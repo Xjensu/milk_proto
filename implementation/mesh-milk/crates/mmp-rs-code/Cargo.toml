@@ -1,0 +1,15 @@
+[package]
+name = "mmp-rs-code"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "no_std GF(256) Reed-Solomon (doc 08 s8; OQ-7 bench lives here)"
+
+[features]
+default = []
+alloc = []
+
+[dependencies]
+
+[lints]
+workspace = true

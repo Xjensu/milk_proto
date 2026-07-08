@@ -1,0 +1,12 @@
+[package]
+name = "mmp-tal-embedded"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "nRF52 (nrf-softdevice) / ESP32 (NimBLE) TAL"
+
+[dependencies]
+mmp-tal = { path = "../mmp-tal" }
+
+[lints]
+workspace = true

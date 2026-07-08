@@ -1,0 +1,17 @@
+[package]
+name = "mmp-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "std orchestration: scheduler, tier ladder, power mgmt (doc 04)"
+
+[dependencies]
+mmp-types = { path = "../mmp-types" }
+mmp-crypto = { path = "../mmp-crypto" }
+mmp-core = { path = "../mmp-core" }
+mmp-router = { path = "../mmp-router" }
+mmp-store = { path = "../mmp-store" }
+mmp-tal = { path = "../mmp-tal" }
+
+[lints]
+workspace = true

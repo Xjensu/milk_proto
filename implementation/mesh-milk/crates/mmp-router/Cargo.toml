@@ -1,0 +1,17 @@
+[package]
+name = "mmp-router"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "spray/utility/quotas/eviction (doc 05)"
+
+[features]
+default = []
+alloc = []
+
+[dependencies]
+mmp-types = { path = "../mmp-types" }
+mmp-core = { path = "../mmp-core" }
+
+[lints]
+workspace = true

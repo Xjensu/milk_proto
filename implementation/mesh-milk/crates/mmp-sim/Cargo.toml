@@ -1,0 +1,14 @@
+[package]
+name = "mmp-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "discrete-event simulator (OQ-4/OQ-5, doc 12 s8)"
+
+[dependencies]
+mmp-types = { path = "../mmp-types" }
+mmp-core = { path = "../mmp-core" }
+mmp-router = { path = "../mmp-router" }
+
+[lints]
+workspace = true

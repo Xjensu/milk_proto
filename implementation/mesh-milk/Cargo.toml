@@ -1,0 +1,19 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "tools/layer-check"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+# Provisional license pending a project decision — the Rust-ecosystem default.
+license = "MIT OR Apache-2.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+# Wire-format layering rule (doc 12 §1, enforced by tools/layer-check + CI):
+# mmp-types ← mmp-crypto ← mmp-core ← mmp-router are #![no_std] (alloc-optional);
+# nothing below mmp-node may depend on tokio, std time, or any TAL implementation.

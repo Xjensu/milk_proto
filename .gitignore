@@ -1,0 +1,9 @@
+# AI tooling artifacts (not part of the project deliverable)
+CLAUDE.md
+.serena/
+other/
+
+# Rust build artifacts
+/implementation/mesh-milk/target/
+**/*.rs.bk
+Cargo.lock.orig
