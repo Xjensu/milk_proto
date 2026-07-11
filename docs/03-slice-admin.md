@@ -594,3 +594,47 @@ pre-image on update would require an extra fetch in every write action and was j
 of scope, see `06-audit-log-gaps.md`). `ip_address` is the resolved client IP, walking
 `X-Forwarded-For` from trusted proxies. Filter query params: `entity_type`, `entity_id`,
 `user_id`, `date_from`, `date_to`.
+
+## 12. Unified entrypoints — one form, one transaction, several tables
+
+Several "heavy" multi-table writes already had (or now have) a single entrypoint instead
+of requiring the client to sequence N separate requests and thread ids between them.
+Each is one DB transaction: either every row is created, or none are.
+
+- **`POST /admin/student_groups`** (existing) — creates the `student_groups` row and,
+  when `auto_provision` is true (default), the full run of `student_group_semesters`
+  rows for the group's `speciality.duration_of_study`, via
+  `Admin::StudentGroups::ProvisionStudyPeriod`.
+- **`POST /admin/schedule_events`** (existing) — creates the `schedule_events` row and
+  every `event_teachers` row for `teacher_on_kafedra_ids` in the same request.
+- **`POST /admin/student_group_semesters/:id/load`** (extended) — creates
+  `curriculum_streams` → `study_load_requirements`, and now optionally
+  `teaching_assignments` → `assignment_room_references` too, nested per requirement:
+  ```json
+  { "streams": [ {
+      "subject_id": 1, "kafedra_id": 1, "course": 1,
+      "requirements": [ {
+        "activity_type_id": 6, "hours_per_event": 2, "hours_assigned": 36,
+        "teaching_assignments": [ {
+          "teacher_on_kafedra_id": 1,
+          "room_references": [ { "room_id": 3, "priority_level": 1 } ]
+        } ]
+      } ]
+  } ] }
+  ```
+  The standalone `POST /admin/curriculum_streams` / `study_load_requirements` /
+  `teaching_assignments` / `assignment_room_references` endpoints are unchanged and
+  remain the right tool for one-off edits after the initial bulk create.
+- **`POST /admin/teachers`** (extended) — accepts an optional top-level
+  `kafedra_assignments: [{ kafedra_id, pochasovoy? }]` array, creating the matching
+  `teacher_on_kafedras` rows alongside the teacher instead of a separate
+  `POST /admin/teacher_on_kafedras` call per kafedra.
+
+All four follow the same shape: a thin `Admin::Action` opens one `repo.transaction`
+block, creates rows across the 2-4 repos involved, then re-fetches the root record with
+a combine graph deep enough for the response to show everything just created. No new
+base class was introduced for this — it's the same pattern already used by
+`Admin::Load::CreateForGroupSemester` and `ScheduleEvents::Create`, just applied
+consistently. Tables considered and deliberately **not** consolidated: `holidays`,
+`weekday_transfers`, `room_reservations`, `teacher_time_constraints` — each is already a
+single-table write with no natural child rows to bundle.
