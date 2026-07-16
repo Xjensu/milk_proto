@@ -18,6 +18,16 @@ Group schedules follow faculty → semester → student group. Teacher and room 
 
 Schedule events may omit a teacher or room. Selecting an event opens the shared side inspector. The current gateway does not expose exact-date teacher/room queries, room occupancy projection, dashboard health, or active-user presence; their UI states remain explicit until those routes are available.
 
+## Workload
+
+Faculty workload is loaded through the scoped faculty entrypoint after faculty and semester selection. Operators may keep all groups or narrow the rendered projection to selected groups. Activity types become dynamic hour columns.
+
+Department workload uses faculty → semester → department context. Rows are grouped by discipline and expose activity cells containing planned hours, room, and teacher; missing assignments remain explicit. The gateway load serializer currently omits the student-group code, so the UI falls back to the speciality name and course when no group name is present.
+
+## Group calendar
+
+Calendar context follows faculty → semester → group. Lecture, credit, and exam periods are independent date ranges and map to `lecture_week`, `credit_week`, and `exam_session`. A scheduled occurrence may be moved without changing its recurring event template; the editor writes an event transfer from the side inspector.
+
 ## Local visual preview
 
 In Vite development only, append `?admin-preview=1` to render the super-administrator shell without creating a session. Production builds ignore the query parameter. The preview exists for responsive visual verification and must not be used as an authentication path.
