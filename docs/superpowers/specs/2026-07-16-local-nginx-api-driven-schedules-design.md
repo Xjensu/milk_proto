@@ -1,10 +1,10 @@
-# Local Nginx Caching and API-Driven Schedules
+# Local Nginx Caching and API-Driven University Scheduling
 
 ## Objective
 
 Turn the current frontend into a same-origin, API-driven application for public users,
-teachers, and administrators. Nginx will provide local/development static delivery and
-browser-cache policy without relying on Cloudflare or another external CDN.
+teachers, and university administrators. Nginx will provide local/development static
+delivery and browser-cache policy without relying on Cloudflare or another external CDN.
 
 The interface remains Russian. Source code and project documentation remain English.
 
@@ -99,6 +99,90 @@ Teacher accounts enter a focused self-service shell instead of the admin dashboa
 Raw JSON is not part of the user-facing success state. It may appear only in development
 diagnostics outside production UI.
 
+## Administration Experience
+
+Authenticated administration uses a task-oriented shell designed so a staff member can
+identify the primary action on each page within five seconds. Navigation is grouped by
+the university workflow rather than backend table names:
+
+- “Обзор” — live operational summary and direct links to incomplete scheduling work;
+- “Расписание” — group, teacher, faculty, department, and room schedule projections;
+- “Нагрузка” — faculty and department workload with semester context;
+- “Структура” — faculties, departments, specialities, teachers, and student groups;
+- “Справочники” — rooms, buildings, subjects, activity types, time slots, posts, degrees,
+  titles, week types, and related reference resources;
+- “Календарь” — group periods, holidays, weekday transfers, and event transfers;
+- “Бронирования” — room reservations and current room occupancy;
+- “Файлы” — Excel imports and asynchronous media-processing status;
+- “Аудит” — immutable administrative activity history;
+- “Пользователи” — account and scope management for `super_admin` only.
+
+The sidebar is filtered by role for usability, while the API remains the authorization
+boundary. `super_admin`, `faculty_admin`, `kafedra_admin`, and `scheduler` receive the
+appropriate write controls; `teacher` accounts are routed to self-service. A server
+`403` always overrides the client capability model.
+
+### Admin Overview
+
+The overview is assembled from real API queries, requested in parallel where they are
+independent. It shows current semester context, unscheduled or under-assigned workload,
+recent audit activity, file-processing status, and shortcuts into schedule and workload
+tasks. If a projection is unavailable to a role, that module is omitted or shown as
+read-only instead of displaying fabricated metrics.
+
+### Reference and Structure Management
+
+Standard resource pages use the JSON:API collections and `meta.actions` exposed by the
+server. Each page provides API-backed pagination, search where supported, a readable
+table, and create/edit/delete dialogs only when the response and role allow them.
+Mutations wrap attributes under the singular resource key required by the API, never
+send server-owned identifiers or timestamps, and refresh only the affected collection.
+
+Large relationships such as subject, teacher, room, department, and group selection use
+searchable API-backed controls rather than static option lists. Faculty -> department ->
+speciality -> group dependencies clear downstream selections when a parent changes.
+
+### Schedule Operations
+
+The schedule workspace uses existing projections from `/admin/faculties`,
+`/admin/kafedras`, `/admin/teachers`, `/admin/rooms`,
+`/admin/student_groups/:id/semesters`, and
+`/admin/student_group_semesters/:id/schedule`. Every projection that requires semester
+context includes `semester_id`.
+The shared week grid renders current events and highlights `is_manual_change`, modified
+status, and transfer data.
+
+Authorized staff can use existing schedule-event, recommendation, teacher-assignment,
+and transfer routes. Empty slots may request ranked recommendations; choosing a result
+creates an event through `/admin/schedule_events/from_recommendation`. Editing and
+transfer actions refresh the active schedule projection without a full-page reload.
+
+### Workload
+
+Faculty and department workload views consume the current load projections and require
+an explicit semester. Rows show subject, group, activity type, assigned hours, actual
+hours where available, teacher, and room context. Existing workload and curriculum
+routes drive editing; the frontend does not infer or write database relationships that
+are not exposed by the API.
+
+### Calendar, Reservations, Files, and Audit
+
+- Calendar pages load and mutate holidays, weekday transfers, event transfers, and group
+  periods through their existing routes.
+- Reservations combine room, teacher, date, and time-slot data from the API and expose
+  creation/deletion only to authorized roles.
+- Media uploads show the asynchronous `quarantined -> scanning -> clean | rejected`
+  lifecycle and request a presigned URL only after the API reports `servable: true`.
+- Audit pages render server-provided before/after snapshots safely and never expose
+  mutation controls.
+
+### Account Administration
+
+The `super_admin` account page uses `/auth/accounts` for list, create, update, and delete.
+The form supports all live roles and validates scope rules before submission. An
+auto-generated initial password is shown once in a deliberate copy-and-confirm state and
+is never persisted by the frontend.
+
 ## Component Boundaries
 
 The current monolithic `App.tsx` will be reduced along the paths touched by this work:
@@ -107,6 +191,9 @@ The current monolithic `App.tsx` will be reduced along the paths touched by this
 - `src/features/schedule/`: public selectors, response normalization, and week grid;
 - `src/features/teacher/`: teacher schedule, workload, and department views;
 - `src/features/auth/`: login and password-change behavior;
+- `src/features/admin/`: app shell, role-aware navigation, dashboard, and operational modules;
+- `src/features/reference-data/`: reusable JSON:API resource tables and editors;
+- `src/features/workload/`, `calendar/`, `reservations/`, `files/`, and `audit/`: focused admin domains;
 - `src/components/`: existing shared primitives only.
 
 The refactor is limited to functionality required by this design. Existing visual tokens
@@ -134,7 +221,10 @@ Completion requires all of the following evidence:
 6. Supplied administrator credentials complete the real login flow through `/api/auth/sessions`.
 7. Public group and teacher schedule flows render live or valid empty API states.
 8. Teacher self-service components render structured API responses without raw JSON.
-9. Desktop and mobile browser checks show no framework overlay, relevant console errors,
+9. The admin dashboard and at least one standard CRUD resource render real authorized API data.
+10. Role-aware admin navigation hides `super_admin` account management from other roles.
+11. Admin schedule and workload requests include their required semester context.
+12. Desktop and mobile browser checks show no framework overlay, relevant console errors,
    page-level overflow, or broken primary interactions.
 
 ## Out of Scope
