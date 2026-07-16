@@ -1,65 +1,104 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, CalendarDays } from "lucide-react";
+import { Activity, CircleUserRound, Radio, Server } from "lucide-react";
 
-import { Badge, Button, Panel } from "../../components/ui";
+import { Badge, Panel } from "../../components/ui";
 import { api, type Account, type JsonApiResource } from "../../lib/api";
-import { resourceLabel, roleLabel } from "./utils";
+import type { ActiveUserSummary, ServiceStatus } from "./domain";
+import { normalizeActiveUsers, normalizeServices } from "./overview/normalize";
+import { Inspector } from "./workspace/Inspector";
 
-type OverviewState = { semesters: JsonApiResource[]; faculties: JsonApiResource[]; audit: JsonApiResource[]; media: JsonApiResource[] };
+type SelectedItem = { title: string; rows: Array<[string, string]> } | null;
 
-export function AdminOverview({ account, onOpenSchedule }: { account: Account | null; onOpenSchedule: () => void }) {
-  const [data, setData] = useState<OverviewState>({ semesters: [], faculties: [], audit: [], media: [] });
-  const [semesterId, setSemesterId] = useState("");
-  const [loadCount, setLoadCount] = useState<number | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
+const CHECKING_SERVICES: ServiceStatus[] = [
+  { key: "api", label: "API", status: "degraded" },
+  { key: "database", label: "Database", status: "degraded" },
+  { key: "streaming", label: "Streaming", status: "degraded" },
+  { key: "background", label: "Background jobs", status: "degraded" },
+];
+
+export function AdminOverview({ account: _account, onOpenSchedule: _onOpenSchedule }: { account: Account | null; onOpenSchedule: () => void }) {
+  const [services, setServices] = useState<ServiceStatus[]>(CHECKING_SERVICES);
+  const [users, setUsers] = useState<ActiveUserSummary[]>([]);
+  const [audit, setAudit] = useState<JsonApiResource[]>([]);
+  const [healthPending, setHealthPending] = useState(true);
+  const [usersPending, setUsersPending] = useState(true);
+  const [auditPending, setAuditPending] = useState(true);
+  const [healthUnavailable, setHealthUnavailable] = useState(false);
+  const [usersUnavailable, setUsersUnavailable] = useState(false);
+  const [auditUnavailable, setAuditUnavailable] = useState(false);
+  const [selected, setSelected] = useState<SelectedItem>(null);
 
   useEffect(() => {
     let active = true;
     Promise.allSettled([
-      api.listAdminCollection("semesters"),
-      api.listAdminCollection("faculties"),
-      api.listAdminCollection("audit_logs", "?page=1&per_page=5"),
-      api.listAdminCollection("media_files", "?page=1&per_page=20"),
-    ]).then((results) => {
+      api.dashboardHealth(),
+      api.dashboardActiveUsers(),
+      api.listAdminCollection("audit_logs", "?page=1&per_page=12"),
+    ]).then(([healthResult, usersResult, auditResult]) => {
       if (!active) return;
-      const collections = results.map((result) => result.status === "fulfilled" ? result.value.data : []);
-      const next = { semesters: collections[0], faculties: collections[1], audit: collections[2], media: collections[3] };
-      setData(next);
-      setSemesterId((current) => current || next.semesters[0]?.id || "");
-      if (results.every((result) => result.status === "rejected")) setError("Не удалось загрузить обзор системы.");
-      setLoading(false);
+      if (healthResult.status === "fulfilled") setServices(normalizeServices(healthResult.value));
+      else setHealthUnavailable(true);
+      if (usersResult.status === "fulfilled") setUsers(normalizeActiveUsers(usersResult.value));
+      else setUsersUnavailable(true);
+      if (auditResult.status === "fulfilled") setAudit(auditResult.value.data);
+      else setAuditUnavailable(true);
+      setHealthPending(false);
+      setUsersPending(false);
+      setAuditPending(false);
     });
     return () => { active = false; };
   }, []);
 
-  useEffect(() => {
-    if (!semesterId) return;
-    let active = true;
-    api.loadOverview(semesterId)
-      .then((response) => active && setLoadCount(response.data.length))
-      .catch(() => active && setLoadCount(null));
-    return () => { active = false; };
-  }, [semesterId]);
+  return <div className="admin-section overview-workspace">
+    <div className="admin-section-heading"><div><span className="eyebrow">Operations</span><h1>System overview</h1></div><p>Live operational state and recent administrative activity.</p></div>
 
-  const cleanMedia = data.media.filter((item) => item.attributes?.status === "clean").length;
+    <section className="service-strip" aria-labelledby="service-status-title">
+      <div className="section-inline-title"><Server aria-hidden="true" size={19} /><h2 id="service-status-title">Service status</h2></div>
+      <div className="service-list">{services.map((service) => <div className={`service-item status-${healthUnavailable ? "unavailable" : service.status}`} key={service.key}>
+        <span className="status-dot" aria-hidden="true" /><strong>{service.label}</strong><span>{healthPending ? "Checking" : healthUnavailable ? "Unavailable" : statusLabel(service.status)}</span>
+        {service.latencyMs !== undefined ? <small>{service.latencyMs} ms</small> : null}
+      </div>)}</div>
+    </section>
 
-  return <div className="admin-section">
-    <div className="admin-topline"><div><span className="eyebrow">Рабочий контур / Обзор</span><h1>Добрый день<span className="brand-dot">.</span></h1><p>Показатели ниже получены из API и отражают текущее состояние данных.</p></div><Badge tone="positive">{roleLabel(account?.role ?? "unknown")}</Badge></div>
-    <div className="admin-context"><label><span>Семестр</span><select value={semesterId} onChange={(event) => setSemesterId(event.target.value)}><option value="">Не выбран</option>{data.semesters.map((item) => <option value={item.id} key={item.id}>{resourceLabel(item, "Семестр")}</option>)}</select></label><div><span>Статус данных</span><strong className={error ? "" : "status-ok"}>{loading ? "Загрузка…" : error || "API отвечает"}</strong></div></div>
-    <div className="admin-live-metrics">
-      <Metric label="Факультеты" value={loading ? "…" : String(data.faculties.length)} />
-      <Metric label="Строки нагрузки" value={loadCount === null ? "—" : String(loadCount)} />
-      <Metric label="Файлы обработаны" value={`${cleanMedia}/${data.media.length}`} />
-      <Metric label="События аудита" value={loading ? "…" : String(data.audit.length)} />
+    <div className="overview-columns">
+      <Panel className="overview-presence">
+        <div className="panel-heading"><div className="section-inline-title"><CircleUserRound aria-hidden="true" size={20} /><div><span className="eyebrow">Presence</span><h2>Active users</h2></div></div><Badge>{users.length}</Badge></div>
+        {usersPending ? <p className="resource-empty">Checking active sessions…</p> : usersUnavailable ? <CapabilityUnavailable label="Active-user presence" /> : users.length === 0 ? <p className="resource-empty">No active users reported.</p> : <div className="presence-list">{users.map((user) => <button type="button" className="presence-row" key={user.id} onClick={() => setSelected(userSelection(user))}>
+          <span className="user-avatar">{user.email.slice(0, 1).toUpperCase()}</span><span><strong>{user.email}</strong><small>{user.role.replaceAll("_", " ")} · {user.area}</small></span><time dateTime={user.lastSeenAt}>{relativeTime(user.lastSeenAt)}</time>
+        </button>)}</div>}
+      </Panel>
+
+      <Panel className="overview-journal">
+        <div className="panel-heading"><div className="section-inline-title"><Activity aria-hidden="true" size={20} /><div><span className="eyebrow">Recent changes</span><h2>Event journal</h2></div></div><Radio aria-hidden="true" size={18} /></div>
+        {auditPending ? <p className="resource-empty">Loading recent activity…</p> : auditUnavailable ? <CapabilityUnavailable label="Event journal" /> : audit.length === 0 ? <p className="resource-empty">No events found.</p> : <div className="journal-list">{audit.map((item) => <button type="button" className="journal-row" key={item.id} onClick={() => setSelected(auditSelection(item))}>
+          <span className="activity-marker" aria-hidden="true" /><span><strong>{describeAuditEvent(item)}</strong><small>{auditContext(item)}</small></span><time dateTime={stringAttribute(item, "created_at")}>{formatDate(stringAttribute(item, "created_at"))}</time>
+        </button>)}</div>}
+      </Panel>
     </div>
-    <div className="admin-grid">
-      <Panel className="admin-focus"><div className="panel-heading"><div><Badge tone="accent">Основная задача</Badge><h2>Проверить расписание выбранного семестра</h2></div><CalendarDays size={25} /></div><p>Откройте рабочую сетку и выберите группу, преподавателя или аудиторию.</p><Button className="button-primary" onClick={onOpenSchedule}>Открыть расписание <ArrowUpRight size={17} /></Button></Panel>
-      <Panel className="activity-card"><div className="panel-heading"><div><span className="eyebrow">Последние изменения</span><h3>Журнал событий</h3></div></div>{data.audit.length === 0 ? <p className="resource-empty">Событий не найдено.</p> : data.audit.map((item) => <div className="activity-row" key={item.id}><span className="activity-marker marker-0" /><span>{String(item.attributes?.action ?? item.attributes?.entity_type ?? "Изменение")}</span><small>{formatDate(item.attributes?.created_at)}</small></div>)}</Panel>
-    </div>
+
+    <Inspector title={selected?.title ?? "Details"} open={selected !== null} onClose={() => setSelected(null)}>
+      <dl className="inspector-details">{selected?.rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>
+    </Inspector>
   </div>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) { return <Panel className="live-metric"><span>{label}</span><strong>{value}</strong></Panel>; }
+export function describeAuditEvent(item: JsonApiResource) {
+  const actor = stringAttribute(item, "actor_name") || stringAttribute(item, "actor_email") || "Administrator";
+  const action = stringAttribute(item, "action") || "updated";
+  const subject = stringAttribute(item, "subject_name") || humanize(stringAttribute(item, "entity_type") || "record");
+  const group = stringAttribute(item, "group_display_name");
+  return `${actor} ${action} ${subject}${group ? ` for ${group}` : ""}`;
+}
 
-function formatDate(value: unknown) { if (typeof value !== "string") return "—"; return new Intl.DateTimeFormat("ru-RU", { dateStyle: "short", timeStyle: "short" }).format(new Date(value)); }
+function CapabilityUnavailable({ label }: { label: string }) {
+  return <div className="capability-unavailable"><strong>{label} is unavailable</strong><p>The current gateway does not expose this projection. No substitute data is shown.</p></div>;
+}
+
+function statusLabel(status: ServiceStatus["status"]) { return status === "operational" ? "Operational" : status === "degraded" ? "Degraded" : "Unavailable"; }
+function humanize(value: string) { return value.replaceAll("_", " "); }
+function stringAttribute(item: JsonApiResource, key: string) { const value = item.attributes?.[key]; return typeof value === "string" || typeof value === "number" ? String(value) : ""; }
+function auditContext(item: JsonApiResource) { return [humanize(stringAttribute(item, "entity_type")), stringAttribute(item, "area")].filter(Boolean).join(" · ") || "Administrative change"; }
+function formatDate(value: string) { if (!value) return "Time unavailable"; return new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
+function relativeTime(value: string) { const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000)); if (seconds < 60) return "Now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; return `${Math.floor(seconds / 3600)}h ago`; }
+function userSelection(user: ActiveUserSummary): SelectedItem { return { title: user.email, rows: [["Role", humanize(user.role)], ["Current area", user.area], ["Last activity", formatDate(user.lastSeenAt)]] }; }
+function auditSelection(item: JsonApiResource): SelectedItem { return { title: "Event details", rows: [["Description", describeAuditEvent(item)], ["Area", auditContext(item)], ["Occurred", formatDate(stringAttribute(item, "created_at"))]] }; }
