@@ -207,6 +207,23 @@ describe("API transport", () => {
       ["/api/admin/room_reservations", "POST"],
     ]);
   });
+
+  it("writes workload assignments through existing join resources", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createTeachingAssignment({ load_requirement_id: 41, teacher_on_kafedra_id: 12 });
+    await api.updateTeachingAssignment("22", { teacher_on_kafedra_id: 13 });
+    await api.createAssignmentRoom({ teaching_assignment_id: 22, room_id: 9, priority_level: 1 });
+    await api.updateAssignmentRoom("31", { room_id: 10 });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/teaching_assignments", "POST"],
+      ["/api/admin/teaching_assignments/22", "PATCH"],
+      ["/api/admin/assignment_room_references", "POST"],
+      ["/api/admin/assignment_room_references/31", "PATCH"],
+    ]);
+  });
 });
 
 function jsonFetch() {

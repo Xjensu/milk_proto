@@ -4,7 +4,7 @@ import { ArrowRight, CalendarRange } from "lucide-react";
 import { Button, Panel } from "../../components/ui";
 import { api, type GroupPeriodInput, type JsonApiResource } from "../../lib/api";
 import type { SemesterSummary } from "./domain";
-import { resourceLabel } from "./utils";
+import { groupResource, resourceLabel } from "./utils";
 import { normalizeScheduleEvents } from "./schedule/normalize";
 import { EntityPicker, type EntityOption } from "./workspace/EntityPicker";
 import { Inspector } from "./workspace/Inspector";
@@ -31,7 +31,7 @@ export function AdminOperations() {
   const [message, setMessage] = useState("");
 
   useEffect(() => { let active = true; Promise.allSettled([api.listAdminCollection("semesters"), api.listAdminCollection("faculties")]).then(([s, f]) => { if (!active) return; if (s.status === "fulfilled") setSemesters(s.value.data.map(toSemester).filter(isSemester)); if (f.status === "fulfilled") setFaculties(f.value.data.map((item) => toOption(item, "Faculty"))); }); return () => { active = false; }; }, []);
-  useEffect(() => { if (!workspace.facultyId || !workspace.semesterId) { setGroups([]); return; } api.listFacultyGroups(workspace.facultyId, workspace.semesterId).then((response) => setGroups(response.data.map((item) => toOption(item, "Student group")))).catch(() => setGroups([])); }, [workspace.facultyId, workspace.semesterId]);
+  useEffect(() => { if (!workspace.facultyId || !workspace.semesterId) { setGroups([]); return; } api.listFacultyGroups(workspace.facultyId, workspace.semesterId).then((response) => setGroups(response.data.map(groupResource))).catch(() => setGroups([])); }, [workspace.facultyId, workspace.semesterId]);
   useEffect(() => {
     if (!workspace.groupId) { setPeriods({}); setEvents([]); return; }
     Promise.allSettled([api.groupPeriods(workspace.groupId), api.adminGroupSchedule(workspace.groupId)]).then(([periodResult, scheduleResult]) => {

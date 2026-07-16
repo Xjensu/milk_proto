@@ -4,8 +4,9 @@ import { Building2, GraduationCap } from "lucide-react";
 import { Button, Panel } from "../../components/ui";
 import { api, type JsonApiResource } from "../../lib/api";
 import type { SemesterSummary } from "./domain";
-import { resourceLabel } from "./utils";
+import { groupResource, resourceLabel } from "./utils";
 import { EntityPicker, type EntityOption } from "./workspace/EntityPicker";
+import { Inspector } from "./workspace/Inspector";
 import { SemesterRail } from "./workspace/SemesterRail";
 import { useWorkspace } from "./workspace/WorkspaceContext";
 import { normalizeWorkload, type WorkloadRow } from "./workload/normalize";
@@ -27,6 +28,9 @@ export function AdminWorkload() {
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState("");
+  const [assignment, setAssignment] = useState<WorkloadRow | null>(null);
+  const [teacherAssignments, setTeacherAssignments] = useState<EntityOption[]>([]);
+  const [roomOptions, setRoomOptions] = useState<EntityOption[]>([]);
 
   useEffect(() => {
     let active = true;
@@ -45,8 +49,16 @@ export function AdminWorkload() {
 
   useEffect(() => {
     if (!workspace.facultyId || !workspace.semesterId) { setGroups([]); setSelectedGroups([]); return; }
-    api.listFacultyGroups(workspace.facultyId, workspace.semesterId).then((response) => setGroups(response.data.map((item) => toOption(item, "Student group")))).catch(() => setGroups([]));
+    api.listFacultyGroups(workspace.facultyId, workspace.semesterId).then((response) => setGroups(response.data.map(groupResource))).catch(() => setGroups([]));
   }, [workspace.facultyId, workspace.semesterId]);
+
+  useEffect(() => {
+    if (!assignment || !selectedDepartment) return;
+    Promise.all([api.listAdminCollection("teacher_on_kafedras", "?page=1&per_page=100"), api.listAdminCollection("rooms", "?page=1&per_page=100")]).then(([teacherResponse, roomResponse]) => {
+      setTeacherAssignments(teacherAssignmentOptions(teacherResponse, selectedDepartment.id));
+      setRoomOptions(roomResponse.data.map((item) => toOption(item, "Room")));
+    }).catch(() => { setTeacherAssignments([]); setRoomOptions([]); });
+  }, [assignment, selectedDepartment]);
 
   const visibleRows = useMemo(() => mode === "faculty" && selectedGroups.length ? rows.filter((row) => selectedGroups.includes(row.groupSemesterId)) : rows, [mode, rows, selectedGroups]);
   const activityTypes = useMemo(() => [...new Set(visibleRows.map((row) => row.activity))], [visibleRows]);
@@ -74,12 +86,30 @@ export function AdminWorkload() {
       {mode === "department" ? <div className="context-step"><span>3</span><EntityPicker label="Department" query={departmentQuery} onQueryChange={setDepartmentQuery} options={filter(departments, departmentQuery)} selectedId={selectedDepartment?.id ?? null} disabled={!workspace.facultyId} onSelect={(option) => { setSelectedDepartment(option); setDepartmentQuery(option.label); setLoaded(false); }} /><small>Only departments inside the selected faculty are shown.</small></div> : null}
       {mode === "faculty" && workspace.facultyId && workspace.semesterId ? <div className="context-step context-step-wide"><span>3</span><div><label>Student groups</label><div className="group-chip-list"><button type="button" className={!selectedGroups.length ? "active" : ""} onClick={() => setSelectedGroups([])}>All groups</button>{groups.map((group) => <button type="button" className={selectedGroups.includes(group.id) ? "active" : ""} key={group.id} onClick={() => setSelectedGroups((current) => current.includes(group.id) ? current.filter((id) => id !== group.id) : [...current, group.id])}>{group.label}</button>)}</div></div><small>Select individual groups or keep the faculty-wide view.</small></div> : null}
     </div><div className="schedule-query-actions"><Button className="button-primary" onClick={load} disabled={!ready || loading}>{loading ? "Loading…" : "Open workload"}</Button></div>{error ? <div className="form-error" role="alert">{error}</div> : null}</Panel>
-    {loaded ? <Panel className="workload-results"><div className="panel-heading"><div><span className="eyebrow">Current selection</span><h2>{mode === "faculty" ? "Faculty workload" : selectedDepartment?.label ?? "Department workload"}</h2></div><span className="resource-count">{visibleRows.length}</span></div>{visibleRows.length ? mode === "faculty" ? <FacultyMatrix rows={visibleRows} activities={activityTypes} /> : <DepartmentMatrix rows={visibleRows} activities={activityTypes} /> : <p className="resource-empty">No workload records match this selection.</p>}</Panel> : null}
+    {loaded ? <Panel className="workload-results"><div className="panel-heading"><div><span className="eyebrow">Current selection</span><h2>{mode === "faculty" ? "Faculty workload" : selectedDepartment?.label ?? "Department workload"}</h2></div><span className="resource-count">{visibleRows.length}</span></div>{visibleRows.length ? mode === "faculty" ? <FacultyMatrix rows={visibleRows} activities={activityTypes} /> : <DepartmentMatrix rows={visibleRows} activities={activityTypes} onAssign={setAssignment} /> : <p className="resource-empty">No workload records match this selection.</p>}</Panel> : null}
+    <AssignmentInspector row={assignment} teachers={teacherAssignments} rooms={roomOptions} onClose={() => setAssignment(null)} onSaved={() => { setAssignment(null); load(); }} />
   </div>;
 }
 
 function FacultyMatrix({ rows, activities }: { rows: WorkloadRow[]; activities: string[] }) { return <div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Department</th><th>Discipline</th><th>Group</th>{activities.map((activity) => <th key={activity}>{activity}</th>)}</tr></thead><tbody>{rows.map((row) => <tr key={row.id}><td><strong>{row.departmentCode}</strong></td><td>{row.subject}</td><td>{row.group}</td>{activities.map((activity) => <td key={activity}>{row.activity === activity ? `${row.plannedHours} h` : "—"}</td>)}</tr>)}</tbody></table></div>; }
-function DepartmentMatrix({ rows, activities }: { rows: WorkloadRow[]; activities: string[] }) { const subjects = [...new Set(rows.map((row) => row.subject))]; return <div className="department-matrix">{subjects.map((subject) => <section key={subject}><header><h3>{subject}</h3><span>{rows.filter((row) => row.subject === subject).length} assignments</span></header><div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Group</th><th>Students</th>{activities.map((activity) => <th key={activity}>{activity}<small>Hours · Room · Teacher</small></th>)}</tr></thead><tbody>{rows.filter((row) => row.subject === subject).map((row) => <tr key={row.id}><td><strong>{row.group}</strong></td><td>{row.students || "—"}</td>{activities.map((activity) => <td key={activity} className={row.activity === activity ? "assignment-cell" : "empty-assignment"}>{row.activity === activity ? <><strong>{row.plannedHours} h</strong><span>{row.room}</span><small>{row.teacher}</small></> : <button type="button">Assign</button>}</td>)}</tr>)}</tbody></table></div></section>)}</div>; }
+function DepartmentMatrix({ rows, activities, onAssign }: { rows: WorkloadRow[]; activities: string[]; onAssign: (row: WorkloadRow) => void }) { const subjects = [...new Set(rows.map((row) => row.subject))]; return <div className="department-matrix">{subjects.map((subject) => <section key={subject}><header><h3>{subject}</h3><span>{rows.filter((row) => row.subject === subject).length} assignments</span></header><div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Group</th><th>Students</th>{activities.map((activity) => <th key={activity}>{activity}<small>Hours · Room · Teacher</small></th>)}</tr></thead><tbody>{rows.filter((row) => row.subject === subject).map((row) => <tr key={row.id}><td><strong>{row.group}</strong></td><td>{row.students || "—"}</td>{activities.map((activity) => <td key={activity} className={row.activity === activity ? "assignment-cell" : "empty-assignment"}>{row.activity === activity ? <button type="button" className="assignment-cell-button" onClick={() => onAssign(row)}><strong>{row.plannedHours} h</strong><span>{row.room}</span><small>{row.teacher}</small></button> : <span>—</span>}</td>)}</tr>)}</tbody></table></div></section>)}</div>; }
+
+function AssignmentInspector({ row, teachers, rooms, onClose, onSaved }: { row: WorkloadRow | null; teachers: EntityOption[]; rooms: EntityOption[]; onClose: () => void; onSaved: () => void }) {
+  const [teacher, setTeacher] = useState<EntityOption | null>(null); const [teacherQuery, setTeacherQuery] = useState(""); const [room, setRoom] = useState<EntityOption | null>(null); const [roomQuery, setRoomQuery] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  useEffect(() => { if (!row) return; const currentTeacher = teachers.find((item) => item.id === row.teacherOnDepartmentId) ?? null; const currentRoom = rooms.find((item) => item.id === row.roomId) ?? null; setTeacher(currentTeacher); setTeacherQuery(currentTeacher?.label ?? ""); setRoom(currentRoom); setRoomQuery(currentRoom?.label ?? ""); }, [row, teachers, rooms]);
+  async function submit(event: React.FormEvent) { event.preventDefault(); if (!row || !teacher) return; setSaving(true); setError(""); try { let assignmentId = row.teachingAssignmentId; if (assignmentId) await api.updateTeachingAssignment(assignmentId, { teacher_on_kafedra_id: Number(teacher.id) }); else { const response = await api.createTeachingAssignment({ load_requirement_id: Number(row.id), teacher_on_kafedra_id: Number(teacher.id) }); assignmentId = response.data.id; } if (room && assignmentId) { if (row.roomReferenceId) await api.updateAssignmentRoom(row.roomReferenceId, { room_id: Number(room.id) }); else await api.createAssignmentRoom({ teaching_assignment_id: Number(assignmentId), room_id: Number(room.id), priority_level: 1 }); } onSaved(); } catch { setError("The workload assignment could not be saved."); } finally { setSaving(false); } }
+  return <Inspector title="Edit workload assignment" open={Boolean(row)} onClose={onClose}><form className="inspector-form" onSubmit={submit}><div className="inspector-note"><strong>{row?.subject}</strong><span>{row?.group} · {row?.activity} · {row?.plannedHours} hours</span></div><EntityPicker label="Teacher" query={teacherQuery} onQueryChange={setTeacherQuery} options={filter(teachers, teacherQuery)} selectedId={teacher?.id ?? null} onSelect={(item) => { setTeacher(item); setTeacherQuery(item.label); }} /><EntityPicker label="Room (optional)" query={roomQuery} onQueryChange={setRoomQuery} options={filter(rooms, roomQuery)} selectedId={room?.id ?? null} onSelect={(item) => { setRoom(item); setRoomQuery(item.label); }} />{error ? <p className="form-error" role="alert">{error}</p> : null}<Button className="button-primary" type="submit" disabled={!teacher || saving}>{saving ? "Saving…" : "Save assignment"}</Button></form></Inspector>;
+}
+
+function teacherAssignmentOptions(response: { data: JsonApiResource[]; included?: JsonApiResource[] }, departmentId: string): EntityOption[] {
+  const included = response.included ?? [];
+  return response.data.flatMap((item) => {
+    const department = relationshipId(item, "kafedra"); if (department && department !== departmentId) return [];
+    const teacherId = relationshipId(item, "teacher"); const teacher = included.find((entry) => entry.type === "teacher" && entry.id === teacherId); if (!teacher) return [];
+    const a = teacher.attributes ?? {}; const label = [a.last_name, a.first_name, a.middle_name].filter(Boolean).join(" "); return label ? [{ id: item.id, label }] : [];
+  });
+}
+function relationshipId(item: JsonApiResource, name: string) { const relation = item.relationships?.[name] as { data?: { id?: string } } | undefined; return relation?.data?.id ? String(relation.data.id) : ""; }
 
 function toSemester(item: JsonApiResource): SemesterSummary | null { const a = item.attributes ?? {}; const number = Number(a.number), startYear = Number(a.start_year), endYear = Number(a.end_year); return Number.isFinite(number) && Number.isFinite(startYear) && Number.isFinite(endYear) ? { id: item.id, number, startYear, endYear } : null; }
 function isSemester(value: SemesterSummary | null): value is SemesterSummary { return value !== null; }
