@@ -327,3 +327,119 @@ h1 span, h2 span { color: var(--cyan); }
   .admin-product-shell .admin-section-heading p { font-size: 13px; }
   .admin-product-shell .admin-inspector { padding: 24px 20px; }
 }
+
+/* Comfortable admin density: preserve the existing visual language while making daily operations easier to scan. */
+.admin-product-shell .admin-sidebar { padding: 34px 22px 26px; }
+.admin-product-shell .sidebar-title { gap: 9px; padding-bottom: 34px; }
+.admin-product-shell .admin-sidebar nav { gap: 7px; }
+.admin-product-shell .admin-sidebar nav button { min-height: 58px; gap: 14px; padding: 15px 14px; font-size: 14px; }
+.admin-product-shell .admin-sidebar nav button svg { width: 22px; height: 22px; }
+.admin-product-shell .sidebar-bottom { gap: 18px; padding-top: 24px; }
+.admin-product-shell .sidebar-user { gap: 12px; }
+.admin-product-shell .user-avatar { width: 34px; height: 34px; font-size: 13px; }
+.admin-product-shell .admin-content { padding: 44px clamp(32px, 5vw, 88px) 96px; }
+.admin-product-shell .admin-section-heading { gap: 30px; margin-bottom: 36px; }
+.admin-product-shell .admin-section-heading p { line-height: 1.75; }
+.admin-product-shell .admin-tabs { gap: 6px; margin-bottom: 18px; }
+.admin-product-shell .admin-tabs button { min-height: 54px; padding: 15px 22px; font-size: 14px; }
+.admin-product-shell .panel-heading { gap: 18px; }
+.admin-product-shell .service-strip,
+.admin-product-shell .schedule-query,
+.admin-product-shell .workload-context,
+.admin-product-shell .workload-results,
+.admin-product-shell .calendar-context,
+.admin-product-shell .transfer-panel,
+.admin-product-shell .catalog-context-card,
+.admin-product-shell .catalog-guided-context,
+.admin-product-shell .catalog-list-panel,
+.admin-product-shell .admin-data-panel,
+.admin-product-shell .admin-edit-panel { padding: 28px; }
+.admin-product-shell .service-list { gap: 14px; }
+.admin-product-shell .service-item { min-height: 98px; padding: 18px; }
+.admin-product-shell .overview-presence,
+.admin-product-shell .overview-journal { min-height: 440px; padding: 28px; }
+.admin-product-shell .presence-row,
+.admin-product-shell .journal-row { min-height: 70px; gap: 14px; padding: 14px 6px; }
+.admin-product-shell .presence-row strong,
+.admin-product-shell .journal-row strong { font-size: 13px; }
+.admin-product-shell .presence-row small,
+.admin-product-shell .journal-row small,
+.admin-product-shell .presence-row time,
+.admin-product-shell .journal-row time { font-size: 10px; }
+.admin-product-shell .admin-data-panel h2,
+.admin-product-shell .admin-edit-panel h2,
+.admin-product-shell .workload-results h2,
+.admin-product-shell .transfer-panel h2,
+.admin-product-shell .catalog-list-panel h2 { font-size: 24px; }
+.admin-product-shell .admin-form-grid { gap: 16px; margin-top: 24px; }
+.admin-product-shell .admin-form-grid label { gap: 9px; font-size: 10px; }
+.admin-product-shell .admin-form-grid input,
+.admin-product-shell .admin-form-grid select,
+.admin-product-shell .admin-context select { min-height: 54px; padding-inline: 15px; font-size: 14px; }
+.admin-product-shell .semester-rail { gap: 12px; padding-bottom: 14px; }
+.admin-product-shell .semester-card { flex-basis: 255px; min-height: 110px; padding: 20px; }
+.admin-product-shell .workload-mode-cards { gap: 16px; margin-bottom: 16px; }
+.admin-product-shell .workload-mode-cards > button { min-height: 130px; gap: 18px; padding: 26px; }
+.admin-product-shell .workload-mode-cards > button svg { width: 42px; height: 42px; padding: 9px; }
+.admin-product-shell .workload-results { margin-top: 16px; }
+.admin-product-shell .workload-table th,
+.admin-product-shell .workload-table td,
+.admin-product-shell .occupancy-grid th,
+.admin-product-shell .occupancy-grid td { padding: 16px; }
+.admin-product-shell .department-matrix { gap: 20px; margin-top: 24px; }
+.admin-product-shell .department-matrix section > header { padding: 18px 20px; }
+.admin-product-shell .department-matrix h3 { font-size: 17px; }
+.admin-product-shell .assignment-cell-button { gap: 6px; padding: 11px; }
+.admin-product-shell .period-card-grid { gap: 16px; margin-top: 16px; }
+.admin-product-shell .period-card { min-height: 270px; gap: 22px; padding: 26px; }
+.admin-product-shell .period-card h2 { font-size: 19px; }
+.admin-product-shell .transfer-event-list { margin-top: 20px; }
+.admin-product-shell .transfer-event-list button { min-height: 74px; gap: 16px; padding: 13px 8px; }
+.admin-product-shell .catalog-card-grid { gap: 14px; margin-top: 22px; }
+.admin-product-shell .catalog-card { min-height: 118px; gap: 9px; padding: 20px; }
+.admin-product-shell .reference-resource-grid { gap: 10px; }
+.admin-product-shell .reference-resource-grid button { min-height: 48px; padding-inline: 17px; font-size: 13px; }
+.admin-product-shell .group-chip-list { gap: 10px; }
+.admin-product-shell .group-chip-list button { min-height: 42px; padding-inline: 14px; font-size: 11px; }
+.admin-product-shell .admin-inspector { width: min(480px, 100vw); padding: 36px; }
+.admin-product-shell .admin-inspector > header { padding-bottom: 22px; }
+.admin-product-shell .admin-inspector h2 { font-size: 31px; }
+.admin-product-shell .admin-inspector-body { padding-top: 22px; }
+.admin-product-shell .inspector-form { gap: 18px; margin-top: 22px; }
+.admin-product-shell .inspector-form input,
+.admin-product-shell .inspector-form select,
+.admin-product-shell .inspector-form textarea { min-height: 50px; padding-inline: 13px; font-size: 14px; }
+.admin-product-shell .inspector-form textarea { min-height: 112px; padding-block: 13px; }
+.admin-product-shell .inspector-actions { gap: 12px; margin-top: 28px; }
+
+@media (max-width: 850px) {
+  .admin-product-shell .admin-sidebar { padding: 18px 20px 15px; }
+  .admin-product-shell .admin-sidebar nav { gap: 5px; }
+  .admin-product-shell .admin-sidebar nav button { min-height: 52px; padding: 13px 12px; }
+  .admin-product-shell .admin-content { padding: 30px 22px 72px; }
+  .admin-product-shell .admin-section-heading { margin-bottom: 28px; }
+}
+
+@media (max-width: 560px) {
+  .admin-product-shell .admin-content { padding: 26px 16px 60px; }
+  .admin-product-shell .admin-section-heading { gap: 18px; margin-bottom: 24px; }
+  .admin-product-shell .admin-tabs { overflow-x: auto; }
+  .admin-product-shell .admin-tabs button { min-height: 50px; padding-inline: 17px; white-space: nowrap; }
+  .admin-product-shell .service-strip,
+  .admin-product-shell .schedule-query,
+  .admin-product-shell .workload-context,
+  .admin-product-shell .workload-results,
+  .admin-product-shell .calendar-context,
+  .admin-product-shell .transfer-panel,
+  .admin-product-shell .catalog-context-card,
+  .admin-product-shell .catalog-guided-context,
+  .admin-product-shell .catalog-list-panel,
+  .admin-product-shell .admin-data-panel,
+  .admin-product-shell .admin-edit-panel,
+  .admin-product-shell .overview-presence,
+  .admin-product-shell .overview-journal { padding: 20px; }
+  .admin-product-shell .semester-card { flex-basis: 230px; min-height: 102px; padding: 18px; }
+  .admin-product-shell .period-card { padding: 20px; }
+  .admin-product-shell .admin-inspector { width: 100vw; padding: 28px 22px; }
+  .admin-product-shell .admin-inspector h2 { font-size: 28px; }
+}
