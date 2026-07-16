@@ -224,6 +224,21 @@ describe("API transport", () => {
       ["/api/admin/assignment_room_references/31", "PATCH"],
     ]);
   });
+
+  it("creates a curriculum stream and its workload requirement", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.searchDisciplines("Distributed systems");
+    await api.createCurriculumStream({ group_semester_id: 17, subject_id: 9, kafedra_id: 3, course: 3 });
+    await api.createStudyLoadRequirement({ stream_id: 20, activity_type_id: 2, hours_assigned: 36, hours_per_event: 2 });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/search/disciplines?q=Distributed%20systems", undefined],
+      ["/api/admin/curriculum_streams", "POST"],
+      ["/api/admin/study_load_requirements", "POST"],
+    ]);
+  });
 });
 
 function jsonFetch() {
