@@ -93,7 +93,7 @@ export function AdminSchedule() {
     </ScheduleQuery>
 
     <Panel className="schedule-result">{mode === "occupancy" ? <OccupancyGrid source={occupancy} rooms={rooms.filter((room) => selectedRoomIds.includes(room.id))} /> : <WeekGrid source={result} onSelect={setSelectedEvent} />}</Panel>
-    <ScheduleInspector event={selectedEvent} onClose={() => setSelectedEvent(null)} />
+    <ScheduleInspector event={selectedEvent} onClose={() => setSelectedEvent(null)} onChanged={() => { setSelectedEvent(null); loadSchedule(); }} />
   </div>;
 }
 

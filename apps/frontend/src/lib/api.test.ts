@@ -239,6 +239,17 @@ describe("API transport", () => {
       ["/api/admin/study_load_requirements", "POST"],
     ]);
   });
+
+  it("updates and deletes schedule events without exposing identifiers in the UI", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    await api.updateScheduleEvent("19", { day_of_week: 2, time_slot_id: 4, room_id: 9, status: "modified", is_manual_change: true });
+    await api.deleteScheduleEvent("19");
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/schedule_events/19", "PATCH"],
+      ["/api/admin/schedule_events/19", "DELETE"],
+    ]);
+  });
 });
 
 function jsonFetch() {
