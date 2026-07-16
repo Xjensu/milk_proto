@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Building2, CalendarDays, UsersRound } from "lucide-react";
+import { Building2, CalendarDays, Plus, UsersRound } from "lucide-react";
 
 import { Button, Panel } from "../../components/ui";
 import { api, type JsonApiResource } from "../../lib/api";
@@ -13,6 +13,7 @@ import { useWorkspace } from "./workspace/WorkspaceContext";
 import { OccupancyGrid } from "./schedule/OccupancyGrid";
 import { ScheduleInspector } from "./schedule/ScheduleInspector";
 import { ScheduleQuery, type ScheduleMode, type ScopeMode } from "./schedule/ScheduleQuery";
+import { CreateScheduleEventInspector } from "./schedule/CreateScheduleEventInspector";
 
 export function AdminSchedule() {
   const { state: workspace, dispatch } = useWorkspace();
@@ -33,6 +34,7 @@ export function AdminSchedule() {
   const [selectedEvent, setSelectedEvent] = useState<ScheduleEvent | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [creatingEvent, setCreatingEvent] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -92,8 +94,10 @@ export function AdminSchedule() {
       {error ? <div className="capability-unavailable" role="alert"><strong>Projection unavailable</strong><p>{error}</p></div> : null}
     </ScheduleQuery>
 
+    {mode === "group" && workspace.groupId ? <div className="schedule-result-toolbar"><Button className="button-primary" onClick={() => setCreatingEvent(true)}><Plus size={15} /> Create scheduled class</Button></div> : null}
     <Panel className="schedule-result">{mode === "occupancy" ? <OccupancyGrid source={occupancy} rooms={rooms.filter((room) => selectedRoomIds.includes(room.id))} /> : <WeekGrid source={result} onSelect={setSelectedEvent} />}</Panel>
     <ScheduleInspector event={selectedEvent} onClose={() => setSelectedEvent(null)} onChanged={() => { setSelectedEvent(null); loadSchedule(); }} />
+    <CreateScheduleEventInspector open={creatingEvent} groupSemesterId={workspace.groupId} onClose={() => setCreatingEvent(false)} onCreated={() => { setCreatingEvent(false); loadSchedule(); }} />
   </div>;
 }
 

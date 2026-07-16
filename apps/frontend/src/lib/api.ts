@@ -50,7 +50,7 @@ export type ActiveUser = {
   last_seen_at: string;
 };
 
-export type AdminCollection = "faculties" | "semesters" | "teachers" | "rooms" | "kafedras" | "student_groups" | "subjects" | "activity_types" | "time_slots" | "teacher_on_kafedras" | "holidays" | "weekday_transfers" | "room_reservations" | "media_files" | "audit_logs";
+export type AdminCollection = "faculties" | "semesters" | "teachers" | "rooms" | "kafedras" | "student_groups" | "subjects" | "activity_types" | "time_slots" | "week_types" | "teacher_on_kafedras" | "holidays" | "weekday_transfers" | "room_reservations" | "media_files" | "audit_logs";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
 
@@ -216,6 +216,12 @@ export const api = {
   },
   deleteScheduleEvent(id: string) {
     return request<void>(`/admin/schedule_events/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  groupWorkload(groupSemesterId: string) {
+    return request<{ data: unknown[] }>(`/admin/student_group_semesters/${encodeURIComponent(groupSemesterId)}/load`);
+  },
+  createScheduleEvent(scheduleEvent: { load_requirement_id: number; time_slot_id: number; room_id: number; week_type_id: number; status: "scheduled" | "cancelled" | "modified"; day_of_week: number; teacher_on_kafedra_ids?: number[] }) {
+    return request<{ data: JsonApiResource }>("/admin/schedule_events", { method: "POST", body: JSON.stringify({ schedule_event: scheduleEvent }) });
   },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });
