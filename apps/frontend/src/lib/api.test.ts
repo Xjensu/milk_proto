@@ -158,6 +158,21 @@ describe("API transport", () => {
       }),
     ]);
   });
+
+  it("uses scoped faculty and department workload entrypoints", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.facultyWorkload("4", "12");
+    await api.departmentWorkload("7", "12");
+    await api.listFacultyDepartments("4");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/admin/faculties/4/load?semester_id=12",
+      "/api/admin/kafedras/7/load?semester_id=12",
+      "/api/admin/faculties/4/kafedras",
+    ]);
+  });
 });
 
 function jsonFetch() {
