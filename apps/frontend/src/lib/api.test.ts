@@ -250,6 +250,17 @@ describe("API transport", () => {
       ["/api/admin/schedule_events/19", "DELETE"],
     ]);
   });
+
+  it("loads group workload and creates a recurring schedule event", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    await api.groupWorkload("17");
+    await api.createScheduleEvent({ load_requirement_id: 41, time_slot_id: 3, room_id: 9, week_type_id: 2, status: "scheduled", day_of_week: 1 });
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/student_group_semesters/17/load", undefined],
+      ["/api/admin/schedule_events", "POST"],
+    ]);
+  });
 });
 
 function jsonFetch() {
