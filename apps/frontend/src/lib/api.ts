@@ -50,7 +50,7 @@ export type ActiveUser = {
   last_seen_at: string;
 };
 
-export type AdminCollection = "faculties" | "semesters" | "teachers" | "rooms" | "kafedras" | "student_groups" | "subjects" | "activity_types" | "time_slots" | "holidays" | "weekday_transfers" | "room_reservations" | "media_files" | "audit_logs";
+export type AdminCollection = "faculties" | "semesters" | "teachers" | "rooms" | "kafedras" | "student_groups" | "subjects" | "activity_types" | "time_slots" | "teacher_on_kafedras" | "holidays" | "weekday_transfers" | "room_reservations" | "media_files" | "audit_logs";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
 
@@ -189,6 +189,18 @@ export const api = {
   },
   deleteRoomReservation(id: string) {
     return request<void>(`/admin/room_reservations/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  createTeachingAssignment(teachingAssignment: { load_requirement_id: number; teacher_on_kafedra_id: number }) {
+    return request<{ data: JsonApiResource }>("/admin/teaching_assignments", { method: "POST", body: JSON.stringify({ teaching_assignment: teachingAssignment }) });
+  },
+  updateTeachingAssignment(id: string, teachingAssignment: { teacher_on_kafedra_id: number }) {
+    return request<{ data: JsonApiResource }>(`/admin/teaching_assignments/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ teaching_assignment: teachingAssignment }) });
+  },
+  createAssignmentRoom(assignmentRoomReference: { teaching_assignment_id: number; room_id: number; priority_level?: number }) {
+    return request<{ data: JsonApiResource }>("/admin/assignment_room_references", { method: "POST", body: JSON.stringify({ assignment_room_reference: assignmentRoomReference }) });
+  },
+  updateAssignmentRoom(id: string, assignmentRoomReference: { room_id: number }) {
+    return request<{ data: JsonApiResource }>(`/admin/assignment_room_references/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ assignment_room_reference: assignmentRoomReference }) });
   },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });

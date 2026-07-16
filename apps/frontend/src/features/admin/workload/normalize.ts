@@ -11,6 +11,10 @@ export type WorkloadRow = {
   actualHours: number;
   teacher: string;
   room: string;
+  teachingAssignmentId: string;
+  teacherOnDepartmentId: string;
+  roomReferenceId: string;
+  roomId: string;
 };
 
 type AnyRecord = Record<string, unknown>;
@@ -47,6 +51,10 @@ export function normalizeWorkload(payload: unknown): WorkloadRow[] {
       actualHours: number(entry.actual_hours, 0),
       teacher: teacherName(teacher),
       room: text(room.name, text(room.number, "Not assigned")),
+      teachingAssignmentId: text(teacherAssignment.teaching_assignment_id, ""),
+      teacherOnDepartmentId: text(teacherAssignment.teacher_on_kafedra_id, ""),
+      roomReferenceId: text(reservation.id, ""),
+      roomId: text(room.id, ""),
     };
   });
 }

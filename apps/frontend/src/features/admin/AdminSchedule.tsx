@@ -6,7 +6,7 @@ import { api, type JsonApiResource } from "../../lib/api";
 import { WeekGrid } from "../schedule/WeekGrid";
 import type { ScheduleEvent, ScheduleSource } from "../schedule/types";
 import type { RoomSummary, SemesterSummary } from "./domain";
-import { resourceLabel } from "./utils";
+import { groupResource, resourceLabel } from "./utils";
 import { EntityPicker, type EntityOption } from "./workspace/EntityPicker";
 import { SemesterRail } from "./workspace/SemesterRail";
 import { useWorkspace } from "./workspace/WorkspaceContext";
@@ -48,7 +48,7 @@ export function AdminSchedule() {
   useEffect(() => {
     if (!workspace.facultyId || !workspace.semesterId) { setGroups([]); return; }
     const controller = new AbortController();
-    api.listFacultyGroups(workspace.facultyId, workspace.semesterId, controller.signal).then((response) => setGroups(response.data.map((item) => toOption(item, "Student group")))).catch((caught) => { if ((caught as Error).name !== "AbortError") setGroups([]); });
+    api.listFacultyGroups(workspace.facultyId, workspace.semesterId, controller.signal).then((response) => setGroups(response.data.map(groupResource))).catch((caught) => { if ((caught as Error).name !== "AbortError") setGroups([]); });
     return () => controller.abort();
   }, [workspace.facultyId, workspace.semesterId]);
 

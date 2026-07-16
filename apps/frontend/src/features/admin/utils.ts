@@ -22,3 +22,11 @@ export function resourceLabel(item: JsonApiResource, fallback: string) {
     .find((candidate) => (typeof candidate === "string" && candidate.length > 0) || typeof candidate === "number");
   return String(value ?? `Unnamed ${fallback.toLowerCase()}`);
 }
+
+export function groupResource(item: JsonApiResource) {
+  const attributes = item.attributes ?? {};
+  return {
+    id: String(attributes.group_semester_id ?? item.id),
+    label: `${String(attributes.speciality_name ?? "Student group")}-${String(attributes.course ?? "—")}`,
+  };
+}
