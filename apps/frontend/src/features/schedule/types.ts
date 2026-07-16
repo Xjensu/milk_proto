@@ -8,11 +8,9 @@ export type ScheduleEvent = {
   activityType: string;
   room: string;
   counterpart: string;
+  group: string;
+  teacher: string;
   changed: boolean;
 };
 
-export type ScheduleDay = {
-  key: string;
-  label: string;
-  events: ScheduleEvent[];
-};
+export type ScheduleDay = { key: string; label: string; events: ScheduleEvent[] };

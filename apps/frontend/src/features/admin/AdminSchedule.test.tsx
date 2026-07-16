@@ -1,16 +1,23 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { AdminSchedule } from "./AdminSchedule";
+import { AdminSchedule, queryModeRequirements } from "./AdminSchedule";
+import { WorkspaceProvider } from "./workspace/WorkspaceContext";
 
 describe("AdminSchedule", () => {
-  it("starts with live semester and entity selectors", () => {
-    const markup = renderToStaticMarkup(<AdminSchedule />);
-    expect(markup).toContain("Рабочая сетка расписания");
-    expect(markup).toContain("Группа");
-    expect(markup).toContain("Преподаватель");
-    expect(markup).toContain("Аудитория");
-    expect(markup).toContain("Выберите семестр");
-    expect(markup).not.toContain("Весна 2026");
+  it("starts with task modes and faculty-first group guidance", () => {
+    const markup = renderToStaticMarkup(<WorkspaceProvider><AdminSchedule /></WorkspaceProvider>);
+    for (const label of ["Group", "Teacher", "Room", "Occupancy"]) expect(markup).toContain(label);
+    expect(markup).toContain("Choose a faculty first");
+    expect(markup).toContain("Choose a semester");
+    expect(markup).toContain("Student group");
+    expect(markup).not.toContain("#1");
+  });
+
+  it("defines the required context for every schedule mode", () => {
+    expect(queryModeRequirements("group", "semester")).toEqual(["faculty", "semester", "group"]);
+    expect(queryModeRequirements("teacher", "date")).toEqual(["date", "teacher"]);
+    expect(queryModeRequirements("room", "semester")).toEqual(["semester", "room"]);
+    expect(queryModeRequirements("occupancy", "date")).toEqual(["date", "rooms"]);
   });
 });
