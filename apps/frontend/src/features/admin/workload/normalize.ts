@@ -17,6 +17,8 @@ export type WorkloadRow = {
   roomId: string;
 };
 
+export type WorkloadMatrixRow = Pick<WorkloadRow, "departmentCode" | "department" | "subject" | "group" | "groupSemesterId" | "students"> & { key: string; activities: Record<string, WorkloadRow> };
+
 type AnyRecord = Record<string, unknown>;
 
 export function normalizeWorkload(payload: unknown): WorkloadRow[] {
@@ -57,6 +59,17 @@ export function normalizeWorkload(payload: unknown): WorkloadRow[] {
       roomId: text(room.id, ""),
     };
   });
+}
+
+export function groupWorkloadRows(rows: WorkloadRow[]): WorkloadMatrixRow[] {
+  const grouped = new Map<string, WorkloadMatrixRow>();
+  for (const row of rows) {
+    const key = `${row.departmentCode}\u0000${row.subject}\u0000${row.groupSemesterId || row.group}`;
+    const current = grouped.get(key) ?? { key, departmentCode: row.departmentCode, department: row.department, subject: row.subject, group: row.group, groupSemesterId: row.groupSemesterId, students: row.students, activities: {} };
+    current.activities[row.activity] = row;
+    grouped.set(key, current);
+  }
+  return [...grouped.values()];
 }
 
 function teacherName(value: AnyRecord) {
