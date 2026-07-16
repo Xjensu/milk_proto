@@ -7,20 +7,16 @@ import { AdminPanel } from "./AdminPanel";
 const account: Account = { id: "1", email: "admin@example.test", role: "super_admin", status: "active" };
 
 describe("AdminPanel", () => {
-  it("renders task-oriented API modules and super-admin account navigation", () => {
+  it("renders English task navigation and super-admin accounts", () => {
     const markup = renderToStaticMarkup(<AdminPanel account={account} onLogout={() => undefined} />);
-
-    expect(markup).toContain("Обзор");
-    expect(markup).toContain("Расписание");
-    expect(markup).toContain("Нагрузка");
-    expect(markup).toContain("Справочники");
-    expect(markup).toContain("Календарь");
-    expect(markup).toContain("Пользователи");
+    for (const label of ["Overview", "Schedule", "Workload", "Catalog", "Calendar", "Accounts"]) {
+      expect(markup).toContain(label);
+    }
     expect(markup).not.toContain("86%");
   });
 
   it("hides account administration from non-super-admin roles", () => {
     const markup = renderToStaticMarkup(<AdminPanel account={{ ...account, role: "scheduler" }} onLogout={() => undefined} />);
-    expect(markup).not.toContain("Пользователи");
+    expect(markup).not.toContain(">Accounts<");
   });
 });
