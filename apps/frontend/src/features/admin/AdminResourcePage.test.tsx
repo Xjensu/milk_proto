@@ -2,20 +2,22 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { AdminResourcePage } from "./AdminResourcePage";
+import { WorkspaceProvider } from "./workspace/WorkspaceContext";
 
 describe("AdminResourcePage", () => {
-  it("exposes live resource categories and authorized editing", () => {
-    const markup = renderToStaticMarkup(<AdminResourcePage canWrite />);
-    expect(markup).toContain("Данные университета");
-    expect(markup).toContain("Факультеты");
-    expect(markup).toContain("Семестры");
-    expect(markup).toContain("Преподаватели");
-    expect(markup).toContain("Аудитории");
-    expect(markup).toContain("Добавить");
+  it("exposes contextual catalog workflows without raw identifiers", () => {
+    const markup = renderToStaticMarkup(<WorkspaceProvider><AdminResourcePage canWrite /></WorkspaceProvider>);
+    expect(markup).toContain("University catalog");
+    expect(markup).toContain("Specialities");
+    expect(markup).toContain("Student groups");
+    expect(markup).toContain("Reservations");
+    expect(markup).toContain("Reference data");
+    expect(markup).not.toContain("Identifier");
+    expect(markup).not.toContain("#");
   });
 
-  it("does not expose write controls to read-only roles", () => {
-    const markup = renderToStaticMarkup(<AdminResourcePage canWrite={false} />);
-    expect(markup).not.toContain("Добавить");
+  it("does not expose creation affordances to read-only roles", () => {
+    const markup = renderToStaticMarkup(<WorkspaceProvider><AdminResourcePage canWrite={false} /></WorkspaceProvider>);
+    expect(markup).not.toContain("Create speciality");
   });
 });

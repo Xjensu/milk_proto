@@ -188,6 +188,25 @@ describe("API transport", () => {
       ["/api/admin/schedule_events/44/transfers", "POST"],
     ]);
   });
+
+  it("uses contextual speciality, group, and reservation routes", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listFacultySpecialities("4");
+    await api.createSpeciality({ faculty_id: 4, name: "Computer Science", duration_of_study: 4 });
+    await api.createStudentGroup({ speciality_id: 8, year_of_admission: "2026-09-01" }, { students_now: 25, semester_duration: 8 });
+    await api.listRoomReservations({ roomId: "9", date: "2026-09-01" });
+    await api.createRoomReservation({ room_id: 9, teacher_id: 6, reserved_date: "2026-09-01", time_slot_id: 3, purpose: "Consultation" });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/faculties/4/specialities", undefined],
+      ["/api/admin/specialities", "POST"],
+      ["/api/admin/student_groups", "POST"],
+      ["/api/admin/room_reservations?room_id=9&date_from=2026-09-01&date_to=2026-09-01", undefined],
+      ["/api/admin/room_reservations", "POST"],
+    ]);
+  });
 });
 
 function jsonFetch() {
