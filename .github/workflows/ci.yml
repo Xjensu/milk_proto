@@ -1,16 +1,27 @@
-# CI matrix per doc 12 §7.6 (ROADMAP Stage 0).
+# CI matrix per doc 12 §7.6 / docs/ROADMAP_TO_PRODUCTION.md.
 # Six targets: x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin
 # (the three host jobs), aarch64-linux-android + thumbv7em-none-eabihf (cross-check),
 # aarch64-apple-ios (ios-check) — plus cargo-deny, the layer test, MIRI on mmp-types,
-# and the flash/RAM size gate (trivially passing at Stage 0, hard-enforced at Stage 7).
+# and the flash/RAM size gate (informational until docs/AGILE_BACKLOG.md E2-S4 lands).
+#
+# This workflow lives at the repo root (not implementation/mesh-milk/.github/) because
+# GitHub Actions only discovers workflows under <repo-root>/.github/workflows/ — see
+# docs/AGILE_BACKLOG.md E2-S0. All `run:` steps default into the workspace directory;
+# `uses:` steps (checkout, cargo-deny-action, upload-artifact) are unaffected by that
+# default and are pointed at the workspace explicitly where they need a path.
 
 name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: implementation/mesh-milk
 
 jobs:
   host:
@@ -22,6 +33,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # mmp-tal-peripheral's Linux backend (bluer, BlueZ D-Bus GATT server)
+      # links against libdbus; the stock ubuntu-latest runner doesn't carry
+      # its dev headers/pkg-config file, so cargo build fails at link time
+      # without this. Windows/macOS backends are stubs with no such need.
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - run: cargo build --workspace --all-features
       - run: cargo test --workspace --all-features
 
@@ -46,8 +63,9 @@ jobs:
   # The no_std proof + size gate: the Core-profile crates must build for
   # thumbv7em-none-eabihf. Budget (doc 12 §7.6): mmp-types+crypto+core+router
   # ≤ 256 KiB flash / ≤ 48 KiB static RAM ⚠. A real gate needs a linked image
-  # (Stage 7, nRF52 profile); until then this job proves no_std builds and
-  # reports rlib sizes for trend visibility — wired, trivially passing.
+  # (nRF52 profile, tracked as E7); until then this job proves no_std builds and
+  # reports rlib sizes for trend visibility — wired, informational (E2-S4 will
+  # turn this into a hard-enforced threshold).
   no-std-size-gate:
     runs-on: ubuntu-latest
     steps:
@@ -58,7 +76,7 @@ jobs:
       - run: >
           cargo build --release --target thumbv7em-none-eabihf
           -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
-      - name: report rlib sizes (informational until Stage 7)
+      - name: report rlib sizes (informational until E2-S4)
         run: ls -l target/thumbv7em-none-eabihf/release/*.rlib
 
   deny:
@@ -66,6 +84,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: implementation/mesh-milk/Cargo.toml
 
   layer-test:
     runs-on: ubuntu-latest
@@ -82,3 +102,76 @@ jobs:
         with:
           components: miri
       - run: cargo +nightly miri test -p mmp-types
+
+  # Generates the Kotlin/Swift bindings mobile apps consume from mmp-ffi's
+  # UniFFI proc-macro surface, via the crate's own `uniffi-bindgen` CLI
+  # binary (mmp-ffi/uniffi-bindgen.rs, gated behind the `cli` feature so
+  # normal mobile-app builds of mmp-ffi never pull in clap/camino/bindgen).
+  # Not a correctness gate on its own (no downstream Kotlin/Swift compiler
+  # runs here) — it proves the bindgen pipeline still produces output and
+  # publishes that output for manual inspection / downstream consumption.
+  mobile-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p mmp-ffi --release
+      - run: cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- generate --library --language kotlin --out-dir bindings/kotlin target/release/libmmp_ffi.so
+      - run: cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- generate --library --language swift --out-dir bindings/swift target/release/libmmp_ffi.so
+      # A single artifact covering both language outputs; download once,
+      # both `bindings/kotlin/` and `bindings/swift/` subtrees included.
+      # upload-artifact's `path` is resolved from GITHUB_WORKSPACE (repo root),
+      # not the `defaults.run.working-directory` above — so it needs the full
+      # prefix even though the `run:` steps above wrote there via a relative path.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-mobile-bindings
+          path: |
+            implementation/mesh-milk/bindings/kotlin
+            implementation/mesh-milk/bindings/swift
+
+  # Pre-auth-parser fuzzing (doc 07 §8 / doc 12 §7 mandate, E5-S6). The `fuzz/`
+  # member is deliberately outside the main workspace (its own `[workspace]`
+  # table) so libfuzzer-sys/arbitrary never leak into a normal build — see
+  # `fuzz/Cargo.toml`'s comment. Linux-only: libFuzzer's sanitizer runtime is
+  # a standard part of the ubuntu-latest toolchain's clang install; on Windows
+  # dev boxes the equivalent ASan runtime libraries are often missing, which
+  # is a toolchain-availability gap, not a target-code problem (verified
+  # 2026-07-16: all four harnesses compile cleanly under rustc on Windows —
+  # only the final sanitizer-instrumented link step fails there).
+  fuzz-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: build every target (cheap correctness gate, every push)
+        run: |
+          cd implementation/mesh-milk/fuzz
+          for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
+            cargo fuzz build "$t"
+          done
+
+  # Short seeded runs — manual/dispatch only (not on every push): doc 12 §7.2's
+  # "N CPU-hours once a baseline is measured" is deliberately NOT pre-committed
+  # here (docs/ROADMAP_TO_PRODUCTION.md Phase C exit gate says the same); this
+  # job is a smoke-level "still finds nothing in a couple minutes" check, not
+  # the real corpus-hardening run.
+  fuzz-run:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz --locked
+      - name: run each target for 2 minutes
+        run: |
+          cd implementation/mesh-milk/fuzz
+          for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
+            cargo fuzz run "$t" -- -max_total_time=120
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mmp-fuzz-corpus
+          path: implementation/mesh-milk/fuzz/corpus

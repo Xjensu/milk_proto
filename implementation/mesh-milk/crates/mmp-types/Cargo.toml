@@ -10,6 +10,11 @@ default = []
 alloc = []
 
 [dependencies]
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+hex = { workspace = true }
 
 [lints]
 workspace = true

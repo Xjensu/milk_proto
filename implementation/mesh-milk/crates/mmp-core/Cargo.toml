@@ -6,12 +6,20 @@ license.workspace = true
 description = "bundle core, session FSM, sync engine (docs 03/06/11)"
 
 [features]
-default = []
+# `std` gates the Noise-backed session engine (snow); the data structures are
+# no_std+alloc throughout.
+default = ["std"]
+std = ["mmp-crypto/std"]
 alloc = []
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
-mmp-crypto = { path = "../mmp-crypto" }
+mmp-crypto = { path = "../mmp-crypto", default-features = false }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rand = { workspace = true }
 
 [lints]
 workspace = true

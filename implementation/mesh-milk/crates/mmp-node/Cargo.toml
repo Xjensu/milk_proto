@@ -3,15 +3,18 @@ name = "mmp-node"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "std orchestration: scheduler, tier ladder, power mgmt (doc 04)"
+description = "std orchestration: node API, scheduler, tier ladder, event stream (doc 04)"
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
 mmp-crypto = { path = "../mmp-crypto" }
 mmp-core = { path = "../mmp-core" }
-mmp-router = { path = "../mmp-router" }
+mmp-router = { path = "../mmp-router", features = ["std"] }
 mmp-store = { path = "../mmp-store" }
 mmp-tal = { path = "../mmp-tal" }
+blake3 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
 
 [lints]
 workspace = true

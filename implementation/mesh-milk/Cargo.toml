@@ -8,6 +8,24 @@ edition = "2021"
 # Provisional license pending a project decision — the Rust-ecosystem default.
 license = "MIT OR Apache-2.0"
 
+[workspace.dependencies]
+# Suite 0x01 primitives (doc 08 §1, doc 12 §4).
+blake3 = { version = "1", default-features = false }
+ed25519-dalek = { version = "2", default-features = false, features = ["alloc", "zeroize"] }
+x25519-dalek = { version = "2", default-features = false, features = ["alloc", "static_secrets", "zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+snow = { version = "0.9", default-features = false, features = ["default-resolver"] }
+zeroize = { version = "1", default-features = false, features = ["zeroize_derive"] }
+rand_core = { version = "0.6", default-features = false }
+
+# std-side only (mmp-node and above).
+rand = "0.8"
+uniffi = "0.29"
+
+# dev
+proptest = "1"
+hex = "0.4"
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 

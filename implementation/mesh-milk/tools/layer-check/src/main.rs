@@ -34,6 +34,7 @@ const BANNED_PACKAGES: &[&str] = &[
     "mmp-tal-btleplug",
     "mmp-tal-mobile",
     "mmp-tal-embedded",
+    "mmp-tal-peripheral",
 ];
 
 const BANNED_SOURCE_TOKENS: &[&str] = &["std::time", "tokio::"];

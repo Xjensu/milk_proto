@@ -5,8 +5,31 @@ edition.workspace = true
 license.workspace = true
 description = "UniFFI bindings: Kotlin/Swift API surface"
 
+[lib]
+# cdylib for Android (.so) / iOS (.dylib via xcframework), staticlib for iOS
+# static linking, lib for the Rust unit tests below and downstream Rust hosts
+# (mmp-cli-style desktop shells that want to skip the FFI layer).
+crate-type = ["cdylib", "staticlib", "lib"]
+
 [dependencies]
 mmp-node = { path = "../mmp-node" }
+mmp-core = { path = "../mmp-core" }
+mmp-store = { path = "../mmp-store" }
+mmp-tal = { path = "../mmp-tal" }
+mmp-types = { path = "../mmp-types" }
+uniffi = "0.29"
+
+[features]
+# Gates the uniffi-bindgen CLI binary (below) behind an opt-in feature: it
+# pulls in clap/camino/bindgen via uniffi's own `cli` feature, which mobile
+# app builds (and every other consumer of this crate) never need and must
+# not be forced to compile.
+cli = ["uniffi/cli"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
+required-features = ["cli"]
 
 [lints]
 workspace = true

@@ -1,3 +1,467 @@
-//! mmp-store — BundleStore trait + impls: redb (std), flash-log (no_std)
+//! mmp-store — persistence over the `mmp_core::BundleStore` seam.
 //!
-//! Stage 0 scaffold (ROADMAP Stage 0): intentionally empty.
+//! MVP persistence is a checksummed snapshot (`SnapshotStore`): every record
+//! carries a BLAKE3 checksum; a corrupt record is dropped, not repaired — the
+//! network is the backup (doc 04 §7). Crash consistency: write-temp + rename,
+//! so resume ≡ reboot. A redb-backed store slots in behind the same trait when
+//! store sizes outgrow snapshot writes (doc 12 §4 alternative noted).
+//!
+//! Beyond the `BundleStore` contents, the same file also carries two more
+//! record kinds under the same MAGIC/checksum/skip-corrupt discipline
+//! (handbook §4.3 "persistence completion", steps 1–2): every currently-held
+//! `Claim` (re-verified on load — a claim that fails signature verification
+//! is dropped exactly like a corrupt record) and an opaque blob per group,
+//! produced/consumed by `mmp-node`'s `GroupState::encode`/`decode` (this
+//! crate does not depend on `mmp-node`, so it treats those blobs as opaque
+//! bytes). One file, one framing, three record kinds — never three formats.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState};
+use mmp_crypto::verify;
+use mmp_types::bundle::{class, prio};
+use mmp_types::claim::Claim;
+use mmp_types::domain::SigDomain;
+use mmp_types::ids::Id16;
+
+/// File-backed store: an in-memory working set with explicit `persist`.
+pub struct SnapshotStore {
+    mem: MemStore,
+    path: PathBuf,
+    /// Claims to write on the next [`SnapshotStore::persist`] (staged by the
+    /// caller via [`SnapshotStore::set_claims`]) — after [`SnapshotStore::open`]
+    /// this instead holds whatever survived load, i.e. every signature-verified
+    /// claim record found on disk.
+    claims: Vec<Claim>,
+    /// Opaque `GroupState::encode()` blobs, same staging discipline as
+    /// `claims` (see [`SnapshotStore::set_group_blobs`]).
+    group_blobs: Vec<Vec<u8>>,
+}
+
+/// Bumped from `MMPSNAP1`: pre-existing snapshot files only ever held bundle
+/// records with no leading kind byte: reusing the old magic on the new,
+/// kind-tagged framing (see [`RECORD_BUNDLE`] etc.) could misparse an old
+/// file's first payload byte as a record kind. This project has no shipped
+/// snapshot files yet, so a clean break costs nothing.
+const MAGIC: &[u8; 8] = b"MMPSNAP2";
+
+/// Record-kind tag: a bundle, framed exactly as before (`encode_record`/`decode_record`).
+const RECORD_BUNDLE: u8 = 0;
+/// Record-kind tag: a `Claim::encode()` payload, re-verified on load.
+const RECORD_CLAIM: u8 = 1;
+/// Record-kind tag: an opaque `mmp_node::group::GroupState::encode()` payload.
+const RECORD_GROUP: u8 = 2;
+
+impl SnapshotStore {
+    /// Open (or create) a snapshot at `path`. Corrupt records are skipped.
+    pub fn open(path: impl Into<PathBuf>) -> SnapshotStore {
+        let path = path.into();
+        let mut store =
+            SnapshotStore { mem: MemStore::new(), path, claims: Vec::new(), group_blobs: Vec::new() };
+        store.load();
+        store
+    }
+
+    fn load(&mut self) {
+        let Ok(bytes) = std::fs::read(&self.path) else { return };
+        if bytes.len() < 8 || &bytes[..8] != MAGIC {
+            return;
+        }
+        let mut pos = 8;
+        while pos + 4 <= bytes.len() {
+            // `.get()` + `?` rather than direct indexing: this is the one path
+            // that reads potentially corrupted/truncated disk bytes, and the
+            // handbook §0 policy is that no panic must be reachable from wire
+            // or disk data, even where a bound is currently provably safe.
+            let Some(len_bytes) = bytes.get(pos..pos + 4) else { break };
+            let len = u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
+            pos += 4;
+            if pos + len + 32 > bytes.len() {
+                break; // truncated tail: crash mid-write — drop it
+            }
+            let record = &bytes[pos..pos + len];
+            let sum = &bytes[pos + len..pos + len + 32];
+            pos += len + 32;
+            if blake3::hash(record).as_bytes() != sum {
+                continue; // corrupt record: drop-and-redownload
+            }
+            let Some((&kind, payload)) = record.split_first() else { continue };
+            match kind {
+                RECORD_BUNDLE => {
+                    if let Some((meta, body)) = decode_record(payload) {
+                        self.mem.put(meta, &body);
+                    }
+                }
+                RECORD_CLAIM => {
+                    if let Ok(claim) = Claim::decode(payload) {
+                        // Doc 04 §7 / handbook §4.3 step 1: a tampered claim
+                        // is dropped on load exactly like a corrupt record —
+                        // verify-before-trust is unconditional (golden rule 4
+                        // applied here to claims, not just bundles).
+                        if verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig)
+                            .is_ok()
+                        {
+                            self.claims.push(claim);
+                        }
+                    }
+                }
+                RECORD_GROUP => {
+                    self.group_blobs.push(payload.to_vec());
+                }
+                _ => {} // unknown kind: forward-compat, skip rather than fail closed
+            }
+        }
+    }
+
+    /// Write the whole store atomically (temp + rename): bundles, then the
+    /// claims/group blobs most recently staged via [`SnapshotStore::set_claims`]
+    /// / [`SnapshotStore::set_group_blobs`].
+    pub fn persist(&self) -> std::io::Result<()> {
+        let tmp = self.path.with_extension("tmp");
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(MAGIC)?;
+            for meta in self.mem.all_meta() {
+                if let Some((m, body)) = self.mem.get(&meta.id) {
+                    let mut record = Vec::with_capacity(1 + 80 + body.len());
+                    record.push(RECORD_BUNDLE);
+                    record.extend_from_slice(&encode_record(&m, &body));
+                    write_record(&mut f, &record)?;
+                }
+            }
+            for claim in &self.claims {
+                let mut record = Vec::with_capacity(1 + 32 + 1 + 4 + claim.body.len() + 64);
+                record.push(RECORD_CLAIM);
+                record.extend_from_slice(&claim.encode());
+                write_record(&mut f, &record)?;
+            }
+            for blob in &self.group_blobs {
+                let mut record = Vec::with_capacity(1 + blob.len());
+                record.push(RECORD_GROUP);
+                record.extend_from_slice(blob);
+                write_record(&mut f, &record)?;
+            }
+            f.sync_all()?;
+        }
+        // Windows rename-over requires the destination to be replaceable.
+        let _ = std::fs::remove_file(&self.path);
+        std::fs::rename(&tmp, &self.path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Claims present in the store: after [`SnapshotStore::open`], every
+    /// signature-verified claim record loaded from disk; after
+    /// [`SnapshotStore::set_claims`], whatever was most recently staged.
+    pub fn claims(&self) -> &[Claim] {
+        &self.claims
+    }
+
+    /// Stage the full claim set to write on the next [`SnapshotStore::persist`]
+    /// (the caller — `mmp-ffi` — owns the `ClaimStore`; this just holds what
+    /// it's told to write, same pattern as `mem` holding bundle contents).
+    pub fn set_claims(&mut self, claims: Vec<Claim>) {
+        self.claims = claims;
+    }
+
+    /// Opaque group-state blobs present in the store (see the module-level
+    /// docs for why this crate cannot know their internal shape).
+    pub fn group_blobs(&self) -> &[Vec<u8>] {
+        &self.group_blobs
+    }
+
+    /// Stage the full group-blob set to write on the next
+    /// [`SnapshotStore::persist`] — mirrors [`SnapshotStore::set_claims`].
+    pub fn set_group_blobs(&mut self, blobs: Vec<Vec<u8>>) {
+        self.group_blobs = blobs;
+    }
+}
+
+fn write_record(f: &mut std::fs::File, record: &[u8]) -> std::io::Result<()> {
+    f.write_all(&(record.len() as u32).to_le_bytes())?;
+    f.write_all(record)?;
+    f.write_all(blake3::hash(record).as_bytes())?;
+    Ok(())
+}
+
+fn encode_record(m: &BundleMeta, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(80 + body.len());
+    out.extend_from_slice(&m.id.0);
+    out.push(m.class);
+    out.extend_from_slice(&m.origin.0);
+    out.extend_from_slice(&m.dest.0);
+    out.push(m.priority);
+    out.extend_from_slice(&m.size.to_le_bytes());
+    out.extend_from_slice(&m.stored_at.to_le_bytes());
+    out.extend_from_slice(&m.expires_at.to_le_bytes());
+    out.push(m.budget);
+    out.push(m.own_origin as u8);
+    out.push(match m.slot {
+        SlotState::Stored => 0,
+        // I3 crash rule: an unconfirmed hand-off counts as completed —
+        // under-spray, never over-spray. Persist it as such.
+        SlotState::HandoffPending => 0,
+    });
+    out.extend_from_slice(body);
+    out
+}
+
+fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
+    const HDR: usize = 16 + 1 + 16 + 16 + 1 + 4 + 8 + 8 + 1 + 1 + 1;
+    if r.len() < HDR {
+        return None;
+    }
+    // `.get()` + `?` throughout rather than direct indexing/`.expect()`: this
+    // decodes potentially corrupted disk bytes, so no panic may be reachable
+    // here even where a bound is provably satisfied today (handbook §0).
+    let id16 = |o: usize| -> Option<Id16> {
+        let mut a = [0u8; 16];
+        a.copy_from_slice(r.get(o..o + 16)?);
+        Some(Id16(a))
+    };
+    let u32le = |o: usize| -> Option<u32> { Some(u32::from_le_bytes(r.get(o..o + 4)?.try_into().unwrap())) };
+    let u64le = |o: usize| -> Option<u64> { Some(u64::from_le_bytes(r.get(o..o + 8)?.try_into().unwrap())) };
+    let class_byte = *r.get(16)?;
+    let priority = *r.get(49)?;
+    let meta = BundleMeta {
+        id: id16(0)?,
+        class: class_byte,
+        origin: id16(17)?,
+        dest: id16(33)?,
+        priority,
+        // Not persisted (RAM-only field, doc 18 §5.2 clamp — see mmp-node's
+        // AuthorityStore/AuthorityBuckets, also RAM-only by design). Safe
+        // fail-closed default on load: non-announcement bundles have no
+        // clamp concept, so effective == declared; a restarted announcement
+        // re-clamps to NORMAL until the authority state that justified any
+        // prior elevation is re-established (it never persisted either).
+        effective_priority: if class_byte == class::ANNOUNCEMENT { prio::NORMAL } else { priority },
+        size: u32le(50)?,
+        stored_at: u64le(54)?,
+        expires_at: u64le(62)?,
+        budget: *r.get(70)?,
+        own_origin: *r.get(71)? != 0,
+        slot: SlotState::Stored,
+    };
+    Some((meta, r.get(HDR..)?.to_vec()))
+}
+
+impl BundleStore for SnapshotStore {
+    fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
+        self.mem.put(meta, bytes)
+    }
+    fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        self.mem.get(id)
+    }
+    fn meta(&self, id: &Id16) -> Option<BundleMeta> {
+        self.mem.meta(id)
+    }
+    fn update_meta(&mut self, meta: BundleMeta) {
+        self.mem.update_meta(meta)
+    }
+    fn remove(&mut self, id: &Id16) -> bool {
+        self.mem.remove(id)
+    }
+    fn ids_range(&self, lo: &Id16, hi: &Id16) -> Vec<Id16> {
+        self.mem.ids_range(lo, hi)
+    }
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        self.mem.all_meta()
+    }
+    fn total_bytes(&self) -> u64 {
+        self.mem.total_bytes()
+    }
+    fn len(&self) -> usize {
+        self.mem.len()
+    }
+    fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
+        self.mem.expire(now_ms)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("snap.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut s = SnapshotStore::open(&path);
+        let meta = BundleMeta {
+            id: Id16([1; 16]),
+            class: 1,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: 5,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::HandoffPending,
+        };
+        s.put(meta, b"hello");
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        let (m2, body) = s2.get(&Id16([1; 16])).unwrap();
+        assert_eq!(body, b"hello");
+        assert_eq!(m2.budget, 4);
+        // I3: pending hand-off resumed as completed (Stored, budget persisted).
+        assert_eq!(m2.slot, SlotState::Stored);
+
+        // Corrupt a byte mid-file → record dropped, no panic.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.get(&Id16([1; 16])).is_none());
+    }
+
+    /// E2-S6 acceptance: a file truncated mid-write (crash right after the
+    /// magic, or right in the middle of a length prefix) must load with
+    /// records skipped, never panic. Covers the anomaly classes the `.get()`
+    /// hardening in `load`/`decode_record` targets, distinct from the
+    /// mid-file byte-flip corruption covered by the other roundtrip tests.
+    #[test]
+    fn truncated_file_loads_with_no_records_and_no_panic() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Case 1: nothing but the magic — no records to read at all.
+        let path1 = dir.join("truncated-magic-only.mmp");
+        std::fs::write(&path1, MAGIC).unwrap();
+        let s1 = SnapshotStore::open(&path1);
+        assert_eq!(s1.claims().len(), 0);
+        assert_eq!(s1.group_blobs().len(), 0);
+
+        // Case 2: magic plus a length prefix cut short (2 of 4 bytes) —
+        // exactly the anomaly the `bytes.get(pos..pos+4)` guard now covers.
+        let path2 = dir.join("truncated-length-prefix.mmp");
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&[0x01, 0x02]);
+        std::fs::write(&path2, &bytes).unwrap();
+        let s2 = SnapshotStore::open(&path2);
+        assert_eq!(s2.claims().len(), 0);
+        assert_eq!(s2.group_blobs().len(), 0);
+
+        // Case 3: a full length prefix claiming a record body that was never
+        // written (crash between writing the length and the body/checksum).
+        let path3 = dir.join("truncated-record-body.mmp");
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&100u32.to_le_bytes());
+        std::fs::write(&path3, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path3);
+        assert_eq!(s3.claims().len(), 0);
+        assert_eq!(s3.group_blobs().len(), 0);
+    }
+
+    fn signed_claim(seed: [u8; 32], field: u8, seq: u32, body: Vec<u8>) -> Claim {
+        let identity = mmp_crypto::Identity::from_seed(&seed);
+        let mut claim = Claim { owner: identity.public(), field, seq, body, sig: mmp_types::ids::Sig64::ZERO };
+        claim.sig = identity.sign(SigDomain::Claim, &claim.signed_object());
+        claim
+    }
+
+    /// Mirrors `snapshot_roundtrip_and_corruption_drop`'s shape (handbook
+    /// §4.3 step 1 acceptance): claims round-trip through open → persist →
+    /// open, and a tampered claim record is dropped on load rather than
+    /// trusted, exactly like a corrupt bundle record.
+    #[test]
+    fn claims_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("claims.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let c1 = signed_claim([1; 32], 0x01, 1, b"alice".to_vec());
+        let c2 = signed_claim([2; 32], 0x01, 1, b"bob".to_vec());
+
+        let mut s = SnapshotStore::open(&path);
+        s.set_claims(vec![c1.clone(), c2.clone()]);
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        assert_eq!(s2.claims().len(), 2, "both signed claims survive the round trip");
+        assert!(s2.claims().contains(&c1));
+        assert!(s2.claims().contains(&c2));
+
+        // Corrupt a byte mid-file → the affected record is dropped, not trusted.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.claims().len() < 2, "the corrupted claim record must not survive load");
+    }
+
+    /// A claim whose signature does not verify (tampered body, valid framing
+    /// and checksum) must be dropped on load — belt-and-braces on top of the
+    /// checksum, per handbook §4.3 step 1 ("re-verify on load").
+    #[test]
+    fn tampered_claim_signature_is_dropped_even_with_a_valid_checksum() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("claims-tampered-sig.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut c = signed_claim([3; 32], 0x01, 1, b"carol".to_vec());
+        let mut s = SnapshotStore::open(&path);
+        s.set_claims(vec![c.clone()]);
+        s.persist().unwrap();
+
+        // Flip the claim body post-signing and re-persist under a *correct*
+        // checksum (simulating a bit-flip that happens to preserve framing —
+        // the point is the signature check, not the checksum) by staging the
+        // tampered claim directly rather than editing file bytes.
+        c.body = b"mallory".to_vec();
+        let mut s2 = SnapshotStore::open(&path);
+        s2.set_claims(vec![c]);
+        s2.persist().unwrap();
+
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.claims().is_empty(), "a claim whose signature no longer matches its body must be dropped");
+    }
+
+    /// Mirrors `snapshot_roundtrip_and_corruption_drop`'s shape for the
+    /// group-state persistence lane (handbook §4.3 step 2 acceptance). This
+    /// crate does not depend on `mmp-node`, so it cannot construct a real
+    /// `GroupState` — it stores/returns opaque blobs, so the test uses
+    /// stand-in bytes; the real `GroupState::encode`/`decode` round trip is
+    /// covered end-to-end by the `mmp-ffi` restart test.
+    #[test]
+    fn group_blobs_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("groups.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let g1 = vec![1u8, 2, 3, 4, 5];
+        let g2 = vec![9u8; 40];
+
+        let mut s = SnapshotStore::open(&path);
+        s.set_group_blobs(vec![g1.clone(), g2.clone()]);
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        assert_eq!(s2.group_blobs().len(), 2);
+        assert!(s2.group_blobs().contains(&g1));
+        assert!(s2.group_blobs().contains(&g2));
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 20] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.group_blobs().len() < 2, "the corrupted group-blob record must not survive load");
+    }
+}

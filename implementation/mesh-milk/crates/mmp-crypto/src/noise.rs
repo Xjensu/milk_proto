@@ -1,0 +1,217 @@
+//! Session handshake: Noise XX + ID_PROOF channel binding (doc 08 §3).
+//!
+//! Pattern is the *standard, formally analyzed* `Noise_XX_25519_ChaChaPoly_BLAKE2s`
+//! via `snow` — BLAKE3 is NOT substituted inside Noise (doc 08 §1 rationale).
+//! The Noise static is the identity's X25519 exchange key.
+//!
+//! Handshake payloads carry `identity_pubkey(32) ‖ HELLO` encrypted (responder
+//! in msg2, initiator in msg3): the ID_PROOF preimage commits to BOTH identity
+//! public keys (anti-UKS, doc 10 §2.2), so each side must learn the other's
+//! identity key before either can sign its proof — carrying it inside the XX
+//! payloads preserves identity hiding and breaks the ordering deadlock.
+
+use alloc::vec::Vec;
+
+use mmp_types::domain::SigDomain;
+use mmp_types::frame::Hello;
+use mmp_types::ids::{Key32, Sig64};
+
+use crate::error::CryptoError;
+use crate::identity::{verify, Identity};
+
+pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
+/// Snow message overhead headroom (two AEAD tags + two public keys).
+const HS_OVERHEAD: usize = 128;
+
+/// What a completed handshake yields alongside the transport channel.
+#[derive(Debug, Clone)]
+pub struct PeerIntro {
+    /// Peer's claimed identity key — proven only after ID_PROOF verifies.
+    pub identity: Key32,
+    /// Peer's Noise static = its X25519 exchange key.
+    pub exchange: Key32,
+    pub hello: Hello,
+}
+
+/// Incremental Noise XX driver: feed inbound HS frames, ship outbound replies.
+pub struct NoiseHandshake {
+    hs: Option<snow::HandshakeState>,
+    initiator: bool,
+    local_payload: Vec<u8>,
+    remote_intro: Option<(Key32, Hello)>,
+}
+
+pub struct HandshakeOutcome {
+    /// Next HS frame payload to send, if any.
+    pub reply: Option<Vec<u8>>,
+    /// Present exactly once, when the handshake completes.
+    pub channel: Option<NoiseChannel>,
+}
+
+fn payload_of(identity: &Identity, hello: &Hello) -> Vec<u8> {
+    let mut p = Vec::with_capacity(32 + 16);
+    p.extend_from_slice(&identity.public().0);
+    p.extend_from_slice(&hello.encode());
+    p
+}
+
+fn parse_payload(bytes: &[u8]) -> Result<(Key32, Hello), CryptoError> {
+    if bytes.len() < 32 {
+        return Err(CryptoError::Noise);
+    }
+    let mut pk = [0u8; 32];
+    pk.copy_from_slice(&bytes[..32]);
+    let hello = Hello::decode(&bytes[32..]).map_err(|_| CryptoError::Noise)?;
+    Ok((Key32(pk), hello))
+}
+
+fn builder() -> snow::Builder<'static> {
+    // Parse of a compile-time constant cannot fail.
+    let params = NOISE_PARAMS.parse().expect("valid noise params");
+    snow::Builder::new(params)
+}
+
+impl NoiseHandshake {
+    /// Start as initiator; returns msg1 (`-> e`, empty payload) to send.
+    pub fn initiator(identity: &Identity, hello: &Hello) -> Result<(Vec<u8>, Self), CryptoError> {
+        let secret = identity.exchange_secret_bytes();
+        let mut hs = builder()
+            .local_private_key(&secret[..])
+            .build_initiator()
+            .map_err(|_| CryptoError::Noise)?;
+        let mut msg1 = alloc::vec![0u8; HS_OVERHEAD];
+        let n = hs.write_message(&[], &mut msg1).map_err(|_| CryptoError::Noise)?;
+        msg1.truncate(n);
+        Ok((
+            msg1,
+            NoiseHandshake {
+                hs: Some(hs),
+                initiator: true,
+                local_payload: payload_of(identity, hello),
+                remote_intro: None,
+            },
+        ))
+    }
+
+    /// Start as responder; waits for msg1.
+    pub fn responder(identity: &Identity, hello: &Hello) -> Result<Self, CryptoError> {
+        let secret = identity.exchange_secret_bytes();
+        let hs = builder()
+            .local_private_key(&secret[..])
+            .build_responder()
+            .map_err(|_| CryptoError::Noise)?;
+        Ok(NoiseHandshake {
+            hs: Some(hs),
+            initiator: false,
+            local_payload: payload_of(identity, hello),
+            remote_intro: None,
+        })
+    }
+
+    /// Drive one inbound HS message. Read → (maybe) write → (maybe) complete.
+    pub fn advance(&mut self, incoming: &[u8]) -> Result<HandshakeOutcome, CryptoError> {
+        let mut hs = self.hs.take().ok_or(CryptoError::Noise)?;
+
+        let mut payload = alloc::vec![0u8; incoming.len().max(HS_OVERHEAD)];
+        let n = hs.read_message(incoming, &mut payload).map_err(|_| CryptoError::Noise)?;
+        if n > 0 {
+            self.remote_intro = Some(parse_payload(&payload[..n])?);
+        }
+
+        if hs.is_handshake_finished() {
+            // Responder after reading msg3.
+            return Ok(HandshakeOutcome { reply: None, channel: Some(self.finish(hs)?) });
+        }
+
+        let mut out = alloc::vec![0u8; self.local_payload.len() + HS_OVERHEAD];
+        let n = hs.write_message(&self.local_payload, &mut out).map_err(|_| CryptoError::Noise)?;
+        out.truncate(n);
+
+        if hs.is_handshake_finished() {
+            // Initiator after writing msg3.
+            return Ok(HandshakeOutcome { reply: Some(out), channel: Some(self.finish(hs)?) });
+        }
+        self.hs = Some(hs);
+        Ok(HandshakeOutcome { reply: Some(out), channel: None })
+    }
+
+    fn finish(&mut self, hs: snow::HandshakeState) -> Result<NoiseChannel, CryptoError> {
+        let mut handshake_hash = [0u8; 32];
+        handshake_hash.copy_from_slice(hs.get_handshake_hash());
+        let remote_static = hs.get_remote_static().ok_or(CryptoError::Noise)?;
+        let mut exchange = [0u8; 32];
+        exchange.copy_from_slice(remote_static);
+        let (identity, hello) = self.remote_intro.take().ok_or(CryptoError::Noise)?;
+        let transport = hs.into_transport_mode().map_err(|_| CryptoError::Noise)?;
+        Ok(NoiseChannel {
+            transport,
+            handshake_hash,
+            initiator: self.initiator,
+            peer: PeerIntro { identity, exchange: Key32(exchange), hello },
+        })
+    }
+}
+
+/// AEAD transport channel after a completed XX handshake.
+pub struct NoiseChannel {
+    transport: snow::TransportState,
+    pub handshake_hash: [u8; 32],
+    pub initiator: bool,
+    pub peer: PeerIntro,
+}
+
+impl NoiseChannel {
+    pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let mut out = alloc::vec![0u8; plaintext.len() + 16];
+        let n = self.transport.write_message(plaintext, &mut out).map_err(|_| CryptoError::Noise)?;
+        out.truncate(n);
+        Ok(out)
+    }
+
+    pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        let mut out = alloc::vec![0u8; ciphertext.len()];
+        let n = self.transport.read_message(ciphertext, &mut out).map_err(|_| CryptoError::Noise)?;
+        out.truncate(n);
+        Ok(out)
+    }
+
+    /// The ID_PROOF signature this side must send (doc 08 §3.2).
+    pub fn make_id_proof(&self, identity: &Identity, local_identity_is_initiator: bool) -> Sig64 {
+        let (init_pk, resp_pk) = if local_identity_is_initiator {
+            (identity.public(), self.peer.identity)
+        } else {
+            (self.peer.identity, identity.public())
+        };
+        identity.sign(SigDomain::ChanBind, &chanbind_object(&self.handshake_hash, &init_pk, &resp_pk))
+    }
+
+    /// Verify the peer's ID_PROOF against its claimed identity key.
+    pub fn verify_id_proof(&self, local: &Key32, sig: &Sig64) -> Result<(), CryptoError> {
+        let (init_pk, resp_pk) = if self.initiator {
+            (*local, self.peer.identity)
+        } else {
+            (self.peer.identity, *local)
+        };
+        verify(
+            SigDomain::ChanBind,
+            &self.peer.identity,
+            &chanbind_object(&self.handshake_hash, &init_pk, &resp_pk),
+            sig,
+        )
+    }
+
+    /// Fresh entropy for the conversation-ratchet epoch bump (doc 08 §5.2):
+    /// session-unique, both-party material.
+    pub fn session_material(&self) -> [u8; 32] {
+        self.handshake_hash
+    }
+}
+
+/// `noise_handshake_hash ‖ initiator_pubkey ‖ responder_pubkey` (doc 10 §2.2).
+pub fn chanbind_object(h: &[u8; 32], init_pk: &Key32, resp_pk: &Key32) -> Vec<u8> {
+    let mut o = Vec::with_capacity(96);
+    o.extend_from_slice(h);
+    o.extend_from_slice(&init_pk.0);
+    o.extend_from_slice(&resp_pk.0);
+    o
+}

@@ -1,0 +1,159 @@
+//! Group membership OR-Set (doc 06 §8): add-wins, admin-signed ops, epoch
+//! anchors as GC checkpoints (AUDIT F5).
+//!
+//! Signature verification of ops happens in the group service (node layer);
+//! this structure is the pure CRDT.
+
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
+
+use mmp_types::ids::{Id16, NodeId};
+
+pub type Tag = u64;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MembershipOp {
+    Add { member: NodeId, tag: Tag },
+    Remove { tags: Vec<Tag> },
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct OrSet {
+    /// member → live add-tags.
+    adds: BTreeMap<NodeId, BTreeSet<Tag>>,
+    tombstones: BTreeSet<Tag>,
+}
+
+impl OrSet {
+    pub fn new() -> OrSet {
+        OrSet::default()
+    }
+
+    pub fn apply(&mut self, op: &MembershipOp) {
+        match op {
+            MembershipOp::Add { member, tag } => {
+                if !self.tombstones.contains(tag) {
+                    self.adds.entry(*member).or_default().insert(*tag);
+                }
+            }
+            MembershipOp::Remove { tags } => {
+                for tag in tags {
+                    self.tombstones.insert(*tag);
+                    for set in self.adds.values_mut() {
+                        set.remove(tag);
+                    }
+                }
+                self.adds.retain(|_, set| !set.is_empty());
+            }
+        }
+    }
+
+    /// Observed add-tags for `member` — what a REMOVE must reference.
+    pub fn tags_of(&self, member: &NodeId) -> Vec<Tag> {
+        self.adds.get(member).map(|s| s.iter().copied().collect()).unwrap_or_default()
+    }
+
+    pub fn members(&self) -> Vec<NodeId> {
+        self.adds.keys().copied().collect()
+    }
+
+    pub fn contains(&self, member: &NodeId) -> bool {
+        self.adds.contains_key(member)
+    }
+
+    /// BLAKE3 root over the sorted member set — the epoch-anchor payload
+    /// (doc 06 §8.3).
+    pub fn member_root(&self) -> [u8; 32] {
+        let mut h = blake3::Hasher::new_derive_key("mmp1 member-root");
+        for m in self.adds.keys() {
+            h.update(&m.0);
+        }
+        *h.finalize().as_bytes()
+    }
+
+    /// Compaction below a mutually-acknowledged anchor (doc 06 §8.5): drop
+    /// tombstones and clamp per-member tag sets to one representative — every
+    /// discarded tag's effect is already reflected in the anchored root.
+    pub fn compact_at_anchor(&mut self, anchored_root: &[u8; 32]) {
+        if &self.member_root() != anchored_root {
+            return; // we have in-flight ops beyond the anchor — retain state
+        }
+        self.tombstones.clear();
+        for set in self.adds.values_mut() {
+            if let Some(&keep) = set.iter().next() {
+                set.clear();
+                set.insert(keep);
+            }
+        }
+    }
+
+    /// State size in tags+tombstones (bounded-growth test hook).
+    pub fn state_size(&self) -> usize {
+        self.tombstones.len() + self.adds.values().map(|s| s.len()).sum::<usize>()
+    }
+
+    /// Persistence encoding (mmp-store snapshot, handbook §4.3 step 2): a
+    /// minimal hand-written codec, no serde (handbook §0 rule 1). Layout:
+    /// `member-count u32 ‖ { member NodeId[16] ‖ tag-count u32 ‖ tag u64× }…
+    /// ‖ tombstone-count u32 ‖ tombstone u64×`. Self-delimiting — the caller
+    /// need not length-prefix this blob to know where it ends, but callers
+    /// embedding it in a larger record still may for simplicity.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(self.adds.len() as u32).to_le_bytes());
+        for (member, tags) in &self.adds {
+            out.extend_from_slice(&member.0);
+            out.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+            for tag in tags {
+                out.extend_from_slice(&tag.to_le_bytes());
+            }
+        }
+        out.extend_from_slice(&(self.tombstones.len() as u32).to_le_bytes());
+        for tag in &self.tombstones {
+            out.extend_from_slice(&tag.to_le_bytes());
+        }
+        out
+    }
+
+    /// Inverse of [`OrSet::encode`]. `None` on any truncation/malformed
+    /// count — the caller (mmp-store) treats that exactly like a corrupt
+    /// checksummed record: drop, don't repair (doc 04 §7).
+    pub fn decode(bytes: &[u8]) -> Option<OrSet> {
+        let mut pos = 0usize;
+        let u32_at = |b: &[u8], p: &mut usize| -> Option<u32> {
+            let v = b.get(*p..*p + 4)?;
+            *p += 4;
+            Some(u32::from_le_bytes(v.try_into().ok()?))
+        };
+        let u64_at = |b: &[u8], p: &mut usize| -> Option<u64> {
+            let v = b.get(*p..*p + 8)?;
+            *p += 8;
+            Some(u64::from_le_bytes(v.try_into().ok()?))
+        };
+
+        let member_count = u32_at(bytes, &mut pos)?;
+        let mut adds = BTreeMap::new();
+        for _ in 0..member_count {
+            let member_bytes = bytes.get(pos..pos + 16)?;
+            pos += 16;
+            let mut arr = [0u8; 16];
+            arr.copy_from_slice(member_bytes);
+            let member: NodeId = Id16(arr);
+            let tag_count = u32_at(bytes, &mut pos)?;
+            let mut tags = BTreeSet::new();
+            for _ in 0..tag_count {
+                tags.insert(u64_at(bytes, &mut pos)?);
+            }
+            adds.insert(member, tags);
+        }
+        let tombstone_count = u32_at(bytes, &mut pos)?;
+        let mut tombstones = BTreeSet::new();
+        for _ in 0..tombstone_count {
+            tombstones.insert(u64_at(bytes, &mut pos)?);
+        }
+        if pos != bytes.len() {
+            return None; // trailing garbage: treat as corrupt, not forward-compat
+        }
+        Some(OrSet { adds, tombstones })
+    }
+}

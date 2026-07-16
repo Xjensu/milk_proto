@@ -7,6 +7,7 @@ description = "no_std GF(256) Reed-Solomon (doc 08 s8; OQ-7 bench lives here)"
 
 [features]
 default = []
+std = []
 alloc = []
 
 [dependencies]

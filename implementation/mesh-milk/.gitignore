@@ -1,3 +1,10 @@
 /target
 **/*.rs.bk
 Cargo.lock.orig
+
+# cargo-fuzz runtime output (E5-S6) — not the seed corpus (none curated yet,
+# see docs/IMPLEMENTATION_HANDBOOK.md §4.7); libFuzzer writes discovered
+# inputs/crashes here on every local `cargo fuzz run`.
+/fuzz/target
+/fuzz/corpus
+/fuzz/artifacts

@@ -3,11 +3,13 @@ name = "mmp-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "BundleStore trait + impls: redb (std), flash-log (no_std)"
+description = "BundleStore impls: checksummed snapshot (std); flash-log (no_std) reserved"
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
+mmp-crypto = { path = "../mmp-crypto" }
 mmp-core = { path = "../mmp-core" }
+blake3 = { workspace = true }
 
 [lints]
 workspace = true

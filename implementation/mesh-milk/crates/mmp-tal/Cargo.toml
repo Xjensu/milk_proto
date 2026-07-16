@@ -8,5 +8,9 @@ description = "transport traits (doc 03 s7) + frame codec (doc 09 s5)"
 [dependencies]
 mmp-types = { path = "../mmp-types" }
 
+[features]
+default = []
+std = []
+
 [lints]
 workspace = true

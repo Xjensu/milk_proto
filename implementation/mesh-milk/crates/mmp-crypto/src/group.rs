@@ -1,0 +1,141 @@
+//! Group sender keys + epochs (doc 08 §6).
+//!
+//! Per (group, epoch, member): a chain key and a DISTINCT Ed25519 group
+//! signature keypair (limits cross-context signature linkage). Distribution
+//! happens over pairwise conversation channels; epoch++ on membership change
+//! re-keys everyone (future secrecy vs removed members).
+
+use alloc::vec::Vec;
+
+use ed25519_dalek::Signer;
+use mmp_types::domain::{signed_preimage, SigDomain};
+use mmp_types::err::WireError;
+use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
+use mmp_types::payload::GroupPayload;
+use mmp_types::wire::{BufExt, Reader};
+use rand_core::CryptoRngCore;
+use zeroize::Zeroizing;
+
+use crate::aead;
+use crate::error::CryptoError;
+use crate::identity::verify;
+use crate::ratchet::{RecvChain, SendChain};
+
+/// Sender-key distribution record, sent inside the pairwise channel as
+/// apptype 0x02 (relays never see it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SenderKeyDist {
+    pub gid: Id16,
+    pub epoch: u16,
+    pub chain_seed: [u8; 32],
+    pub sig_pub: Key32,
+}
+
+impl SenderKeyDist {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(16 + 2 + 32 + 32);
+        out.extend_from_slice(&self.gid.0);
+        out.put_u16(self.epoch);
+        out.extend_from_slice(&self.chain_seed);
+        out.extend_from_slice(&self.sig_pub.0);
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<SenderKeyDist, WireError> {
+        let mut r = Reader::new(bytes);
+        let gid = r.id16()?;
+        let epoch = r.u16()?;
+        let mut chain_seed = [0u8; 32];
+        chain_seed.copy_from_slice(r.take(32)?);
+        let sig_pub = r.key32()?;
+        r.finish()?;
+        Ok(SenderKeyDist { gid, epoch, chain_seed, sig_pub })
+    }
+}
+
+/// Our own sender key for (group, epoch).
+pub struct LocalSenderKey {
+    chain: SendChain,
+    sig: ed25519_dalek::SigningKey,
+    dist: SenderKeyDist,
+}
+
+impl LocalSenderKey {
+    pub fn generate(rng: &mut impl CryptoRngCore, gid: Id16, epoch: u16) -> LocalSenderKey {
+        let mut chain_seed = [0u8; 32];
+        rng.fill_bytes(&mut chain_seed);
+        let mut sig_seed = Zeroizing::new([0u8; 32]);
+        rng.fill_bytes(&mut sig_seed[..]);
+        let sig = ed25519_dalek::SigningKey::from_bytes(&sig_seed);
+        let dist = SenderKeyDist {
+            gid,
+            epoch,
+            chain_seed,
+            sig_pub: Key32(sig.verifying_key().to_bytes()),
+        };
+        LocalSenderKey { chain: SendChain::new(chain_seed, epoch), sig, dist }
+    }
+
+    pub fn dist(&self) -> &SenderKeyDist {
+        &self.dist
+    }
+
+    pub fn epoch(&self) -> u16 {
+        self.dist.epoch
+    }
+
+    /// Encrypt + sign one group message body. `ad` binds the routing header
+    /// (doc 10 §4.1 discipline applied to class 2).
+    pub fn encrypt(&mut self, member: NodeId, ad: &[u8], body: &[u8]) -> GroupPayload {
+        let (key, epoch, index) = self.chain.next();
+        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
+        let ct = aead::seal(&bound, ad, body);
+        let mut p = GroupPayload {
+            gid: self.dist.gid,
+            epoch,
+            member,
+            chain_index: index,
+            ct,
+            member_sig: Sig64::ZERO,
+        };
+        let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
+        p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
+        p
+    }
+}
+
+/// A remote member's sender key for (group, epoch).
+pub struct RemoteSenderKey {
+    recv: RecvChain,
+    sig_pub: Key32,
+    gid: Id16,
+}
+
+impl RemoteSenderKey {
+    pub fn from_dist(dist: &SenderKeyDist, window: u32) -> RemoteSenderKey {
+        RemoteSenderKey {
+            recv: RecvChain::new(dist.chain_seed, dist.epoch, window),
+            sig_pub: dist.sig_pub,
+            gid: dist.gid,
+        }
+    }
+
+    /// Verify the member signature, then decrypt.
+    pub fn decrypt(&mut self, p: &GroupPayload, ad: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        verify(SigDomain::GroupMsg, &self.sig_pub, &p.signed_object(), &p.member_sig)?;
+        let key = self.recv.key_for(p.epoch, p.chain_index)?;
+        let bound =
+            aead::committed_key(&key, &group_context(&self.gid, p.epoch, &p.member, p.chain_index));
+        aead::open(&bound, ad, &p.ct)
+    }
+}
+
+/// AEAD context commitment input (doc 16 §4.2 CR-S2 applied to groups).
+fn group_context(gid: &Id16, epoch: u16, member: &NodeId, index: u32) -> Vec<u8> {
+    let mut c = Vec::with_capacity(16 + 2 + 16 + 4);
+    c.extend_from_slice(&gid.0);
+    c.put_u16(epoch);
+    c.extend_from_slice(&member.0);
+    c.put_u32(index);
+    c
+}

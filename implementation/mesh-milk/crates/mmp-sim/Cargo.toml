@@ -8,7 +8,8 @@ description = "discrete-event simulator (OQ-4/OQ-5, doc 12 s8)"
 [dependencies]
 mmp-types = { path = "../mmp-types" }
 mmp-core = { path = "../mmp-core" }
-mmp-router = { path = "../mmp-router" }
+mmp-node = { path = "../mmp-node" }
+mmp-tal = { path = "../mmp-tal", features = ["std"] }
 
 [lints]
 workspace = true
