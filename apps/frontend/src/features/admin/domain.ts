@@ -40,3 +40,30 @@ export type WorkspaceSelection = {
   room: RoomSummary | null;
   date: string;
 };
+
+export type ServiceStatus = {
+  key: string;
+  label: string;
+  status: "operational" | "degraded" | "unavailable";
+  latencyMs?: number;
+};
+
+export type ActiveUserSummary = {
+  id: string;
+  email: string;
+  role: string;
+  area: string;
+  lastSeenAt: string;
+};
+
+export type AdminScheduleEvent = {
+  id: string;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  subject: string;
+  activityType: string;
+  group: string;
+  teacher: string;
+  room: string;
+};

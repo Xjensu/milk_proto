@@ -102,4 +102,67 @@ describe("API transport", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/auth/password");
     expect(fetchMock.mock.calls[0][1].body).toBe(JSON.stringify({ current_password: "old-password", new_password: "new-password" }));
   });
+
+  it("loads groups only inside faculty and semester context", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listFacultyGroups("faculty 4", "semester 12");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/admin/faculties/faculty%204/groups?semester_id=semester%2012",
+    );
+  });
+
+  it("builds teacher and room schedule queries for semester or exact date", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.teacherScheduleQuery("7", { semesterId: "12" });
+    await api.teacherScheduleQuery("7", { date: "2027-01-11" });
+    await api.roomScheduleQuery("9", { date: "2027-01-11" });
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/admin/teachers/7/schedule?semester_id=12",
+      "/api/admin/teachers/7/schedule?date=2027-01-11",
+      "/api/admin/rooms/9/schedule?date=2027-01-11",
+    ]);
+  });
+
+  it("uses bounded search and operational dashboard routes", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.searchTeachers("Emily Carter");
+    await api.dashboardHealth();
+    await api.dashboardActiveUsers();
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/admin/search/teachers?q=Emily%20Carter",
+      "/api/admin/dashboard/health",
+      "/api/admin/dashboard/active_users",
+    ]);
+  });
+
+  it("posts a bounded room set for occupancy", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.roomOccupancy("2027-01-11", ["9", "11"]);
+
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "/api/admin/schedules/rooms/occupancy-query",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ date: "2027-01-11", room_ids: ["9", "11"] }),
+      }),
+    ]);
+  });
 });
+
+function jsonFetch() {
+  return vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: [] }), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })));
+}
