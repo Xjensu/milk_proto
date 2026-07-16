@@ -9,6 +9,7 @@ const account: Account = { id: "1", email: "admin@example.test", role: "super_ad
 describe("AdminPanel", () => {
   it("renders English task navigation and super-admin accounts", () => {
     const markup = renderToStaticMarkup(<AdminPanel account={account} onLogout={() => undefined} />);
+    expect(markup).toContain("admin-product-shell");
     for (const label of ["Overview", "Schedule", "Workload", "Catalog", "Calendar", "Accounts"]) {
       expect(markup).toContain(label);
     }
