@@ -28,6 +28,23 @@ export type JsonApiCollection = {
   links?: Record<string, unknown>;
 };
 
+export type ScheduleQuery = { semesterId?: string; date?: string };
+
+export type DashboardService = {
+  key: string;
+  label: string;
+  status: "operational" | "degraded" | "unavailable";
+  latency_ms?: number;
+};
+
+export type ActiveUser = {
+  account_id: string;
+  email: string;
+  role: AccountRole;
+  area: string;
+  last_seen_at: string;
+};
+
 export type AdminCollection = "faculties" | "semesters" | "teachers" | "rooms" | "kafedras" | "student_groups" | "subjects" | "activity_types" | "time_slots" | "holidays" | "weekday_transfers" | "room_reservations" | "media_files" | "audit_logs";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "/api";
@@ -128,6 +145,30 @@ export const api = {
   listAdminCollection(resource: AdminCollection, query = "") {
     return request<JsonApiCollection>(`/admin/${resource}${query}`);
   },
+  listFacultyGroups(facultyId: string, semesterId: string, signal?: AbortSignal) {
+    return request<JsonApiCollection>(`/admin/faculties/${encodeURIComponent(facultyId)}/groups?semester_id=${encodeURIComponent(semesterId)}`, { signal });
+  },
+  searchTeachers(query: string, signal?: AbortSignal) {
+    return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });
+  },
+  teacherScheduleQuery(teacherId: string, query: ScheduleQuery, signal?: AbortSignal) {
+    return request<Record<string, unknown>>(`/admin/teachers/${encodeURIComponent(teacherId)}/schedule${scheduleQuery(query)}`, { signal });
+  },
+  roomScheduleQuery(roomId: string, query: ScheduleQuery, signal?: AbortSignal) {
+    return request<Record<string, unknown>>(`/admin/rooms/${encodeURIComponent(roomId)}/schedule${scheduleQuery(query)}`, { signal });
+  },
+  dashboardHealth() {
+    return request<{ data: DashboardService[] }>("/admin/dashboard/health");
+  },
+  dashboardActiveUsers() {
+    return request<{ data: ActiveUser[] }>("/admin/dashboard/active_users");
+  },
+  roomOccupancy(date: string, roomIds: string[]) {
+    return request<Record<string, unknown>>("/admin/schedules/rooms/occupancy-query", {
+      method: "POST",
+      body: JSON.stringify({ date, room_ids: roomIds }),
+    });
+  },
   listAccounts() {
     return request<JsonApiCollection>("/auth/accounts");
   },
@@ -170,6 +211,12 @@ export const api = {
     return request<void>("/auth/sessions", { method: "DELETE", body: JSON.stringify({ refresh_token: refreshToken }) });
   },
 };
+
+function scheduleQuery(query: ScheduleQuery) {
+  if (query.date) return `?date=${encodeURIComponent(query.date)}`;
+  if (query.semesterId) return `?semester_id=${encodeURIComponent(query.semesterId)}`;
+  return "";
+}
 
 export function accountFromAccessToken(token: string, email: string): Account {
   try {
