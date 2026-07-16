@@ -43,7 +43,7 @@ All multi-byte integers are little-endian. The bundle is encoded as a fixed head
 ```
 Bundle {
   version      : u4        // wire version = 1
-  class        : u4        // 0=control 1=direct 2=group 3=claim 4=symbol
+  class        : u4        // 0=control 1=direct 2=group 3=claim 4=symbol 5=announcement (doc 18 §3)
   flags        : u8        // bit0: has_parents, bit1: wants_receipt, …
   origin       : [u8; 32]  // origin's Ed25519 identity PUBLIC KEY (inline, AUDIT F2)
   dest         : [u8; 16]  // NodeID, GroupID, or well-known scope ID
@@ -52,7 +52,7 @@ Bundle {
   ext_len      : u16
   extensions   : TLV*      // §4.4
   payload_len  : u16
-  payload      : bytes     // AEAD ciphertext for class 1,2; plaintext for 0,3,4 (still signed)
+  payload      : bytes     // AEAD ciphertext for class 1,2; plaintext for 0,3,4,5 (still signed)
   signature    : [u8; 64]  // Ed25519 by origin, domain-separated (doc 10 §3.1), over lifetime-zeroed canonical bytes
 }
 BundleID = BLAKE3-256(canonical bytes, lifetime zeroed)[0..16]

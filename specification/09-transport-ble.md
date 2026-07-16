@@ -62,6 +62,26 @@ MMP Primary Service
 
 Both directions carry the **session frame stream** (doc 10 §2): length-prefixed frames fragmented into ATT payloads of (MTU−3) bytes; reassembly by length prefix only — no per-fragment headers (stream semantics over ordered, reliable ATT writes/notifications). Write-without-response + notifications avoid per-PDU round trips, the documented throughput technique [B1].
 
+**UUIDs (implementation-pinned, OQ-12 development placeholders pending SIG assignment):** this
+spec deliberately did not pin characteristic UUIDs, leaving it to the first implementation —
+`implementation/mesh-milk` has since done so and both radio crates (`mmp-tal-btleplug`, central;
+`mmp-tal-peripheral`, peripheral) are cross-verified byte-equal against each other in CI, so any
+second implementation MUST match them for interop:
+
+```
+Service:               6d6d7031-0000-4d4d-5031-6d6573686d6c
+TX (client writes):    6d6d7031-0001-4d4d-5031-6d6573686d6c   (Write Without Response)
+RX (server notifies):  6d6d7031-0002-4d4d-5031-6d6573686d6c   (Notify)
+```
+
+"Client"/"TX" and "server"/"RX" are named from the **central's** perspective throughout this
+document and the implementation — a peripheral's GATT server exposes TX as writable-into (its
+inbound direction) and RX as its outbound notify channel; do not re-derive the naming per role,
+it inverts and causes exactly the kind of bug the peripheral implementation had to guard against
+explicitly. These 128-bit UUIDs remain a placeholder pending Bluetooth SIG 16-bit assignment
+(OQ-12) — swapping to an assigned UUID is a coordinated, versioned change across every
+implementation, not a local edit.
+
 **Reassembly bound (normative, AUDIT F10):** the reassembly buffer is pre-allocated to `MAX_BUNDLE = 4096` and is never grown by an attacker-supplied length prefix; a prefix > 4096 → immediate `ERROR + CLOSE` (doc 10 §6.4, doc 11 §3). A frame whose bytes stall past the session idle timer (doc 11 §7) is discarded — no cross-contact reassembly, no slow-dribble buffer pin (also bounded by the 60 s airtime cap, §7).
 
 ### 5.2 Flow control

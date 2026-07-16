@@ -54,6 +54,14 @@
 | 16 | Jamming | RF denial | none (physics) | documented; store-carry-forward inherently routes *around* jammed areas via mobility |
 | 17 | Zombie lifetimes / resurrection | relay inflates remaining lifetime or resurrects a captured bundle | clamp to class maximum (03 §4.3) + **SeenIndex-from-first-sight** (03 §4.2) + per-class app dedup (AUDIT F1) | bounded: ≤ one quota-capped relay store/offer cycle per resurrection past the dedup horizon; no duplicate user-visible delivery |
 | 18 | WoT quota inference | measure quota treatment to map social ties | acknowledged side channel (05 §12); paranoid build: uniform quotas | coarse "relay favors origin" bits for a co-present adversary |
+| 19 | Stolen conductor (AuthCert) key | attacker exfiltrates a live AuthCert's private key | per-cert budget × remaining-validity bound; issuer revocation list, sticky union (18 §6/§7 A1) | bundles admitted before the revocation list propagates cannot be un-admitted after local render — accounting, not prevention (18 §5.4(b)) |
+| 20 | Profile-B self-issued authority | no operator root exists; attacker self-issues AuthCert-shaped claims | no trust root to pin/gossip against ⇒ priority 0/1 never admits; UI shows "unverified" for every sender (18 §7 A4) | depends entirely on the UX banner being non-bypassable — flagged for doc 12 conformance tests |
+| 21 | False-panic announcement | a legitimately-authorized issuer signs a false EMERGENCY announcement | out of cryptographic scope by design; accountability via non-repudiable signature + identity-visible UX (18 §7 A5) | social/procedural, not protocol-solvable — documented, not hidden |
+| 22 | Stolen operator ROOT key | attacker exfiltrates the root key, mints unlimited fresh AuthCerts | scope containment (a stolen root grants nothing outside its scope namespace); dual-control minting; re-pin recovery (18 §7 A6) | **unbounded within the scope until re-pin** — the standard, irreducible PKI-root risk, scoped to one operator's namespace rather than a global CA |
+| 23 | Declared-priority queue-jump | any origin self-declares priority 0/1 on junk bundles; wire-phase ordering services it earlier | none at wire-phase ordering in v1, stated plainly; priority buys order, never volume — buckets/quotas stay priority-blind (18 §5.2.2/§7 A7) | earlier-in-session service for junk within unenlarged budgets — a scheduling nuisance, not a safety breach; structural fix filed as errata-candidate |
+| 24 | Garbage-manifest quota exhaustion | flood of well-formed-but-useless file manifests (fake names, dangling roots) | costs bounded by the existing per-origin token bucket like any class 1/2 bundle; the extra manifest-verify cost falls only on decrypting recipients (16 §9.1) | Sybil residual unmodified (#4) — spreading across fresh identities still forces one verify-before-store per identity |
+
+Doc 18's own §7 additionally covers A2 (replay of a valid announcement), which doc 18 itself cross-references back to this matrix's #3/#17 (SeenIndex-from-first-sight + per-class dedup) rather than introducing a new mechanism — no separate row needed here. A3 (cross-scope priority injection) is closed entirely by a mechanism specific to authority announcements (scope-match admission, doc 18 §5.2) with no general-catalog analog, so it is not pointed to from this matrix — see doc 18 §7 directly.
 
 ## 4. Bridgefy/bitchat failure classes → explicit closure
 
@@ -102,8 +110,11 @@ Doc 02 F-A2 catalog, item by item:
 5. WoT quota side channel (#18).
 6. Receipt-filter FP suppression, ~1% per pair (#12).
 7. Sybil base-rate consumption (#4) — fairness degradation under industrial Sybil presence.
+8. Stolen operator ROOT key (#22, doc 18 §7 A6) — **unbounded within the compromised scope until re-pin**, the one entry in this register that is not merely bounded but genuinely open-ended pending an out-of-band recovery ceremony; contained to one operator's scope namespace, never global, which is the honest bound this entry actually has.
+9. Stolen conductor (AuthCert) key (#19, doc 18 §7 A1) — bundles admitted before a revocation list propagates cannot be un-admitted after local render; bounded by budget × remaining validity, unlike #8.
+10. Declared-priority queue-jump (#23, doc 18 §7 A7) — no defense at wire-phase ordering in v1; bounded to earlier-in-session service within unenlarged per-origin budgets, a scheduling nuisance rather than a safety breach.
 
-Each is (a) stated honestly rather than hidden, (b) bounded, (c) has a named escalation path (privacy profiles OQ-9, paranoid build, v2 scope).
+Each is (a) stated honestly rather than hidden, (b) bounded except item 8 (explicitly flagged as the exception), (c) has a named escalation path (privacy profiles OQ-9, paranoid build, v2 scope, or — for items 8-10 — the doc 18 §6/§7 mechanisms themselves).
 
 ## 8. Persona review checkpoints
 
@@ -115,4 +126,4 @@ Each is (a) stated honestly rather than hidden, (b) bounded, (c) has a named esc
 
 ## 9. Cross-references
 
-Crypto mechanisms backing #1–3, 11–13 → doc 08. Quota/budget mechanics → docs 04–05. Fuzzing/parser mandates → doc 12. OQ-9 (privacy profiles) appended to research/open-questions.md. Failure-mode interactions (e.g., eclipse + storage pressure) → doc 14.
+Crypto mechanisms backing #1–3, 11–13 → doc 08. Quota/budget mechanics → docs 04–05. Fuzzing/parser mandates → doc 12. OQ-9 (privacy profiles) appended to research/open-questions.md. Failure-mode interactions (e.g., eclipse + storage pressure) → doc 14. File-transfer abuse analysis (#24) → doc 16 §9. Authority-announcement abuse analysis and the full A1–A7 catalog (#19–23) → doc 18 §7.

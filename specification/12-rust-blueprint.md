@@ -31,6 +31,8 @@ mesh-milk/
 
 Dependency rule (enforced via CI `cargo-deny` + layer test): `mmp-types ← mmp-crypto ← mmp-core ← mmp-router` are `#![no_std]` (alloc-optional via feature `alloc`); nothing below `mmp-node` may depend on tokio, std time, or any TAL implementation. This is doc 04 §1's inversion made mechanical.
 
+**Rev-B crate ownership (doc 18 authority/announcements; `docs/AGILE_BACKLOG.md` architecture decision A3.1):** `AuthCert` and announcement-body structs/codecs → `mmp-types` (new `authcert.rs`, extending `payload.rs`); AuthCert verification, revocation tombstones, and the receive-time priority clamp → `mmp-core` (`claims.rs` + ingest admission, doc 18 §5.2); per-subject announcement token bucket and UI events → `mmp-node` (doc 18 §5.3). Same layering rule as above — nothing rev-B adds may push `mmp-types`/`mmp-core` past their `no_std`+alloc-only budget. Tracked as `docs/AGILE_BACKLOG.md` E5-S5, still open.
+
 ## 2. Core trait surface (the two seams + platform ports)
 
 ```rust
@@ -112,7 +114,7 @@ Rust core compiles to `aarch64-linux-android` / `aarch64-apple-ios`; the **platf
 
 ## 7. Testing mandates (normative for the reference impl)
 
-1. **Golden vectors** (`vectors/`): every frame & bundle type, with fixed keys — cross-checked by an independent decoder written from doc 10 alone (spec-ambiguity detector, like the doc 10 §8 lifetime catch). MUST include the post-audit negatives: (a) a signature minted under one signing-domain tag (doc 10 §3.1) presented under another → reject (AUDIT F4); (b) a non-canonical/overlarge-`S` Ed25519 signature → reject via `verify_strict` (AUDIT F9); (c) a bundle with `lifetime_ms` reset → identical BundleID, caught by SeenIndex (AUDIT F1); (d) a budget grant > `L_MAX` → clamped (AUDIT F3).
+1. **Golden vectors** (`vectors/`): every frame & bundle type, with fixed keys — cross-checked by an independent decoder written from doc 10 alone (spec-ambiguity detector, like the doc 10 §8 lifetime catch). MUST include the post-audit negatives: (a) a signature minted under one signing-domain tag (doc 10 §3.1) presented under another → reject (AUDIT F4); (b) a non-canonical/overlarge-`S` Ed25519 signature → reject via `verify_strict` (AUDIT F9); (c) a bundle with `lifetime_ms` reset → identical BundleID, caught by SeenIndex (AUDIT F1); (d) a budget grant > `L_MAX` → clamped (AUDIT F3); (e) **rev. B cross-tag negatives (doc 10 §3.1):** a signature under any of `mmp1/manifest` / `mmp1/authcert` / `mmp1/announce` MUST NOT verify under any other tag (and vice versa) — this requirement was previously stated only in doc 10 §3.1 and tracked implementation-side in `implementation/mesh-milk/vectors/README.md`; it is now also normative here.
 2. **Fuzzing** (`cargo-fuzz`): targets per parser — beacon, HS1, ID_PROOF, every post-auth frame, bundle canonical decode, TLV walker, RBSR range handler. Pre-auth targets run under allocation-counting harness (doc 10 §6.2: zero-alloc proof).
 3. **Property tests** (`proptest`): canonical-encoding round-trip + rejection (mutate any byte → reject or different ID); RBSR convergence (random set pairs → equal stores ≤ R_max rounds); LWW merge commutativity/idempotence (doc 06 §4.2); OR-Set convergence (doc 06 §8); ratchet out-of-order windows (doc 08 §5).
 4. **FSM invariants** I1–I4 (doc 11 §4) as transition-table exhaustive tests.

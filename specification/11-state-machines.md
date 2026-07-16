@@ -78,7 +78,7 @@ There is **no QUARANTINE state** in the bundle FSM (AUDIT F2): the origin public
 
 Invariants (testable, doc 12):
 - I1: a bundle reaches STORED only after successful canonical-S signature verification against its inline origin key **and** a consistent `NodeID = BLAKE3(origin)[0..16]` check (doc 03 §4.1.2); failure → DROPPED, never OFFERED.
-- I2: STORED→OFFERED requires admission re-check (receipt filter, blocklist may have changed); any copy budget adopted from a peer is **clamped to L_MAX on receive** (doc 03 §4.5, doc 05 §2.3.1, AUDIT F3).
+- I2: STORED→OFFERED requires admission re-check (receipt filter, blocklist may have changed); any copy budget adopted from a peer is **clamped to L_MAX on receive** (doc 03 §4.5, doc 05 §2.3.1, AUDIT F3). **Rev. B second admission gate (doc 18 §5.2):** for class-5 (announcement) bundles, the declared `priority` byte is additionally clamped to 2 (NORMAL) on receive unless the bundle's `origin` matches a verified, unexpired, budget-remaining AuthCert.subject for the receiver-subscribed scope — a receiver-local admission/rendering decision, never a wire mutation (declared priority stays intact for RBSR partitioning, doc 18 §5.2 CR2bis-3).
 - I3: lifetime decremented before any hand-off; clamp on receive (doc 03 §4.3). Hand-off intent (bundle ID, granted budget) is persisted *before* the BUNDLE frame is sent; crash recovery treats unconfirmed hand-offs as completed — under-spray, never over-spray (doc 14 F15 review).
 - I4: own-originated bundles never EVICTED before EXPIRED (doc 04 §2).
 - I5: a BundleID enters SeenIndex on first sight and persists for class-max lifetime regardless of later `lifetime_ms` values (resurrection resistance, doc 03 §4.2, AUDIT F1); PURGED requires an exact authenticated D0 receipt, never a Bloom hit (doc 06 §6.3, AUDIT F11).
@@ -122,6 +122,9 @@ Partial-state note: a node MAY serve symbols from ABANDONED/FETCHING states (it 
 | reassembly stall | session idle (doc 09 §5.1) | transport | discard partial frame (AUDIT F10; replaces the obsolete quarantine timer) |
 | receipt bucket | 6 h × 12 | store | filter rotation |
 | claim refresh (own) | 24 h | services | liveness of presence claims |
+| AuthCert `priority_budget` refill | per-cert field, admissions/hour ⚠ (doc 18 §2, §5.3) | bundle (admission) | per-authority elevated-priority rate limit, keyed on AuthCert.subject |
+| `not_after` clock-skew tolerance | 15 min ⚠ (doc 18 §6, CR-A6) | bundle (admission) | AuthCert/revocation expiry check against receiver's own local clock (no shared clock, doc 03 §1) |
+| REVOCATION_LIST republish | ordinary claim-gossip cadence (doc 06 §4.3) — no dedicated timer; re-offered whenever `seq` differs in the SUMMARY claim digest | claims | issuer's revocation state (doc 18 §6) propagates at gossip speed, capped at `REVLIST_MAX = 48` ⚠ entries per update |
 
 ## 8. Persona review checkpoints
 
@@ -133,4 +136,4 @@ Partial-state note: a node MAY serve symbols from ABANDONED/FETCHING states (it 
 
 ## 9. Cross-references
 
-Frames each FSM consumes → doc 10. Rust typestate realization + invariant tests I1–I4 → doc 12. Timer/energy interaction → doc 13. Failure-mode walks of these FSMs (partition, storm, clock anomalies) → doc 14.
+Frames each FSM consumes → doc 10. Rust typestate realization + invariant tests I1–I4 → doc 12. Timer/energy interaction → doc 13. Failure-mode walks of these FSMs (partition, storm, clock anomalies) → doc 14. Blob-plane symbol/manifest schema → doc 16. Deployment-profile timer presets (train/campus) → doc 17. Rev. B class-5 admission gate (I2 above), AuthCert/revocation timers (§7) → doc 18 §5.2/§6.
