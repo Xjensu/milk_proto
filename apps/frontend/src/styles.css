@@ -276,3 +276,54 @@ h1 span, h2 span { color: var(--cyan); }
 
 .accounts-workspace .admin-section-heading h1 { margin: 10px 0 0; font-size: 38px; letter-spacing: -.055em; }.accounts-actions { display: flex; justify-content: flex-end; margin: -8px 0 12px; }.accounts-workspace .admin-data-panel { min-height: 360px; }
 @media (max-width: 560px) { .accounts-actions .button { width: 100%; } }
+
+/* Admin readability scale: keep the workspace calm while giving operational text and controls more room. */
+.admin-product-shell { font-size: 15px; }
+.admin-product-shell .admin-sidebar nav button { min-height: 52px; gap: 12px; padding: 13px 12px; font-size: 13px; }
+.admin-product-shell .admin-sidebar nav button svg { width: 20px; height: 20px; }
+.admin-product-shell .sidebar-title strong { font-size: 21px; }
+.admin-product-shell .sidebar-user strong { font-size: 14px; }
+.admin-product-shell .sidebar-user small, .admin-product-shell .sidebar-logout { font-size: 11px; }
+.admin-product-shell .admin-section-heading h1 { font-size: clamp(42px, 4vw, 52px); }
+.admin-product-shell .admin-section-heading h2 { font-size: 42px; }
+.admin-product-shell .admin-section-heading p { max-width: 440px; font-size: 14px; }
+.admin-product-shell .eyebrow, .admin-product-shell .catalog-control-label, .admin-product-shell .context-step-wide label, .admin-product-shell .schedule-context-grid label, .admin-product-shell .date-field > span { font-size: 11px; }
+.admin-product-shell .button { min-height: 46px; padding: 13px 19px; font-size: 14px; }
+.admin-product-shell .button-small { min-height: 40px; padding: 9px 13px; font-size: 12px; }
+.admin-product-shell .admin-tabs button { min-height: 48px; padding: 13px 19px; font-size: 13px; }
+.admin-product-shell .scope-switch button { min-height: 44px; padding-inline: 16px; font-size: 12px; }
+.admin-product-shell .semester-card { flex-basis: 235px; min-height: 98px; padding: 17px; }
+.admin-product-shell .semester-card strong { font-size: 14px; }
+.admin-product-shell .semester-card span { font-size: 11px; }
+.admin-product-shell .entity-picker-input, .admin-product-shell .date-field input, .admin-product-shell .admin-form-grid input, .admin-product-shell .admin-form-grid select, .admin-product-shell .inspector-form input, .admin-product-shell .inspector-form select { min-height: 50px; padding-inline: 14px; font-size: 14px; }
+.admin-product-shell .entity-picker-input input { font-size: 14px; }
+.admin-product-shell .entity-picker li button { min-height: 52px; padding: 10px; }
+.admin-product-shell .entity-picker li strong { font-size: 13px; }
+.admin-product-shell .entity-picker li span { font-size: 11px; }
+.admin-product-shell .workload-mode-cards > button { min-height: 118px; padding: 22px; }
+.admin-product-shell .workload-mode-cards strong { font-size: 17px; }
+.admin-product-shell .workload-mode-cards small { font-size: 11px; }
+.admin-product-shell .workload-table th, .admin-product-shell .occupancy-grid thead th { font-size: 10px; }
+.admin-product-shell .workload-table td, .admin-product-shell .occupancy-grid td strong { font-size: 12px; }
+.admin-product-shell .workload-table td small, .admin-product-shell .occupancy-grid td small, .admin-product-shell .occupancy-grid td span { font-size: 10px; }
+.admin-product-shell .catalog-card strong { font-size: 14px; }
+.admin-product-shell .catalog-card span, .admin-product-shell .catalog-card small { font-size: 11px; }
+.admin-product-shell .admin-inspector { width: min(440px, 100vw); padding: 30px; }
+.admin-product-shell .admin-inspector h2 { font-size: 28px; }
+.admin-product-shell .inspector-form label span { font-size: 10px; }
+.admin-product-shell .inspector-help, .admin-product-shell .inspector-note { font-size: 12px; }
+
+@media (max-width: 850px) {
+  .admin-product-shell .admin-section-heading h1 { font-size: clamp(36px, 8vw, 46px); }
+  .admin-product-shell .admin-section-heading h2 { font-size: 36px; }
+  .admin-product-shell .admin-sidebar nav button { min-height: 48px; }
+}
+
+@media (max-width: 560px) {
+  .admin-product-shell { font-size: 14px; }
+  .admin-product-shell .admin-content { padding-inline: 16px; }
+  .admin-product-shell .admin-section-heading h1 { font-size: 35px; }
+  .admin-product-shell .admin-section-heading h2 { font-size: 30px; }
+  .admin-product-shell .admin-section-heading p { font-size: 13px; }
+  .admin-product-shell .admin-inspector { padding: 24px 20px; }
+}
