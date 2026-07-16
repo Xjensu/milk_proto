@@ -1,14 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { WorkspaceProvider } from "./workspace/WorkspaceContext";
 import { AdminWorkload } from "./AdminWorkload";
 
 describe("AdminWorkload", () => {
-  it("requires a live semester before loading the overview", () => {
-    const markup = renderToStaticMarkup(<AdminWorkload />);
-    expect(markup).toContain("Контроль учебной нагрузки");
-    expect(markup).toContain("Выберите семестр");
-    expect(markup).toContain("Загрузить нагрузку");
-    expect(markup).not.toContain("Сводная нагрузка");
+  it("starts with readable faculty and department workflows", () => {
+    const markup = renderToStaticMarkup(<WorkspaceProvider><AdminWorkload /></WorkspaceProvider>);
+    expect(markup).toContain("Workload distribution");
+    expect(markup).toContain("Faculty workload");
+    expect(markup).toContain("Department workload");
+    expect(markup).toContain("Search faculty");
+    expect(markup).not.toContain("semester_id");
+    expect(markup).not.toContain("#");
   });
 });

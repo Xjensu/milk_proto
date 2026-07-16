@@ -148,6 +148,15 @@ export const api = {
   listFacultyGroups(facultyId: string, semesterId: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/faculties/${encodeURIComponent(facultyId)}/groups?semester_id=${encodeURIComponent(semesterId)}`, { signal });
   },
+  listFacultyDepartments(facultyId: string) {
+    return request<JsonApiCollection>(`/admin/faculties/${encodeURIComponent(facultyId)}/kafedras`);
+  },
+  facultyWorkload(facultyId: string, semesterId: string) {
+    return request<{ data: unknown[] }>(`/admin/faculties/${encodeURIComponent(facultyId)}/load?semester_id=${encodeURIComponent(semesterId)}`);
+  },
+  departmentWorkload(departmentId: string, semesterId: string) {
+    return request<{ data: unknown[] }>(`/admin/kafedras/${encodeURIComponent(departmentId)}/load?semester_id=${encodeURIComponent(semesterId)}`);
+  },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });
   },
