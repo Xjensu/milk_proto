@@ -12,6 +12,10 @@ Semesters use the format `3 semester 2026/2027`. Student groups use `<name>-<cou
 
 Overview intentionally contains only service status, active users, and the event journal. Each projection is requested independently. If the gateway does not expose a projection, the page shows a capability-unavailable state and never substitutes fabricated metrics.
 
+## Navigation and selection controls
+
+The sidebar includes a return-to-home action for leaving administration. Administrative labels are presented in Russian. Searchable entity pickers close after a selection and render their result list in normal document flow, so an open list never obscures the next context control. Table typography uses a higher-contrast, larger operational scale.
+
 ## Schedule
 
 Group schedules follow faculty → semester → student group. Teacher and room schedules support either semester context or an exact date. Occupancy accepts a date and multiple rooms. All large collections use searchable entity pickers; semesters use a horizontal card rail.

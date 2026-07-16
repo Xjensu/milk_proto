@@ -7,11 +7,11 @@ import { AdminOperations } from "./AdminOperations";
 describe("AdminOperations", () => {
   it("guides operators from faculty and semester to a group calendar", () => {
     const markup = renderToStaticMarkup(<WorkspaceProvider><AdminOperations /></WorkspaceProvider>);
-    expect(markup).toContain("Group calendar");
+    expect(markup).toContain("Календарь группы");
     expect(markup).toContain("Lecture period");
     expect(markup).toContain("Credit period");
     expect(markup).toContain("Exam session");
-    expect(markup).toContain("Search faculty");
+    expect(markup).toContain("Поиск: факультет");
     expect(markup).not.toContain("GET /admin");
     expect(markup).not.toContain("#");
   });

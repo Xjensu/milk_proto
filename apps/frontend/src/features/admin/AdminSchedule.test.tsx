@@ -7,10 +7,10 @@ import { WorkspaceProvider } from "./workspace/WorkspaceContext";
 describe("AdminSchedule", () => {
   it("starts with task modes and faculty-first group guidance", () => {
     const markup = renderToStaticMarkup(<WorkspaceProvider><AdminSchedule /></WorkspaceProvider>);
-    for (const label of ["Group", "Teacher", "Room", "Occupancy"]) expect(markup).toContain(label);
-    expect(markup).toContain("Choose a faculty first");
-    expect(markup).toContain("Choose a semester");
-    expect(markup).toContain("Student group");
+    for (const label of ["Группа", "Преподаватель", "Аудитория", "Занятость"]) expect(markup).toContain(label);
+    expect(markup).toContain("Сначала выберите факультет.");
+    expect(markup).toContain("Выберите семестр.");
+    expect(markup).toContain("Учебная группа");
     expect(markup).not.toContain("#1");
   });
 

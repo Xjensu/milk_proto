@@ -62,7 +62,7 @@ function App() {
         {view === "home" && <Home onLogin={() => setView(staffView(account))} onOpenSchedule={(mode) => setView(mode)} />}
         {view === "login" && <Login onBack={() => setView("home")} onLoggedIn={handleLogin} />}
         {view === "password" && account ? <PasswordChange email={account.email} onChanged={handleLogin} onLogout={handleLogout} /> : null}
-        {view === "admin" && <ApiAdminPanel account={account} onLogout={handleLogout} />}
+        {view === "admin" && <ApiAdminPanel account={account} onLogout={handleLogout} onBack={() => setView("home")} />}
         {view === "self" && <ApiTeacherSelfService onLogout={handleLogout} />}
         {(view === "group" || view === "teacher" || view === "room") && <ApiPublicSchedulePage mode={view} onBack={() => setView("home")} />}
       </main>

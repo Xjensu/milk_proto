@@ -27,7 +27,7 @@ describe("workspace selection primitives", () => {
       onSelect={() => undefined}
     />);
     expect(markup).toContain('role="combobox"');
-    expect(markup).toContain("Carter Emily");
+    expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain(">7<");
   });
 

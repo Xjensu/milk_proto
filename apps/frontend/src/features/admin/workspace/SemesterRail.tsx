@@ -6,7 +6,7 @@ export function SemesterRail({ semesters, selectedId, onSelect }: {
   selectedId: string | null;
   onSelect: (semester: SemesterSummary) => void;
 }) {
-  return <div className="semester-rail" role="radiogroup" aria-label="Semester">
+  return <div className="semester-rail" role="radiogroup" aria-label="Семестр">
     {semesters.map((semester) => <button
       type="button"
       role="radio"
@@ -16,7 +16,7 @@ export function SemesterRail({ semesters, selectedId, onSelect }: {
       onClick={() => onSelect(semester)}
     >
       <strong>{formatSemester(semester)}</strong>
-      <span>{semester.startYear} academic year</span>
+      <span>{semester.startYear} учебный год</span>
     </button>)}
   </div>;
 }

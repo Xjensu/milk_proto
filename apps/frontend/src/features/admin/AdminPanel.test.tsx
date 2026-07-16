@@ -7,10 +7,10 @@ import { AdminPanel } from "./AdminPanel";
 const account: Account = { id: "1", email: "admin@example.test", role: "super_admin", status: "active" };
 
 describe("AdminPanel", () => {
-  it("renders English task navigation and super-admin accounts", () => {
+  it("renders Russian task navigation, back navigation, and super-admin accounts", () => {
     const markup = renderToStaticMarkup(<AdminPanel account={account} onLogout={() => undefined} />);
     expect(markup).toContain("admin-product-shell");
-    for (const label of ["Overview", "Schedule", "Workload", "Catalog", "Calendar", "Accounts"]) {
+    for (const label of ["На главную", "Обзор", "Расписание", "Нагрузка", "Справочники", "Календарь", "Учётные записи"]) {
       expect(markup).toContain(label);
     }
     expect(markup).not.toContain("86%");
