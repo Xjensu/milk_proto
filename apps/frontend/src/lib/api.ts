@@ -29,6 +29,8 @@ export type JsonApiCollection = {
 };
 
 export type ScheduleQuery = { semesterId?: string; date?: string };
+export type GroupPeriodInput = { period_kind: "lecture_week" | "credit_week" | "exam_session"; start_date: string; end_date: string };
+export type EventTransferInput = { original_date: string; transfer_type: "moved" | "cancelled"; new_date?: string; new_time_slot_id?: number; new_room_id?: number; reason?: string };
 
 export type DashboardService = {
   key: string;
@@ -156,6 +158,15 @@ export const api = {
   },
   departmentWorkload(departmentId: string, semesterId: string) {
     return request<{ data: unknown[] }>(`/admin/kafedras/${encodeURIComponent(departmentId)}/load?semester_id=${encodeURIComponent(semesterId)}`);
+  },
+  groupPeriods(groupSemesterId: string) {
+    return request<JsonApiCollection>(`/admin/student_group_semesters/${encodeURIComponent(groupSemesterId)}/periods`);
+  },
+  upsertGroupPeriod(groupSemesterId: string, period: GroupPeriodInput) {
+    return request<{ data: JsonApiResource }>(`/admin/student_group_semesters/${encodeURIComponent(groupSemesterId)}/periods`, { method: "POST", body: JSON.stringify({ period }) });
+  },
+  createEventTransfer(eventId: string, eventTransfer: EventTransferInput) {
+    return request<{ data: JsonApiResource }>(`/admin/schedule_events/${encodeURIComponent(eventId)}/transfers`, { method: "POST", body: JSON.stringify({ event_transfer: eventTransfer }) });
   },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });

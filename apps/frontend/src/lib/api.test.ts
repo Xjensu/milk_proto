@@ -173,6 +173,21 @@ describe("API transport", () => {
       "/api/admin/faculties/4/kafedras",
     ]);
   });
+
+  it("uses group calendar and single-occurrence transfer routes", async () => {
+    const fetchMock = jsonFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.groupPeriods("17");
+    await api.upsertGroupPeriod("17", { period_kind: "lecture_week", start_date: "2026-09-01", end_date: "2026-09-10" });
+    await api.createEventTransfer("44", { original_date: "2026-09-04", transfer_type: "moved", new_date: "2026-09-11", new_time_slot_id: 3 });
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method])).toEqual([
+      ["/api/admin/student_group_semesters/17/periods", undefined],
+      ["/api/admin/student_group_semesters/17/periods", "POST"],
+      ["/api/admin/schedule_events/44/transfers", "POST"],
+    ]);
+  });
 });
 
 function jsonFetch() {
