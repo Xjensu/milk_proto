@@ -31,6 +31,9 @@ export type JsonApiCollection = {
 export type ScheduleQuery = { semesterId?: string; date?: string };
 export type GroupPeriodInput = { period_kind: "lecture_week" | "credit_week" | "exam_session"; start_date: string; end_date: string };
 export type EventTransferInput = { original_date: string; transfer_type: "moved" | "cancelled"; new_date?: string; new_time_slot_id?: number; new_room_id?: number; reason?: string };
+export type SpecialityInput = { faculty_id: number; name: string; duration_of_study: number };
+export type StudentGroupInput = { speciality_id: number; year_of_admission: string };
+export type RoomReservationInput = { room_id: number; teacher_id: number; reserved_date: string; time_slot_id: number; purpose?: string };
 
 export type DashboardService = {
   key: string;
@@ -167,6 +170,25 @@ export const api = {
   },
   createEventTransfer(eventId: string, eventTransfer: EventTransferInput) {
     return request<{ data: JsonApiResource }>(`/admin/schedule_events/${encodeURIComponent(eventId)}/transfers`, { method: "POST", body: JSON.stringify({ event_transfer: eventTransfer }) });
+  },
+  listFacultySpecialities(facultyId: string) {
+    return request<JsonApiCollection>(`/admin/faculties/${encodeURIComponent(facultyId)}/specialities`);
+  },
+  createSpeciality(speciality: SpecialityInput) {
+    return request<{ data: JsonApiResource }>("/admin/specialities", { method: "POST", body: JSON.stringify({ speciality }) });
+  },
+  createStudentGroup(studentGroup: StudentGroupInput, options: { students_now: number; semester_duration: number }) {
+    return request<{ data: JsonApiResource }>("/admin/student_groups", { method: "POST", body: JSON.stringify({ student_group: studentGroup, auto_provision: true, ...options }) });
+  },
+  listRoomReservations({ roomId, date }: { roomId: string; date: string }) {
+    const query = new URLSearchParams({ room_id: roomId, date_from: date, date_to: date });
+    return request<JsonApiCollection>(`/admin/room_reservations?${query.toString()}`);
+  },
+  createRoomReservation(roomReservation: RoomReservationInput) {
+    return request<{ data: JsonApiResource }>("/admin/room_reservations", { method: "POST", body: JSON.stringify({ room_reservation: roomReservation }) });
+  },
+  deleteRoomReservation(id: string) {
+    return request<void>(`/admin/room_reservations/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });
