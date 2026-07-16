@@ -18,6 +18,8 @@ Group schedules follow faculty → semester → student group. Teacher and room 
 
 Schedule events may omit a teacher or room. Selecting an event opens the shared side inspector. The current gateway does not expose exact-date teacher/room queries, room occupancy projection, dashboard health, or active-user presence; their UI states remain explicit until those routes are available.
 
+Group Schedule can create recurring classes from the selected group-semester workload. The creation inspector exposes readable discipline/activity, day, time slot, week type, and room controls. Existing events can be edited or deleted from their detail inspector.
+
 ## Workload
 
 Faculty workload is loaded through the scoped faculty entrypoint after faculty and semester selection. Operators may keep all groups or narrow the rendered projection to selected groups. Activity types become dynamic hour columns.
@@ -25,6 +27,8 @@ Faculty workload is loaded through the scoped faculty entrypoint after faculty a
 Department workload uses faculty → semester → department context. Rows are grouped by discipline and expose activity cells containing planned hours, room, and teacher; missing assignments remain explicit. The gateway load serializer currently omits the student-group code, so the UI falls back to the speciality name and course when no group name is present.
 
 Selecting an activity cell opens an assignment inspector that creates or updates the existing teaching-assignment and room-reference join resources. A separate inspector creates a curriculum stream and its workload requirement together using searchable discipline and group selection.
+
+Requirements are aggregated into one discipline-and-group row before rendering, so each activity type occupies one comparable column. The column configuration inspector can show or hide any activity type without changing source data.
 
 ## Group calendar
 
@@ -35,6 +39,8 @@ Schedule event details can update day, time slot, room, state, and administrativ
 ## Catalog
 
 Specialities are always loaded after faculty selection. Student groups require faculty and semester context and are displayed as `<speciality>-<course>` because the current schema has no separate group code. Creating a group selects a faculty speciality and admission year, then uses the existing automatic provisioning action to generate its semester records.
+
+The number of generated semesters is derived from the selected speciality duration rather than entered as a technical provisioning value.
 
 Reservations start with room text search and a date. Creation uses a side inspector with searchable teacher selection and readable time slots. Reference collections remain available as compact cards and never expose database identifiers.
 

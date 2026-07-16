@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { normalizeWorkload } from "./normalize";
+import { groupWorkloadRows, normalizeWorkload } from "./normalize";
 
 describe("normalizeWorkload", () => {
   it("turns enriched load entries into readable matrix rows", () => {
@@ -14,5 +14,12 @@ describe("normalizeWorkload", () => {
     expect(row.group).toBe("Physics-1");
     expect(row.teacher).toBe("Not assigned");
     expect(row.room).toBe("Not assigned");
+  });
+
+  it("combines activity requirements into one discipline and group row", () => {
+    const base = { id: "1", departmentCode: "CS", department: "Computer Science", subject: "Networks", group: "CS-3", groupSemesterId: "17", students: 20, activity: "Lecture", plannedHours: 18, actualHours: 0, teacher: "Not assigned", room: "Not assigned", teachingAssignmentId: "", teacherOnDepartmentId: "", roomReferenceId: "", roomId: "" };
+    const [row] = groupWorkloadRows([base, { ...base, id: "2", activity: "Laboratory work", plannedHours: 36 }]);
+    expect(row.activities.Lecture.plannedHours).toBe(18);
+    expect(row.activities["Laboratory work"].plannedHours).toBe(36);
   });
 });
