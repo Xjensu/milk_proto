@@ -1,0 +1,14 @@
+.env*.local
+apps/*
+!apps/frontend/
+apps/frontend/node_modules/
+apps/frontend/dist/
+apps/frontend/*.log
+apps/frontend/tsconfig.tsbuildinfo
+.worktrees/
+!apps/web/
+!apps/bff/
+apps/web/node_modules/
+apps/web/dist/
+apps/bff/node_modules/
+apps/bff/dist/
