@@ -28,6 +28,16 @@ Department workload uses faculty → semester → department context. Rows are g
 
 Calendar context follows faculty → semester → group. Lecture, credit, and exam periods are independent date ranges and map to `lecture_week`, `credit_week`, and `exam_session`. A scheduled occurrence may be moved without changing its recurring event template; the editor writes an event transfer from the side inspector.
 
+## Catalog
+
+Specialities are always loaded after faculty selection. Student groups require faculty and semester context and are displayed as `<speciality>-<course>` because the current schema has no separate group code. Creating a group selects a faculty speciality and admission year, then uses the existing automatic provisioning action to generate its semester records.
+
+Reservations start with room text search and a date. Creation uses a side inspector with searchable teacher selection and readable time slots. Reference collections remain available as compact cards and never expose database identifiers.
+
+## Accounts
+
+Account creation uses a side inspector. Faculty and department administrators receive searchable access-area selectors; the operator never enters scope identifiers. Existing scopes resolve to readable names when the associated catalog data is available.
+
 ## Local visual preview
 
 In Vite development only, append `?admin-preview=1` to render the super-administrator shell without creating a session. Production builds ignore the query parameter. The preview exists for responsive visual verification and must not be used as an authentication path.
