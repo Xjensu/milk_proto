@@ -24,7 +24,7 @@ export function AdminPanel({ account, onLogout }: { account: Account | null; onL
     ...(account?.role === "super_admin" ? [{ id: "accounts" as const, label: "Accounts", icon: <ShieldCheck size={16} /> }] : []),
   ];
 
-  return <WorkspaceProvider><section className="admin-layout section-wrap" data-reveal>
+  return <WorkspaceProvider><section className="admin-product-shell admin-layout" data-reveal>
     <aside className="admin-sidebar">
       <div className="sidebar-title"><span className="eyebrow">University workspace</span><strong>Administration</strong></div>
       <nav aria-label="Administration sections">{nav.map((item) => <button type="button" key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.icon}<span>{item.label}</span>{tab === item.id ? <ChevronRight size={14} /> : null}</button>)}</nav>

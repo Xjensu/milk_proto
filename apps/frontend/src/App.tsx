@@ -9,6 +9,7 @@ import { TeacherSelfService as ApiTeacherSelfService } from "./features/teacher/
 import { AdminPanel as ApiAdminPanel } from "./features/admin/AdminPanel";
 import { PasswordChange } from "./features/auth/PasswordChange";
 import { staffView } from "./lib/navigation";
+import { devAdminPreview } from "./lib/devPreview";
 
 type View = "home" | "login" | "password" | "admin" | "self" | "group" | "teacher" | "room";
 
@@ -19,9 +20,10 @@ const sampleSchedule = [
 ];
 
 function App() {
-  const [view, setView] = useState<View>("home");
+  const previewAdmin = devAdminPreview(import.meta.env.DEV, window.location.search);
+  const [view, setView] = useState<View>(previewAdmin ? "admin" : "home");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [account, setAccount] = useState<Account | null>(() => { const token = sessionStorage.getItem("milk_schedule_access_token"); const email = sessionStorage.getItem("milk_schedule_email"); return token && email ? accountFromAccessToken(token, email) : null; });
+  const [account, setAccount] = useState<Account | null>(() => { if (previewAdmin) return { id: "preview", email: "admin@university.test", role: "super_admin", status: "active" }; const token = sessionStorage.getItem("milk_schedule_access_token"); const email = sessionStorage.getItem("milk_schedule_email"); return token && email ? accountFromAccessToken(token, email) : null; });
   const stageRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,10 +53,10 @@ function App() {
   }
 
   return (
-    <div className="app-shell" ref={stageRef}>
+    <div className={`app-shell ${view === "admin" ? "admin-app-shell" : ""}`} ref={stageRef}>
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
-      <Header account={account} currentLabel={currentLabel} onLogin={() => setView(staffView(account))} onHome={() => setView("home")} onMenu={() => setMobileMenuOpen((value) => !value)} />
+      {view !== "admin" ? <Header account={account} currentLabel={currentLabel} onLogin={() => setView(staffView(account))} onHome={() => setView("home")} onMenu={() => setMobileMenuOpen((value) => !value)} /> : null}
       {mobileMenuOpen && <MobileMenu onClose={() => setMobileMenuOpen(false)} onLogin={() => { setMobileMenuOpen(false); setView("login"); }} />}
       <main>
         {view === "home" && <Home onLogin={() => setView(staffView(account))} onOpenSchedule={(mode) => setView(mode)} />}

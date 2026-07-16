@@ -198,3 +198,46 @@ h1 span, h2 span { color: var(--cyan); }
 .schedule-workspace .schedule-result { min-height: 390px; align-items: stretch; margin-top: 12px; padding: 14px; }.schedule-event-button { width: 100%; border-right: 0; border-bottom: 0; border-left: 0; color: inherit; background: transparent; text-align: left; }.schedule-event-button:hover { background: rgba(101,233,255,.045); }.schedule-event-button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }.inspector-actions { display: grid; gap: 8px; margin-top: 22px; }.occupancy-scroll { width: 100%; overflow-x: auto; }.occupancy-grid { width: 100%; min-width: 720px; border-collapse: collapse; text-align: left; }.occupancy-grid th, .occupancy-grid td { padding: 12px; border-bottom: 1px solid var(--line); }.occupancy-grid thead th { color: var(--muted); font: 500 8px/1.2 'DM Mono', monospace; text-transform: uppercase; }.occupancy-grid tbody th { position: sticky; left: 0; z-index: 1; color: #d9e8fb; background: #0c2145; font-size: 10px; }.occupancy-grid td { min-width: 145px; background: rgba(255,255,255,.02); }.occupancy-grid td strong, .occupancy-grid td small { display: block; }.occupancy-grid td strong { font-size: 9px; }.occupancy-grid td small, .occupancy-grid td span { margin-top: 4px; color: var(--muted); font-size: 8px; }
 @media (max-width: 850px) { .context-step-wide .semester-rail { max-width: calc(100vw - 90px); }.schedule-context-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .schedule-query-body { padding: 13px; }.context-step { grid-template-columns: 1fr; }.context-step > span { display: none; }.context-step > small { grid-column: 1; }.context-step-wide .semester-rail { max-width: calc(100vw - 58px); }.schedule-query-actions .button { width: 100%; } }
+
+/* Full-width administration product shell. Public pages keep the original campaign theme. */
+.admin-app-shell { color: #17213a; background: #f4f7fb; overflow: visible; --ink: #17213a; --muted: #68748b; --line: #dfe6f0; --cyan: #2563eb; --lime: #a8d83f; --panel: #fff; }
+.admin-app-shell > .ambient, .admin-app-shell > .site-footer { display: none; }
+.admin-app-shell main { min-height: 100vh; }
+.admin-product-shell { width: 100%; min-height: 100vh; grid-template-columns: 224px minmax(0,1fr); gap: 0; padding: 0; }
+.admin-product-shell .admin-sidebar { position: sticky; top: 0; min-height: 100vh; height: 100vh; padding: 28px 18px 20px; border: 0; color: #eef5ff; background: linear-gradient(180deg,#123a77 0%,#0b2c61 100%); box-shadow: 8px 0 30px rgba(23,54,102,.12); }
+.admin-product-shell .sidebar-title { padding: 0 10px 27px; }
+.admin-product-shell .sidebar-title .eyebrow { color: #9ec5ff; }
+.admin-product-shell .sidebar-title strong { color: #fff; font-size: 18px; }
+.admin-product-shell .admin-sidebar nav button { min-height: 44px; color: #b9cceb; }
+.admin-product-shell .admin-sidebar nav button:hover { color: #fff; background: rgba(255,255,255,.08); }
+.admin-product-shell .admin-sidebar nav button.active { color: #fff; background: rgba(255,255,255,.14); box-shadow: inset 3px 0 #84b7ff; }
+.admin-product-shell .admin-sidebar nav button.active svg { color: #9ec5ff; }
+.admin-product-shell .sidebar-user strong { color: #fff; }
+.admin-product-shell .sidebar-user small, .admin-product-shell .sidebar-logout { color: #a9bee0; }
+.admin-product-shell .admin-content { padding: 34px clamp(24px,4vw,64px) 72px; background: #f4f7fb; }
+.admin-product-shell .admin-section { width: min(1320px,100%); margin-inline: auto; }
+.admin-product-shell .panel, .admin-product-shell .service-strip, .admin-product-shell .schedule-query { background: #fff; box-shadow: 0 8px 24px rgba(34,62,105,.06); }
+.admin-product-shell .admin-section-heading h1, .admin-product-shell .admin-section-heading h2 { color: #17213a; }
+.admin-product-shell .eyebrow { color: #64748b; }
+.admin-product-shell .service-item { background: #f6f8fc; }
+.admin-product-shell .semester-card { color: #17213a; background: #fff; }
+.admin-product-shell .semester-card.is-selected { color: #143d80; border-color: #2563eb; background: #eef5ff; }
+.admin-product-shell .entity-picker-input, .admin-product-shell .date-field input, .admin-product-shell .admin-context select, .admin-product-shell .admin-form-grid input, .admin-product-shell .admin-form-grid select { color: #17213a; color-scheme: light; background: #fff; }
+.admin-product-shell .entity-picker ul { color: #17213a; background: #fff; box-shadow: 0 18px 45px rgba(34,62,105,.18); }
+.admin-product-shell .admin-tabs button.active { color: #1d4ed8; }
+.admin-product-shell .scope-switch button.active { color: #1d4ed8; border-color: #93b7f4; background: #eef5ff; }
+.admin-product-shell .week-grid th { color: #1d4ed8; background: #eef5ff; }
+.admin-product-shell .week-grid td, .admin-product-shell .occupancy-grid td { background: #fbfcfe; }
+.admin-product-shell .schedule-event-button { color: #17213a; }
+.admin-product-shell .schedule-event-button:hover { background: #eef5ff; }
+.admin-product-shell .occupancy-grid tbody th { color: #17213a; background: #f4f7fb; }
+.admin-product-shell .capability-unavailable { background: #f8fafc; }
+.admin-product-shell .button-primary { color: #fff; background: #2563eb; box-shadow: 0 10px 24px rgba(37,99,235,.18); }
+.admin-product-shell .button-primary:hover { background: #1d4ed8; }
+
+@media (max-width: 850px) {
+  .admin-product-shell { grid-template-columns: 1fr; }
+  .admin-product-shell .admin-sidebar { position: sticky; z-index: 12; min-height: auto; height: auto; padding: 15px 18px 12px; border: 0; }
+  .admin-product-shell .sidebar-title { padding: 0 6px 10px; }
+  .admin-product-shell .admin-content { padding: 24px 18px 56px; }
+}
