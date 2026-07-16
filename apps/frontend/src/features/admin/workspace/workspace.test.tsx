@@ -35,6 +35,7 @@ describe("workspace selection primitives", () => {
     const markup = renderToStaticMarkup(<Inspector title="Mathematics" open onClose={() => undefined}>Details</Inspector>);
     expect(markup).toContain('role="dialog"');
     expect(markup).toContain('aria-modal="true"');
+    expect(markup).toContain("inspector-backdrop");
     expect(markup).toContain("Mathematics");
   });
 });
