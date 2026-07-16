@@ -1,0 +1,105 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { API_BASE_URL, accountFromAccessToken, api } from "./api";
+
+class MemoryStorage implements Storage {
+  private values = new Map<string, string>();
+  get length() { return this.values.size; }
+  clear() { this.values.clear(); }
+  getItem(key: string) { return this.values.get(key) ?? null; }
+  key(index: number) { return [...this.values.keys()][index] ?? null; }
+  removeItem(key: string) { this.values.delete(key); }
+  setItem(key: string, value: string) { this.values.set(key, value); }
+}
+
+describe("API transport", () => {
+  beforeEach(() => {
+    vi.stubGlobal("sessionStorage", new MemoryStorage());
+    vi.restoreAllMocks();
+  });
+
+  it("uses the same-origin API proxy by default", () => {
+    expect(API_BASE_URL).toBe("/api");
+  });
+
+  it("includes semester context in a public room schedule request", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.roomSchedule("14", "2");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/public/rooms/14/schedule?semester_id=2",
+      expect.any(Object),
+    );
+  });
+
+  it("includes semester context in teacher self-service requests", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.meSchedule("2");
+    await api.meLoad("2");
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/admin/me/schedule?semester_id=2",
+      "/api/admin/me/load?semester_id=2",
+    ]);
+  });
+
+  it("uses only live routes for admin operational collections and accounts", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.listAdminCollection("holidays");
+    await api.listAdminCollection("audit_logs", "?page=2&per_page=10");
+    await api.listAccounts();
+
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "/api/admin/holidays",
+      "/api/admin/audit_logs?page=2&per_page=10",
+      "/api/auth/accounts",
+    ]);
+  });
+
+  it("uses the documented account CRUD routes and envelopes", async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ data: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.createAccount({ email: "scheduler@example.test", role: "scheduler" });
+    await api.updateAccount("account 1", { status: "disabled" });
+    await api.deleteAccount("account 1");
+
+    expect(fetchMock.mock.calls.map(([url, init]) => [url, init.method, init.body])).toEqual([
+      ["/api/auth/accounts", "POST", JSON.stringify({ account: { email: "scheduler@example.test", role: "scheduler" } })],
+      ["/api/auth/accounts/account%201", "PATCH", JSON.stringify({ account: { status: "disabled" } })],
+      ["/api/auth/accounts/account%201", "DELETE", undefined],
+    ]);
+  });
+
+  it("preserves the forced-password-change claim and uses its dedicated route", async () => {
+    const payload = btoa(JSON.stringify({ sub: "42", role: "teacher", must_change_password: true })).replace(/=/g, "");
+    expect(accountFromAccessToken(`header.${payload}.signature`, "teacher@example.test").must_change_password).toBe(true);
+
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response(JSON.stringify({ access_token: "new", refresh_token: "refresh" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    await api.changePassword("old-password", "new-password");
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/auth/password");
+    expect(fetchMock.mock.calls[0][1].body).toBe(JSON.stringify({ current_password: "old-password", new_password: "new-password" }));
+  });
+});

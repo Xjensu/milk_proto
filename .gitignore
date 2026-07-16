@@ -7,3 +7,13 @@ other/
 /implementation/mesh-milk/target/
 **/*.rs.bk
 Cargo.lock.orig
+
+.env*.local
+apps/*
+.worktrees/
+!apps/web/
+!apps/bff/
+apps/web/node_modules/
+apps/web/dist/
+apps/bff/node_modules/
+apps/bff/dist/
