@@ -55,6 +55,10 @@ function normalizeEvent(event: Record<string, unknown>, id: string): ScheduleEve
     group: groupName,
     teacher: teacherName,
     changed: Boolean(event.is_manual_change || event.is_transferred || event.status === "modified" || event.status === "transferred"),
+    dayOfWeek: Number(event.day_of_week) || undefined,
+    timeSlotId: stringValue(event.time_slot_id ?? timeSlot.id),
+    roomId: stringValue(event.room_id ?? room.id),
+    status: stringValue(event.status, "scheduled"),
   };
 }
 

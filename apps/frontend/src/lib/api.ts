@@ -211,6 +211,12 @@ export const api = {
   createStudyLoadRequirement(studyLoadRequirement: { stream_id: number; activity_type_id: number; hours_assigned: number; hours_per_event?: number }) {
     return request<{ data: JsonApiResource }>("/admin/study_load_requirements", { method: "POST", body: JSON.stringify({ study_load_requirement: studyLoadRequirement }) });
   },
+  updateScheduleEvent(id: string, scheduleEvent: { day_of_week?: number; time_slot_id?: number; room_id?: number; status?: "scheduled" | "cancelled" | "modified"; is_manual_change?: boolean; change_reason?: string }) {
+    return request<{ data: JsonApiResource }>(`/admin/schedule_events/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ schedule_event: scheduleEvent }) });
+  },
+  deleteScheduleEvent(id: string) {
+    return request<void>(`/admin/schedule_events/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
   searchTeachers(query: string, signal?: AbortSignal) {
     return request<JsonApiCollection>(`/admin/search/teachers?q=${encodeURIComponent(query.trim())}`, { signal });
   },

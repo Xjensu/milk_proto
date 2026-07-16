@@ -24,9 +24,13 @@ Faculty workload is loaded through the scoped faculty entrypoint after faculty a
 
 Department workload uses faculty → semester → department context. Rows are grouped by discipline and expose activity cells containing planned hours, room, and teacher; missing assignments remain explicit. The gateway load serializer currently omits the student-group code, so the UI falls back to the speciality name and course when no group name is present.
 
+Selecting an activity cell opens an assignment inspector that creates or updates the existing teaching-assignment and room-reference join resources. A separate inspector creates a curriculum stream and its workload requirement together using searchable discipline and group selection.
+
 ## Group calendar
 
 Calendar context follows faculty → semester → group. Lecture, credit, and exam periods are independent date ranges and map to `lecture_week`, `credit_week`, and `exam_session`. A scheduled occurrence may be moved without changing its recurring event template; the editor writes an event transfer from the side inspector.
+
+Schedule event details can update day, time slot, room, state, and administrative reason or delete the recurring event. The current gateway create contract still requires a room, even though schedule reads correctly support missing rooms; creating roomless events remains a documented gateway contract gap.
 
 ## Catalog
 

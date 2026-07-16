@@ -11,6 +11,10 @@ export type ScheduleEvent = {
   group: string;
   teacher: string;
   changed: boolean;
+  dayOfWeek?: number;
+  timeSlotId?: string;
+  roomId?: string;
+  status?: string;
 };
 
 export type ScheduleDay = { key: string; label: string; events: ScheduleEvent[] };

@@ -1,18 +1,18 @@
+import { useEffect, useState } from "react";
+
 import { Button } from "../../../components/ui";
+import { api, type JsonApiResource } from "../../../lib/api";
 import type { ScheduleEvent } from "../../schedule/types";
+import { resourceLabel } from "../utils";
 import { Inspector } from "../workspace/Inspector";
 
-export function ScheduleInspector({ event, onClose }: { event: ScheduleEvent | null; onClose: () => void }) {
-  return <Inspector title={event?.subject ?? "Event details"} open={event !== null} onClose={onClose}>
-    {event ? <><dl className="inspector-details">
-      <Detail label="Activity" value={event.activityType} />
-      <Detail label="Group" value={event.group || "Not assigned"} />
-      <Detail label="Teacher" value={event.teacher || "Not assigned"} />
-      <Detail label="Room" value={event.room || "Not assigned"} />
-      <Detail label="Time" value={`${event.startTime}${event.endTime ? `–${event.endTime}` : ""}`} />
-      <Detail label="State" value={event.changed ? "Changed occurrence" : "Scheduled"} />
-    </dl><div className="inspector-actions"><Button className="button-primary">Move occurrence</Button><Button className="button-outline">Edit event</Button></div></> : null}
-  </Inspector>;
+export function ScheduleInspector({ event, onClose, onChanged }: { event: ScheduleEvent | null; onClose: () => void; onChanged?: () => void }) {
+  const [editing, setEditing] = useState(false); const [slots, setSlots] = useState<JsonApiResource[]>([]); const [rooms, setRooms] = useState<JsonApiResource[]>([]); const [day, setDay] = useState(""); const [slot, setSlot] = useState(""); const [room, setRoom] = useState(""); const [status, setStatus] = useState<"scheduled" | "cancelled" | "modified">("scheduled"); const [reason, setReason] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  useEffect(() => { if (!event) return; setEditing(false); setDay(String(event.dayOfWeek ?? "")); setSlot(event.timeSlotId ?? ""); setRoom(event.roomId ?? ""); setStatus(event.status === "cancelled" ? "cancelled" : event.status === "modified" ? "modified" : "scheduled"); setReason(""); }, [event]);
+  useEffect(() => { if (!editing) return; Promise.all([api.listAdminCollection("time_slots"), api.listAdminCollection("rooms", "?page=1&per_page=100")]).then(([slotResponse, roomResponse]) => { setSlots(slotResponse.data); setRooms(roomResponse.data); }); }, [editing]);
+  async function save(submitEvent: React.FormEvent) { submitEvent.preventDefault(); if (!event || !day || !slot || !room) return; setSaving(true); setError(""); try { await api.updateScheduleEvent(event.id, { day_of_week: Number(day), time_slot_id: Number(slot), room_id: Number(room), status, is_manual_change: true, change_reason: reason || undefined }); onChanged?.(); } catch { setError("The schedule event could not be updated."); } finally { setSaving(false); } }
+  async function remove() { if (!event || !window.confirm(`Delete ${event.subject} from the recurring schedule?`)) return; setSaving(true); setError(""); try { await api.deleteScheduleEvent(event.id); onChanged?.(); } catch { setError("The schedule event could not be deleted."); } finally { setSaving(false); } }
+  return <Inspector title={event?.subject ?? "Event details"} open={event !== null} onClose={onClose}>{event ? editing ? <form className="inspector-form" onSubmit={save}><label><span>Day</span><select name="day" required value={day} onChange={(e) => setDay(e.target.value)}><option value="">Choose a day</option>{["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map((label,index) => <option value={index + 1} key={label}>{label}</option>)}</select></label><label><span>Time slot</span><select name="time-slot" required value={slot} onChange={(e) => setSlot(e.target.value)}><option value="">Choose a time slot</option>{slots.map((item) => <option value={item.id} key={item.id}>{timeSlotLabel(item)}</option>)}</select></label><label><span>Room</span><select name="room" required value={room} onChange={(e) => setRoom(e.target.value)}><option value="">Choose a room</option>{rooms.map((item) => <option value={item.id} key={item.id}>{resourceLabel(item,"Room")}</option>)}</select></label><label><span>Status</span><select name="status" value={status} onChange={(e) => setStatus(e.target.value as typeof status)}><option value="scheduled">Scheduled</option><option value="modified">Modified</option><option value="cancelled">Cancelled</option></select></label><label><span>Change reason</span><textarea name="reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Optional administrative note" /></label>{error ? <div className="form-error" role="alert">{error}</div> : null}<Button className="button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save event"}</Button><Button type="button" className="button-outline" onClick={() => setEditing(false)}>Cancel editing</Button></form> : <><dl className="inspector-details"><Detail label="Activity" value={event.activityType} /><Detail label="Group" value={event.group || "Not assigned"} /><Detail label="Teacher" value={event.teacher || "Not assigned"} /><Detail label="Room" value={event.room || "Not assigned"} /><Detail label="Time" value={`${event.startTime}${event.endTime ? `–${event.endTime}` : ""}`} /><Detail label="State" value={event.changed ? "Changed occurrence" : "Scheduled"} /></dl>{error ? <div className="form-error" role="alert">{error}</div> : null}<div className="inspector-actions"><Button className="button-primary" onClick={() => setEditing(true)}>Edit event</Button><Button className="button-outline danger-button" disabled={saving} onClick={remove}>Delete event</Button></div></> : null}</Inspector>;
 }
-
 function Detail({ label, value }: { label: string; value: string }) { return <div><dt>{label}</dt><dd>{value}</dd></div>; }
+function timeSlotLabel(item: JsonApiResource) { const a = item.attributes ?? {}; return `${String(a.call_number ?? "Class")} · ${String(a.start_time ?? "")}-${String(a.end_time ?? "")}`; }
