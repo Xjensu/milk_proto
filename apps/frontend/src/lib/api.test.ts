@@ -144,19 +144,17 @@ describe("API transport", () => {
     ]);
   });
 
-  it("posts a bounded room set for occupancy", async () => {
+  it("fans occupancy out over per-room date schedule views", async () => {
     const fetchMock = jsonFetch();
     vi.stubGlobal("fetch", fetchMock);
 
-    await api.roomOccupancy("2027-01-11", ["9", "11"]);
+    const result = await api.roomOccupancy("2027-01-11", ["9", "11"]);
 
-    expect(fetchMock.mock.calls[0]).toEqual([
-      "/api/admin/schedules/rooms/occupancy-query",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({ date: "2027-01-11", room_ids: ["9", "11"] }),
-      }),
+    expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+      "/api/admin/rooms/9/schedule?date=2027-01-11",
+      "/api/admin/rooms/11/schedule?date=2027-01-11",
     ]);
+    expect(result).toEqual({ data: [] });
   });
 
   it("uses scoped faculty and department workload entrypoints", async () => {

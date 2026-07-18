@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { groupWorkloadRows, normalizeWorkload } from "./normalize";
+import { groupWorkloadRows, normalizeWorkload, streamedActivitiesForRow } from "./normalize";
 
 describe("normalizeWorkload", () => {
   it("turns enriched load entries into readable matrix rows", () => {
@@ -17,9 +17,36 @@ describe("normalizeWorkload", () => {
   });
 
   it("combines activity requirements into one discipline and group row", () => {
-    const base = { id: "1", departmentCode: "CS", department: "Computer Science", subject: "Networks", group: "CS-3", groupSemesterId: "17", students: 20, activity: "Lecture", plannedHours: 18, actualHours: 0, teacher: "Not assigned", room: "Not assigned", teachingAssignmentId: "", teacherOnDepartmentId: "", roomReferenceId: "", roomId: "" };
+    const base = { id: "1", departmentCode: "CS", department: "Computer Science", subject: "Networks", group: "CS-3", groupSemesterId: "17", students: 20, activity: "Lecture", plannedHours: 18, actualHours: 0, teacher: "Not assigned", room: "Not assigned", teachingAssignmentId: "", teacherOnDepartmentId: "", roomReferenceId: "", roomId: "", streamGroups: [] };
     const [row] = groupWorkloadRows([base, { ...base, id: "2", activity: "Laboratory work", plannedHours: 36 }]);
     expect(row.activities.Lecture.plannedHours).toBe(18);
     expect(row.activities["Laboratory work"].plannedHours).toBe(36);
+  });
+
+  it("resolves stream_siblings into readable group labels using other entries in the same response", () => {
+    const rows = normalizeWorkload({
+      data: [
+        { id: 41, activity_type: { name: "Lecture" }, stream: { subject: { name: "Networks" }, kafedra: { short_name: "CS" }, student_group_semester: { id: 17, course_number: 3, student_group: { name: "CS-21" } } }, teachers: [], reservations: [], stream_siblings: [18, 99] },
+        { id: 42, activity_type: { name: "Lecture" }, stream: { subject: { name: "Networks" }, kafedra: { short_name: "CS" }, student_group_semester: { id: 18, course_number: 3, student_group: { name: "CS-22" } } }, teachers: [], reservations: [], stream_siblings: [17] },
+      ],
+    });
+
+    expect(rows[0].streamGroups).toEqual([{ id: "18", label: "CS-22-3" }, { id: "99", label: "Group semester #99" }]);
+    expect(rows[1].streamGroups).toEqual([{ id: "17", label: "CS-21-3" }]);
+  });
+
+  it("leaves streamGroups empty when a requirement has no stream_siblings", () => {
+    const [row] = normalizeWorkload({ data: [{ id: 1, activity_type: { name: "Exam" }, stream: { subject: { name: "Physics" }, student_group_semester: { course_number: 1, student_group: { speciality: { name: "Physics" } } } }, teachers: [], reservations: [] }] });
+    expect(row.streamGroups).toEqual([]);
+  });
+
+  it("streamedActivitiesForRow surfaces only the activities within a matrix row that are streamed", () => {
+    const base = { id: "1", departmentCode: "CS", department: "Computer Science", subject: "Networks", group: "CS-21-3", groupSemesterId: "17", students: 20, teacher: "Not assigned", room: "Not assigned", teachingAssignmentId: "", teacherOnDepartmentId: "", roomReferenceId: "", roomId: "", actualHours: 0, plannedHours: 18 };
+    const [row] = groupWorkloadRows([
+      { ...base, id: "1", activity: "Lecture", streamGroups: [{ id: "18", label: "CS-22-3" }] },
+      { ...base, id: "2", activity: "Laboratory work", plannedHours: 36, streamGroups: [] },
+    ]);
+
+    expect(streamedActivitiesForRow(row)).toEqual([{ activity: "Lecture", groups: [{ id: "18", label: "CS-22-3" }] }]);
   });
 });

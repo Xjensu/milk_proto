@@ -1,3 +1,5 @@
+export type StreamGroupRef = { id: string; label: string };
+
 export type WorkloadRow = {
   id: string;
   departmentCode: string;
@@ -15,6 +17,7 @@ export type WorkloadRow = {
   teacherOnDepartmentId: string;
   roomReferenceId: string;
   roomId: string;
+  streamGroups: StreamGroupRef[];
 };
 
 export type WorkloadMatrixRow = Pick<WorkloadRow, "departmentCode" | "department" | "subject" | "group" | "groupSemesterId" | "students"> & { key: string; activities: Record<string, WorkloadRow> };
@@ -24,8 +27,10 @@ type AnyRecord = Record<string, unknown>;
 export function normalizeWorkload(payload: unknown): WorkloadRow[] {
   const root = record(payload);
   const data = Array.isArray(root.data) ? root.data : [];
-  return data.map((value, index) => {
-    const entry = record(value);
+  const entries = data.map(record);
+  const groupLabelById = buildGroupLabelIndex(entries);
+
+  return entries.map((entry, index) => {
     const stream = record(entry.stream);
     const subject = record(stream.subject);
     const department = record(stream.kafedra);
@@ -39,6 +44,7 @@ export function normalizeWorkload(payload: unknown): WorkloadRow[] {
     const room = record(reservation.room);
     const course = number(groupSemester.course_number, number(stream.course, 1));
     const groupName = text(group.name, text(group.code, text(speciality.name, "Student group")));
+    const streamSiblingIds = Array.isArray(entry.stream_siblings) ? entry.stream_siblings.map(idText).filter(Boolean) : [];
 
     return {
       id: text(entry.id, String(index)),
@@ -57,8 +63,33 @@ export function normalizeWorkload(payload: unknown): WorkloadRow[] {
       teacherOnDepartmentId: text(teacherAssignment.teacher_on_kafedra_id, ""),
       roomReferenceId: text(reservation.id, ""),
       roomId: text(room.id, ""),
+      streamGroups: streamSiblingIds.map((id) => ({ id, label: groupLabelById.get(id) ?? `Group semester #${id}` })),
     };
   });
+}
+
+/** Maps every group_semester_id present in this response to its readable "<Group>-<course>" label. */
+function buildGroupLabelIndex(entries: AnyRecord[]): Map<string, string> {
+  const index = new Map<string, string>();
+  for (const entry of entries) {
+    const stream = record(entry.stream);
+    const groupSemester = record(stream.student_group_semester);
+    const group = record(groupSemester.student_group);
+    const speciality = record(group.speciality);
+    const id = text(groupSemester.id, "");
+    if (!id) continue;
+    const course = number(groupSemester.course_number, number(stream.course, 1));
+    const groupName = text(group.name, text(group.code, text(speciality.name, "Student group")));
+    index.set(id, `${groupName}-${course}`);
+  }
+  return index;
+}
+
+/** For a grouped matrix row, returns the activities taught as a shared stream, with their sibling groups. */
+export function streamedActivitiesForRow(row: WorkloadMatrixRow): { activity: string; groups: StreamGroupRef[] }[] {
+  return Object.entries(row.activities)
+    .filter(([, activityRow]) => activityRow.streamGroups.length > 0)
+    .map(([activity, activityRow]) => ({ activity, groups: activityRow.streamGroups }));
 }
 
 export function groupWorkloadRows(rows: WorkloadRow[]): WorkloadMatrixRow[] {
@@ -80,3 +111,4 @@ function teacherName(value: AnyRecord) {
 function record(value: unknown): AnyRecord { return value && typeof value === "object" && !Array.isArray(value) ? value as AnyRecord : {}; }
 function text(value: unknown, fallback: string) { return typeof value === "string" && value.trim() ? value : typeof value === "number" ? String(value) : fallback; }
 function number(value: unknown, fallback: number) { const parsed = Number(value); return Number.isFinite(parsed) ? parsed : fallback; }
+function idText(value: unknown) { return typeof value === "number" ? String(value) : typeof value === "string" ? value.trim() : ""; }

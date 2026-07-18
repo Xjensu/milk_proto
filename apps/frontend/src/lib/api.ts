@@ -238,11 +238,54 @@ export const api = {
   dashboardActiveUsers() {
     return request<{ data: ActiveUser[] }>("/admin/dashboard/active_users");
   },
-  roomOccupancy(date: string, roomIds: string[]) {
-    return request<Record<string, unknown>>("/admin/schedules/rooms/occupancy-query", {
+  async roomOccupancy(date: string, roomIds: string[]) {
+    // The gateway has no bulk occupancy endpoint; fan out over the per-room
+    // date view and flatten to the rows OccupancyGrid consumes.
+    const perRoom = await Promise.all(roomIds.map(async (roomId) => {
+      const response = await request<JsonApiCollection>(`/admin/rooms/${encodeURIComponent(roomId)}/schedule?date=${encodeURIComponent(date)}`);
+      return response.data.map((item) => ({
+        ...(item.attributes ?? {}),
+        id: item.id,
+        room_id: roomId,
+        start_time: item.attributes?.time_slot_start_time,
+      }));
+    }));
+    return { data: perRoom.flat() } as Record<string, unknown>;
+  },
+  scheduleRecommendations(groupSemesterId: string, dayOfWeek: number, timeSlotId: number) {
+    return request<{ data: unknown[] }>("/admin/schedule_recommendations", {
       method: "POST",
-      body: JSON.stringify({ date, room_ids: roomIds }),
+      body: JSON.stringify({ schedule_recommendation: { student_group_semester_id: Number(groupSemesterId), day_of_week: dayOfWeek, time_slot_id: timeSlotId } }),
     });
+  },
+  // Creates the event AND mirrors it to every stream-sibling requirement in one
+  // transaction; the gateway answers 409 when a slot is taken for any group.
+  createEventFromRecommendation(recommendation: Record<string, unknown>) {
+    return request<Record<string, unknown>>("/admin/schedule_events/from_recommendation", {
+      method: "POST",
+      body: JSON.stringify({ recommendation }),
+    });
+  },
+  createResource(resource: AdminCollection, key: string, attributes: Record<string, unknown>) {
+    return request<{ data: JsonApiResource }>(`/admin/${resource}`, { method: "POST", body: JSON.stringify({ [key]: attributes }) });
+  },
+  updateResource(resource: AdminCollection, key: string, id: string, attributes: Record<string, unknown>) {
+    return request<{ data: JsonApiResource }>(`/admin/${resource}/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ [key]: attributes }) });
+  },
+  deleteResource(resource: AdminCollection, id: string) {
+    return request<void>(`/admin/${resource}/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  updateSpeciality(id: string, speciality: Partial<SpecialityInput>) {
+    return request<{ data: JsonApiResource }>(`/admin/specialities/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ speciality }) });
+  },
+  deleteSpeciality(id: string) {
+    return request<void>(`/admin/specialities/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  updateStudentGroup(id: string, studentGroup: Partial<StudentGroupInput>) {
+    return request<{ data: JsonApiResource }>(`/admin/student_groups/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ student_group: studentGroup }) });
+  },
+  deleteStudentGroup(id: string) {
+    return request<void>(`/admin/student_groups/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
   listAccounts() {
     return request<JsonApiCollection>("/auth/accounts");

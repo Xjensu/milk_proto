@@ -1,4 +1,5 @@
 import { Fragment, type PropsWithChildren, type RefObject, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { gsap } from "gsap";
 
@@ -25,7 +26,7 @@ export function Inspector({ title, open, onClose, triggerRef, children }: PropsW
   }, [open, triggerRef]);
 
   if (!open) return null;
-  return (
+  const content = (
     <Fragment>
       <div className="inspector-backdrop" role="presentation" onMouseDown={onClose} />
       <aside
@@ -72,4 +73,8 @@ export function Inspector({ title, open, onClose, triggerRef, children }: PropsW
       </aside>
     </Fragment>
   );
+  // Portal to <body>: ancestors animated by gsap keep a transform, which would
+  // otherwise turn position:fixed into container-relative positioning. Fall back
+  // to inline rendering where no DOM exists (static markup in tests).
+  return typeof document === "undefined" ? content : createPortal(content, document.body);
 }

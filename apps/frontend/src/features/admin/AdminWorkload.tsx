@@ -9,7 +9,7 @@ import { EntityPicker, type EntityOption } from "./workspace/EntityPicker";
 import { Inspector } from "./workspace/Inspector";
 import { SemesterRail } from "./workspace/SemesterRail";
 import { useWorkspace } from "./workspace/WorkspaceContext";
-import { groupWorkloadRows, normalizeWorkload, type WorkloadRow } from "./workload/normalize";
+import { groupWorkloadRows, normalizeWorkload, streamedActivitiesForRow, type WorkloadRow } from "./workload/normalize";
 
 type WorkloadMode = "faculty" | "department";
 
@@ -97,8 +97,42 @@ export function AdminWorkload() {
   </div>;
 }
 
-function FacultyMatrix({ rows, activities }: { rows: WorkloadRow[]; activities: string[] }) { const matrix = groupWorkloadRows(rows); return <div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Department</th><th>Discipline</th><th>Group</th>{activities.map((activity) => <th key={activity}>{activity}</th>)}</tr></thead><tbody>{matrix.map((row) => <tr key={row.key}><td><strong>{row.departmentCode}</strong></td><td>{row.subject}</td><td>{row.group}</td>{activities.map((activity) => <td key={activity}>{row.activities[activity] ? `${row.activities[activity].plannedHours} h` : "—"}</td>)}</tr>)}</tbody></table></div>; }
-function DepartmentMatrix({ rows, activities, onAssign }: { rows: WorkloadRow[]; activities: string[]; onAssign: (row: WorkloadRow) => void }) { const matrix = groupWorkloadRows(rows); const subjects = [...new Set(matrix.map((row) => row.subject))]; return <div className="department-matrix">{subjects.map((subject) => { const subjectRows = matrix.filter((row) => row.subject === subject); return <section key={subject}><header><h3>{subject}</h3><span>{subjectRows.length} groups</span></header><div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Group</th><th>Students</th>{activities.map((activity) => <th key={activity}>{activity}<small>Hours · Room · Teacher</small></th>)}</tr></thead><tbody>{subjectRows.map((row) => <tr key={row.key}><td><strong>{row.group}</strong></td><td>{row.students || "—"}</td>{activities.map((activity) => { const assignment = row.activities[activity]; return <td key={activity} className={assignment ? "assignment-cell" : "empty-assignment"}>{assignment ? <button type="button" className="assignment-cell-button" onClick={() => onAssign(assignment)}><strong>{assignment.plannedHours} h</strong><span>{assignment.room}</span><small>{assignment.teacher}</small></button> : <span>—</span>}</td>; })}</tr>)}</tbody></table></div></section>; })}</div>; }
+function FacultyMatrix({ rows, activities }: { rows: WorkloadRow[]; activities: string[] }) {
+  const matrix = groupWorkloadRows(rows);
+  const { openKeys, toggle } = useStreamDisclosure();
+  return <div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Department</th><th>Discipline</th><th>Group</th>{activities.map((activity) => <th key={activity}>{activity}</th>)}</tr></thead><tbody>{matrix.flatMap((row) => {
+    const streamed = streamedActivitiesForRow(row);
+    const isOpen = openKeys.has(row.key);
+    const tr = <tr key={row.key}><td><strong>{row.departmentCode}</strong></td><td>{row.subject}</td><td className="workload-group-cell">{row.group}<StreamIndicator streamed={streamed} open={isOpen} onToggle={() => toggle(row.key)} /></td>{activities.map((activity) => <td key={activity}>{row.activities[activity] ? `${row.activities[activity].plannedHours} h` : "—"}</td>)}</tr>;
+    return isOpen && streamed.length ? [tr, <tr className="stream-disclosure-row" key={`${row.key}-stream`}><td colSpan={3 + activities.length}><StreamDisclosure items={streamed} /></td></tr>] : [tr];
+  })}</tbody></table></div>;
+}
+function DepartmentMatrix({ rows, activities, onAssign }: { rows: WorkloadRow[]; activities: string[]; onAssign: (row: WorkloadRow) => void }) {
+  const matrix = groupWorkloadRows(rows);
+  const subjects = [...new Set(matrix.map((row) => row.subject))];
+  const { openKeys, toggle } = useStreamDisclosure();
+  return <div className="department-matrix">{subjects.map((subject) => { const subjectRows = matrix.filter((row) => row.subject === subject); return <section key={subject}><header><h3>{subject}</h3><span>{subjectRows.length} groups</span></header><div className="workload-table-scroll"><table className="workload-table"><thead><tr><th>Group</th><th>Students</th>{activities.map((activity) => <th key={activity}>{activity}<small>Hours · Room · Teacher</small></th>)}</tr></thead><tbody>{subjectRows.flatMap((row) => {
+    const streamed = streamedActivitiesForRow(row);
+    const isOpen = openKeys.has(row.key);
+    const tr = <tr key={row.key}><td className="workload-group-cell"><strong>{row.group}</strong><StreamIndicator streamed={streamed} open={isOpen} onToggle={() => toggle(row.key)} /></td><td>{row.students || "—"}</td>{activities.map((activity) => { const assignment = row.activities[activity]; return <td key={activity} className={assignment ? "assignment-cell" : "empty-assignment"}>{assignment ? <button type="button" className="assignment-cell-button" onClick={() => onAssign(assignment)}><strong>{assignment.plannedHours} h</strong><span>{assignment.room}</span><small>{assignment.teacher}</small></button> : <span>—</span>}</td>; })}</tr>;
+    return isOpen && streamed.length ? [tr, <tr className="stream-disclosure-row" key={`${row.key}-stream`}><td colSpan={2 + activities.length}><StreamDisclosure items={streamed} /></td></tr>] : [tr];
+  })}</tbody></table></div></section>; })}</div>;
+}
+
+function useStreamDisclosure() {
+  const [openKeys, setOpenKeys] = useState<Set<string>>(new Set());
+  const toggle = (key: string) => setOpenKeys((current) => { const next = new Set(current); if (next.has(key)) next.delete(key); else next.add(key); return next; });
+  return { openKeys, toggle };
+}
+
+function StreamIndicator({ streamed, open, onToggle }: { streamed: ReturnType<typeof streamedActivitiesForRow>; open: boolean; onToggle: () => void }) {
+  if (!streamed.length) return null;
+  return <button type="button" className="stream-indicator" aria-expanded={open} aria-label="Show stream groups" onClick={onToggle}>+</button>;
+}
+
+function StreamDisclosure({ items }: { items: ReturnType<typeof streamedActivitiesForRow> }) {
+  return <div className="stream-disclosure">{items.map((item) => <div className="stream-disclosure-group" key={item.activity}><span className="stream-disclosure-activity">{item.activity}</span><ul>{item.groups.map((group) => <li key={group.id}>{group.label}</li>)}</ul></div>)}</div>;
+}
 
 function AssignmentInspector({ row, teachers, rooms, onClose, onSaved }: { row: WorkloadRow | null; teachers: EntityOption[]; rooms: EntityOption[]; onClose: () => void; onSaved: () => void }) {
   const [teacher, setTeacher] = useState<EntityOption | null>(null); const [teacherQuery, setTeacherQuery] = useState(""); const [room, setRoom] = useState<EntityOption | null>(null); const [roomQuery, setRoomQuery] = useState(""); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
