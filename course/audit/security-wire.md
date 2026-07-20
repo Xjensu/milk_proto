@@ -10,6 +10,7 @@
 
 ### Normative invariants
 
+- Активы/цели `07 §2`: content — confidentiality/integrity/authenticity через E2E AEAD+signatures; identity keys — unforgeability (Ed25519, ключи не покидают устройство); presence — скрыта от strangers ephem_id; social graph — скрыт от strangers и раскрывается другу лишь по согласию; delivery — availability под атакой; battery/storage — bounded abuse через квоты, verify-on-sight и burst limits.
 - Идентичность — ключ: `NodeID = BLAKE3(origin)[0..16]`; bundle подписан и проверяется до хранения (`03 §4.1.2`).
 - Приложение MUST предложить QR/числовую проверку ключа и явно различать TOFU и verified; FRIEND_OFFER MUST раскрывать данные до согласия; блокирование MUST быть бесшумным (`07 §6.1–6.5`).
 - SeenIndex ведётся с первого наблюдения class-max время, lifetime ограничивается; purge допустим только по точной аутентифицированной D0-квитанции, не по Bloom-hit (`03 §4.2–4.3`, `06 §6.3`).
@@ -24,12 +25,15 @@
 - TOFU+Noise XX сочетается с внеканальной церемонией вместо недостижимой серверной аутентификации; spray, локальная utility и WoT-разнообразие не создают единственного маршрута (`07 §3 #2, #5–7`).
 - Квоты, per-origin token bucket, лимит 4 KiB и pull-only blob symbols ограничивают storage/battery; PoW отклонён как враждебный IoT/батарее (`07 §3 #4, #8–9; §8`).
 - Ротация ephem_id/slot salt, скрытие payload в AEAD и optional padding уменьшают локальную корреляцию; mixing/cover traffic и ephemeral destination ID оставлены для v2 privacy profiles/OQ-9 (`07 §3 #14–15; §5`).
+- Компактная матрица «атака → защита → остаток»: replay/zombie → SeenIndex с first sight, lifetime clamp и app dedup → не более одного quota-capped store/offer цикла; Sybil → per-origin bucket/WoT+quota → `N_keys×base-rate`, fairness loss; eclipse/sinkhole/blackhole → spray diversity, local utility, receipts → полная eclipse остаётся partition, у relay теряются лишь врученные copies (`07 §3 #3–7, #17`).
+- DoS storage/battery/cache → MAX_BUNDLE, eviction, burst/admission caps и verify-before-store → churn/degraded discovery, без key-unknown quarantine; blob pollution → signed BLAKE3 Merkle verification до store → источник заявляет отсутствующий residual; receipt forgery/suppression → conversation-key MAC+exact D0 purge → Bloom FP лишь deprioritizes offer; group infiltration → admin-signed membership+epoch re-key → прошлый traffic доступен бывшему участнику; beacon tracking → ephem_id+slot salt → RF fingerprint/continuous following out of scope; jamming → нет protocol defence, mobility может обойти область; WoT inference → paranoid uniform quotas → coarse co-present preference bit (`07 §3 #8–18`).
 
 ### Provisional or uncertain claims
 
 - T_alarm=24 h ⚠ и Bloom false-positive около 1% на пару — параметры, не абсолютные гарантии (`07 §6.3; §7 #6`).
 - TOFU при первом активном контакте MITM-able; adversary может подавить свежие prekey claims и опустить first-message FS до sealed-box baseline (`07 §3 #2; §7 #1–2`).
 - Сохраняются локальная видимость контакта/грубого объёма, полная eclipse-партиция, Sybil fairness loss и WoT quota side-channel. Корневой операторский ключ — единственный открыто неограниченный риск внутри scope до re-pin (`07 §7 #3–10`).
+- Именно stolen operator ROOT key остаётся **unbounded within its scope until re-pin**; остальные перечисленные matrix/register residuals описаны как bounded (включая conductor key: budget×remaining validity), кроме явно документированных физики/вне-scope ограничений (`07 §3 #16, #19, #22; §7`).
 - Утверждение «нет privacy regression» от inline public key относится к уже псевдонимной, а не анонимной модели; relay всё равно видит origin pubkey, destination, размер, lifetime и class (`07 §5 note`).
 
 ### Dependencies and cross-references
@@ -111,12 +115,13 @@ Beacon — малый, вероятностный discovery; связь bulk —
 ### Design choices and alternatives
 
 - GATT TX=central→server Write Without Response, RX=server→central Notify; имена намеренно от central perspective. Характеристики имеют implementation-pinned 128-bit UUID, но это development placeholders до SIG 16-bit assignment/OQ-12, выпуск блокирован (`09 §2; §5.1`).
+- Точные bulk UUID, которые второе implementation MUST match для interop: Service `6d6d7031-0000-4d4d-5031-6d6573686d6c`; TX (central/client writes) `6d6d7031-0001-4d4d-5031-6d6573686d6c`; RX (central receives Notify) `6d6d7031-0002-4d4d-5031-6d6573686d6c`. Это не 16-bit Service Data UUID advertising: последний требуется из SIG range для targeted iOS background scan, пока development `mmp1` 128-bit namespace ⚠ и production assignment — OQ-12 release blocker (`09 §2; §5.1`).
 - Credits N=8 ⚠ на HELLO/CREDIT предотвращают flood медленного stack; CoC MAY мигрировать для TRANSFER/BLOB при обеих поддержках, иначе transparent fallback к GATT (`09 §5.2–5.4`).
 - iOS background — connectable peripheral/overflow, не полноценный advertiser; relays SHOULD scan overflow areas, но это reverse-engineered OQ-3, не требование conformance (`09 §6; §8`).
 
 ### Provisional or uncertain claims
 
-- Advertising 2–10 s, scan 30 ms/1.28 s ≈2.3%, burst 30 s, ±10% jitter, 15 min slot, RSSI gate, credits 8, MTU/PHY/DLE, interval 15–30/50 ms, 4 s supervision, 60 s airtime, ≤0.5% adv и ≤2.5% scan — всё отмечено ⚠ и зависит от doc 13/реальных ОС (`09 §3, §5, §7`).
+- 247+ MTU, 2M PHY и DLE — требуемые при dial **requests**, а не ⚠-параметры и не performance guarantee: handshake продолжается независимо от negotiated values, включая MTU=23 floor (`09 §4`). `09` реально помечает ⚠ development `mmp1` namespace, empty scan response v1, advertising 2–10 s, baseline scan 30 ms/1.28 s (≈2.3% duty), 15-min slot/±1 acceptance, RSSI >−85 dBm, `≥3` centrals и busy bit, credit N=8, connection interval 15–30 ms/50 ms и 4-s supervision, airtime cap 60 s, duty ≤0.5%/≤2.5% и idle-renegotiation >2 s; их подтверждение ждёт doc 13 (`09 §2–8`).
 - Burst scan допустим лишь foreground/Android foreground service; iOS background и Android без FG деградируют до opportunistic-on-open (`09 §3.2`).
 - Throughput CoC «modest» против tuned GATT и iOS overflow behaviour — зависимости [B18], [B1], [B11], а не гарантии (`09 §5.4; §8`).
 
@@ -142,7 +147,7 @@ Beacon payload — `03 §5.1`, `10 §5`; session frames — `10 §2`; Noise — 
 
 ### Normative invariants
 
-- `Frame { len:u16 ≤4096, typ:u8, payload }`; typ: HS1/2/3=0x01, ID_PROOF=0x02, CREDIT=0x03, SUMMARY=0x10, RECON_INIT/RANGE/IDS=0x11–0x13, WANT=0x14, BUNDLE=0x20, BUDGET=0x21, BLOB_REQ/HAVE=0x30/0x31, FRIEND_OFFER/ACK/PROXY_SUMMARY=0x40–0x42, ERROR=0x7E, CLOSE=0x7F. HS1–3/ID_PROOF — единственные pre-channel parsers, всё остальное AEAD; unknown type → ERROR(unsupported)+CLOSE (`10 §2`).
+- `Frame { len:u16 (длина именно payload, ≤4096), typ:u8, payload }`; typ: HS1/2/3=0x01, ID_PROOF=0x02, CREDIT=0x03, SUMMARY=0x10, RECON_INIT/RANGE/IDS=0x11–0x13, WANT=0x14, BUNDLE=0x20, BUDGET=0x21, BLOB_REQ/HAVE=0x30/0x31, FRIEND_OFFER/ACK/PROXY_SUMMARY=0x40–0x42, ERROR=0x7E, CLOSE=0x7F. HS1–3/ID_PROOF — единственные pre-channel parsers, всё остальное AEAD; unknown type → ERROR(unsupported)+CLOSE (`10 §2`).
 - Bundle: `ver_class, flags, origin:key32, dest:id16, lifetime:u40, priority, ext_len, TLV, payload_len, payload, sig64`; fixed overhead `124+ext`. `BundleID` и signature используют canonical bytes с zeroed `lifetime_ms`; origin MUST быть проверен как источник NodeID (`10 §3`).
 - HELLO внутри Noise payload: `ver, suites, tier, flags(coc_avail/proxy_carrier…), credits, psm`; ID_PROOF=`identity_pubkey(key32) || sig64`; SUMMARY, RBSR, BUDGET и BLOB_REQ/HAVE имеют только layout `10 §2.3–2.6`. `BUDGET` без непосредственно предшествующего held BUNDLE — ERROR, grant MUST clamp к 32 (`10 §2`).
 - Payload layouts: class-1 `(conv,epoch,index,body)` либо async sealed/prekey form; class-2 `(gid,epoch, member/index,chain_index,body,member_sig)`; class-0 `(delivered,mac16)`; class-3 `(owner,field,seq,body,sig)`; class-4 raw RS symbol с SYMBOL_INFO TLV (`10 §4`).
@@ -192,11 +197,12 @@ Bundle semantics — `03 §4`; RBSR — `06 §3`; crypto — `08`; GATT framing 
 - Tier transitions: T2→T1 при <20%/FG lost/iOS bg; T1→T2 >25%+FG+opt-in; T2→T3-like charging+opt-in; T3→T2 unplugged; `any→T0` explicitly invalid, потому что T0 build profile. Изменение только при следующей beacon rotation (`11 §2`).
 - Session: DIALING→HANDSHAKE→BINDING→ESTABLISHED→SUMMARY/RECONCILE/TRANSFER/BLOB/CLOSING→CLOSED; timeout/refuse → BACKOFF, bad MAC/timeout/bad proof → ABORT; invalid phase frame → ERROR+CLOSING; CLOSE означает stop sending. Inbound deny — silent disconnect before HS response (`11 §3`).
 - Bundle хранится только после strict signature+NodeID; inbound budget clamp L_MAX; lifetime decrement/clamp; SeenIndex first-sight; exact D0-only purge. QUARANTINE explicitly отсутствует (`11 §4 I1–I5`).
+- I4 отдельно: собственный originated bundle **никогда не EVICTED до EXPIRED** (`11 §4 I4`; eviction order — `04 §2`).
 - Friendship: NONE→PENDING по OFFER sent/received; PENDING→ACTIVE по ACK+counter-signature, PENDING→NONE по timeout 60 s ⚠; ACTIVE→ACTIVE по renewal, ACTIVE→NONE по expiry 24 h ⚠/revoke (buffered bundles возвращаются normal spray pool). Blob: WANTED→FETCHING только по verified root; invalid root→REJECTED; FETCHING→BLOCK_DONE при k symbols/block→ASSEMBLED при всех blocks; symbol Merkle failure лишь drop+blacklist count++; interest expiry/cancel→ABANDONED (`11 §5–6`).
 
 ### Physical or distributed-systems model
 
-Контакт краток и может обрываться: crash/disconnect эквивалентен CLOSING без flush, phases idempotent. D0…D3 serial per domain, BLOB лишь после D0–D3 либо explicit WANT; D3 имеет ≤40% session cap ⚠, BLOB may pre-empt после D0/D1. Sender/receiver дружбы переживают reboot как counter-signed claims; blob partial cache можно безопасно serve только после individual Merkle verification (`11 §3, §5–6, §8`).
+Контакт краток и может обрываться: crash/disconnect эквивалентен CLOSING без flush, phases idempotent; failure после HANDSHAKE+BINDING budget ведёт в BACKOFF с per-peer exponential 1 s base ×2 до 5 min ⚠. D0…D3 serial per domain, BLOB лишь после D0–D3 либо explicit WANT; D3 имеет ≤40% session cap ⚠, BLOB may pre-empt после D0/D1. Sender/receiver дружбы переживают reboot как counter-signed claims; active friend буферизует dependent traffic в quota slice 25% ⚠ своего, а blob-interest истекает через 7 d ⚠/user cancel. Partial cache можно serve только после individual Merkle verification (`11 §3, §5–6, §8`).
 
 ### Design choices and alternatives
 
@@ -232,11 +238,12 @@ Frames — `10`; node/tier rules — `04`; domain ordering/receipts — `03`, `0
 
 ### Normative invariants
 
-- Layer rule: `mmp-types ↔ mmp-crypto ↔ mmp-core ↔ mmp-router` — `#![no_std]`, alloc optional; ниже `mmp-node` нельзя tokio, std time или TAL impl; CI должен применять cargo-deny и layer test (`12 §1`).
+- Layer rule: `mmp-types ← mmp-crypto ← mmp-core ← mmp-router` — `#![no_std]`, alloc optional; ниже `mmp-node` нельзя tokio, std time или TAL impl; CI должен применять cargo-deny и layer test (`12 §1`).
 - Radio seam ровно BeaconPort/ContactPort/FrameLink, platform ports MonotonicClock/CryptoRng/KeyVault/BundleStore; FrameLink — reliable ordered Frame plus LinkQuality (`12 §2`).
 - Session typestate ограничивает frames фазой; ERROR/CLOSE consume self. Bundle lifecycle — `SlotState` в storage index, не per-bundle object; transition tables должны покрывать I1–I4 (`12 §3`).
 - `verify_strict` only, hand-written wire codec; vectors, fuzz allocation proof, property/FSM/concurrency tests и CI matrix/size gate обязательны для reference impl (`12 §4, §7`).
 - Тестовый объём не ограничен happy path: golden bytes independent decoder и отрицательные domain-tag/canonical-S/lifetime-reset/budget-clamp cases; fuzz beacon, HS1, ID_PROOF, every post-auth frame, bundle/TLV/RBSR; proptest canonical/RBSR/LWW/OR-Set/ratchet; exhaustive I1–I4, Loom/equivalent, MIRI `mmp-types`, шесть target builds, cargo-deny и size gate (`12 §7`).
+- Reference impl MUST иметь отдельный structured trace под build flag `diag`: off by default, never on Core и независим от user event stream. Он записывает journey `(BundleID, created/received/verified/stored/offered/handed_off/receipt_seen/purged/expired/evicted/dropped, peer?, monotonic_ts)`, contact `(ephem_id→nodeid?, dial/accept, handshake_ms, domains, bytes, close_reason)` и counters quarantine/clamp/drop; line-delimited feed для `mmp-cli inspect`/`mmp-sim`. Это **не** меняет protocol surface (`12 §7.7`).
 
 ### Physical or distributed-systems model
 
