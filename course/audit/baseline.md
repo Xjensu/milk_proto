@@ -18,8 +18,13 @@
 
 ## Rust toolchain
 
-`implementation/mesh-milk/rust-toolchain.toml` буквально задаёт канал
-`stable` и цель `thumbv7em-none-eabihf`.
+Буквальное содержимое `implementation/mesh-milk/rust-toolchain.toml`:
+
+```toml
+[toolchain]
+channel = "stable"
+targets = ["thumbv7em-none-eabihf"]
+```
 
 ## Specification inventory
 
