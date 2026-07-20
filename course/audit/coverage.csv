@@ -3,17 +3,19 @@ PHY-01,1-physics+capstone,not-applicable; gate D is preimplementation design,phy
 PHY-02,1-physics+capstone,not-applicable; DISC-002 and DISC-007 block a controlled energy target,reproducible-field-energy-validation-and-defense,E,gap
 PHY-03,1-physics+capstone,not-applicable; gate D is preimplementation design,physical-claim-boundary-design-review,D,planned
 NET-01,2-network+3-rust-i,canonical-wire-codec-and-negative-parser-tests,wire-format-and-adversarial-parser-review,A+C,planned
-NET-02,2-network+3-rust-i,contact-simulator-session-FSM-trace,contact-simulator-and-adversarial-FSM-review,A+C,planned
+NET-02,2-network+3-rust-i,contact-simulator-tier-session-FSM-trace-with-deterministic-role-battery-capability-tests,contact-simulator-and-adversarial-tier-session-FSM-review,A+C,planned
 NET-03,2-network+capstone,not-applicable; DISC-001 and DISC-006 block production BLE/platform conformance,reproducible-TAL-platform-implementation-and-defense (blocked),E,gap
 DTN-01,4-dtn-routing+capstone,spray-routing-mini_milk-end-to-end-run,reproducible-routing-capstone-and-defense,B+E,planned
-DTN-02,4-dtn-routing+3-rust-i,bounded-store-forward-mini_milk-end-to-end-and-negative-tests,adversarial-store-invariant-review,B+C,planned
-DTN-03,4-dtn-routing+5-sync,receipt-and-quota-mini_milk-end-to-end-run,adversarial-purge-and-fairness-review,B+C,planned
+DTN-02,4-dtn-routing+3-rust-i,bounded-store-forward-mini_milk-end-to-end-object-manifest-integrity-assembly-corruption-and-quota-tests,adversarial-object-assembly-corruption-and-quota-bound-review,B+C,planned
+DTN-03,4-dtn-routing+5-sync,receipt-quota-and-attachment-airtime-mini_milk-end-to-end-run,adversarial-attachment-airtime-and-file-abuse-simulation-with-measurable-bounds,B+C,planned
 SYN-01,5-sync+capstone,RBSR-mini_milk-end-to-end-reconciliation-run,reproducible-reconciliation-capstone-and-defense,B+E,planned
 SYN-02,5-sync+3-rust-i,causal-DAG-mini_milk-end-to-end-merge,adversarial-missing-parent-review,B+C,planned
 SYN-03,5-sync,OR-Set-mini_milk-end-to-end-merge,concurrent-merge-adversarial-review,B+C,planned
 SEC-01,6-security-crypto+capstone,not-applicable; gate D is preimplementation design,threat-model-and-invariant-design-review,D,planned
 SEC-02,6-security-crypto+3-rust-i,identity-and-crypto-mini_milk-end-to-end-tests,cross-domain-adversarial-review,B+C,planned
 SEC-03,6-security-crypto+capstone,not-applicable,reproducible-security-capstone-and-residual-risk-defense,E,planned
+SEC-04,6-security-crypto+capstone,authority-certificate-grant-announcement-revocation-mini_milk-end-to-end-run,reproducible-authority-provisioning-announcement-revocation-and-adversarial-abuse-defense,B+C+E,planned
+SEC-05,6-security-crypto,blob-manifest-Merkle-RS-mini_milk-end-to-end-corruption-recovery-and-assembly-tests,adversarial-symbol-manifest-mutation-and-recovery-bound-review,B+C,planned
 RST-01,3-rust-i,typed-codec-mini_milk-end-to-end-tests,error-path-adversarial-review,B+C,planned
 RST-02,3-rust-i,store-trait-mini_milk-end-to-end-tests,corruption-adversarial-review,B+C,planned
 RST-03,7-rust-ii-robustness+2-network,mini_milk-end-to-end-TAL-adapter-run-with-contact-simulator-event-trace,reproducible-async-TAL-adapter-capstone-implementation,A+B,planned

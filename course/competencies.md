@@ -40,7 +40,7 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 
 ## NET-02 — Защищает FSM контакта, сессии и tier
 - Действие: строит таблицу состояний tier, handshake, summary, reconciliation, transfer, timeout и protocol error; проверяет запрещённые переходы.
-- Доказательство: переходная таблица, тесты timeout/close и трасса одного успешного контакта.
+- Доказательство: переходная таблица tier/session, детерминированные тесты role/battery/capability ограничений и трасса одного успешного контакта.
 - Уровень выпуска: 4 — сломать FSM недопустимой последовательностью.
 - Предпосылки: NET-01, RST-03.
 - Traceability: FSM-001, FSM-002, FSM-003, FSM-004, FSM-006.
@@ -61,14 +61,14 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 
 ## DTN-02 — Реализует bounded store-and-forward
 - Действие: применяет verify-before-store, TTL aging, dedup, quota и copy-budget clamp к очереди bundles, bounded blob objects и их manifests.
-- Доказательство: mini_milk store с тестами expiry, duplicate resurrection и quota eviction.
+- Доказательство: mini_milk store с object/manifest integrity, assembly и corruption tests, а также expiry, duplicate resurrection и object-quota eviction.
 - Уровень выпуска: 4 — сломать store negative cases.
 - Предпосылки: NET-01, RST-02.
 - Traceability: BND-002, BND-003, BND-004, BND-005, RTE-004, STO-001, STO-002, STO-005, FIL-001.
 
 ## DTN-03 — Проверяет receipt и fairness policy
 - Действие: различает exact receipt и probabilistic hint, затем оценивает origin quota, attachment airtime и file-abuse bounds при конкуренции.
-- Доказательство: таблица purge decisions и тест, где Bloom hit не удаляет bundle.
+- Доказательство: таблица purge decisions, тест Bloom hit без purge и adversarial attachment simulation с измеримыми quota/airtime/abuse bounds.
 - Уровень выпуска: 4 — сломать ошибочное purge-правило.
 - Предпосылки: DTN-02, SYN-01.
 - Traceability: RTE-005, RTE-006, STO-004, CRY-006, FIL-002, FIL-003.
@@ -108,12 +108,26 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 - Предпосылки: SEC-01, RST-01.
 - Traceability: ID-001, ID-002, ID-003, CRY-001, CRY-002, CRY-003.
 
-## SEC-03 — Защищает rotation, authority trust и остаточный crypto risk
-- Действие: моделирует ratchet, sender-key epoch rotation, authority trust lifecycle, Merkle/RS blob-integrity boundary и forward-secrecy последствия компрометации, включая непроверенные persistence/platform claims.
-- Доказательство: compromise timeline и capstone security review с residual-risk register.
+## SEC-03 — Защищает pairwise/group rotation и остаточный crypto risk
+- Действие: моделирует pairwise ratchet, sender-key epoch rotation и forward-secrecy последствия компрометации, включая непроверенные persistence/platform claims.
+- Доказательство: pairwise/group rotation и persistence compromise timeline, затем capstone security review с residual-risk register.
 - Уровень выпуска: 5 — защитить меры и нерешённые риски.
 - Предпосылки: SEC-02, SYN-02.
-- Traceability: CRY-004, CRY-005, CRY-007, CRY-008, AUT-001, AUT-002, AUT-003, AUT-004, AUT-005.
+- Traceability: CRY-004, CRY-005, CRY-008.
+
+## SEC-04 — Проверяет authority provisioning, объявления и revocation
+- Действие: выпускает и проверяет scoped authority certificate/grant, связывает announcement с bundle, применяет priority admission и проверяет sticky revocation/abuse limits.
+- Доказательство: mini_milk certificate-grant-announcement-revocation run и adversarial tests для scope, budget, root compromise и повторной выдачи после revocation.
+- Уровень выпуска: 5 — защитить trust-root policy, альтернативы provisioning и остаточный abuse risk.
+- Предпосылки: SEC-02, RST-02.
+- Traceability: AUT-001, AUT-002, AUT-003, AUT-004, AUT-005.
+
+## SEC-05 — Проверяет Merkle/RS целостность blob objects
+- Действие: строит manifest/root, проверяет Merkle integrity и восстанавливает erasures Reed–Solomon; отклоняет corruption до assembly.
+- Доказательство: mini_milk manifest/object fixture с corruption, recovery и bounded assembly tests, плюс adversarial symbol/manifest mutation review.
+- Уровень выпуска: 4 — сломать recovery или integrity boundary повреждённым объектом.
+- Предпосылки: SEC-02, DTN-02.
+- Traceability: CRY-007.
 
 ## RST-01 — Применяет Rust типы, ownership и Result к протокольной границе
 - Действие: моделирует идентификаторы, bounded input и failure path типами; объясняет ownership заимствований в decoder.
