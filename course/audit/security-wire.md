@@ -60,7 +60,7 @@
 
 - v1 suite: Ed25519, X25519, IETF ChaCha20-Poly1305, BLAKE3 вне Noise; handshake ровно `Noise_XX_25519_ChaChaPoly_BLAKE2s` (`08 §1`).
 - После XX обе стороны посылают ID_PROOF над `mmp1/chanbind || 0x01 || h || initiator_pubkey || responder_pubkey`; проверка MUST быть canonical-S `verify_strict`, а всякая Ed25519-подпись MUST использовать доменный тег (`08 §3.2; §10`, `10 §3.1`).
-- Chain key после advance стирается; phones/PC SHALL хранить chain state и prekey secrets только keystore-wrapped, CK₀ MUST NOT persist, stale blob старше `RATCHET_PERSIST_TTL_MS=LIFETIME_MESSAGE_MS` MUST discard, а первая живая сессия после restore MUST bump epoch (`08 §5.3`). Core/`no_std` persistence не делает.
+- Chain key после advance стирается; phones/PC SHALL хранить chain state и prekey secrets только keystore-wrapped, CK₀ MUST NOT persist, persisted ratchet-state record старше `RATCHET_PERSIST_TTL_MS=LIFETIME_MESSAGE_MS` MUST discard, а первая живая сессия после restore MUST bump epoch (`08 §5.3`). Core/`no_std` persistence не делает.
 - Membership change ведёт к epoch++; удалённый член не получает новых sender keys; символ проверяется Merkle path до store (`08 §6.3; §8`).
 
 ### Physical or distributed-systems model
@@ -77,7 +77,7 @@
 ### Provisional or uncertain claims
 
 - M=16 prekeys, W=512 (Core W=32), 72 h, Merkle arity 4, ≤5 levels и ≤1 MiB auto-fetch — ⚠; exact sizing ждёт doc 13 (`08 §4.2; §5.1; §6.4; §8`).
-- X3DH adaptation, channel binding и contact DH-ratchet — проектные/не-стандартные композиции, явно для внешнего review OQ-10; replay-consume/suppression понижают FS, но не ниже sealed-box baseline (`08 §3.2; §4.2; §5.2`).
+- X3DH adaptation, channel binding и contact DH-ratchet — проектные/не-стандартные композиции, явно для внешнего review OQ-10. Replay-consume понижает first-message FS к signed-prekey level; suppression свежих claims может принудить sealed-box/no-FS baseline, но не ниже его confidentiality floor (`08 §3.2; §4.2; §5.2`).
 - Persistence открывает snapshot future-chain-key до next meeting и ≤W уже derived skipped keys; keystore wrap не превращает это в доказательство отсутствия capture, а только запрещает clear fallback (`08 §5.3`).
 - Преднамеренно нет deniability, PCS между встречами/внутри group epoch, anonymity за пределами pseudonymity+beacon unlinkability и metadata-free relay (`08 §11`).
 
@@ -115,8 +115,8 @@ Beacon — малый, вероятностный discovery; связь bulk —
 
 ### Design choices and alternatives
 
-- GATT TX=central→server Write Without Response, RX=server→central Notify; имена намеренно от central perspective. Характеристики имеют implementation-pinned 128-bit UUID, но это development placeholders до SIG 16-bit assignment/OQ-12, выпуск блокирован (`09 §2; §5.1`).
-- Точные bulk UUID, которые второе implementation MUST match для interop: Service `6d6d7031-0000-4d4d-5031-6d6573686d6c`; TX (central/client writes) `6d6d7031-0001-4d4d-5031-6d6573686d6c`; RX (central receives Notify) `6d6d7031-0002-4d4d-5031-6d6573686d6c`. Это не 16-bit Service Data UUID advertising: последний требуется из SIG range для targeted iOS background scan, пока development `mmp1` 128-bit namespace ⚠ и production assignment — OQ-12 release blocker (`09 §2; §5.1`).
+- GATT TX=central→server Write Without Response, RX=server→central Notify; имена намеренно от central perspective. Service/TX/RX — implementation-pinned 128-bit **GATT interop identifiers**, которые все реализации должны одинаково использовать, а не локальные UUID (`09 §5.1`).
+- Точные pinned bulk UUID, которые второе implementation MUST match для interop: Service `6d6d7031-0000-4d4d-5031-6d6573686d6c`; TX (central/client writes) `6d6d7031-0001-4d4d-5031-6d6573686d6c`; RX (central receives Notify) `6d6d7031-0002-4d4d-5031-6d6573686d6c`. От них отделён только **advertised 16-bit Service Data UUID**: он нужен из SIG range для targeted iOS background scan, пока development использует `mmp1` 128-bit namespace ⚠, и именно его production assignment — OQ-12 release blocker (`09 §2; §5.1`).
 - Credits N=8 ⚠ на HELLO/CREDIT предотвращают flood медленного stack; CoC MAY мигрировать для TRANSFER/BLOB при обеих поддержках, иначе transparent fallback к GATT (`09 §5.2–5.4`).
 - iOS background — connectable peripheral/overflow, не полноценный advertiser; relays SHOULD scan overflow areas, но это reverse-engineered OQ-3, не требование conformance (`09 §6; §8`).
 
