@@ -6,7 +6,7 @@
 
 ### Purpose
 
-Сводка представляет MMP/1 как офлайн mesh для телефонов, ПК и IoT, задаёт масштабные цели (полная функция до 100 узлов, usable около 1 000, graceful degradation при 10 000+) и карту всего комплекта. Это итоговое, описательное введение, а не самостоятельный RFC-нормативный источник (`specification/01-executive-summary.md §What mesh_milk is`).
+Сводка представляет MMP/1 как офлайн mesh для телефонов, ПК и IoT, задаёт масштабные цели (полная функция до 100 узлов, usable около 1 000, graceful degradation при 10 000+) и карту всего комплекта. Её статус — **FINAL for v1 specification suite**; исходник говорит, что исходные 15 документов complete. Это итоговое, описательное введение, а не самостоятельный RFC-нормативный источник (`specification/01-executive-summary.md §What mesh_milk is`; `specification/01-executive-summary.md`, document header).
 
 ### Normative invariants
 
@@ -24,7 +24,7 @@
 
 - ~22–36 KiB сетевой стоимости для сообщения 1 KiB, ~1 MiB/day relay-load и ~1–2 min airtime — результаты модели doc 13, не самостоятельная гарантия (`specification/01-executive-summary.md §What the numbers say (doc 13)`).
 - Радиооценка ~0.35%/day; с `k_sys ∈ [3,10]` — ~1–3.5%/day. Цель <5%/day названа правдоподобной, но непроверенной, OQ-13 (`specification/01-executive-summary.md §What the numbers say (doc 13)`).
-- До v1.0 остаются ⚠ OQ-4 (симуляция routing constants), OQ-10 (внешний crypto review), OQ-12 (SIG UUID), OQ-13 (энергия); это blockers, а не закрытые факты (`specification/01-executive-summary.md §Status and the path to running code`).
+- Несмотря на FINAL/15 complete для suite, до тега **v1.0 implementation/release** остаются ⚠ OQ-4 (симуляция routing constants), OQ-10 (внешний crypto review), OQ-12 (SIG UUID), OQ-13 (энергия); это blockers реализации/релиза, не незавершённость 15-документной suite (`specification/01-executive-summary.md §Status and the path to running code`). В фактическом repo есть поздние Rev. B docs 16–18; сам источник отмечает, что 01–15 frozen, поэтому это audit caveat к статусу, а не пересмотр его FINAL-утверждения (`specification/01-executive-summary.md §Rev. B extension (2026-07-03)`).
 
 ### Dependencies and cross-references
 
@@ -90,11 +90,11 @@ R-C1 рекомендует Binary Spray-and-Wait + локально наблю�
 
 ### Physical or distributed-systems model
 
-Контакты непредсказуемы, global clock/topology/always-reachable node отсутствуют; hostile local peer/link — базовая trust model. Beacon plane имеет ≤24 B ⚠ и неаутентифицирован, bulk plane — authenticated GATT stream; lifetime age-based по monotonic clock. MMP-Core может omit blob, membership CRDT и utility routing, но Standard/Anchor расширяют relay/storage (`specification/03-protocol-spec.md §1. Scope and Model`; `§5`; `§6`).
+Контакты непредсказуемы, global clock/topology/always-reachable node отсутствуют; hostile local peer/link — базовая trust model. MMP Service Data beacon payload имеет ≤24 B ⚠ и неаутентифицирован; он помещается в legacy advertisement с общим payload 31 B, а bulk plane — authenticated GATT stream. Lifetime age-based по monotonic clock. MMP-Core может omit blob, membership CRDT и utility routing, но Standard/Anchor расширяют relay/storage (`specification/02-research-report.md §2.1 Quantified constraints table`; `specification/03-protocol-spec.md §1. Scope and Model`; `specification/03-protocol-spec.md §5`; `specification/03-protocol-spec.md §6`).
 
 ### Design choices and alternatives
 
-Inline key выбран вместо key-unknown quarantine; lifetime исключён из signature/BundleID, но ограничен clamp+SeenIndex; copy budget вынесен в MAC’d session control и ограничен clamp+origin quota. Выбраны 31-byte legacy BLE service-data beacon, rotating pseudonym/salted summary, RBSR phase order SUMMARY→RECONCILE и TAL abstraction; alternative signed spray certificates отвергнуты из-за topology/certificate-size (`specification/03-protocol-spec.md §3.2`; `§4.2`–`§4.5`; `§5`; `§11. Persona review checkpoints`).
+Inline key выбран вместо key-unknown quarantine; lifetime исключён из signature/BundleID, но ограничен clamp+SeenIndex; copy budget вынесен в MAC’d session control и ограничен clamp+origin quota. Выбраны legacy BLE Service Data beacon payload ≤24 B ⚠ внутри legacy advertising payload 31 B total, rotating pseudonym/salted summary, RBSR phase order SUMMARY→RECONCILE и TAL abstraction; alternative signed spray certificates отвергнуты из-за topology/certificate-size (`specification/02-research-report.md §2.1 Quantified constraints table`; `specification/03-protocol-spec.md §3.2`; `specification/03-protocol-spec.md §4.2`–`§4.5`; `specification/03-protocol-spec.md §5`; `specification/03-protocol-spec.md §11. Persona review checkpoints`).
 
 ### Provisional or uncertain claims
 
@@ -120,7 +120,7 @@ Inline key выбран вместо key-unknown quarantine; lifetime исклю
 
 ### Normative invariants
 
-BundleStore eviction: expired → receipt-confirmed → over-quota; node MUST NOT evict own undelivered original before expiry. Tier claim в beacon — лишь hint, behavior измеряется. Friendship создаётся signed exchange; dependent MAY hold до 3 friends; friend не даёт delivery receipt. Архитектура также требует only monotonic clocks for aging (`specification/04-architecture.md §2. Data stores`; `§3`; `§4`; `§7. Failure containment`).
+BundleStore eviction: expired → receipt-confirmed → over-quota; node MUST NOT evict own undelivered original before expiry. Tier claim в beacon — лишь hint, behavior измеряется. Friendship создаётся signed exchange; dependent MAY hold до 3 friends; friend не даёт delivery receipt. Архитектура также требует only monotonic clocks for aging. Для риска выживания Android FG service build SHOULD visibly indicate relay-active state пользователю и SHOULD request battery-optimization exemption, где платформа это допускает (`specification/04-architecture.md §2. Data stores`; `specification/04-architecture.md §3`; `specification/04-architecture.md §4`; `specification/04-architecture.md §5. Power management`; `specification/04-architecture.md §7. Failure containment`).
 
 ### Physical or distributed-systems model
 
@@ -132,7 +132,7 @@ BundleStore eviction: expired → receipt-confirmed → over-quota; node MUST NO
 
 ### Provisional or uncertain claims
 
-⚠ bounds: BundleStore 128 MiB/32 KiB, SeenIndex Core ring 4 KiB, ReceiptFilter 64 KiB/1 KiB, ContactGraph ≤4096/≤16 peers, ReasmBuf ≤16/4 KiB; sensor poll e.g. every 5 min, friendship 24 h, beacon 2–10 s, scan ≤2.5%, `T_redial=60 s`, T2 sessions=2, burst ≤6/min (`specification/04-architecture.md §2`; `§4`–`§6`; `§8`). FG-service survival — OEM-policy deployment risk; source требует field validation, а не обещает T2 availability (`specification/04-architecture.md §5. Power management`).
+⚠ bounds: BundleStore 128 MiB/32 KiB, SeenIndex Core ring 4 KiB, ReceiptFilter 64 KiB/1 KiB, **ProfileStore Standard ≤16 MiB / Core: own keys + friends only**, ContactGraph ≤4096/≤16 peers, ReasmBuf ≤16/4 KiB; sensor poll e.g. every 5 min, friendship 24 h, beacon 2–10 s, scan ≤2.5%, `T_redial=60 s`, T2 sessions=2, burst ≤6/min. Таблица source помечает Bounds (Std/Core ⚠), поэтому ProfileStore и остальные bounds здесь не измеренная гарантия (`specification/04-architecture.md §2. Data stores`; `specification/04-architecture.md §4`–`§6`; `specification/04-architecture.md §8`). FG-service survival — OEM-policy deployment risk; source требует field validation, а не обещает T2 availability (`specification/04-architecture.md §5. Power management`).
 
 ### Dependencies and cross-references
 
@@ -155,7 +155,7 @@ BundleStore eviction: expired → receipt-confirmed → over-quota; node MUST NO
 ### Normative invariants
 
 - Carried copy имеет `budget ≥1`; receiver of grant MUST clamp to `L_MAX=32` ⚠. Focus-copy передаётся и удаляется только при `U_peer > U_self + θ_focus`; direct delivery always wins (`specification/05-routing-spec.md §2`).
-- `N̂` MUST NOT exchange; eligible/inbound admission требует authenticated session, verify signature, quota/rate checks и tier policy (`specification/05-routing-spec.md §3`; `§5`).
+- `N̂` **не обменивается**: source описательно говорит «is never exchanged» и не использует RFC keyword; eligible/inbound admission требует authenticated session, verify signature, quota/rate checks и tier policy (`specification/05-routing-spec.md §3. Population estimate N̂`; `specification/05-routing-spec.md §5. Eligibility and admission`).
 - Beacon summary MUST NOT be relied on for suppression/purge at scale; exact D0 receipt, не Bloom hit, purge’ит stored bundle (`specification/05-routing-spec.md §7.2`–`§7.2.1`).
 - Group IDs — random 128-bit; blocked IDs drop at admission; origin SHOULD cap in-flight bundles per destination at 64 ⚠ (`specification/05-routing-spec.md §8`; `§9`).
 
