@@ -63,6 +63,15 @@ starter code или assessment rubrics уже реализованы.
   (`DISC-003`); no unsupported classification appears. A `block` must remain in
   affected coverage evidence, while `teach-as-gap` becomes an explicit lesson
   about provenance rather than a false conformance claim.
+- **Documented plan correction:** Task 6 Step 4 previously compared the count
+  of `conflict`/`unknown` rows with the count of `DISC-*` headings. That check
+  was invalid because several rows can correctly share one root cause. The
+  approved structured-reference check instead requires every such row to carry
+  one or more `discrepancy_ids=DISC-NNN` values in `notes`, and verifies that
+  every referenced ID exists in [discrepancies.md](discrepancies.md). It passes:
+  **8** `conflict`/`unknown` rows and **11** `+block` rows resolve only to the
+  **7** existing discrepancies. This is a plan-check correction, not a change
+  to traceability status, discrepancy classification, or ledger cardinality.
 - Competencies: **27** total — **22 planned**, **5 gap**, **0 covered**.
   The five gaps and their causes remain exactly those in
   [coverage.csv](coverage.csv) and the reviewer dependency map in

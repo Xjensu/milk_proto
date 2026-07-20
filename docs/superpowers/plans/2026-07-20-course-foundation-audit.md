@@ -381,11 +381,30 @@ $rows | ForEach-Object {
   if ($_.confidence -notin $allowedConfidence) { throw "Bad confidence: $($_.confidence)" }
   if (-not $_.requirement_id -or -not $_.spec_location -or -not $_.requirement_summary) { throw "Incomplete row: $($_.requirement_id)" }
 }
-if (($rows | Where-Object status -in @('conflict','unknown')).Count -gt (rg -c "^## DISC-" course/audit/discrepancies.md)) { throw 'Missing discrepancy entries' }
+$discrepancyText = Get-Content -Raw -Encoding utf8 course/audit/discrepancies.md
+$discrepancyIds = @([regex]::Matches($discrepancyText, '(?m)^## (DISC-\d{3})\s+—') | ForEach-Object { $_.Groups[1].Value })
+if ($discrepancyIds.Count -ne ($discrepancyIds | Sort-Object -Unique).Count) { throw 'Duplicate discrepancy heading ID' }
+function Assert-DiscrepancyReferences([object[]]$rowsToCheck, [string]$label) {
+  foreach ($row in $rowsToCheck) {
+    $matches = [regex]::Matches([string]$row.notes, '(?<![A-Za-z0-9_-])discrepancy_ids=(DISC-\d{3}(?:\s*,\s*DISC-\d{3})*)')
+    if ($matches.Count -ne 1) { throw "$label row $($row.requirement_id) must contain exactly one discrepancy_ids=DISC-NNN[,DISC-NNN...] field" }
+    $referencedIds = @($matches[0].Groups[1].Value -split '\s*,\s*')
+    if ($referencedIds.Count -lt 1) { throw "$label row $($row.requirement_id) has no discrepancy ID" }
+    $missingIds = @($referencedIds | Where-Object { $_ -notin $discrepancyIds })
+    if ($missingIds.Count -gt 0) { throw "$label row $($row.requirement_id) references missing discrepancy IDs: $($missingIds -join ', ')" }
+  }
+}
+$flaggedRows = @($rows | Where-Object { $_.status -in @('conflict','unknown') })
+$blockRows = @($rows | Where-Object { $_.course_treatment -split '\+' -contains 'block' })
+Assert-DiscrepancyReferences $flaggedRows 'Conflict/unknown'
+Assert-DiscrepancyReferences $blockRows '+block'
 git diff --check -- course/audit/traceability.csv course/audit/discrepancies.md
 ```
 
-Expected: all controlled values accepted and every conflict/unknown represented in the discrepancy ledger.
+Expected: all controlled values accepted; every conflict/unknown row and every
+`+block` row names one or more existing discrepancy IDs in `notes`. This is a
+many-rows-to-one-root-cause relation, so the number of flagged rows need not
+equal the number of discrepancy headings.
 
 - [ ] **Step 5: Commit traceability**
 
