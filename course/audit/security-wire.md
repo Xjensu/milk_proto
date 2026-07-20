@@ -105,12 +105,13 @@
 
 - Standard/Anchor чередуют Peripheral (advertise/accept) и Central (scan/dial); Core peripheral-mostly, iOS T1 leaf central-mostly (`09 §1`).
 - Ровно 31 B legacy advertisement: Flags 3 B + Service Data header 4 B + beacon 24 B; без name/TX-power, scan response v1 empty ⚠ (`09 §3.1`). Это total advertising budget, тогда как MMP Service Data несёт только header+24 B, не все 31 B.
+- Для iOS foreground таблица источника отдельно указывает лишь 28 B usable; документ не задаёт packing workaround, и из этой оговорки его выводить нельзя (`09 §6`).
 - ephem_id каждые 15 min ⚠ MUST совпасть с RPA rotation; summary fragments MUST быть per-epoch re-salt. Fragment/Bloom — hint, не authority; 1k+ Bloom fragment FP-saturated (`09 §3.2–3.3`).
 - GATT stream использует length-prefix, ATT payload `(MTU−3)`, buffer preallocated `MAX_BUNDLE=4096`; prefix >4096 — immediate ERROR+CLOSE, idle-stall discard (`09 §5.1`).
 
 ### Physical or distributed-systems model
 
-Beacon — малый, вероятностный discovery; связь bulk — короткий BLE contact с ordered/reliable ATT. Dial score учитывает novelty/role/RSSI >−85 dBm ⚠/budget, пытается MTU≥247, PHY 2M, DLE, но должна работать на MTU=23 (`09 §4`). Anti-storm: при ≥3 ⚠ центральных подключениях/подключениях к peripheral busy flag даёт random 1–8 s backoff.
+Beacon — малый, вероятностный discovery; связь bulk — короткий BLE contact с ordered/reliable ATT. Advertising interval 2–10 s ⚠ получает ±10% randomization; novel beacon hit запускает continuous 30 s burst scan, rate-limited (`09 §3.2`). Dial score учитывает novelty/role/RSSI >−85 dBm ⚠/budget; при dial запрашиваются MTU≥247, PHY 2M и DLE, но сессия должна работать и на MTU=23 (`09 §4`). Anti-storm: при ≥3 ⚠ центральных подключениях/подключениях к peripheral busy flag даёт random 1–8 s backoff.
 
 ### Design choices and alternatives
 
@@ -121,7 +122,7 @@ Beacon — малый, вероятностный discovery; связь bulk —
 
 ### Provisional or uncertain claims
 
-- 247+ MTU, 2M PHY и DLE — требуемые при dial **requests**, а не ⚠-параметры и не performance guarantee: handshake продолжается независимо от negotiated values, включая MTU=23 floor (`09 §4`). `09` реально помечает ⚠ development `mmp1` namespace, empty scan response v1, advertising 2–10 s, baseline scan 30 ms/1.28 s (≈2.3% duty), 15-min slot/±1 acceptance, RSSI >−85 dBm, `≥3` centrals и busy bit, credit N=8, connection interval 15–30 ms/50 ms и 4-s supervision, airtime cap 60 s, duty ≤0.5%/≤2.5% и idle-renegotiation >2 s; их подтверждение ждёт doc 13 (`09 §2–8`).
+- MTU 247+, PHY 2M и DLE запрашиваются при dial, а не являются ⚠-параметрами или performance guarantee: handshake продолжается независимо от negotiated values, включая MTU=23 floor (`09 §4`). `09` реально помечает ⚠ development `mmp1` namespace, empty scan response v1, advertising 2–10 s, baseline scan 30 ms/1.28 s (≈2.3% duty), 15-min slot/±1 acceptance, RSSI >−85 dBm, `≥3` centrals и busy bit, credit N=8, connection interval 15–30 ms/50 ms и 4-s supervision, airtime cap 60 s, duty ≤0.5%/≤2.5% и idle-renegotiation >2 s; их подтверждение ждёт doc 13 (`09 §2–8`).
 - Burst scan допустим лишь foreground/Android foreground service; iOS background и Android без FG деградируют до opportunistic-on-open (`09 §3.2`).
 - Throughput CoC «modest» против tuned GATT и iOS overflow behaviour — зависимости [B18], [B1], [B11], а не гарантии (`09 §5.4; §8`).
 
@@ -156,7 +157,7 @@ Beacon payload — `03 §5.1`, `10 §5`; session frames — `10 §2`; Noise — 
 
 ### Physical or distributed-systems model
 
-Wire разделяет короткий BLE session stream и переносимый signed bundle. Lifetime может легально меняться carrier, поэтому исключён canonical-zeroing из BundleID/signature; DTN dedup остаётся стабильным. Relay видит header, но AEAD direct-message binds canonical header as associated data (`10 §3–4`).
+Wire разделяет короткий BLE session stream и переносимый signed bundle. `lifetime_ms` нормализуется в ноль при вычислении BundleID и signing preimage; live lifetime исключён из обоих digest scopes, так как carrier может его легально менять, а DTN dedup остаётся стабильным (`10 §3`). Relay видит header, но AEAD direct-message binds canonical header as associated data (`10 §3–4`).
 
 ### Design choices and alternatives
 
