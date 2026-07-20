@@ -384,26 +384,50 @@ $rows | ForEach-Object {
 $discrepancyText = Get-Content -Raw -Encoding utf8 course/audit/discrepancies.md
 $discrepancyIds = @([regex]::Matches($discrepancyText, '(?m)^## (DISC-\d{3})\s+—') | ForEach-Object { $_.Groups[1].Value })
 if ($discrepancyIds.Count -ne ($discrepancyIds | Sort-Object -Unique).Count) { throw 'Duplicate discrepancy heading ID' }
-function Assert-DiscrepancyReferences([object[]]$rowsToCheck, [string]$label) {
+function Get-DiscrepancyIds([string]$notes, [string]$label) {
+  $fields = @($notes -split ';' | ForEach-Object { $_.Trim() })
+  $discrepancyFields = @($fields | Where-Object { $_.StartsWith('discrepancy_ids=', [System.StringComparison]::Ordinal) })
+  if ($discrepancyFields.Count -ne 1) { throw "$label must contain exactly one semicolon-delimited discrepancy_ids= field" }
+  $value = $discrepancyFields[0].Substring('discrepancy_ids='.Length)
+  if ($value -notmatch '^DISC-\d{3}(,DISC-\d{3})*$') { throw "$label has malformed discrepancy_ids value: $value" }
+  $ids = @($value -split ',')
+  if ($ids.Count -ne ($ids | Sort-Object -Unique).Count) { throw "$label repeats a discrepancy ID" }
+  return $ids
+}
+function Assert-DiscrepancyReferences([object[]]$rowsToCheck, [string]$label, [System.Collections.Generic.HashSet[string]]$referencedIds) {
   foreach ($row in $rowsToCheck) {
-    $matches = [regex]::Matches([string]$row.notes, '(?<![A-Za-z0-9_-])discrepancy_ids=(DISC-\d{3}(?:\s*,\s*DISC-\d{3})*)')
-    if ($matches.Count -ne 1) { throw "$label row $($row.requirement_id) must contain exactly one discrepancy_ids=DISC-NNN[,DISC-NNN...] field" }
-    $referencedIds = @($matches[0].Groups[1].Value -split '\s*,\s*')
-    if ($referencedIds.Count -lt 1) { throw "$label row $($row.requirement_id) has no discrepancy ID" }
-    $missingIds = @($referencedIds | Where-Object { $_ -notin $discrepancyIds })
+    $rowIds = @(Get-DiscrepancyIds ([string]$row.notes) "$label row $($row.requirement_id)")
+    $missingIds = @($rowIds | Where-Object { $_ -notin $discrepancyIds })
     if ($missingIds.Count -gt 0) { throw "$label row $($row.requirement_id) references missing discrepancy IDs: $($missingIds -join ', ')" }
+    foreach ($id in $rowIds) { $null = $referencedIds.Add($id) }
   }
 }
 $flaggedRows = @($rows | Where-Object { $_.status -in @('conflict','unknown') })
 $blockRows = @($rows | Where-Object { $_.course_treatment -split '\+' -contains 'block' })
-Assert-DiscrepancyReferences $flaggedRows 'Conflict/unknown'
-Assert-DiscrepancyReferences $blockRows '+block'
+$referencedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+Assert-DiscrepancyReferences $flaggedRows 'Conflict/unknown' $referencedIds
+Assert-DiscrepancyReferences $blockRows '+block' $referencedIds
+$unreferencedIds = @($discrepancyIds | Where-Object { -not $referencedIds.Contains($_) })
+if ($unreferencedIds.Count -gt 0) { throw "Discrepancy headings without an applicable trace row: $($unreferencedIds -join ', ')" }
+$negativeNotes = @{
+  malformed_suffix = 'context; discrepancy_ids=DISC-001-suffix'
+  spaced_list = 'context; discrepancy_ids=DISC-001, DISC-002'
+  duplicate_id = 'context; discrepancy_ids=DISC-001,DISC-001'
+}
+foreach ($case in $negativeNotes.GetEnumerator()) {
+  $rejected = $false
+  try { $null = Get-DiscrepancyIds $case.Value "negative case $($case.Key)" } catch { $rejected = $true }
+  if (-not $rejected) { throw "Negative parser case was accepted: $($case.Key)" }
+}
 git diff --check -- course/audit/traceability.csv course/audit/discrepancies.md
 ```
 
 Expected: all controlled values accepted; every conflict/unknown row and every
-`+block` row names one or more existing discrepancy IDs in `notes`. This is a
-many-rows-to-one-root-cause relation, so the number of flagged rows need not
+`+block` row has exactly one semicolon-delimited `discrepancy_ids=` field whose
+comma-separated IDs are strict, unique, and present in the ledger. Every ledger
+heading is referenced by at least one applicable trace row. The negative cases
+prove rejection of a suffix, a space-separated list, and a duplicate ID. This is
+a many-rows-to-one-root-cause relation, so the number of flagged rows need not
 equal the number of discrepancy headings.
 
 - [ ] **Step 5: Commit traceability**
