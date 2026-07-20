@@ -18,7 +18,7 @@
 - Кратко: Время, в течение которого радиоканал занят передачей.
 - Точно: Это ресурс канала, зависящий от длины, PHY и повторов, а не только число полезных байтов.
 - Не путать с: Пропускной способностью приложения или временем CPU.
-- В mesh_milk: Airtime ограничивает relay-нагрузку и отдельно учитывается для beacon и bulk plane ([13 §2](../../specification/13-performance-model.md#2-contact-capacity)).
+- В mesh_milk: Beacon plane определён в [09 §3](../../specification/09-transport-ble.md#3-beacon-plane), а bulk plane — в [09 §5](../../specification/09-transport-ble.md#5-bulk-plane); их airtime ограничивает relay-нагрузку.
 
 ## Аутентификация (`authentication`)
 - Кратко: Проверка того, кем является предъявитель ключа или учётных данных.
@@ -86,7 +86,7 @@
 - Не путать с: TTL, quota или числом фактически принятых копий.
 - В mesh_milk: Mutable per-hop budget receive-clamp'ится до L_MAX ([03 §4.5](../../specification/03-protocol-spec.md#45-mutable-per-hop-metadata)).
 
-## Сходящийся тип данных / наблюдаемый remove-set (`CRDT / OR-Set`)
+## Наблюдаемое множество с удалениями (`CRDT / OR-Set`)
 - Кратко: CRDT — структура со сходимостью реплик; OR-Set — наблюдаемый remove-set.
 - Точно: OR-Set различает добавления по тегам и удаления только наблюдённых добавлений.
 - Не путать с: LWW register или произвольной merge-функцией.

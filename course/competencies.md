@@ -36,42 +36,42 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 - Доказательство: mini_milk codec, negative test matrix и byte-level expected results.
 - Уровень выпуска: 4 — сломать parser некорректным входом.
 - Предпосылки: RST-01.
-- Traceability: WIR-001, WIR-002, WIR-004, BND-001.
+- Traceability: WIR-001, WIR-002, WIR-003, WIR-004, BND-001.
 
-## NET-02 — Защищает FSM контакта и сессии
-- Действие: строит таблицу состояний handshake, summary, reconciliation, transfer, timeout и protocol error; проверяет запрещённые переходы.
+## NET-02 — Защищает FSM контакта, сессии и tier
+- Действие: строит таблицу состояний tier, handshake, summary, reconciliation, transfer, timeout и protocol error; проверяет запрещённые переходы.
 - Доказательство: переходная таблица, тесты timeout/close и трасса одного успешного контакта.
 - Уровень выпуска: 4 — сломать FSM недопустимой последовательностью.
 - Предпосылки: NET-01, RST-03.
-- Traceability: FSM-001, FSM-003, FSM-004, FSM-006.
+- Traceability: FSM-001, FSM-002, FSM-003, FSM-004, FSM-006.
 
 ## NET-03 — Проектирует TAL/GATT границу без ложной platform-конформности
 - Действие: задаёт адаптер событий link-up/data/link-down, MTU chunking и BLE discovery/bulk роли; фиксирует непроверенные платформы.
 - Доказательство: contract test или mock trace TAL и перечень platform evidence, необходимого до claims.
 - Уровень выпуска: 5 — защитить границу, альтернативы и ограничения.
 - Предпосылки: NET-02, PHY-03, RST-03.
-- Traceability: TAL-001, BLE-001, BLE-003, BLE-004, BLE-006.
+- Traceability: TAL-001, BLE-001, BLE-002, BLE-003, BLE-004, BLE-006.
 
 ## DTN-01 — Защищает bounded routing policy
-- Действие: сравнивает Binary Spray-and-Wait с flooding и обосновывает split copy budget по локальным наблюдениям.
+- Действие: сравнивает Binary Spray-and-Wait с flooding и обосновывает split copy budget и scope-budgeted group dissemination по локальным наблюдениям.
 - Доказательство: мини-симуляция или расчёт передачи с budget ledger и defense memo.
 - Уровень выпуска: 5 — защитить выбор, альтернативы и остаточный риск.
 - Предпосылки: PHY-01, DES-01.
-- Traceability: RTE-001, RTE-002, RTE-003.
+- Traceability: RTE-001, RTE-002, RTE-003, RTE-007.
 
 ## DTN-02 — Реализует bounded store-and-forward
-- Действие: применяет verify-before-store, TTL aging, dedup, quota и copy-budget clamp к очереди bundles.
+- Действие: применяет verify-before-store, TTL aging, dedup, quota и copy-budget clamp к очереди bundles, bounded blob objects и их manifests.
 - Доказательство: mini_milk store с тестами expiry, duplicate resurrection и quota eviction.
 - Уровень выпуска: 4 — сломать store negative cases.
 - Предпосылки: NET-01, RST-02.
-- Traceability: BND-002, BND-003, BND-004, RTE-004, STO-001, STO-002.
+- Traceability: BND-002, BND-003, BND-004, BND-005, RTE-004, STO-001, STO-002, STO-005, FIL-001.
 
 ## DTN-03 — Проверяет receipt и fairness policy
-- Действие: различает exact receipt и probabilistic hint, затем оценивает origin quota при конкуренции.
+- Действие: различает exact receipt и probabilistic hint, затем оценивает origin quota, attachment airtime и file-abuse bounds при конкуренции.
 - Доказательство: таблица purge decisions и тест, где Bloom hit не удаляет bundle.
 - Уровень выпуска: 4 — сломать ошибочное purge-правило.
 - Предпосылки: DTN-02, SYN-01.
-- Traceability: RTE-005, RTE-006, STO-004.
+- Traceability: RTE-005, RTE-006, STO-004, CRY-006, FIL-002, FIL-003.
 
 ## SYN-01 — Реализует bounded reconciliation
 - Действие: вычисляет различие двух bounded summary и передаёт только запрошенные bundles.
@@ -95,25 +95,25 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 - Traceability: SYN-005, SYN-006, FSM-005.
 
 ## SEC-01 — Формализует threat model, non-goals и инварианты
-- Действие: извлекает assets, local active adversary, trust boundaries, non-goals и verify-before-store invariant в attack matrix.
+- Действие: извлекает assets, local active adversary, metadata disclosure, trust boundaries, non-goals и verify-before-store invariant в attack matrix.
 - Доказательство: requirements/threat/non-goals sheet с трассировкой каждого control к threat.
 - Уровень выпуска: 5 — защитить границы модели и остаточный риск.
 - Предпосылки: нет.
-- Traceability: SEC-001, SEC-002, SEC-004, BND-002.
+- Traceability: SEC-001, SEC-002, SEC-003, SEC-004, BND-002.
 
 ## SEC-02 — Проверяет криптографические контексты и identity
-- Действие: проверяет Ed25519 identity, domain-separated signature, AEAD associated data и authenticated handshake на фиксированных input.
+- Действие: проверяет Ed25519 identity, nickname/key disambiguation, domain-separated signature, AEAD associated data и authenticated handshake на фиксированных input.
 - Доказательство: тестовый набор с позитивным и cross-domain negative case.
 - Уровень выпуска: 4 — сломать неверный domain/context.
 - Предпосылки: SEC-01, RST-01.
-- Traceability: ID-001, ID-002, CRY-001, CRY-002, CRY-003.
+- Traceability: ID-001, ID-002, ID-003, CRY-001, CRY-002, CRY-003.
 
-## SEC-03 — Защищает rotation и остаточный crypto risk
-- Действие: моделирует ratchet, sender-key epoch rotation и forward-secrecy последствия компрометации, включая непроверенные persistence/platform claims.
+## SEC-03 — Защищает rotation, authority trust и остаточный crypto risk
+- Действие: моделирует ratchet, sender-key epoch rotation, authority trust lifecycle, Merkle/RS blob-integrity boundary и forward-secrecy последствия компрометации, включая непроверенные persistence/platform claims.
 - Доказательство: compromise timeline и capstone security review с residual-risk register.
 - Уровень выпуска: 5 — защитить меры и нерешённые риски.
 - Предпосылки: SEC-02, SYN-02.
-- Traceability: CRY-004, CRY-005, CRY-008, AUT-005.
+- Traceability: CRY-004, CRY-005, CRY-007, CRY-008, AUT-001, AUT-002, AUT-003, AUT-004, AUT-005.
 
 ## RST-01 — Применяет Rust типы, ownership и Result к протокольной границе
 - Действие: моделирует идентификаторы, bounded input и failure path типами; объясняет ownership заимствований в decoder.
@@ -165,18 +165,18 @@ A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_mi
 - Traceability: SIM-002, SIM-003.
 
 ## DES-01 — Превращает требования в проверяемые границы
-- Действие: формулирует scale tiers, latency, retention, battery, threat model и non-goals как testable acceptance statements.
-- Доказательство: requirements sheet с owner, metric, evidence и unresolved question для каждого ограничения.
+- Действие: формулирует scale tiers, latency, retention, battery, threat model и non-goals как testable acceptance statements; рассчитывает количественные ограничения с единицами и проверяет допущения.
+- Доказательство: requirements sheet с owner, metric, evidence и unresolved question для каждого ограничения плюс таблица расчётов с единицами, преобразованиями и проверкой допущений.
 - Уровень выпуска: 2 — рассчитать и проверить единицы/допущения.
 - Предпосылки: нет.
 - Traceability: SEC-001, SIM-001, SIM-003.
 
 ## DES-02 — Защищает архитектурный выбор и альтернативы
-- Действие: сравнивает beacon/GATT, bounded routing, reconciliation и crypto seams с отклонёнными альтернативами по constraints.
+- Действие: сравнивает beacon/GATT, bounded routing, reconciliation, crypto seams и deployment profiles с отклонёнными альтернативами по constraints.
 - Доказательство: architecture decision record с rationale, tradeoffs, evidence confidence и adversarial review block.
 - Уровень выпуска: 5 — защитить архитектуру перед review.
 - Предпосылки: DES-01, PHY-03, DTN-01, SYN-01, SEC-01.
-- Traceability: PLN-001, TAL-001, RTE-001, SYN-001, CRY-001.
+- Traceability: PLN-001, TAL-001, RTE-001, SYN-001, CRY-001, DEP-001, DEP-002.
 
 ## DES-03 — Проводит evidence review без завышения конформности
 - Действие: классифицирует claim как implemented, partial, specified-only или conflict и связывает его с audit evidence/discrepancy.

@@ -23,4 +23,4 @@ SIM-02,capstone,scale-and-sensitivity-mini_milk-review,adversarial-scale-model-r
 SIM-03,capstone,not-applicable; DISC-002 and DISC-007 block validated energy and failure-drill results,reproducible-field-validation-implementation-and-defense (blocked),E,gap
 DES-01,0-tools+capstone,not-applicable; gate D is preimplementation design,requirements-and-non-goals-design-review,D,planned
 DES-02,0-tools+capstone,not-applicable; gate D is preimplementation design,architecture-tradeoff-design-review,D,planned
-DES-03,capstone,not-applicable,reproducible-capstone-implementation-audit-and-residual-risk-defense,E,planned
+DES-03,capstone,not-applicable; mandatory RST-04 and SIM-03 prerequisites are blocked by DISC-002 DISC-004 DISC-005 DISC-006 and DISC-007,reproducible-capstone-implementation-audit-and-residual-risk-defense,E,gap
