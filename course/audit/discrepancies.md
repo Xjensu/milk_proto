@@ -53,3 +53,12 @@
 - Course treatment: block
 - Confidence: High
 - Resolution owner: platform integration lead
+
+## DISC-007 — Required energy and failure-validation drills are unexecuted
+- Specification: `specification/13-performance-model.md` §1 and `specification/14-failure-analysis.md` §3 require measured phone energy, long-running fuzzing, and platform/OEM validation drills before release acceptance.
+- Implementation: none in audited baseline.
+- Evidence: `course/audit/implementation.md` Simulation capabilities and Mobile and embedded boundaries; `implementation/mesh-milk/fuzz/README.md`.
+- Impact: deterministic simulator and unit-test results cannot validate the battery target, failure-drill pass bands, or platform behavior required for the course release gate.
+- Course treatment: block
+- Confidence: High
+- Resolution owner: performance validation lead
