@@ -4,7 +4,7 @@ PHY-02,1-physics+capstone,not-applicable; DISC-002 and DISC-007 block a controll
 PHY-03,1-physics+capstone,not-applicable; gate D is preimplementation design,physical-claim-boundary-design-review,D,planned
 NET-01,2-network+3-rust-i,canonical-wire-codec-and-negative-parser-tests,wire-format-and-adversarial-parser-review,A+C,planned
 NET-02,2-network+3-rust-i,contact-simulator-session-FSM-trace,contact-simulator-and-adversarial-FSM-review,A+C,planned
-NET-03,2-network+capstone,not-applicable; DISC-001 and DISC-006 block production BLE/platform conformance,reproducible-TAL-platform-implementation-and-defense (blocked),A+D+E,gap
+NET-03,2-network+capstone,not-applicable; DISC-001 and DISC-006 block production BLE/platform conformance,reproducible-TAL-platform-implementation-and-defense (blocked),E,gap
 DTN-01,4-dtn-routing+capstone,spray-routing-mini_milk-end-to-end-run,reproducible-routing-capstone-and-defense,B+E,planned
 DTN-02,4-dtn-routing+3-rust-i,bounded-store-forward-mini_milk-end-to-end-and-negative-tests,adversarial-store-invariant-review,B+C,planned
 DTN-03,4-dtn-routing+5-sync,receipt-and-quota-mini_milk-end-to-end-run,adversarial-purge-and-fairness-review,B+C,planned
@@ -13,14 +13,14 @@ SYN-02,5-sync+3-rust-i,causal-DAG-mini_milk-end-to-end-merge,adversarial-missing
 SYN-03,5-sync,OR-Set-mini_milk-end-to-end-merge,concurrent-merge-adversarial-review,B+C,planned
 SEC-01,6-security-crypto+capstone,not-applicable; gate D is preimplementation design,threat-model-and-invariant-design-review,D,planned
 SEC-02,6-security-crypto+3-rust-i,identity-and-crypto-mini_milk-end-to-end-tests,cross-domain-adversarial-review,B+C,planned
-SEC-03,6-security-crypto+capstone,not-applicable; gate D is preimplementation design,reproducible-security-capstone-and-residual-risk-defense,D+E,planned
+SEC-03,6-security-crypto+capstone,not-applicable,reproducible-security-capstone-and-residual-risk-defense,E,planned
 RST-01,3-rust-i,typed-codec-mini_milk-end-to-end-tests,error-path-adversarial-review,B+C,planned
 RST-02,3-rust-i,store-trait-mini_milk-end-to-end-tests,corruption-adversarial-review,B+C,planned
-RST-03,7-rust-ii-robustness+2-network,contact-simulator-TAL-event-trace,async-adapter-mini_milk-end-to-end-run,A+B,planned
+RST-03,7-rust-ii-robustness+2-network,mini_milk-end-to-end-TAL-adapter-run-with-contact-simulator-event-trace,reproducible-async-TAL-adapter-capstone-implementation,A+B,planned
 RST-04,7-rust-ii-robustness+capstone,not-applicable; DISC-004 DISC-005 and DISC-006 block committed vectors fuzz evidence and target matrix,reproducible-adversarial-fuzz-vectors-target-matrix-and-defense (blocked),C+E,gap
-SIM-01,capstone,contact-simulator-deterministic-seed-scenario,reproducible-contact-simulator-capstone,A+E,planned
+SIM-01,capstone,contact-simulator-deterministic-seed-scenario,reproducible-contact-simulator-capstone-implementation-and-defense,A+E,planned
 SIM-02,capstone,scale-and-sensitivity-mini_milk-review,adversarial-scale-model-review,C,planned
 SIM-03,capstone,not-applicable; DISC-002 and DISC-007 block validated energy and failure-drill results,reproducible-field-validation-implementation-and-defense (blocked),E,gap
 DES-01,0-tools+capstone,not-applicable; gate D is preimplementation design,requirements-and-non-goals-design-review,D,planned
 DES-02,0-tools+capstone,not-applicable; gate D is preimplementation design,architecture-tradeoff-design-review,D,planned
-DES-03,capstone,not-applicable; gate D is preimplementation design,reproducible-capstone-audit-and-residual-risk-defense,D+E,planned
+DES-03,capstone,not-applicable,reproducible-capstone-implementation-audit-and-residual-risk-defense,E,planned
