@@ -6,7 +6,7 @@ This audit is a course-facing traceability record, not a performance claim or an
 
 ### Purpose
 
-Quantify whether the DTN design can meet the battery, contact-capacity, load, sync, and latency goals, while labelling arithmetic `[A]`, simulation work `[S]`, and measurement work `[E]`.
+Quantify whether the DTN design can meet the battery, contact-capacity, load, sync, and latency goals, while labelling arithmetic `[A]`, simulation-required / unexecuted targets `[S]`, and measurement work `[E]`.
 
 ### Normative invariants
 
@@ -22,7 +22,7 @@ It chooses spray-and-wait rather than epidemic forwarding, mini filters before e
 
 ### Provisional or uncertain claims
 
-`k_sys`, delivery latency, adversarial RBSR behavior, short-contact discovery sufficiency, connection parameters, and RS decode cost are unmeasured or simulated. The source document's `[4,12]` planning band conflicts with OQ-13's stale `[3,10]`; neither value is selected here. Same-district p50 ≤60 min is a simulator fail band, not a delivery guarantee.
+`k_sys`, delivery latency, adversarial RBSR behavior, short-contact discovery sufficiency, connection parameters, and RS decode cost are unmeasured or simulation-required. The source document's `[4,12]` planning band conflicts with OQ-13's stale `[3,10]`; neither value is selected here. Same-district p50 ≤60 min is a simulation-required / unexecuted target `[S]`, not a delivery guarantee.
 
 ### Dependencies and cross-references
 
@@ -174,7 +174,7 @@ This is a case study in making deployment assumptions testable: name the cells, 
 
 ### Potential flaw / Alternative / Resolution
 
-**Performance Engineer — Potential flaw:** dwell-capacity arithmetic treats a successful BLOB phase as given. **Alternative:** equate contact duration with transferable payload. **Resolution:** retain setup amortization as a simulator dependency; use D-8/D-9 only as provisional pass bands.
+**Performance Engineer — Potential flaw:** dwell-capacity arithmetic treats a successful BLOB phase as given. **Alternative:** equate contact duration with transferable payload. **Resolution:** retain setup amortization as a simulator dependency; treat D-8/D-9 as simulation-required / unexecuted targets `[S]` only.
 
 ## 18 — Authority, Announcements, and Priority Admission
 
@@ -241,7 +241,7 @@ Every value below states units, basis, dependencies, and status. “Design targe
 | Epidemic at N=10k: ~260 MiB/node/day, ~280× spray | MiB/node/day and dimensionless comparison; doc 13 arithmetic | M, bundle size, forwarding policy | validated arithmetic `[A]`; not a field measurement |
 | 600k IDs/72 h; ~700 KB SeenIndex | IDs, hours, KB | N=10k/load/retention | validated arithmetic `[A]`; sizing assumption |
 | RBSR `n=100k`, `d=100`, `B_f=16`, `T_list=24`, 1–3 rounds, 2–20 KiB, ~300 ms | IDs, branches, bytes, ms | doc 06, RTT distribution | arithmetic `[A]`; adversarial behavior provisional `[S]` |
-| Same-district p50 ≤60 min; D-3 p95 <6 h; D-4 ≥0.9/30 min; D-6 drop ≤10% | minutes/hours/ratio | mobility, contact graph, adversary | simulated pass bands/design targets `[S]` |
+| Same-district p50 ≤60 min; D-3 p95 <6 h; D-4 ≥0.9/30 min; D-6 drop ≤10% | minutes/hours/ratio | mobility, contact graph, adversary | simulation-required / unexecuted target `[S]` |
 | D-1 10k bundles ×1000 cuts; D-2 72 h; D-7 ≥3 device/OEM classes | count, duration, classes | implementation harness | required drills; unexecuted |
 | File ≤8 MiB; album ≤16; name ≤255 B; MIME ≤64 B | bytes/files; scope and parser bounds, no formal derivation | doc 16 parsing/quota | provisional design targets |
 | Thumbnail ≤32 KiB; generic auto-fetch ≤1 MiB; class-4 TTL 72 h; quota 128 MiB | KiB/MiB/hours; thumbnail is OQ-18 target, other values reused | docs 03, 08, 16 | thumbnail provisional; reused constants retain source status |
@@ -251,7 +251,7 @@ Every value below states units, basis, dependencies, and status. “Design targe
 | Train poll 60 s vs 5 min; validity ≤12 h | seconds/minutes/hours; profile target for train power | power source, doc 18 | provisional |
 | Dwell 30–120 s; 180–560 KiB then 0.7–2 MiB | seconds/KiB/MiB from goodput and 60 s cap | OQ-2/setup cost | provisional arithmetic `[S]` |
 | Opposing contact 0.24–1.08 s (`2R/v`) | seconds from 10–30 m and 200–300 km/h | H2/H6, range/velocity assumptions | derived/provisional; ruled unusable by setup model |
-| D-8: 8 cars, ≤2 rounds p95, ≥95%, ≥50% degradation; D-9 ≥0.85/15 min | cars, rounds, percentages, minutes | mmp-sim, profile topology | simulated design targets `[S]` |
+| D-8: 8 cars, ≤2 rounds p95, ≥95%, ≥50% degradation; D-9 ≥0.85/15 min | cars, rounds, percentages, minutes | mmp-sim, profile topology | simulation-required / unexecuted target `[S]` |
 | Campus floor loss `15+4(n−1)` dB; N≈30 | dB/model coefficient; secondary I9 | actual building/material/frequency | low-confidence provisional model |
 | Class 5; fields 0x07/0x08; TLVs 0x81/0x82; D3 | identifiers, not physical quantities; allocated protocol constants | docs 03, 06, 10 | normative extension allocation; compatibility-dependent |
 | `priority_budget` admissions/hour; `B≤β`; bound `B+βT≤β(T+1)` | admissions/hour and hours; documented lemma | honest receiver, distinct IDs, local clock | lemma arithmetic validated under assumptions; β provisional |

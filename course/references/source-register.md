@@ -88,8 +88,8 @@ This register imports the sources used by the performance, failure, and extensio
 - Source class: Paper
 - Accessed: 2026-07-02
 - Supports: [H5]; data-mule precedent.
-- Confidence: High
-- Evidence basis: Bibliography records H existence but unverified content.
+- Confidence: Low
+- Evidence basis: Bibliography records H existence but unverified content; this register does not treat existence alone as substantive support.
 - Limitations: PDF content was not verified in the project.
 
 ## SRC-0011 — VANET contact-duration study
@@ -357,10 +357,10 @@ This register imports the sources used by the performance, failure, and extensio
 - URL: https://www.rfc-editor.org/rfc/rfc9171.html
 - Source class: RFC
 - Accessed: 2026-07-02
-- Supports: [J8], [A7]; priority comparison.
+- Supports: [J8]; priority comparison.
 - Confidence: High
 - Evidence basis: Project bibliography classifies [J8] as RFC, H.
-- Limitations: Does not provide sender-authenticated priority admission.
+- Limitations: Does not provide sender-authenticated priority admission; duplicate URL also appears in bibliography entry A7.
 
 ## SRC-0041 — ACPC revocation
 - URL: https://www.sciencedirect.com/science/article/pii/S1570870518304761 (eprint: https://eprint.iacr.org/2018/324)
@@ -654,10 +654,10 @@ This register imports the sources used by the performance, failure, and extensio
 - URL: https://www.rfc-editor.org/rfc/rfc9171.html
 - Source class: RFC
 - Accessed: 2026-06-10
-- Supports: [A7], [J8]; DTN concepts and priority comparison.
+- Supports: [A7]; DTN concepts.
 - Confidence: High
 - Evidence basis: Project bibliography: RFC, H.
-- Limitations: No native sender-authenticated priority admission.
+- Limitations: No native sender-authenticated priority admission; duplicate URL also appears in bibliography entry J8.
 
 ## SRC-0074 — BPv7 custody transfer
 - URL: https://arxiv.org/html/2507.17403v1
@@ -807,19 +807,19 @@ This register imports the sources used by the performance, failure, and extensio
 - URL: https://pmc.ncbi.nlm.nih.gov/articles/PMC6111614/
 - Source class: Paper
 - Accessed: 2026-06-10
-- Supports: [A24], [B15]; Bluetooth Mesh comparison.
+- Supports: [A24]; Bluetooth Mesh comparison.
 - Confidence: High
 - Evidence basis: Project bibliography: Paper, H.
-- Limitations: Not a DTN phone-mesh evaluation.
+- Limitations: Not a DTN phone-mesh evaluation; duplicate URL also appears in bibliography entry B15.
 
 ## SRC-0091 — BLE throughput primer
 - URL: https://interrupt.memfault.com/blog/ble-throughput-primer
-- Source class: [B1] Engineering analysis; [I7] Blog.
-- Accessed: [B1] 2026-06-10; [I7] re-verified 2026-07-02.
-- Supports: [B1] BLE throughput planning context; [I7] iPhone GATT and ATT-ceiling re-check.
-- Confidence: [B1] Medium; [I7] Low.
-- Evidence basis: [B1] project bibliography: engineering analysis, M; [I7] project bibliography: Blog, L, re-verified in Track I.
-- Limitations: [B1] is not a current phone-to-phone matrix; [I7] is a blog re-check and does not validate the mixed-fleet planning band.
+- Source class: Engineering analysis
+- Accessed: 2026-06-10
+- Supports: [B1]; BLE throughput planning context.
+- Confidence: Medium
+- Evidence basis: Project bibliography classifies [B1] as engineering analysis, M.
+- Limitations: Not a current phone-to-phone matrix; duplicate URL also appears in bibliography entry I7, which has its own 2026-07-02 Low-confidence record.
 
 ## SRC-0092 — BLE 5 PHY trade-offs
 - URL: https://www.carloalbertoboano.com/documents/spoerk19ble5phy.pdf
@@ -852,10 +852,10 @@ This register imports the sources used by the performance, failure, and extensio
 - URL: https://source.android.com/docs/core/connect/bluetooth/ble_advertising
 - Source class: Vendor documentation
 - Accessed: 2026-06-10
-- Supports: [B5], [I6]; Android advertising context.
+- Supports: [B5]; Android advertising context.
 - Confidence: High
-- Evidence basis: Bibliography gives B5 H and I6 M.
-- Limitations: Capability availability is hardware-dependent.
+- Evidence basis: Project bibliography classifies [B5] as vendor documentation, H.
+- Limitations: Capability availability is hardware-dependent; duplicate URL also appears in bibliography entry I6.
 
 ## SRC-0096 — BLE advertising extensions
 - URL: https://blog.nordicsemi.com/getconnected/bluetooth-5-advertising-extensions
@@ -1260,4 +1260,4 @@ This register imports the sources used by the performance, failure, and extensio
 - Supports: [B15]; redundant-relay PER degradation.
 - Confidence: High
 - Evidence basis: Project bibliography classifies [B15] as Paper, H.
-- Limitations: Same paper URL as [A24]; this separately preserves the [B15] bibliography alias.
+- Limitations: Same paper URL as bibliography entry A24; this separately preserves the B15 bibliography alias.
