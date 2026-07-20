@@ -1,8 +1,11 @@
 # Implementation Audit
 
-Scope: isolated worktree `course-foundation-audit`, commit
-`1c6470d313803458c4d0ecb8f83cc21389becc24`, inspected 2026-07-20. This is
-an audit of that committed tree only. It does not describe the user-owned,
+Rust source baseline / parent HEAD before this audit artifact was created:
+`1c6470d313803458c4d0ecb8f83cc21389becc24`, inspected 2026-07-20. Subsequent
+Task 5 commits add or revise only `course/audit/implementation.md`; they do not
+change the audited Rust tree under `implementation/mesh-milk/`. This document
+does not attempt to permanently name its own containing HEAD, because its own
+commit necessarily changes that HEAD. It does not describe the user-owned,
 possibly dirty checkout at `C:\Users\Asus\Desktop\milk_proto`, and no source
 from that checkout was used as evidence. No additional implementation document
 was read to resolve a boundary; this audit relies on manifests, Rust sources,
@@ -80,10 +83,10 @@ mapping stated in manifest/module comments; it is not a conformance verdict.
 | `mmp-router` | Spray/focus handoff, transfer/eviction ordering, utility and origin token buckets (`crates/mmp-router/src/lib.rs`). | `mmp-types`, no-default-feature `mmp-core` | conditional `no_std`; manifest has empty `std` and `alloc` features. | 05, 06, 12, 18 | 8 tests cover formula/ordering/bucket properties; no mobility calibration or adversarial-scale measurement. |
 | `mmp-store` | `SnapshotStore`: checksummed file snapshot behind `BundleStore`, plus claim and opaque group-blob staging (`crates/mmp-store/src/lib.rs`). | `mmp-types`, `mmp-crypto`, `mmp-core` | source uses `std::fs`, `std::io`, and paths; no `no_std` attribute. Manifest reserves a future flash log but does not implement it. | 04, 12, 18 | 5 persistence/corruption tests. Snapshot write is temp plus remove/rename; its power-loss/Windows semantics are not fault-injected here. |
 | `mmp-tal` | TAL event vocabulary (`TalEvent`, `LinkQuality`, `LinkId`) and in-memory `MemLink`, not a trait object transport (`crates/mmp-tal/src/lib.rs`). | `mmp-types` | conditional `no_std`, `alloc`; default feature set is empty. | 03, 09, 12 | no dedicated `#[test]` scenarios; `MemLink` is used as a seam, not radio evidence. |
-| `mmp-node` | std node API: events, direct/group/announcement operations, sessions, quota/receipt/claim glue (`crates/mmp-node/src/lib.rs`). | types, crypto, core, router, store, TAL | std: uses `std::collections` and `rand::StdRng`. | 04, 05, 06, 08, 11, 12, 18 | 13 integration tests plus 2 authority-bucket tests. In-memory contacts prove protocol paths, not a real scheduler/radio. |
+| `mmp-node` | std node API: events, direct/group/announcement operations, sessions, quota/receipt/claim glue (`crates/mmp-node/src/lib.rs`). | types, crypto, core, router, store, TAL | std: uses `std::collections` and `rand::StdRng`. | 04, 05, 06, 08, 11, 12, 18 | 13 total unit-module tests: 11 in `tests::` and 2 in `authority_bucket::tests`. In-memory contacts prove protocol paths, not a real scheduler/radio. |
 | `mmp-cli` | Desktop/debug binary: key generation, inspect, in-memory demo, BLE central `connect`/`send`, and peripheral `listen` (`crates/mmp-cli/src/main.rs`). | node, core, store, TAL, btleplug TAL, peripheral TAL, types | std/Tokio binary by manifest and source. | 03, 04, 09, 12 | 0 unit tests. CLI control flow and physical BLE commands have no automated result in this baseline. |
 | `mmp-tal-btleplug` | Desktop BLE central adapter, UUID constants, events, chunking (`crates/mmp-tal-btleplug/src/lib.rs`, `framing.rs`). | TAL, types | std/Tokio/btleplug/futures by manifest/source. | 09, 12 | 7 deterministic unit tests (link ID and chunks); no device or cross-platform connection test. |
-| `mmp-tal-peripheral` | PC peripheral/GATT server/advertiser; Linux/BlueZ implementation, Windows/macOS unsupported API-compatible stubs (`src/lib.rs`, `linux.rs`, `unsupported.rs`). | TAL, types; Linux `bluer`; dev-only central TAL | std/Tokio; target-specific Linux backend. | 09, 12 | 15 UUID/framing/link/re-advertise tests. Linux source is compiled on this host but no Bluetooth daemon/hardware scenario ran; Windows/macOS return Unsupported. |
+| `mmp-tal-peripheral` | PC peripheral/GATT server/advertiser; Linux/BlueZ implementation, Windows/macOS unsupported API-compatible stubs (`src/lib.rs`, `linux.rs`, `unsupported.rs`). | TAL, types; Linux `bluer`; dev-only central TAL | std/Tokio; target-specific Linux backend. | 09, 12 | Host `x86_64-pc-windows-msvc` selected `unsupported.rs`; 15 shared framing/stub/UUID/link/re-advertise tests ran. `linux.rs`/BlueZ was not compiled or tested in this native baseline, and no Bluetooth daemon/hardware scenario ran. |
 | `mmp-tal-mobile` | Re-exports TAL types and `att_chunk(mtu)` for native Kotlin/Swift radio ownership (`crates/mmp-tal-mobile/src/lib.rs`). | TAL | no `#![no_std]` declaration; manifest has no std feature gate. | 09, 12 | 0 tests; no Rust phone radio implementation or generated binding test. |
 | `mmp-tal-embedded` | Placeholder nRF52/ESP32 TAL re-export. | TAL | explicit `#![no_std]`. | 09, 12 | 0 tests; source explicitly says target TAL is out of MVP scope. |
 | `mmp-node-embassy` | Placeholder embedded executor shell. | core, router, store, TAL | explicit `#![no_std]`; source contains only module documentation and the attribute. | 12 | 0 tests; no executor/API behavior exists at this HEAD. |
@@ -148,7 +151,8 @@ evidence of structure, not evidence of end-to-end conformance.
 
 The active test total is 111. The useful grouping, based on the test output and
 source locations, is: `mmp-types` 21; `mmp-crypto` 12; `mmp-core` 17;
-`mmp-router` 8; `mmp-store` 5; `mmp-node` 13 (including 2 `authority_bucket` tests);
+`mmp-router` 8; `mmp-store` 5; `mmp-node` 13 (11 `tests::` plus 2
+`authority_bucket::tests`);
 `mmp-ffi` 7; `mmp-sim` 3 active plus 1 ignored; `mmp-rs-code` 3;
 `mmp-tal-btleplug` 7; `mmp-tal-peripheral` 15; `mmp-cli`, `mmp-tal`,
 `mmp-tal-mobile`, `mmp-tal-embedded`, `mmp-node-embassy`, and `layer-check`
@@ -247,11 +251,12 @@ orchestration beyond `#![no_std]`. No nRF52, ESP32, Embassy, flash-log, or
 evidence.
 
 Desktop transport has a stronger source implementation boundary but still limited
-execution evidence. `mmp-tal-btleplug` is a Tokio/btleplug central adapter;
-`mmp-tal-peripheral` selects a Linux/BlueZ `bluer` backend, while its
-`unsupported.rs` explicitly reports Unsupported for Windows and macOS. The
-workspace native test only exercised deterministic code paths; it neither
-advertised nor connected to a physical device or daemon.
+execution evidence. `mmp-tal-btleplug` is a Tokio/btleplug central adapter.
+For `mmp-tal-peripheral`, the native host was `x86_64-pc-windows-msvc`, so
+`unsupported.rs`, not the cfg-gated `linux.rs`/BlueZ backend, was selected.
+The workspace native test therefore evidences only shared framing/stub paths;
+it did not compile or test Linux/BlueZ, advertise, or connect to a physical
+device or daemon.
 
 ## Specification-conformance evidence
 
