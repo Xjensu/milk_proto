@@ -312,14 +312,20 @@ Never equate code presence with correctness; state the supporting test/vector ev
 
 ```powershell
 $metadata = cargo metadata --manifest-path implementation/mesh-milk/Cargo.toml --no-deps --format-version 1 | ConvertFrom-Json
-$metadata.workspace_members | ForEach-Object {
-  $name = ($_ -split ' ')[0]
+$workspacePackages = @($metadata.packages | Where-Object { $_.id -in $metadata.workspace_members })
+if ($workspacePackages.Count -ne $metadata.workspace_members.Count) { throw "Workspace package resolution mismatch: packages=$($workspacePackages.Count), members=$($metadata.workspace_members.Count)" }
+$workspaceNames = @($workspacePackages.name)
+if (($workspaceNames | Sort-Object -Unique).Count -ne $workspaceNames.Count) { throw 'Duplicate workspace package name' }
+$workspaceNames | ForEach-Object {
+  $name = $_
   if (-not (Select-String -LiteralPath course/audit/implementation.md -SimpleMatch $name -Quiet)) { throw "Missing crate $name" }
 }
 git diff --check -- course/audit/implementation.md
 ```
 
-Expected: no missing crate names and no whitespace errors.
+Expected: all 17 workspace packages resolve from the modern Cargo PackageId
+values, all 17 exact package names are present, no names are duplicated, and
+there are no whitespace errors.
 
 - [ ] **Step 5: Commit the implementation audit**
 
