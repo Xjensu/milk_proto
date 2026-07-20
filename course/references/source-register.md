@@ -156,7 +156,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Content not verified in project.
 
 ## SRC-0018 — Drive-thru Internet
-- URL: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1109/INFCOM.2004.1354509
+- URL: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1109/INFCOM.2004.1354509 (IEEE: https://ieeexplore.ieee.org/document/1354509)
 - Source class: Paper
 - Accessed: 2026-07-03
 - Supports: [H13]; R16 prior-art qualification.
@@ -291,7 +291,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Phone-to-MCU, not phone-to-phone; OQ-2 remains open.
 
 ## SRC-0033 — LTE alert spoofing
-- URL: https://dl.acm.org/doi/10.1145/3307334.3326082
+- URL: https://dl.acm.org/doi/10.1145/3307334.3326082 (mirror: https://ericw.us/trow/lte-alerts.pdf)
 - Source class: Paper
 - Accessed: 2026-07-02
 - Supports: [J1]; authenticated-broadcast threat model.
@@ -363,7 +363,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Does not provide sender-authenticated priority admission.
 
 ## SRC-0041 — ACPC revocation
-- URL: https://www.sciencedirect.com/science/article/pii/S1570870518304761
+- URL: https://www.sciencedirect.com/science/article/pii/S1570870518304761 (eprint: https://eprint.iacr.org/2018/324)
 - Source class: Paper
 - Accessed: 2026-07-02
 - Supports: [J9]; activation-code revocation comparison.
@@ -417,7 +417,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Fetch returned 403; content unverified.
 
 ## SRC-0047 — k-times anonymous authentication
-- URL: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1007/978-3-540-30539-2_22
+- URL: https://api.semanticscholar.org/graph/v1/paper/DOI:10.1007/978-3-540-30539-2_22 (Springer: https://link.springer.com/chapter/10.1007/978-3-540-30539-2_22)
 - Source class: Paper
 - Accessed: 2026-07-03
 - Supports: [J15]; cryptographic-budget alternative.
@@ -426,7 +426,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Full text paywalled in project research.
 
 ## SRC-0048 — Untraceable electronic cash
-- URL: https://chaum.com/wp-content/uploads/2021/12/Untraceable_Electronic_Cash.pdf
+- URL: https://chaum.com/wp-content/uploads/2021/12/Untraceable_Electronic_Cash.pdf (Springer: https://link.springer.com/chapter/10.1007/0-387-34799-2_25)
 - Source class: Paper
 - Accessed: 2026-07-03
 - Supports: [J16]; offline double-spend alternative.
@@ -525,7 +525,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: Preprint; fresh verification required.
 
 ## SRC-0059 — Off-grid emergency communication report
-- URL: https://www.helpnetsecurity.com/2025/10/08/off-grid-emergency-communication/
+- URL: https://www.helpnetsecurity.com/2025/10/08/off-grid-emergency-communication/ (paper: https://arxiv.org/pdf/2509.22568)
 - Source class: Preprint and press
 - Accessed: 2026-07-02
 - Supports: [K11]; mesh landscape comparison.
@@ -814,12 +814,12 @@ This register imports the sources used by the performance, failure, and extensio
 
 ## SRC-0091 — BLE throughput primer
 - URL: https://interrupt.memfault.com/blog/ble-throughput-primer
-- Source class: Engineering analysis
-- Accessed: 2026-06-10
-- Supports: [B1], [I7]; BLE throughput context.
-- Confidence: Medium
-- Evidence basis: Bibliography records B1 M; the I7 re-check is L.
-- Limitations: No current phone-to-phone matrix.
+- Source class: [B1] Engineering analysis; [I7] Blog.
+- Accessed: [B1] 2026-06-10; [I7] re-verified 2026-07-02.
+- Supports: [B1] BLE throughput planning context; [I7] iPhone GATT and ATT-ceiling re-check.
+- Confidence: [B1] Medium; [I7] Low.
+- Evidence basis: [B1] project bibliography: engineering analysis, M; [I7] project bibliography: Blog, L, re-verified in Track I.
+- Limitations: [B1] is not a current phone-to-phone matrix; [I7] is a blog re-check and does not validate the mixed-fleet planning band.
 
 ## SRC-0092 — BLE 5 PHY trade-offs
 - URL: https://www.carloalbertoboano.com/documents/spoerk19ble5phy.pdf
@@ -984,7 +984,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: None recorded in project bibliography.
 
 ## SRC-0110 — DTN opportunistic-routing survey
-- URL: https://www.researchgate.net/publication/320347333_Survey_on_Opportunistic_Routing_for_DelayDisruption_Tolerant_NETWORK
+- URL: https://www.researchgate.net/publication/320347333_Survey_on_Opportunistic_Routing_for_DelayDisruption_Tolerant_Networks
 - Source class: Survey
 - Accessed: 2026-06-10
 - Supports: [C8]; routing comparison.
@@ -1119,7 +1119,7 @@ This register imports the sources used by the performance, failure, and extensio
 - Limitations: None recorded in project bibliography.
 
 ## SRC-0125 — NTC network coding
-- URL: https://www.researchgate.net/publication/224251698_NTC_Towards_Efficient_Network_Coding_in_Delay_TOLERANT_NETWORKS
+- URL: https://www.researchgate.net/publication/224251698_NTC_Towards_Efficient_Network_Coding_in_Delay_Tolerant_Networks
 - Source class: Paper
 - Accessed: 2026-06-10
 - Supports: [E3]; coding alternatives.

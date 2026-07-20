@@ -216,7 +216,9 @@ Teach the split between authenticity, authority, admission, display, and wire or
 
 | Item | Carried status and required resolution |
 |---|---|
+| OQ-1 | Per-sender sequencing versus TTL deletion remains unresolved for the RBSR expiry/sync model: expiry creates sequence gaps, so reconciliation must remain over BundleID sets rather than sequence ranges. Resolve by verifying that doc 06 has no hidden sequence-density dependency; current best guess is Medium confidence. |
 | OQ-2, OQ-4, OQ-5, OQ-7, OQ-13 | Phone throughput, BLE simulation, RBSR contacts, RS decode, and whole-phone energy require bench/simulator work. OQ-13's `[3,10]` value conflicts with doc 13's `[4,12]`; repair the question record before a gate. |
+| OQ-3 | Current iOS background-to-background discovery/relay behavior remains unresolved. It directly conditions doc 14 F8 and D-7 and doc 17 Profile B's leaf-heavy degradation. Resolve by re-testing current iOS or locating 2024+ published measurements; the source-defined best guess is restricted, poll-only leaf behavior (Medium confidence). |
 | OQ-6, OQ-8–OQ-12 | RaptorQ IPR, group succession, privacy, crypto review, hybrid PQ, and SIG UUID remain unresolved; none is closed by docs 13–18. |
 | OQ-14–OQ-15 | Measure inter-carriage 2.4 GHz propagation and contact-duration estimation; current train/campus claims are provisional profiles. |
 | OQ-16–OQ-17 | Validate QR/gossip provisioning, root-compromise detection, and issuer kill-list latency against cert expiry. |
