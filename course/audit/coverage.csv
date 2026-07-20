@@ -1,0 +1,26 @@
+competency_id,planned_module,mini_milk_evidence,capstone_evidence,assessment_gate,status
+PHY-01,1-physics,link-budget-airtime-sheet,physical-budget-appendix,B,planned
+PHY-02,1-physics+capstone,not-applicable; DISC-002 and DISC-007 block a controlled energy target,field-energy-validation-plan,E,gap
+PHY-03,1-physics,assumption-boundary-review,architecture-claim-boundary,B,planned
+NET-01,2-network+3-rust-i,canonical-codec-negative-tests,wire-parser-review,D,planned
+NET-02,2-network+3-rust-i,session-fsm-transition-tests,contact-trace-and-fsm-defense,D,planned
+NET-03,2-network+capstone,not-applicable; DISC-001 and DISC-006 block production BLE/platform conformance,TAL-platform-evidence-plan,E,gap
+DTN-01,4-dtn-routing,spray-budget-ledger,routing-tradeoff-defense,E,planned
+DTN-02,4-dtn-routing+3-rust-i,bounded-store-expiry-dedup-tests,store-forward-invariant-review,D,planned
+DTN-03,4-dtn-routing+5-sync,receipt-purge-decision-tests,fairness-policy-review,D,planned
+SYN-01,5-sync,RBSR-summary-trace,reconciliation-demo,C,planned
+SYN-02,5-sync+3-rust-i,causal-DAG-fixtures,causal-merge-review,D,planned
+SYN-03,5-sync,OR-Set-concurrency-test,CRDT-choice-defense,D,planned
+SEC-01,6-security-crypto,threat-and-invariant-matrix,security-boundary-defense,E,planned
+SEC-02,6-security-crypto+3-rust-i,identity-domain-negative-tests,crypto-context-review,D,planned
+SEC-03,6-security-crypto+capstone,ratchet-epoch-compromise-timeline,residual-crypto-risk-defense,E,planned
+RST-01,3-rust-i,typed-codec-error-tests,Rust-protocol-boundary-review,C,planned
+RST-02,3-rust-i,store-trait-corruption-tests,storage-contract-review,C,planned
+RST-03,7-rust-ii-robustness+2-network,async-TAL-event-trace,adapter-lifecycle-review,C,planned
+RST-04,7-rust-ii-robustness+capstone,not-applicable; DISC-004 DISC-005 and DISC-006 block committed vectors fuzz evidence and target matrix,portability-and-robustness-evidence-pack,E,gap
+SIM-01,capstone,deterministic-seed-scenario,simulation-results-appendix,C,planned
+SIM-02,capstone,sensitivity-counterexample-report,model-limitations-defense,D,planned
+SIM-03,capstone,not-applicable; DISC-002 and DISC-007 block validated energy and failure-drill results,field-validation-protocol,E,gap
+DES-01,0-tools,requirements-and-non-goals-sheet,acceptance-criteria-review,B,planned
+DES-02,0-tools+capstone,architecture-decision-record,architecture-defense,E,planned
+DES-03,capstone,evidence-classification-memo,audit-and-residual-risk-defense,E,planned
