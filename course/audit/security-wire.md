@@ -123,6 +123,7 @@ Beacon — малый, вероятностный discovery; связь bulk —
 ### Provisional or uncertain claims
 
 - MTU 247+, PHY 2M и DLE запрашиваются при dial, а не являются ⚠-параметрами или performance guarantee: handshake продолжается независимо от negotiated values, включая MTU=23 floor (`09 §4`). `09` реально помечает ⚠ development `mmp1` namespace, empty scan response v1, advertising 2–10 s, baseline scan 30 ms/1.28 s (≈2.3% duty), 15-min slot/±1 acceptance, RSSI >−85 dBm, `≥3` centrals и busy bit, credit N=8, connection interval 15–30 ms/50 ms и 4-s supervision, airtime cap 60 s, duty ≤0.5%/≤2.5% и idle-renegotiation >2 s; их подтверждение ждёт doc 13 (`09 §2–8`).
+- В самом `09` есть неразрешённое противоречие development advertising: нормативная/deployed layout требует Service Data **16-bit** AD header (AD type 0x16, 4 B) и ровно 24-B beacon в 31-B budget, тогда как development упоминает 128-bit `mmp1` namespace, не задавая ни advertising AD type/encoding, ни пересчитанный byte budget. Поэтому development advertising framing не определён и не реализуем из одного `09` до разрешения OQ-12/16-bit assignment; это не затрагивает pinned bulk GATT UUID (`09 §2–3.1`).
 - Burst scan допустим лишь foreground/Android foreground service; iOS background и Android без FG деградируют до opportunistic-on-open (`09 §3.2`).
 - Throughput CoC «modest» против tuned GATT и iOS overflow behaviour — зависимости [B18], [B1], [B11], а не гарантии (`09 §5.4; §8`).
 
