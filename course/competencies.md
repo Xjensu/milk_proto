@@ -8,7 +8,7 @@
 
 ## Assessment gates
 
-A — трассировка требования и словарь; B — расчёт или разбор wire/state; C — mini_milk реализация; D — negative/adversarial verification; E — capstone review и защита.
+A — wire format + contact simulator; B — mini_milk end-to-end; C — mini_milk adversarial and scale review; D — capstone design review before implementation; E — reproducible capstone implementation and defense.
 
 ## PHY-01 — Рассчитывает ограничение радиоканала и airtime
 - Действие: вычисляет link budget, airtime и duty-cycle для заданного beacon/bulk сценария, помечая каждое допущение.

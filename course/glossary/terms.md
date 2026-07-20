@@ -2,7 +2,7 @@
 
 Порядок стабилен и концептуален: сначала границы протокола и носителя, затем DTN и состояние, затем безопасность и бюджеты. Английское слово в заголовке — термин спецификации; русский текст — рабочее объяснение курса.
 
-## AEAD (`AEAD`)
+## Аутентифицированное шифрование с ассоциированными данными (`AEAD`)
 - Кратко: Шифрование с аутентификацией связанных данных.
 - Точно: AEAD одновременно скрывает plaintext и отвергает изменённые ciphertext или associated data.
 - Не путать с: Подписью: подпись публично проверяема, AEAD обычно требует секретного ключа.
@@ -44,13 +44,13 @@
 - Не путать с: Пакетом bulk-передачи или доказательством доставки.
 - В mesh_milk: Legacy beacon — hint plane; production layout и UUID имеют открытый блокер DISC-001 ([09 §§2–3](../../specification/09-transport-ble.md#2-service-identity)).
 
-## Bloom-фильтр (`Bloom filter`)
+## Фильтр Блума (`Bloom filter`)
 - Кратко: Вероятностное компактное представление множества.
 - Точно: Он допускает ложные совпадения, но при корректном построении не должен давать ложных отрицаний.
 - Не путать с: Точным журналом receipt или доказательством наличия.
 - В mesh_milk: Receipt filter служит только hint и не может сам удалить bundle ([06 §4](../../specification/06-sync-spec.md)).
 
-## Bundle (`bundle`)
+## Бандл (`bundle`)
 - Кратко: DTN-единица хранения, переноса и проверки.
 - Точно: Bundle имеет каноническую форму, идентификатор, lifetime и подписанный origin-контекст.
 - Не путать с: OSI packet, BLE frame или произвольным payload.
@@ -86,13 +86,13 @@
 - Не путать с: TTL, quota или числом фактически принятых копий.
 - В mesh_milk: Mutable per-hop budget receive-clamp'ится до L_MAX ([03 §4.5](../../specification/03-protocol-spec.md#45-mutable-per-hop-metadata)).
 
-## CRDT / OR-Set (`CRDT / OR-Set`)
+## Сходящийся тип данных / наблюдаемый remove-set (`CRDT / OR-Set`)
 - Кратко: CRDT — структура со сходимостью реплик; OR-Set — наблюдаемый remove-set.
 - Точно: OR-Set различает добавления по тегам и удаления только наблюдённых добавлений.
 - Не путать с: LWW register или произвольной merge-функцией.
 - В mesh_milk: OR-Set выбран для группового состояния, а не для всех данных ([06 §5](../../specification/06-sync-spec.md)).
 
-## DAG (`DAG`)
+## Ориентированный ациклический граф (`DAG`)
 - Кратко: Ориентированный ациклический граф зависимостей.
 - Точно: Ребро parent указывает на предшествующее событие; отсутствие циклов позволяет вычислять зависимые frontier.
 - Не путать с: Деревом: у вершины DAG может быть несколько родителей.
@@ -104,7 +104,7 @@
 - Не путать с: Airtime одной передачи или latency.
 - В mesh_milk: Duty-cycle допущения входят в телефонную энергетическую модель ([13 §1](../../specification/13-performance-model.md#1-phone-energy-budget-5day-target)).
 
-## DTN (`DTN`)
+## Сеть с задержками и разрывами (`DTN`)
 - Кратко: Delay/Disruption-Tolerant Networking для связности с разрывами.
 - Точно: Данные хранятся у промежуточных узлов и переносятся между редкими контактами.
 - Не путать с: Непрерывной IP-сетью с end-to-end path в момент отправки.
@@ -122,19 +122,19 @@
 - Не путать с: Unix timestamp или TTL bundle.
 - В mesh_milk: Sender keys вращаются при изменении группы и отделяются по epoch ([08 §6](../../specification/08-crypto-spec.md#6-group-messaging-sender-keys-epochs)).
 
-## Forward secrecy (`forward secrecy`)
+## Прямая секретность (`forward secrecy`)
 - Кратко: Компрометация текущего ключа не раскрывает прошлые защищённые сообщения.
 - Точно: Свойство требует эволюции/стирания секретов и корректного ограничения истории ключей.
 - Не путать с: Посткомпромиссной безопасностью или простым шифрованием долгим ключом.
 - В mesh_milk: Noise/ratchet выбор должен оцениваться вместе с persistence и recovery ([08 §§4–5](../../specification/08-crypto-spec.md#4-asynchronous-dtn-message-keys-first-contact-between-identities)).
 
-## Frame (`frame`)
+## Кадр (`frame`)
 - Кратко: Структурированная единица обмена в session/wire протоколе.
 - Точно: Frame имеет type и bounded payload, который парсится по каноническим правилам.
 - Не путать с: Bundle: frame переносит управляющие и data-plane сообщения, bundle живёт в DTN store.
 - В mesh_milk: Handshake, summary, want и transfer упорядочены session FSM ([10 §4](../../specification/10-message-format.md)).
 
-## GATT (`GATT`)
+## Профиль обобщённых атрибутов BLE (`GATT`)
 - Кратко: BLE Generic Attribute Profile для структурированного обмена через connection.
 - Точно: Это BLE application-layer модель service/characteristic операций, не DTN routing protocol.
 - Не путать с: Advertising beacon или самим payload форматом MMP.
@@ -164,31 +164,31 @@
 - Не путать с: Примером поведения, метрикой или необязательной оптимизацией.
 - В mesh_milk: Verify-before-store/forward и bounded lifetime — проверяемые инварианты ([03 §4](../../specification/03-protocol-spec.md)).
 
-## Link budget (`link budget`)
+## Энергетический баланс линии (`link budget`)
 - Кратко: Баланс мощности передачи, потерь и чувствительности приёма.
 - Точно: Он выражает запас физического канала при заданных предположениях и не гарантирует session goodput.
 - Не путать с: Airtime budget, энергетическим бюджетом или количеством копий.
 - В mesh_milk: Физические допущения должны быть отделены от DTN delivery claim ([13 §2](../../specification/13-performance-model.md#2-contact-capacity)).
 
-## Merkle-DAG (`Merkle-DAG`)
+## Аутентифицированный хешами граф (`Merkle-DAG`)
 - Кратко: DAG, чьи узлы или связи аутентифицируются hash-значениями.
 - Точно: Hash связывает содержимое и зависимости, позволяя проверять целостность и искать отсутствующие вершины.
 - Не путать с: Merkle tree с единственным деревообразным путём.
 - В mesh_milk: Parent-hash DAG используется для причинного группового состояния ([06 §5](../../specification/06-sync-spec.md)).
 
-## MTU (`MTU`)
+## Максимальный размер передаваемого блока (`MTU`)
 - Кратко: Наибольший размер единицы данных на данной границе передачи.
 - Точно: MTU относится к конкретному layer/adapter и требует fragmentation или bounded frame design выше него.
 - Не путать с: Максимальным размером bundle или BLE advertising payload.
 - В mesh_milk: ATT chunking — обязанность mobile transport adapter, а не изменение wire grammar ([09 §5](../../specification/09-transport-ble.md#5-bulk-plane)).
 
-## Packet (`packet`)
+## Пакет (`packet`)
 - Кратко: Единица данных, определённая конкретным сетевым или канальным протоколом.
 - Точно: Смысл packet определяется его layer и не переносится автоматически между OSI, BLE и DTN.
 - Не путать с: MMP bundle: bundle не следует называть OSI packet.
 - В mesh_milk: Курс называет wire units frames, DTN units bundles, а BLE units — transport fragments ([10 §3](../../specification/10-message-format.md#3-bundle-layout-normative-bit-level-expands-doc-03-41)).
 
-## Payload (`payload`)
+## Полезная нагрузка (`payload`)
 - Кратко: Содержательная часть контейнера после управляющих полей.
 - Точно: Payload имеет собственный type, bounds и криптографический domain context.
 - Не путать с: Полным bundle, frame header или transport fragment.
@@ -200,37 +200,37 @@
 - Не путать с: Одной библиотекой, service API или implementation-only форматом.
 - В mesh_milk: Норма распределена по спецификациям 03–11; локальный MMPSNAP2 не является wire protocol ([12 §1](../../specification/12-rust-blueprint.md#1-workspace-layout)).
 
-## Quota (`quota`)
+## Квота (`quota`)
 - Кратко: Явный лимит ресурса для субъекта, класса или хранилища.
 - Точно: Quota задаёт измеряемое ограничение и policy реакции при превышении.
 - Не путать с: TTL: quota ограничивает объём, TTL — возраст.
 - В mesh_milk: Storage и origin quotas ограничивают relay без бесконечного роста ([05 §8](../../specification/05-routing-spec.md#8-fairness-quotas-anti-abuse)).
 
-## Ratchet (`ratchet`)
+## Храповик ключей (`ratchet`)
 - Кратко: Механизм одностороннего продвижения ключевого состояния.
 - Точно: После шага новый ключ выводится из состояния, а старый материал должен быть ограничен или уничтожен по политике.
 - Не путать с: Простым счётчиком epoch или handshake без последующих сообщений.
 - В mesh_milk: Ratchet поддерживает out-of-order окно в direct-message crypto path ([08 §5](../../specification/08-crypto-spec.md#5-conversation-ratchet-pairwise)).
 
-## Receipt (`receipt`)
+## Квитанция (`receipt`)
 - Кратко: Криптографически проверяемое свидетельство доставки или обработки.
 - Точно: Receipt несёт ограниченную семантику и не равен вероятностной подсказке фильтра.
 - Не путать с: Bloom filter hit или подтверждением радиокадра.
 - В mesh_milk: Exact receipt допускает purge, тогда как filter — только advisory hint ([06 §4](../../specification/06-sync-spec.md)).
 
-## Reconciliation (`reconciliation`)
+## Согласование множеств (`reconciliation`)
 - Кратко: Обмен, выявляющий различия реплик и передающий недостающие элементы.
 - Точно: Он должен переносить только доказуемо нужные данные при bounded памяти и контакте.
 - Не путать с: Полной пересылкой всех bundles или causal merge сам по себе.
 - В mesh_milk: RBSR согласует bounded bundle summaries в session ([06 §3](../../specification/06-sync-spec.md)).
 
-## Routing (`routing`)
+## Маршрутизация (`routing`)
 - Кратко: Выбор того, какие данные и копии переносить через контакт.
 - Точно: В DTN routing использует локальные наблюдения, budgets и policy без обязательного end-to-end path.
 - Не путать с: Forwarding — конкретной передачей уже выбранной копии.
 - В mesh_milk: Выбран bounded Binary Spray-and-Wait с локальной utility ([05 §2](../../specification/05-routing-spec.md)).
 
-## Service (`service`)
+## Сервис (`service`)
 - Кратко: Набор возможностей, предоставляемых через определённую границу.
 - Точно: Service описывает назначение и контракт, но не обязательно конкретный протокол wire bytes.
 - Не путать с: BLE GATT service UUID, Rust crate или облачной службой.
@@ -242,25 +242,25 @@
 - Не путать с: Списком функций или диаграммой happy path.
 - В mesh_milk: Отдельные FSM задают lifecycle, session, bundle и другие границы ([11 §1](../../specification/11-state-machines.md#1-node-lifecycle-fsm)).
 
-## Store-and-forward (`store-and-forward`)
+## Хранение-и-пересылка (`store-and-forward`)
 - Кратко: Сначала сохранить данные, затем передать при будущем контакте.
 - Точно: Промежуточный узел владеет bounded store и применяет expiry, dedup и policy до следующего hop.
 - Не путать с: Сквозным streaming-соединением или broadcast flooding.
 - В mesh_milk: Carrier уменьшает lifetime, а expired bundle очищается ([03 §4.3](../../specification/03-protocol-spec.md#43-lifetime-age-based-no-global-clock)).
 
-## Threat model (`threat model`)
+## Модель угроз (`threat model`)
 - Кратко: Явное описание активов, противника, границ и целей защиты.
 - Точно: Он ограничивает обещания системы и задаёт проверяемые attack scenarios.
 - Не путать с: Перечнем криптоалгоритмов или общим списком угроз.
 - В mesh_milk: Локальный активный adversary и pseudonymous identities — исходные требования ([07 §1](../../specification/07-security-spec.md)).
 
-## Transport adaptation layer (`transport adaptation layer`)
+## Слой адаптации транспорта (`transport adaptation layer`)
 - Кратко: Слой, переводящий platform/radio события в нейтральные события протокола.
 - Точно: TAL изолирует MTU, connection lifecycle и API ОС, не меняя core message semantics.
 - Не путать с: Routing layer, GATT service или application UI.
 - В mesh_milk: TAL event seam отделяет core от BLE/mobile/embedded adapters ([12 §2](../../specification/12-rust-blueprint.md#2-core-trait-surface-the-two-seams-platform-ports)).
 
-## TTL (`TTL`)
+## Время жизни (`TTL`)
 - Кратко: Время жизни объекта до обязательного истечения.
 - Точно: TTL измеряет возраст согласно правилам протокола и становится нулём независимо от удобства relay.
 - Не путать с: Quota, session timeout или криптографическим epoch.
