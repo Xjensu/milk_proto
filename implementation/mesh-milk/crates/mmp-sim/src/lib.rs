@@ -71,6 +71,19 @@ pub struct Sim {
     tracked: HashSet<Id16>,
     received_ids: HashSet<Id16>,
     delivered_ids: HashSet<Id16>,
+    /// `now_ms` at the moment each tracked id was sent (E6-S1, doc 13 §5) —
+    /// needed to turn a `Delivered` event into an end-to-end latency sample.
+    sent_at_ms: std::collections::HashMap<Id16, u64>,
+    /// One sample per tracked id, pushed exactly once (`delivered_ids` above
+    /// already gates the "exactly once" edge-triggering) at the moment its
+    /// `Delivered` receipt is observed.
+    delivery_latencies_ms: Vec<u64>,
+    /// Running max of `store_len(i) * MAX_BUNDLE` across every node touched
+    /// by a `meet()` so far — the same conservative per-node upper bound
+    /// `quota_ok()` uses, tracked as a peak rather than a final snapshot
+    /// (doc 13 §3's "store high-water" column is a peak-over-the-run figure,
+    /// not an end-of-run one).
+    store_high_water_bytes: u64,
 }
 
 impl Sim {
@@ -100,6 +113,9 @@ impl Sim {
             tracked: HashSet::new(),
             received_ids: HashSet::new(),
             delivered_ids: HashSet::new(),
+            sent_at_ms: std::collections::HashMap::new(),
+            delivery_latencies_ms: Vec::new(),
+            store_high_water_bytes: 0,
         }
     }
 
@@ -175,6 +191,7 @@ impl Sim {
         let peer = self.nodes[to].node_id();
         let id = self.nodes[from].send_text(&peer, text).expect("peer claims known (introduce first)");
         self.tracked.insert(id);
+        self.sent_at_ms.insert(id, self.now_ms);
         self.counters.messages_sent += 1;
         id
     }
@@ -229,11 +246,19 @@ impl Sim {
                         if self.tracked.contains(id) && self.delivered_ids.insert(*id) =>
                     {
                         self.counters.messages_delivered += 1;
+                        if let Some(sent) = self.sent_at_ms.get(id) {
+                            self.delivery_latencies_ms.push(self.now_ms.saturating_sub(*sent));
+                        }
                     }
                     _ => {}
                 }
                 out.push((idx, ev));
             }
+        }
+
+        for i in [a_idx, b_idx] {
+            let bytes = self.nodes[i].store_len() as u64 * MAX_BUNDLE as u64;
+            self.store_high_water_bytes = self.store_high_water_bytes.max(bytes);
         }
 
         self.counters.meetings_run += 1;
@@ -344,6 +369,33 @@ impl Sim {
         }
     }
 
+    /// End-to-end delivery latency (send → origin sees the receipt) for
+    /// every tracked message delivered so far, in simulated milliseconds —
+    /// the raw samples doc 13 §5's p50/p90 latency bands are computed over.
+    pub fn delivery_latencies_ms(&self) -> &[u64] {
+        &self.delivery_latencies_ms
+    }
+
+    /// The `p`-th percentile (`0.0..=1.0`) of [`Sim::delivery_latencies_ms`],
+    /// nearest-rank on a sorted copy. `None` with no delivered samples yet.
+    pub fn latency_percentile_ms(&self, p: f64) -> Option<u64> {
+        if self.delivery_latencies_ms.is_empty() {
+            return None;
+        }
+        let mut sorted = self.delivery_latencies_ms.clone();
+        sorted.sort_unstable();
+        let idx = ((sorted.len() as f64 * p).ceil() as usize).saturating_sub(1).min(sorted.len() - 1);
+        Some(sorted[idx])
+    }
+
+    /// Peak, over every `meet()` so far, of `store_len * MAX_BUNDLE` for any
+    /// single node — doc 13 §3's "store high-water" figure (the same
+    /// conservative per-record upper bound `quota_ok()` uses, tracked as a
+    /// running max rather than an end-of-run snapshot).
+    pub fn store_high_water_bytes(&self) -> u64 {
+        self.store_high_water_bytes
+    }
+
     /// Conservative per-node quota check: `store_len * MAX_BUNDLE` is an
     /// upper bound on `total_bytes` (every stored record is ≤ `MAX_BUNDLE`
     /// wire bytes), and `Node::tick` already self-enforces the real byte
@@ -367,3 +419,5 @@ mod tests;
 mod tests_adversarial;
 #[cfg(test)]
 mod tests_blob;
+#[cfg(test)]
+mod tests_scale;
