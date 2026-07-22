@@ -56,12 +56,16 @@ ReceiptFilter: 8192 receipts/bucket capacity vs §3 load (≤720 deliveries/day/
 
 Store-carry-forward delivery time ≈ hops × inter-contact time. With human mobility (pause-times minutes–hours) and L-way spray: published spray analyses [C1][C3] show near-epidemic delay at a fraction of cost, and epidemic ≈ optimal. **Model expectation:** same-gathering (≤2 radio hops): seconds–minute; same-district with mobility mixing: tens of minutes; cross-city multi-day carry chains: hours — consistent with the "minutes acceptable" requirement for the common cases. **No credible closed-form exists for our exact stack; this is THE simulation deliverable (OQ-4) [S]** — the model above sets pass/fail bands for the sim (fail = p50 same-district > 60 min at N=1k under SLAW-like mobility ⚠).
 
+**E6-S1 partial simulation result (2026-07-22, `mmp-sim::tests_scale::thousand_node_mesh_scale_validation`, `--ignored`, seed `0x5CA1E_1000_0000_001`):** `mmp-sim` implements uniform-random pairwise contact only — no SLAW or any clustered mobility model exists in the tree, so this run does not directly answer the band above. What it measures instead, honestly: at N=1,000 with 20 disjoint sender/receiver pairs and 500,000 uniform-random meetings, delivery ratio reached only **0.45** (vs. 1.0 at N=100/N=30 in the CI/stress scenarios), and — because achieving even that much mixing within `LIFETIME_MESSAGE_MS` (72 h) required compressing the average inter-contact gap to ~250 ms (two-to-three orders of magnitude denser than the 5–20 s realistic cadence the smaller-N scenarios use) — the resulting p50 ≈ 434 min / p90 ≈ 683 min are **not in real-world minutes** and are not comparable to the 60-min band. **What this genuinely shows:** a uniform-random contact process, lacking any geographic/social clustering to concentrate contacts the way a real same-district population would, measurably dilutes delivery probability as N grows — direct simulation-level evidence that this doc's own "SLAW-like mobility" qualifier is load-bearing for the latency claim, not a decorative mobility detail. Store growth stayed safely inside quota throughout (high-water ≈ 208 KiB across 1,000 nodes — §3's "ample" claim holds at this scale for the message plane). **OQ-4 status: partially advanced, not closed** — the cost-side claims (§3) and quota-safety hold under measurement; the SLAW-specific same-district latency band still has no simulator that can test it, pending a clustered-mobility model (tracked as follow-on work under E6-S1, not silently dropped).
+
 ## 6. Constant validation status (the de-⚠ ledger)
 
 | Constant (doc) | Status |
 |---|---|
 | Beacon 2–10 s, scan 30/1280 ms (09/11) | [A] within energy budget; [E] k_sys check |
 | L formula (05 §2.2) | [A] cost side; [S] delivery side |
+| 1k-node quota/store-growth (§3) | [A] — measured 208 KiB high-water, `mmp-sim::tests_scale` (E6-S1) |
+| Uniform-random mixing p50/p90 @ N=1k (§5, OQ-4) | [S] — measured under a non-SLAW model, not directly comparable to the band; clustered-mobility sim still needed |
 | SUMMARY sizes / mini-filter mandate (06) | [A] — mini REQUIRED for <15 s contacts |
 | RBSR B_f=16, T_list=24 (06 §3.2) | [A] model; [S] adversarial |
 | Burst ≤6/min, sessions 50/day class (04/09) | [A] energy; [S] discovery sufficiency |
