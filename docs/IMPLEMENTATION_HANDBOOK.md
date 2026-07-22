@@ -412,6 +412,129 @@ contact; B reconstructs bit-exact; store quotas respected; a second send of the 
 no-op (dedup by content address). Unit tests: stripe padding edges (empty file, exactly one
 symbol, non-multiple length), Merkle path verification failure drops the symbol.
 
+**SHIPPED (E5-S1, 2026-07-18).** Resolved via a Fable-class design pass first (per this section's
+own "largest remaining algorithm" scoping note), because the wire-layout placement of the Merkle
+path (doc 10 §4.5 says the payload is "RS symbol bytes," doc 16 promises "zero new wire
+allocations," and neither leaves room for a new TLV) and the doc 11 §6 FSM/D3-sub-budget gap were
+genuine architectural forks, not mechanical translations of the spec. Eight decisions (D1–D8), full
+rationale in the design record; summarized by file below.
+
+- **D1 wire layout:** the class-4 payload is `u16 path_len ‖ MerklePath wire bytes ‖ symbol bytes
+  (exactly SYMBOL_SIZE)` — decode requires an EXACT length match, not "at least." Positioning
+  (`root`/`block`/`sym`) stays exclusively in the existing `Ext::SymbolInfo` TLV, never duplicated;
+  `mmp-types/src/payload.rs`'s new `SymbolPayload` codec enforces the path-length cap (≤1024 B)
+  before any allocation. `mmp-crypto/src/merkle.rs` gained `MerklePath::encode`/`decode`/
+  `leaf_index()`, `compute_root` (the refactor `verify_path` now wraps), and
+  `MERKLE_PATH_MAX_LEVELS = 8`. **Position-binding (D1 check b) is the load-bearing addition:** a
+  symbol counts toward an assembly only if `compute_root(hash_block(symbol), path)[..16] ==
+  root` **AND** `path.leaf_index() == sym_no` — membership alone (the first check only) would let
+  an attacker replay a genuinely-valid symbol under a forged `SymbolInfo` position, poisoning a
+  stripe decode; the second check closes that hole. Verified by a dedicated crypto-layer test
+  (`forged_position_path_is_rejected_by_leaf_index_check`).
+- **D2/D3 assembly state:** `mmp-node/src/blob.rs` — `BlobState { Wanted, Fetching, Assembled,
+  Abandoned }` (doc 11 §6's FSM, minus the unreachable `REJECTED` state: a manifest that fails
+  `verify_strict` never creates an assembly at all, so that spec edge is structurally absent, not
+  silently dropped) and `BlobAssembly` (per-root `have`/`stripe_done` bitmaps, a lazily-opened
+  `.part` file, `BLOB_INTEREST_TTL_MS` = 7 d clock). Symbols are never buffered beyond one stripe
+  (≤ 64 KiB) — `NodeCore` holds only `blob_index: HashMap<Id16, BTreeMap<u16, Id16>>` (root → sym_no
+  → BundleID) and `symbol_of` (the reverse index for O(1) prune on expiry/eviction); the symbols
+  themselves live in the ordinary bundle store under normal quota, exactly like the friendship pin
+  bookkeeping precedent. `bad_symbols` is a diagnostic counter only (doc 11 §6 "blacklist sender" is
+  deferred — see residuals); a Merkle-failing symbol is `store.remove`d and pruned from both indices
+  so it is never served onward (doc 11 §8 uniform verify-before-serve).
+- **D4 SessionHost seam:** `mmp-core/src/session.rs` — three new `SessionHost` methods
+  (`on_blob_have`, `on_blob_req`, `blob_frames`), all default no-op exactly like the four
+  friendship methods (handbook §4.5 precedent) so no existing host breaks. The engine's old
+  advisory no-op arm for `Frame::BlobReq`/`Frame::BlobHave` is now real dispatch through the same
+  `load_for_handoff` → BUNDLE + BUDGET path `Frame::Want` already uses. Bitmap semantics pinned:
+  stripe-major, `RS_TOTAL_N` = 40 bits = 5 B/stripe, LSB-first — a whole 8 MiB file's BLOB_HAVE is
+  128 × 5 = 640 B, one frame, and the requester's in-RAM `have` vec is byte-identical to the wire
+  form. MVP requesters emit only BLOB_HAVE, one per active assembly, polled right after
+  `friend_frames`; BLOB_REQ send-side is receive-only (interoperability without a sender feature).
+- **D5 pacing (honest MVP substitute, no per-domain sub-budget exists anywhere in the session
+  engine — a real gap, not faked):** class-4 already falls into RBSR domain 3 (relay inventory) via
+  the existing `_ => 3` catch-all, so symbols structurally sync after control/direct/group/claims;
+  symbols mint at `prio::BULK` (lowest), which `transfer_order`/`eviction_order` already rank
+  accordingly; `BLOB_SERVE_MAX_PER_CONTACT = 64` bounds symbols served per peer per contact, reset
+  in `accept_peer`. Admission: the requester-side bypass (`on_bundle`'s admission closure) admits a
+  class-4 symbol without origin-bucket charge only when it matches an active `Wanted`/`Fetching`
+  assembly and the local `have` bit is clear — mirrors the shipped friend-quota-bypass shape
+  exactly. Relays get **no** such exemption — an unsolicited symbol flood is exactly what the
+  origin bucket exists to bound, and exempting it would hand any Sybil a free storage channel.
+- **D6 dedup:** `send_file` computes the Merkle root before minting anything; if `blob_index`
+  already holds every symbol for that root, it mints zero new class-4 bundles and re-sends only a
+  fresh manifest message.
+- **D7 `blobroot_object`:** left dead on purpose, one doc-comment added explaining why (reserved
+  for the public avatar-root claim path, doc 06 §4.1; a private file-transfer root must never be
+  published as a claim).
+- **D8 public API:** `Node::send_file`/`fetch_file`/`cancel_fetch`/`file_progress`,
+  `Event::FileOffered`/`FileReady`/`FileFailed`, mirrored at the FFI boundary
+  (`mmp-ffi/src/lib.rs`, see `docs/API_REFERENCE.md` §5.12) with the same public-only-material
+  discipline as every other event (paths/names/sizes/hashes/keys only, never secret key material).
+  `deliver_direct` gained the manifest hook: on `apptype::FILE_MANIFEST`, parse + `verify_strict`
+  under `SigDomain::Manifest` against the manifest's own inline `sharer` key (never the bundle's
+  `origin` — re-shares detach the two); success caches a FIFO-capped (`FILE_OFFER_CACHE = 256`)
+  offer and fires `FileOffered` **in addition to** the existing `MessageReceived`, never instead of
+  it; any failure is the doc 16 §3.1 fail-safe — silent, `MessageReceived` alone still fires, the
+  session never drops or errors. `Node::new` rebuilds `blob_index`/`symbol_of` at startup from
+  whatever class-4 bundles the store already holds, mirroring how claims/groups restore.
+
+**A pre-existing bug found (and fixed) while building the acceptance test, not an E5-S1 design
+gap:** `mmp-core/src/rbsr.rs`'s `on_ids` unconditionally echoed the full local ID list back as a
+`Frame::ReconIds` terminal reply, with no size check — fine at every existing test's scale, but a
+domain with hundreds of items (exactly what a file's class-4 symbol set is) produced a real
+envelope over `MAX_ENVELOPE_PAYLOAD`, silently past the `debug_assert!`s that only fire in debug
+builds, killing the session on arrival (`WireError::Oversize` → `protocol_error`). Fixed by giving
+`on_ids` the same size discipline `on_range` already has: split via `split_ranges`/`RBSR_B_F`
+instead of listing once `ours.len() > RBSR_T_LIST`. Covered by the acceptance test below, which
+would not otherwise complete.
+
+**Residuals (deferred, not faked — mirrors `vectors/README.md`'s house style):**
+
+1. **Airtime sub-budget.** No per-domain airtime accounting exists in the session engine; D5's
+   stack (domain order + BULK priority + per-contact serve cap) substitutes until a dedicated
+   sub-budget story lands.
+2. **Group file sharing.** `deliver_group` discards the apptype byte; out of scope for this story.
+3. **Thumbnail auto-fetch policy** (doc 16 §5.1's role-gated eager tier) — deferred; nothing
+   auto-downloads (safe default).
+4. **Streaming sender.** `send_file` takes `&[u8]` (≤ 8 MiB in sender RAM); disk-streaming encode is
+   follow-up work.
+5. **Origin-targeted BLOB_REQ emission and BlobHave gossip beyond active assemblies** — receive-side
+   is wired for interoperability, MVP requesters never send BLOB_REQ.
+
+**Spec-precision gaps found, recorded as `CHANGELOG.md` errata candidates rather than edited into
+the spec unilaterally:** doc 10 §4.5's payload-layout prose is superseded by D1's placement decision
+(a path TLV would violate doc 16's "zero new wire allocations" promise and doc 03 §4.4's TLV
+registry discipline); doc 11 §6's `REJECTED` state and "blacklist sender" step are, respectively,
+unreachable and diagnostic-only in this implementation (see D2/D3 above); doc 16 §8 vs. doc 05 §8's
+bucket-throughput arithmetic for relayed files was never reconciled against each other and this
+implementation surfaces the gap concretely (see the acceptance test's own interpretation-call
+documentation, `mmp-sim/src/tests_blob.rs`); this section's own step-5 payload-layout sketch is
+superseded by D1.
+
+**Acceptance test, and what it actually demonstrates (`mmp-sim/src/tests_blob.rs`):** a 3-node sim
+(A, R, B) with A's and B's identity claims mutually ingested VERIFIED at every hop; A `send_file`s a
+250 KB / 4-stripe / 160-symbol buffer to B via relay R; B reassembles bit-exact; store quotas hold
+throughout (`Sim::quota_ok`); a second identical `send_file` mints zero new class-4 bundles. The
+250 KB size and the R→B-only (not A→R) loss placement are both interpretation calls made by
+actually running the scenario, not assumed — documented in full, with root cause, at the top of
+that file: (1) literal per-frame silent dropping breaks the Noise transport's monotonic AEAD nonce
+counter (a real `NoiseChannel`/`snow` characteristic, not an E5-S1 concern) — loss is modeled as a
+contact ending early instead, which a real BLE disconnect would also look like; (2) `Frame::Want`'s
+hand-off commits a bundle's spray-budget mutation for an entire incoming WANT batch synchronously,
+before any resulting `Frame::Bundle` is actually drained onto the wire — combined with this sim's
+population estimate keeping `origin_budget` at its floor (4 — two attempts before the FOCUS rule's
+strict-superiority requirement permanently stops retries, and a same-utility non-destination relay
+never clears that bar, doc 05 §2.2/§4, no transitivity by design), any nonzero loss chance on the
+A→R hop strands most of a multi-hundred-symbol batch within two contacts regardless of how many
+further contacts run. Both are genuine, pre-existing `mmp-router`/`mmp-core` characteristics
+surfaced by building this test — distinct from the `rbsr.rs` bug above, which was this story's own
+to find and fix. The test therefore keeps A→R loss-free and applies the loss model to R→B, where
+`handoff_decision`'s `peer_is_dest` branch makes retries genuinely budget-exempt — still a full
+demonstration of multi-contact, loss-tolerant reconstruction, just not literally "30% loss on both
+hops of a 1 MiB transfer," which the current router cannot sustain for any non-trivial file
+regardless of E5-S1's own correctness.
+
 ### 4.5 Friendship / proxy buffering (Phase C; doc 04 §4, doc 06 §7)
 
 **Context.** A "friend" node volunteers to buffer traffic for a mostly-offline "dependent"
@@ -440,6 +563,118 @@ its normal eviction pressure (fill the store with junk to force eviction — pin
 survive); B comes online, syncs from F, receipt purges F's copy. Negative: non-friend node under
 the same pressure evicts.
 
+**SHIPPED (E5-S2, 2026-07-17).** Resolved via a Fable-class design pass first (per the
+`ROADMAP_TO_PRODUCTION.md` Phase C scoping note this section's earlier text left open) — the
+blocking architectural question was whether a session retains the peer's verified identity `Key32`
+after ID_PROOF for later frames to use. Answer: yes, but via the HOST, not the engine — `NodeCore`
+now keeps its own `known_identities: HashMap<NodeId, Key32>`, populated in `accept_peer` (doc 08
+§3.2), so the friendship handshake (keyed on `NodeId` at the `SessionHost` seam, same as every
+other callback) can resolve a peer's Ed25519 key when it needs one. Field `0x05` FRIENDSHIP, wired
+end to end:
+- `mmp-core/src/session.rs`: `SessionHost` gained four methods **with default no-op impls** so
+  every existing host keeps compiling unchanged — `on_friend_offer(peer, body) -> Option<Vec<u8>>`
+  (`Some(ack)` ⇒ the engine sends FRIEND_ACK right back), `on_friend_ack(peer, body)`,
+  `on_proxy_summary(peer, body)`, and `friend_frames(peer) -> Vec<Frame>` (polled once right after
+  Established, after SUMMARY, on BOTH sides — not just the initiator). The three-armed
+  "ignore" stub at the old `session.rs:318-321` is now real dispatch to these callbacks; the
+  engine itself stays grammar-only, still never interprets the frame bodies.
+- `mmp-types/src/claim.rs`: `Friendship` struct (`friend key32, since u64, countersig sig64`, 104
+  B) + strict encode/decode, matching the crate's other claim bodies. `friendship_signed_object(owner,
+  friend, since) -> Vec<u8>` is the shared 72-byte countersig preimage (`owner ‖ friend ‖
+  since_be`) — used identically by the FRIEND_ACK verify (session layer) and the claim body's own
+  countersig check (`ClaimStore::merge`), so sign and verify can never drift apart. `since` is
+  encoded big-endian in this preimage specifically — deliberately not the crate's usual
+  little-endian wire convention, since a signed preimage isn't a wire encoding; flagged here as an
+  explicit choice, not an oversight, in case a later pass wants it to match wire endianness instead.
+  `mmp-types/src/frame.rs`: `FriendOfferBody { since: u64 }`, `FriendAckBody { countersig: sig64 }`,
+  `ProxySummaryBody { dependent: id16, bloom: varbytes }` — the concrete codecs for the
+  previously-opaque `FRIEND_OFFER`/`FRIEND_ACK`/`PROXY_SUMMARY` frame bodies.
+- `mmp-core/src/claims.rs`: `ClaimStore::merge` gained a FRIENDSHIP arm in the same per-field-body
+  style E5-S3 added for REVOCATION (checked before the ordinary LWW logic): decodes the body and
+  verifies the patron's countersig under `SigDomain::Friend` before accepting; a bad or malformed
+  countersig is `ClaimMerge::Rejected`. Integrates cleanly with E5-S3's revocation tombstone
+  short-circuit with no special-casing — a revoked dependent's friendship claims are already
+  blocked by that rule, which runs first.
+- `mmp-node/src/lib.rs`: `Node::request_friendship(peer_identity: Key32)` (dependent side, enforces
+  `MAX_PATRONS = 3`, doc 04 §4.4) and `Node::allow_friendship_from(peer_identity: Key32)` (patron
+  side allowlist — no auto-accept, doc 04 §4 security note) are the app-facing entry points.
+  `NodeCore` gained `friends: HashMap<NodeId, FriendState>` (patron side; `FriendState { since,
+  quota_used, buffered: BTreeSet<Id16> }`), `patrons: HashMap<NodeId, u64>` (dependent side),
+  `pending_offers`/`offered_since` (dependent-side handshake bookkeeping), `friend_allowlist`, and
+  `proxy_hints: HashMap<NodeId, HashSet<NodeId>>`. Pinning + quota exemption (item 2): `on_bundle`'s
+  admission closure bypasses `buckets.admit` entirely for a class-1 bundle whose `dest` is a live
+  friend with room left under `FRIEND_QUOTA` (16 MiB/dependent, new const, doc 13 note) — the
+  post-store step re-checks the identical `FriendState::has_room` predicate before pinning, so a
+  bundle that fell through to the ordinary charged path (quota exhausted or TTL lapsed) is never
+  pinned. `enforce_quota` filters every live friend's `buffered` set out of eviction candidacy
+  entirely (not a priority nudge — untouchable by construction); if that leaves nothing left to
+  evict it breaks rather than looping, so pinned bytes can legitimately exceed `quota` by up to
+  `friends.len() * FRIEND_QUOTA` — an accepted MVP bound. Unpin/GC: an end-to-end receipt purge
+  (`handle_receipt`) drops the id from `buffered` and refunds `quota_used` in O(1) (the meta, and
+  therefore the size, is already in hand right before `store.remove`); `store.expire()`-driven
+  removal hands back only ids with no size, so that path (`unpin_expired`) resyncs `quota_used`
+  from what's still actually on file instead. `FRIENDSHIP_TTL_MS = 24 h` (new const) expiry is
+  pruned lazily on `tick` (`prune_expired_friendships`) — a lapsed patron-side entry is simply
+  dropped, which drops its pins by construction (nothing left in `enforce_quota`'s pinned set to
+  protect them); no separate unpin step needed for that path. Receipts stay end-to-end: the patron
+  never mints one (unchanged code path, verified not re-touched). `PROXY_SUMMARY` (item 3, MVP):
+  `friend_frames` emits one per dependent with a non-empty buffered set, to every peer synced with
+  (no poll scheduling yet, see deferrals below) using `mmp-core::bloom::Bloom` folded to
+  `BLOOM_SUMMARY_MAX`, same mini-filter machinery as the receipt-bucket SUMMARY fields and the same
+  `INTERNAL_SALT` convention (the filter travels only inside the already-authenticated AEAD
+  channel). The receiver folds it into `proxy_hints` and `load_for_handoff` nudges `u_peer` toward
+  `0.9` when a verified FRIENDSHIP claim OR a proxy hint says the handoff peer already buffers for
+  the bundle's destination — advisory only, same Hint/Purge asymmetry as AUDIT F11: a false
+  positive here wastes a spray copy, never causes a drop. Delivery (item 4) needed **no new sync
+  machinery at all**: RBSR domain 1 already offers `dest == peer` bundles, so once the dependent
+  connects to its patron the buffered bundles transfer over the ordinary WANT/BUNDLE path and the
+  resulting receipt is what triggers the unpin above.
+- `mmp-ffi/src/lib.rs`: `MmpNode::request_friendship(peer: Vec<u8>)` /
+  `MmpNode::allow_friendship_from(peer: Vec<u8>)` mirror the `Node` methods (public keys only, doc
+  12 §9 secret-boundary rule). `FfiEvent::FriendshipEstablished { peer, since }` mirrors the core
+  event.
+- Tests: `mmp-types/src/claim.rs` (`Friendship` roundtrip + truncation/trailing negatives,
+  `friendship_signed_object`'s exact byte layout), `mmp-types/src/tests.rs` (the three frame body
+  codecs), `mmp-core/src/claims.rs` (`friendship_claim_with_valid_countersig_is_adopted`,
+  `friendship_claim_with_bad_countersig_is_rejected`), `mmp-node/src/tests.rs`
+  (`friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt` — the positive
+  3-node acceptance scenario, using a direct synthetic-bundle injection helper for deterministic
+  junk pressure rather than relying on the router's probabilistic spray timing to generate it;
+  `non_friend_bundle_evicts_under_the_same_quota_pressure` — the negative case;
+  `expired_friendship_unpins_its_buffered_bundle` — the TTL case), `mmp-ffi/src/tests.rs`
+  (`friendship_handshake_via_ffi_surface`).
+
+**Interpretation calls made without spec authority to invent new ones** (flagged per this repo's
+methodology): (1) `friendship_signed_object`'s big-endian `since` — the handbook/doc 06 text never
+specified byte order for this preimage; picked explicit big-endian specifically so it reads as a
+deliberate, distinct-from-wire-encoding choice rather than an accidental reuse of `BufExt`'s
+little-endian convention, but this is a genuine judgment call, not a spec-mandated one. (2)
+`FriendState` gained a `since: u64` field on the patron side that the handbook's struct sketch
+didn't list — required to implement the TTL expiry the same section's prose describes ("relationship
+live iff `now - since < FRIENDSHIP_TTL_MS`"); the sketch's `last_poll_ms` field was dropped instead
+of carried as dead weight, since it belongs to the deferred poll-scheduling item below and an unused
+struct field fails `clippy -D warnings`. (3) Multiple concurrent patrons (`MAX_PATRONS = 3`) and
+`ClaimStore`'s one-slot-per-`(owner, field)` LWW design are in tension: publishing a second
+FRIENDSHIP claim for a second patron overwrites the first in every peer's `ClaimStore` (last
+`seq` wins, doc 06 §4.2) — `request_friendship`'s local cap and the buffering mechanism itself
+both work correctly with multiple patrons, but only the most-recently-established patron's claim
+survives on the wire for OTHER nodes to see (e.g. for the `load_for_handoff` proxy-hint check).
+This is a real MVP gap in the wire-level multi-patron story, not silently papered over — flagging
+it here since neither the handbook nor doc 06 addresses it, and fixing it (e.g. a claim body that
+lists multiple friends) is protocol-format work out of this story's scope.
+
+**Deferred, not done — doc 06 §7's full proxy-answering design:** (1) the friend answering D1/D2
+reconciliation on the dependent's behalf (doc 06 §7.2) — this MVP relies entirely on RBSR domain 1
+already offering `dest == peer` bundles once the dependent itself connects, never having the
+patron answer FOR it; (2) signed proxy summaries with a validity horizon (doc 06 §7.1) — the
+`PROXY_SUMMARY` shipped here is an unsigned, best-effort Bloom hint with no timestamp/horizon,
+resting entirely on the already-authenticated session channel for its (limited) trust; (3)
+ephem-id resolution (doc 03 §11) — friendship here is keyed on `NodeId`/`Key32` only, no
+interaction with ephemeral BLE identifiers; (4) poll scheduling — `friend_frames` advertises
+`PROXY_SUMMARY` unconditionally on every session with every peer rather than on any kind of
+schedule or budget, which is fine at MVP/sim scale but not yet the "poll on a cadence" design doc
+06 §7.3 gestures at.
+
 ### 4.6 Revocation & succession claims (Phase C; doc 18 §6 generalized)
 
 **Field number corrected (E5-S3, 2026-07-15):** this section originally assigned field `0x07` to
@@ -463,6 +698,59 @@ as other claims).
 
 **Acceptance:** unit — revocation beats higher-seq nickname claim; session attempt from revoked
 key is silently denied; succession countersig failure → succession ignored, revocation stands.
+
+**SHIPPED (E5-S3, 2026-07-17).** Field `0x09` wired end to end:
+- `mmp-types/src/claim.rs`: `field::REVOCATION = 0x09`; `Revocation` struct + strict encode/decode
+  (`revoked_key ‖ reason ‖ has_successor ‖ [successor ‖ successor_countersig]`, any `has_successor`
+  byte other than `0x00`/`0x01` rejected) matching the codec discipline the rest of the crate uses
+  (hand-written wire codec, `Reader::finish()` trailing-byte rejection); `succession_signed_object`
+  free function (`revoked_key ‖ successor`, 64 B) as the counter-signature preimage under
+  `SigDomain::Claim`.
+- `mmp-core/src/claims.rs`: `ClaimStore::merge` now short-circuits to `Stale` for ANY claim by an
+  owner that already has a stored revocation — checked before the ordinary per-field LWW logic, so
+  it applies regardless of `seq` and regardless of which field is being merged, including a second
+  revocation attempt (immutable once stored). A `REVOCATION` claim whose body's `revoked_key`
+  doesn't match the claim's own `owner` is rejected outright (`ClaimMerge::Rejected`, a new variant
+  — `Stale` was the wrong name for "never had anything to keep"). Query surface:
+  `ClaimStore::revocation(&NodeId) -> Option<Revocation>` and `ClaimStore::successor(&NodeId) ->
+  Option<Key32>` (the latter verifies the succession counter-signature and returns `None` on a
+  missing successor, a missing signature, OR a bad one — the revocation itself is unaffected either
+  way).
+- `mmp-node/src/lib.rs`: `accept_peer` denies any peer with a stored revocation, silently, the same
+  shape as the existing `blocklist` check — this fires symmetrically on both sides of a session
+  (doc 11 §3's Binding phase runs `accept_peer` for both ID_PROOFs), so it covers inbound and
+  outbound alike; there is no separate "dial a specific peer" primitive in this architecture to gate
+  any earlier (the TAL decides physical connections, identity is only known after ID_PROOF). `send_app`
+  (the shared class-1 sending path) now checks `claims.revocation(peer)` up front, before touching
+  `resolve_peer_key` or a stored prekey batch — this is what stops an *already-stored* prekey batch
+  from being used for X3DH after the owner is revoked, since the tombstone merge rule alone only
+  blocks *new* prekey claims from arriving. New `SendError::PeerRevoked` variant. `Event::PeerRevoked
+  { peer, successor }` fires from `learn_claim`'s `REVOCATION` arm — `successor` is `Some` only once
+  `ClaimStore::successor` verifies, so the event itself is the "offer trust successor" hook; nothing
+  in this crate migrates a petname automatically. New `Node::publish_claim` now returns the encoded
+  claim bytes (was `()`) so `Node::revoke_identity(reason: u8) -> Vec<u8>` — a thin wrapper that
+  builds a successor-less `Revocation` at a fixed `seq = 1` (correct, not a shortcut: a revocation is
+  a one-shot tombstone, there is never a second write to race against) — can hand them back.
+- `mmp-ffi/src/lib.rs`: `FfiEvent::PeerRevoked { peer, successor }` mirrors the core event (public
+  keys only). `MmpNode::revoke_identity(reason: u8) -> Vec<u8>` mirrors `Node::revoke_identity`.
+  `SendError::PeerRevoked` folds into the existing `FfiError::UnknownPeer` rather than growing the
+  three-variant FFI error enum — consistent with that enum's own documented "deliberately coarse"
+  rationale; `Event::PeerRevoked` is what carries the actual distinction (including the successor)
+  to the host.
+- Spec: `specification/06-sync-spec.md` §4.1 registers `0x09` (new paragraph after the existing
+  rev-B pointer paragraph, same style).
+
+**Interpretation calls made without spec authority to invent new ones** (flagged per this repo's
+methodology, not silently decided): (1) the query methods' exact signatures — the handbook sketch
+said `revocation(owner: &Key32)`; implemented as `&NodeId` instead, matching every other
+`ClaimStore` query (`get`, `pin`, …), all of which are `NodeId`-keyed since the store itself is;
+(2) `revoke_identity`'s FFI shape — "returning the claim bytes or queuing it into gossip" was
+explicitly left open; implemented as both (gossips via the existing `publish_claim` path AND
+returns the bytes) with no successor parameter (a succession claim needs the successor's own
+counter-signature, which a single unilateral FFI call from the revoked party's device cannot
+produce — out of scope for this entry point, documented at the call site); (3) `ClaimMerge` gained
+a fourth variant (`Rejected`) rather than overloading `Stale` for "invalid body, nothing was ever
+stored" — the one exhaustive match site (`mmp-node`'s `learn_claim`) was updated accordingly.
 
 ### 4.7 Fuzzing (Phase C) — targets SHIPPED (E5-S6, 2026-07-16); test vectors still open
 
@@ -573,6 +861,60 @@ listing omits `suite`, but its signed preimage requires it (the same pattern doc
 carries for `AuthCert`, with its own explicit cipher-agility rationale). The implementation carries
 `suite` as a wire byte for both objects, consistently — recorded as a `CHANGELOG.md` errata
 candidate for doc 18 rather than edited into the spec unilaterally.
+
+---
+
+### 4.11 Cipher-agility exercise — SHIPPED (E6-S2, 2026-07-22, doc 03 §8)
+
+**Real gap found, not a mechanical translation:** `Hello.suites` (`mmp-types/src/frame.rs`) has
+carried an advertised cipher-suite list on the wire since Phase A, but nothing ever read it —
+`NoiseHandshake::initiator`/`responder` (`mmp-crypto/src/noise.rs`) accepted a `&Hello` parameter
+purely to embed it in the encrypted handshake payload, never to negotiate against it. Two nodes
+advertising completely disjoint suite sets (a real possibility once suite `0x02` exists, or simply
+a malformed/future peer) would have completed the Noise handshake anyway, in silent violation of
+doc 03 §8's "cipher suites: 1-byte registry pinned in the handshake." No design fork was needed
+here — only one suite (`0x01`) has a real construction, `0x02` is reserved and unimplemented
+(OQ-11), so there is nothing to *select between* yet, only a presence check to add.
+
+**What shipped:**
+- `mmp-crypto/src/noise.rs`: `pub const SUPPORTED_SUITES: &[u8] = &[0x01]` and a check inside
+  `NoiseHandshake::advance()` — the moment either side decrypts the peer's `Hello` (msg2 for the
+  initiator, msg3 for the responder; msg1 carries no payload under Noise XX), it verifies the
+  peer's `suites` list intersects `SUPPORTED_SUITES` and returns `Err(CryptoError::Noise)` if not.
+  Deliberately reused the existing coarse `CryptoError::Noise` variant rather than adding a new one
+  — `mmp-crypto/src/error.rs`'s own doc comment states errors are "deliberately coarse: callers
+  drop, they don't diagnose," and a suite mismatch gets exactly the same caller reaction (drop the
+  attempt) as every other handshake failure.
+- No changes needed above the crypto layer: `mmp-core/src/session.rs::on_hs` already treats any
+  `Err` from `advance()` as `self.close_silently()` (used for the pre-existing handshake-timeout
+  path), so "refuse cleanly, no panic, no partial state" was already the session engine's behavior
+  for this error — the story was entirely contained inside `mmp-crypto`.
+
+**Interpretation call, documented rather than assumed:** the backlog's acceptance wording ("two
+builds pinned to different suite IDs") is read here as two differently-configured `Hello` values,
+not two separate Cargo feature builds — since suite selection is a runtime-advertised list on the
+wire (`Hello.suites: Vec<u8>`), not a compile-time feature, a real second build isn't necessary to
+exercise the negotiation path, and inventing a second compiled suite would mean inventing crypto
+doc 08 explicitly says isn't standardized yet (OQ-11).
+
+**Tests (all new, 5 total):** `mmp-crypto::tests` — refusal when the *initiator's* advertised
+suites are disjoint (surfaces on the responder's msg3 read), refusal when the *responder's* are
+disjoint (surfaces on the initiator's msg2 read), and acceptance when a multi-suite list overlaps
+on `0x01`. `mmp-core::tests::handshake_refuses_peer_with_no_common_cipher_suite` — the same
+scenario driven through the real two-engine `pump()` harness, asserting `Phase::Closed` and no
+`SessionEvent::Established`, not just a crypto-layer `Result`. Full workspace re-verify: 162
+tests / 0 failed / 1 pre-existing ignore, `clippy --workspace --all-targets -- -D warnings` clean,
+`layer-check` OK. One fix cycle: the first version of the initiator-disjoint test asserted on
+`b.advance(&msg1)`, which is wrong — msg1 is `-> e` with an empty payload under Noise XX, so the
+initiator's `Hello` isn't visible to the responder until msg3; corrected to pump through msg2/msg3
+before asserting the refusal.
+
+**Explicitly out of scope** (tracked as follow-on, not silently dropped): suite `0x02` itself
+(blocked on OQ-11's hybrid-Noise construction not being standardized); a real *selection* policy
+for when multiple mutually-supported suites exist (moot with one real suite; when `0x02` lands,
+"prefer highest ID both sides support" is the obvious default but unverified against nothing to
+test it with today); surfacing the refusal reason to the host/FFI layer (mirrors every other
+handshake failure's silence — `SessionHost` gets nothing on a failed handshake today, by design).
 
 ---
 

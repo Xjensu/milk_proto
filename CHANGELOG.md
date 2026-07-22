@@ -15,6 +15,167 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-22 — E6-S2 cipher-agility exercise
+
+### Added
+- **HELLO cipher-suite negotiation is now enforced (E6-S2, doc 03 §8):** `mmp-crypto::noise`
+  gained `SUPPORTED_SUITES = &[0x01]`; `NoiseHandshake::advance()` now checks, the moment either
+  side decrypts the peer's `Hello` payload, that the peer's advertised `suites` list intersects
+  the local build's supported set, refusing (existing `CryptoError::Noise`, no new variant) if
+  not. `mmp-core`'s session engine already closed cleanly on any handshake error, so no change was
+  needed above the crypto layer. Full write-up in `docs/IMPLEMENTATION_HANDBOOK.md` §4.11.
+
+### Fixed
+- **Silent cipher-suite mismatch acceptance, pre-existing since Phase A.** `Hello.suites` has
+  carried an advertised suite list on the wire from the start, but nothing ever read it —
+  `NoiseHandshake::initiator`/`responder` accepted a `Hello` only to embed it in the encrypted
+  payload, never to check it. Two nodes advertising disjoint suite sets would have completed the
+  handshake anyway, contradicting doc 03 §8's "cipher suites: 1-byte registry pinned in the
+  handshake." No wire format change — the field already existed; only the read side was missing.
+
+### Deferred, stated honestly (not faked)
+- Suite `0x02` (hybrid X25519+ML-KEM) itself — blocked on OQ-11 (no standardized hybrid-Noise
+  construction to implement against yet).
+- A real multi-suite *selection* policy — moot with exactly one real suite; "prefer highest
+  mutually-supported ID" is the obvious default whenever `0x02` lands, but unverified today.
+- Surfacing the specific refusal reason to the host/FFI layer — every handshake failure is silent
+  to `SessionHost` today by design; this one is not treated differently.
+
+---
+
+## [Implementation] 2026-07-18 — E5-S1 blob plane / file transfer
+
+### Added
+- **File transfer over the blob plane (E5-S1, handbook §4.4, doc 16):** `Node::send_file`/
+  `fetch_file`/`cancel_fetch`/`file_progress`, `Event::FileOffered`/`FileReady`/`FileFailed`,
+  mirrored at the FFI boundary (`docs/API_REFERENCE.md` §5.12). Class-4 symbol bundles carry
+  `u16 path_len ‖ MerklePath wire bytes ‖ symbol bytes` (`mmp-types::payload::SymbolPayload`);
+  positioning stays exclusively in the existing `Ext::SymbolInfo` TLV — zero new wire allocations,
+  per doc 16's own promise. `mmp-crypto::merkle` gained the `MerklePath` wire codec
+  (`encode`/`decode`/`leaf_index`) and `compute_root`; a symbol only counts toward reassembly if
+  its Merkle path both proves membership under the manifest root AND proves the claimed position
+  (`leaf_index() == sym_no`) — closing a forged-position replay hole a membership-only check would
+  leave open. `mmp-node::blob` implements the doc 11 §6 per-root FSM (`Wanted → Fetching →
+  Assembled`, or `Abandoned`); symbols are never buffered beyond one stripe (≤ 64 KiB) — they live
+  in the ordinary bundle store, indexed by a RAM-only `root → sym_no → BundleID` map pruned on
+  expiry/eviction. Three new `SessionHost` seam methods (`on_blob_have`/`on_blob_req`/
+  `blob_frames`), default no-op exactly like the shipped friendship seam, turn the previously
+  advisory-only BLOB_REQ/BLOB_HAVE frames into real dispatch. Dedup by content address: resending
+  identical bytes mints zero new class-4 bundles. Full design record (decisions D1–D8) and the
+  residual list (airtime sub-budget, group sharing, thumbnail auto-fetch, streaming sender,
+  origin-targeted BLOB_REQ) are in `docs/IMPLEMENTATION_HANDBOOK.md` §4.4's SHIPPED note.
+
+### Fixed
+- **`mmp-core/src/rbsr.rs` `on_ids`, pre-existing bug found while building this story's acceptance
+  test.** The terminal-list reply to a peer's small-range echo unconditionally listed the full
+  local ID set for that range with no size check, correct at every previously-tested scale but
+  capable of producing a real envelope over `MAX_ENVELOPE_PAYLOAD` for a domain with hundreds of
+  items — exactly what a file's class-4 symbol set is. The oversize check only fires as a
+  `debug_assert!` at encode time, so a release build emitted the bad envelope; the receiver's
+  `read_envelope` then rejected it outright, silently killing the session
+  (`WireError::Oversize` → `protocol_error`) right as the largest domain's reconciliation was about
+  to pay off. Fixed by giving `on_ids` the same size discipline `on_range` already has: split via
+  the existing `split_ranges`/`RBSR_B_F` machinery instead of listing once the local set exceeds
+  `RBSR_T_LIST`.
+
+### Deferred, stated honestly (not faked)
+- Airtime sub-budget (doc 11 §8 D3 / doc 16 §8, both ≤40%) — no per-domain accounting exists
+  anywhere in the session engine; substituted with domain ordering + BULK priority + a fixed
+  per-contact serve cap.
+- Group file sharing — `deliver_group` discards the apptype byte needed to route a manifest inside
+  a group message.
+- Thumbnail auto-fetch (doc 16 §5.1's role-gated eager tier) — nothing auto-downloads yet.
+- Streaming sender — `send_file` takes the whole buffer in host RAM (≤ 8 MiB); disk-streaming
+  encode is follow-up work.
+- Origin-targeted BLOB_REQ emission and BLOB_HAVE gossip beyond active assemblies — receive-side is
+  wired for interoperability; MVP requesters only ever emit BLOB_HAVE.
+
+### Errata candidate
+- Doc 10 §4.5's class-4 payload-layout prose ("RS symbol bytes," positioning elsewhere) is
+  superseded by this story's D1 placement decision (the Merkle path lives in the payload itself,
+  ahead of the symbol bytes) — a path TLV would have required a new wire allocation doc 16
+  explicitly promises against. Doc 11 §6's `REJECTED` state is unreachable in this implementation
+  (a manifest failing `verify_strict` never creates an assembly at all) and its "blacklist sender"
+  step is diagnostic-only (`bad_symbols` counter, no policy yet) — both are residuals, not gaps.
+  Doc 16 §8 vs. doc 05 §8's bucket-throughput arithmetic for relayed files was never reconciled
+  against each other; this story's acceptance test surfaced the gap concretely rather than papering
+  over it (see `mmp-sim/src/tests_blob.rs`'s own interpretation-call documentation for the exact
+  router interaction: a bundle's spray budget is spent on every hand-off *attempt*, not on confirmed
+  receipt, so any nonzero loss on a non-destination relay hop strands most of a multi-hundred-symbol
+  transfer within two attempts regardless of how many further contacts run — a real, pre-existing
+  `mmp-router` characteristic, distinct from the `rbsr.rs` bug above).
+
+---
+
+## [Implementation] 2026-07-17 — E5-S4 golden test vectors
+
+### Added
+- **Golden test vectors (E5-S4, handbook §4.7, doc 10 §6.4):** a `mmp-cli vectors` generator
+  (`crates/mmp-cli/src/vectors.rs`) emitting fixed-seed, RNG-free, wall-clock-free JSON vectors under
+  `implementation/mesh-milk/vectors/` — bundle (canonical bytes + BundleID + `mmp1/bundle` signature),
+  beacon codec, nickname claim, receipt MAC, envelope framing, RBSR fingerprint, plus negatives:
+  cross-signing-domain rejection (AUDIT F4, incl. the rev-B `mmp1/manifest`/`mmp1/authcert`/`mmp1/announce`
+  tags), lifetime-reset→identical-BundleID (F1), and budget>L_MAX clamp (F3). The consuming test
+  (`vectors::tests`) drift-guards the committed files against current codec output AND independently
+  re-verifies each invariant. Every expected byte comes from the real `mmp-types`/`mmp-crypto` codecs,
+  never hand-authored. No private key/ratchet/MAC-key material appears in any vector.
+
+### Deferred, stated honestly (not faked)
+- The X3DH-agreement vector (needs deterministic-RNG plumbing) and the overlarge-S/non-canonical
+  Ed25519 negative (needs a crafted malleable signature) are follow-ups; both properties are already
+  covered by `mmp-crypto` unit tests (`prekey_agreement_matches_both_sides`,
+  `sign_verify_and_cross_domain_rejects`). See `vectors/README.md`.
+
+### Errata candidate
+- Some spec/doc text refers to `specification/test-vectors/*.json`; the vectors have a single home at
+  `implementation/mesh-milk/vectors/` (where `vectors/README.md` and the generator/test resolve them).
+  The `specification/` path mention should be reconciled to the one location, not duplicated.
+
+---
+
+## [Implementation] 2026-07-17 — E5-S3 identity revocation, E5-S2 friendship buffering, E5-S7 adversarial sims
+
+### Added
+- **Identity revocation & succession (E5-S3, handbook §4.6, doc 06 §4.1):** new claim
+  field `0x09 revocation` (`revoked_key ‖ reason ‖ optional successor ‖ successor_countersig`).
+  `mmp-types::claim::Revocation` codec; `mmp-core::ClaimStore` tombstone-merge semantics — a
+  stored revocation is immutable and beats any other claim by that owner regardless of seq;
+  `revocation()`/`successor()` queries (the latter verifies the succession counter-signature under
+  `mmp1/claim` with the successor's own key, a failed countersig leaves the revocation standing);
+  `mmp-node` refuses sessions from and use of stored prekeys of a revoked key, emits
+  `Event::PeerRevoked{peer, successor}`; FFI `revoke_identity` + `FfiEvent::PeerRevoked`. Petname
+  migration stays manual (the event is the only hook). Field `0x09` chosen to avoid the `0x07`
+  AUTHCERT / `0x08` REVOCATION_LIST collision (distinct mechanism: identity vs. authority-grant).
+- **Friendship / proxy buffering (E5-S2, handbook §4.5, doc 04 §4):** counter-signed friendship
+  claim (field `0x05`, body `friend ‖ since ‖ countersig` under `mmp1/friend`); `FRIEND_OFFER`/
+  `FRIEND_ACK`/`PROXY_SUMMARY` frame bodies made load-bearing (four new `SessionHost` seam methods,
+  all default no-op so existing hosts are unaffected); a patron pins bundles destined to a
+  dependent up to `FRIEND_QUOTA` (16 MiB), exempt from origin-bucket charging and from eviction,
+  unpinned+GC'd on the dependent's end-to-end receipt; `FRIENDSHIP_TTL_MS` (24 h) expiry;
+  `MAX_PATRONS` (3). FFI `request_friendship`/`allow_friendship_from` + `FfiEvent::FriendshipEstablished`.
+- **Adversarial simulation suite (E5-S7, handbook §4.8, doc 14 §1):** `mmp-sim::adversary::Adversary`
+  raw-frame node wrapper and five scenarios — `replay_storm_delivers_exactly_once` (F21),
+  `flood_origin_is_throttled_but_others_deliver` (F6), `quota_abuse_degrades_gracefully` (F4),
+  `eclipse_gains_nothing` (F22), `bloom_poison_never_deletes` (F5) — each asserting a protocol
+  observable, not an internal counter. `mmp-node::set_store_quota` added as a test/sim-only seam so
+  quota-pressure scenarios run at CI scale instead of requiring a ~2000-identity Sybil swarm.
+
+### Fixed
+- The quota-abuse scenario originally shipped `#[ignore]`d because a tier-sized (128 MiB) quota was
+  unreachable cheaply, and it asserted "eviction happened" without asserting its own precondition
+  ("store exceeded quota") — masking that far fewer bundles were admitted than its burst-math
+  assumed. Reworked around `set_store_quota` with an adaptive Sybil loop and an explicit
+  precondition assertion; now runs in CI, un-ignored.
+
+### Known limitation, stated honestly
+- `MAX_PATRONS = 3` permits multiple concurrent patrons, but `ClaimStore` is a one-slot-per-
+  `(owner, field)` LWW register, so only the last-published `0x05` friendship claim is wire-visible
+  (the proxy-hint routing input). Buffering itself works with all patrons; only the gossiped claim
+  is single-valued. Recorded in `docs/IMPLEMENTATION_HANDBOOK.md` §4.5 — resolving it needs a
+  wire-format change, out of E5-S2's scope.
+
+---
+
 ## [Implementation] 2026-07-16 — E1-S3 threat-catalog consolidation, E5-S6 fuzz targets
 
 ### Added
