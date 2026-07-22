@@ -100,7 +100,7 @@ No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodolog
 
 ### Phase D — "Beta hardening"
 - External crypto/security review of `mmp-crypto` and the session/handshake code, plus fixes arising from it. **[L]**
-- 1k-node `mmp-sim` scale validation against the doc 13 performance model (§3 network load vs. scale, §5 latency). **[L]**
+- ~~1k-node `mmp-sim` scale validation against the doc 13 performance model (§3 network load vs. scale, §5 latency).~~ **CORE MEASUREMENT DONE (E6-S1, 2026-07-22)** — see `docs/AGILE_BACKLOG.md` E6-S1 and `docs/IMPLEMENTATION_HANDBOOK.md` §4.12. §3 quota/store-growth claims measured and hold at N=1,000; §5's SLAW-band latency claim explains-its-deviation rather than closes — a clustered-mobility contact model remains a real gap in `mmp-sim`.
 - ~~Versioning/cipher-agility exercise: run an actual HELLO negotiation between two builds pinned to different suite IDs, confirm doc 03 §8 (versioning and agility) behaves as specified.~~ **DONE (E6-S2, 2026-07-22)** — see `docs/AGILE_BACKLOG.md` E6-S2 and `docs/IMPLEMENTATION_HANDBOOK.md` §4.11. Suite `0x02` itself remains blocked on OQ-11.
 - Performance/battery measurements on real devices (resolves OQ-13, the k_sys whole-phone energy multiplier, per specification/research/open-questions.md). **[M]**
 - Docs freeze.

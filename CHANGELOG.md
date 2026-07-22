@@ -15,6 +15,33 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-22 — E6-S1 1k-node scale validation
+
+### Added
+- **`mmp-sim` latency and store-growth instrumentation (E6-S1, doc 13 §3/§5):** `Sim` gained
+  `delivery_latencies_ms()`/`latency_percentile_ms(p)` (per-tracked-message send→delivery samples,
+  nearest-rank percentile) and `store_high_water_bytes()` (running max, not an end-of-run snapshot).
+  New `mmp-sim::tests_scale::thousand_node_mesh_scale_validation` (`#[ignore]`, ~19 min under
+  `--release`): 1,000 nodes, 20 disjoint pairs, 500k uniform-random meetings.
+
+### Finding (recorded, not silently worked around)
+- **Uniform-random contact mixing measurably dilutes with N.** N=100/30 CI scenarios reach delivery
+  ratio 1.0; the first N=1,000 attempt at a realistic 5–20 s contact cadence couldn't mix enough
+  pairs within `LIFETIME_MESSAGE_MS` (72 h) at all; compressing the gap to ~250 ms fit the TTL but
+  only reached ratio 0.45, and at that density the simulated clock no longer represents real
+  elapsed time — its p50 (≈434 min) / p90 (≈683 min) are not comparable to doc 13 §5's real-minutes
+  SLAW band. Quota/store-growth cost claims (doc 13 §3) DO hold, measured: 208 KiB high-water across
+  1,000 nodes. Recorded in `specification/13-performance-model.md` §5/§6 and
+  `specification/research/open-questions.md` OQ-4 as a partial answer — the cost/quota side closes,
+  the SLAW-specific latency question stays open pending a clustered-mobility contact model.
+
+### Deferred, stated honestly (not faked)
+- A SLAW or other clustered-mobility contact model for `mmp-sim` — a simulation-model project of its
+  own; without it, doc 13 §5's same-district latency band cannot be validly tested at N=1k at all.
+- The N=10,000 tier of doc 13 §3's network-load table.
+
+---
+
 ## [Implementation] 2026-07-22 — E6-S2 cipher-agility exercise
 
 ### Added

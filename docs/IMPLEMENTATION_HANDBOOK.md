@@ -918,6 +918,51 @@ handshake failure's silence — `SessionHost` gets nothing on a failed handshake
 
 ---
 
+### 4.12 1k-node scale validation — measured, OQ-4 partially advanced (E6-S1, 2026-07-22, doc 13 §3/§5)
+
+**Real finding, not a mechanical scale-up:** `mmp-sim` had 10/30-node CI scenarios and a 100-node
+`#[ignore]` stress test, all reaching delivery ratio 1.0, but nothing at the 1,000-node scale doc 13
+§5 names as the pass/fail band for OQ-4 ("fail = p50 same-district > 60 min at N=1k"). Two tuning
+attempts (this story's own verify-fix cycle) surfaced a genuine model-fidelity gap rather than a
+constants-tuning problem: at the 5–20 s realistic per-contact cadence the smaller scenarios use, the
+meeting count needed for N=1,000's ~500k possible pairs to mix at all overruns
+`LIFETIME_MESSAGE_MS` (72 h) by more than an order of magnitude (first attempt: 150k meetings @
+1–3 s gaps hit 83.3 simulated hours and a 0.05 delivery ratio — bundles expiring before delivery,
+exactly the "tuning lesson" the 100-node scenario's own doc comment already warns about). Compressing
+the gap to ~250 ms (second attempt: 500k meetings @ 100–400 ms) fits the TTL (34.6 simulated hours)
+and reaches ratio 0.45, but at that density the simulated clock no longer represents realistic
+elapsed time — its p50/p90 output is not comparable to doc 13 §5's real-minutes band, so asserting it
+against the 60-min line would be comparing incompatible units, not validating anything real.
+
+**What shipped:**
+- `mmp-sim/src/lib.rs`: `Sim` gained latency and store-growth instrumentation doc 13 §3/§5 actually
+  need — `sent_at_ms`/`delivery_latencies_ms` (per-tracked-message send→delivery samples),
+  `latency_percentile_ms(p)` (nearest-rank on a sorted copy), and `store_high_water_bytes()` (a
+  running max, not an end-of-run snapshot, updated inside `meet()` using the same conservative
+  `store_len * MAX_BUNDLE` bound `quota_ok()` already relies on).
+- `mmp-sim/src/tests_scale.rs` (new): `thousand_node_mesh_scale_validation`, `#[ignore]`d like the
+  100-node stress test (wall time ~19 min under `--release`). Asserts what the measurement actually
+  supports — TTL safety, quota safety, and a regression-guard delivery-ratio floor (`>= 0.40`, below
+  the measured 0.45) — rather than a hard gate against doc 13 §5's SLAW band, which this uniform-random
+  model cannot be validly compared to. The module doc records the full reasoning so a future reader
+  doesn't mistake the passing test for "OQ-4 closed."
+- `specification/13-performance-model.md` §5/§6 and `specification/research/open-questions.md`
+  OQ-4: measured numbers recorded (delivery ratio 0.45 @ N=1,000 vs. 1.0 @ N=100/30; store high-water
+  208 KiB; quota safety holds), with the honest conclusion — uniform-random mixing measurably dilutes
+  with N, which is itself evidence that doc 13's "SLAW-like mobility" qualifier is load-bearing for
+  the latency claim, not decorative. OQ-4 marked partially advanced (cost/quota side closed at 1k),
+  not fully closed (SLAW-specific latency still needs a clustered-mobility model nothing in the tree
+  implements).
+
+**Explicitly out of scope, tracked as follow-on** (E6-S1 in `docs/AGILE_BACKLOG.md`, not silently
+dropped): a SLAW or other clustered-mobility contact model for `mmp-sim` (a simulation-model project
+of its own); the N=10,000 tier of doc 13 §3's table (not attempted — the N=1,000 result already
+surfaced the mixing-dilution question that would need answering first); re-running at a realistic,
+uncompressed contact cadence once a clustered model exists, which is the only way to produce a p50/p90
+figure actually comparable to doc 13 §5's band.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
