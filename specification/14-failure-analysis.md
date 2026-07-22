@@ -32,6 +32,8 @@
 | F20 | Beacon ephem_id collision (8-byte) | L | birthday at city scale: ~10⁴ concurrent IDs → P(collision) ≈ 10⁸/2⁶⁵ ≈ negligible; resolution failures just skip dial-score boost | none meaningful |
 | F21 | Lifetime-resurrection replay (AUDIT F1) | M | captor resets a stored bundle's `lifetime_ms` to class-max and re-injects: BundleID excludes lifetime → identical ID → caught by **SeenIndex persisted from first sight for class-max** (03 §4.2); past that horizon, **per-class application dedup** (ratchet index / claim seq / receipt MAC / symbol coords) discards it | ≤ one quota-bounded relay store/offer cycle per resurrection; **no duplicate user-visible delivery** — content is authentic, just stale |
 | F22 | Prekey suppression → FS downgrade (AUDIT F6b) | M | active relay-adversary withholds a victim's fresh prekey-batch claims, forcing senders onto a stale signed-prekey or the sealed-box baseline (08 §4.2); cannot forge a higher-seq claim, only eclipse newer ones | first-message forward secrecy degrades to the sealed-box floor (no-FS) under attack; **confidentiality never drops below baseline**; eclipse-class, detected by the receipt-starvation alarm (07 §6.3) |
+| F23 | Stolen operator ROOT key (pointer only — rev. B, full analysis doc 18 §7 A6) | H | scope containment (a stolen root grants nothing outside its scope namespace); dual-control minting; recovery = new root + physical re-pin | **unbounded within the scope until re-pin** — the one entry in this register that is not merely bounded but genuinely open-ended pending an out-of-band recovery ceremony |
+| F24 | Declared-priority queue-jump (pointer only — rev. B, full analysis doc 18 §7 A7) | L | none at wire-phase ordering in v1, stated plainly; priority buys order, never volume — per-origin buckets/quotas stay priority-blind | earlier-in-session service for junk within unenlarged budgets — a scheduling nuisance, not a safety breach; structural fix filed as a `CHANGELOG.md` errata candidate |
 
 ## 2. Deep walks
 
@@ -61,6 +63,8 @@ Both emit claims with independent seq counters → equal-seq conflicts → deter
 | D-5 | Clock torture (jumps, reboots, skew) | F1/F2 invariants hold; no lifetime inflation |
 | D-6 | Sybil/drain adversary suite | honest-traffic delivery drop ≤ 10%; battery cost bounded per W3 |
 | D-7 | iOS/Android background matrix **+ OEM background-kill matrix** (AUDIT F13) | leaf reachability per 09 §6 table on ≥3 device classes; T2 FG-service survival measured across ≥3 OEM battery-manager policies; honest T2→T1 degradation on kill |
+| D-8 | Pointer only — rev. B, full definition doc 17 §8 (S-8, train profile) | train Profile A misdeployment check: a conforming one-anchor-per-carriage topology vs. a single-lead-anchor deployment must show ≥50% delivery-ratio degradation ⚠ in far carriages, confirming §3.1's minimum cardinality is load-bearing |
+| D-9 | Pointer only — rev. B, full definition doc 17 §8 (S-9, campus profile) | delivery ratio ≥0.85 ⚠ same-building within 15 min ⚠ — tighter time, lower density than W2/D-4's stadium band |
 
 ## 4. Persona review checkpoints
 

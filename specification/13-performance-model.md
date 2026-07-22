@@ -47,6 +47,16 @@ Fixed costs: handshake+BINDING ≈ 1 KiB; Standard SUMMARY ≈ 20 KiB (mini: 0.7
 All three orders of magnitude sit far inside quotas (128 MiB) and airtime budgets (relay token bucket) **[A]** — confirming doc 05 §10 and the central claim: *cost per message grows with log N (via L), not N*. Epidemic at N=10k would be ~260 MiB/node/day — 280× worse [A].
 SeenIndex at 10k: 600k IDs / 72 h → time-bucketed Blooms ≈ 700 KB [A] (doc 04 §8 confirmed).
 
+### 3.1 Additional workload classes (doc 16/18, ⚠ provisional — E1-S6)
+
+Three workload classes exist outside the message-plane model above, each flagged by its owning doc for exactly this table (doc 16 §11's Battery Specialist checkpoint; doc 18 §9's constants note "all ⚠ pending doc 13/17"). Assumptions below are stated, not measured — this section formalizes the "rounding error" claims those docs already make, it does not newly validate them.
+
+| Workload | Assumption ⚠ | Cost | vs. §3 baseline |
+|---|---|---|---|
+| Album-thumbnail eager-fetch (doc 16 §5/§10) | 3 manifest sightings/day/node; `THUMB_MAX`=32 KiB, `ALBUM_MAX_FILES`=16 | typical (1 file/manifest): 96 KiB/day; worst case (all 3 full 16-file albums): 1.5 MiB/day | negligible vs. 128 MiB quota (storage); competes for the same per-hour airtime budget as everything else (doc 04 §5) — no separate accounting exists |
+| Full-file pull (doc 16 §1/§10) | `FILE_MAX_SIZE`=8 MiB, RS 32+8 ⇒ ≈10 MiB of symbol traffic to reconstruct | at doc 13 §2's 5 s/≈0.5 MiB-per-contact low end: ≈20 contacts to complete one pull | on-demand, user-initiated — not a per-day background cost like the row above; bounded by `BLOB_SUBBUDGET` ≤40% of session cap (doc 16 §8) |
+| AuthCert/announcement traffic (doc 18 §2/§3) | 5 class-5 announcements/day/node in an active deployment profile (doc 17); AuthCert claim (≈151 B body, §2's struct) re-offered at ordinary claim-gossip cadence (doc 06 §4.3, no dedicated timer per doc 11 §7) | ≈289 B/announcement bundle (85 B `AnnouncementBody` fixed fields + ~80 B typical text + 124 B bundle overhead, doc 10 §7) ⇒ ≈1.4 KiB/day/node from announcements alone | a rounding error against the 572–936 KiB/day baseline above, confirming doc 18 §9's Performance Engineer checkpoint quantitatively rather than by assertion |
+
 ## 4. Sync arithmetic
 
 RBSR: domain of n=100k IDs, diff d=100: rounds ≈ ⌈log₁₆(n/24)⌉ = 3; bytes ≈ Σ branch fan-out ≈ 3 × 16 × 12 B × active branches ≈ 5–20 KiB worst case, ≪ inventory exchange (1.6 MB) [A]; typical post-Bloom diffs (d<20) terminate in 1–2 rounds, <2 KiB [A]. Round-trips: 3 rounds × ~100 ms ≈ 300 ms of a 5 s contact — OQ-5 answered affirmatively at the model level, **[S]** for adversarial/edge distributions.

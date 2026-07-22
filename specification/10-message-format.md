@@ -148,6 +148,10 @@ Async first-contact form (no conversation yet): flags bit2 set; payload = sealed
 
 Payload = RS symbol bytes; SYMBOL_INFO TLV carries `(root id16, block u16, sym u16, k u8, n u8)`; verification path doc 08 §8.
 
+### 4.6 Class 5 announcement (pointer only — rev. B, defined and owned by doc 18 §3)
+
+Plaintext payload (never AEAD — announcements are public by design): `AnnouncementBody { ann_type u8, scope id16, not_after u32, text varbytes, sig64 }`, signed under `mmp1/announce` by the authority subject. `dest` carries `scope_id` verbatim, zero wire change (doc 18 §4). Same unknown-bundle-class rule as every other class doc 03 §8 defines: a rev-A node relays class-5 bundles blindly and correctly if the outer signature verifies, without understanding this section at all.
+
 ## 5. Beacon layout (doc 03 §5.1, doc 09 §3.1)
 
 ```
@@ -191,4 +195,4 @@ At 50–150 kbps goodput (C-B1): a 5 s contact carries ≈ 30–90 KiB → hands
 
 ## 9. Cross-references
 
-Field semantics: bundles doc 03, RBSR doc 06, crypto payloads doc 08, transport framing doc 09. State machines consuming these frames → doc 11. Test vectors + fuzz targets → doc 12. Size/energy model → doc 13.
+Field semantics: bundles doc 03, RBSR doc 06, crypto payloads doc 08, transport framing doc 09. State machines consuming these frames → doc 11. Test vectors + fuzz targets → doc 12. Size/energy model → doc 13. Rev. B extensions reusing this doc's frames/schemas verbatim (zero wire change): file transfer's class-4 symbol payload and BLOB frames (§2.6, §4.5) → doc 16; deployment-profile constant presets (no new wire) → doc 17; class-5 announcement (§4.6), claim fields 0x07/0x08/0x09, and the two new signing-domain tags (§3.1) → doc 18.
