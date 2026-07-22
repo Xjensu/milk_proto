@@ -157,6 +157,14 @@ impl Sim {
 
     /// Fraction of tracked sends whose `Delivered` receipt has been seen by
     /// the origin. `0.0` when nothing has been sent yet.
+    /// Whether the origin has seen `id`'s delivery receipt yet — per-message
+    /// detail beneath [`Sim::delivery_ratio`]'s aggregate, for scenarios that
+    /// need to compare delivery across subsets of tracked sends (E6-S3's
+    /// near-carriage-vs-far-carriage misdeployment check, doc 17 §8 D-8).
+    pub fn is_delivered(&self, id: &Id16) -> bool {
+        self.delivered_ids.contains(id)
+    }
+
     pub fn delivery_ratio(&self) -> f64 {
         if self.counters.messages_sent == 0 {
             0.0
@@ -369,6 +377,18 @@ impl Sim {
         }
     }
 
+    /// One conductor round (doc 17 §3.2, E6-S3): `conductor` meets each node
+    /// in `stops` **in order**, full `meet()` contacts (not random pairing) —
+    /// the scheduled, deterministic topology a physically-walking conductor
+    /// imposes, as opposed to [`Sim::run_random_meetings`]'s uniform-random
+    /// pairing. `travel_ms` advances the clock after each stop (time to walk
+    /// to the next carriage); does not loop — call again for another round.
+    pub fn run_conductor_round(&mut self, conductor: usize, stops: &[usize], travel_ms: u64) {
+        for &stop in stops {
+            self.meet(conductor, stop, travel_ms);
+        }
+    }
+
     /// End-to-end delivery latency (send → origin sees the receipt) for
     /// every tracked message delivered so far, in simulated milliseconds —
     /// the raw samples doc 13 §5's p50/p90 latency bands are computed over.
@@ -421,3 +441,5 @@ mod tests_adversarial;
 mod tests_blob;
 #[cfg(test)]
 mod tests_scale;
+#[cfg(test)]
+mod tests_deployment;
