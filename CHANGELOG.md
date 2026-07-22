@@ -15,6 +15,24 @@ omitted rather than invented.
 
 ---
 
+## [Documentation] 2026-07-22 — E6-S4 external security review package
+
+### Added
+- **`docs/SECURITY_REVIEW_DOSSIER.md`:** scopes the review to OQ-10's three non-standard crypto
+  compositions (channel binding doc 08 §3.2, serverless prekeys §4.2, opportunistic ratchet §5.2);
+  a crypto inventory with exact `Cargo.lock`-resolved crate versions (`ed25519-dalek` 2.2.0,
+  `x25519-dalek` 2.0.1, `chacha20poly1305` 0.10.1, `blake3` 1.8.5, `snow` 0.9.6); doc 07's full
+  10-entry residual risk register; honest fuzz status (CI runs a 2-minute smoke test per target,
+  not a hardening run; no seed corpus yet; a documented Windows toolchain gap, not a code defect);
+  the 9 golden vectors and what they cover; and a "known gaps" section (clippy not yet CI-gated, no
+  MSRV pin, `AuthorityStore` has no durable persistence, `mmp-sim` has no clustered-mobility model)
+  so the external reviewer isn't spent rediscovering already-tracked items.
+
+This is a compilation of already-shipped, already-verified material — no new analysis, no new
+code. The review itself remains external, per the story's own scope.
+
+---
+
 ## [Implementation] 2026-07-22 — E6-S3 deployment-profile drills (D-8/D-9)
 
 ### Added
