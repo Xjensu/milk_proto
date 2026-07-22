@@ -15,6 +15,35 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-22 — E6-S3 deployment-profile drills (D-8/D-9)
+
+### Added
+- **`Sim::run_conductor_round` (E6-S3, doc 17 §3.2):** a scheduled, deterministic meeting sequence
+  (conductor visits each stop in order) — the train profile's actual contact topology, which the
+  existing uniform-random `run_random_meetings` cannot express. `Sim::is_delivered(id)`: per-message
+  delivery detail beneath `delivery_ratio()`'s aggregate.
+- **`mmp-sim::tests_deployment`** (`#[ignore]`d): `train_profile_a_misdeployment_drill` (D-8) —
+  100% far-carriage telemetry arrival with a per-carriage anchor rail vs. 0% with only a single
+  lead-carriage anchor, exceeding doc 17 §8's ≥50%-degradation band. `campus_profile_delivery_drill`
+  (D-9) — delivery ratio 1.0 within 13.9 simulated minutes, clearing the 0.85-within-15-min band.
+
+### Fixed (found mid-drill, not a pre-existing bug)
+- **D-8's first version measured the wrong thing.** It tracked round-trip delivery receipts and got
+  stuck at ratio 0.000 through 10 rounds; tracing individual contacts showed the conductor reliably
+  received every carriage's telemetry within round 0, and the stall was 8 receipts minted back-to-back
+  hitting the conductor's own per-origin admission bucket — a real, separate rate-limiting mechanism,
+  not this drill's subject. Doc 17 §8's actual D-8 band is one-way arrival at the conductor
+  (`Event::MessageReceived`), not a round trip; fixed by measuring that directly.
+
+### Deferred, stated honestly (not faked)
+- The misdeployed scenario's 60% contact-drop rate (brief walking-past pass vs. persistent
+  same-carriage co-presence) is a stated modeling assumption, not a measured figure.
+- Neither drill wires up real AuthCert/class-5 announcements end-to-end — telemetry/announcement
+  propagation is modeled with ordinary class-1 direct bundles, since the conductor-round latency these
+  drills measure is a session-mechanism property common to every bundle class.
+
+---
+
 ## [Specification] 2026-07-22 — E1-S6 registry sweeps
 
 ### Added

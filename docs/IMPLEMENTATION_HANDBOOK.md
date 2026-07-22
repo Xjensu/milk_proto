@@ -963,6 +963,57 @@ figure actually comparable to doc 13 §5's band.
 
 ---
 
+### 4.13 Deployment-profile drills D-8/D-9 — SHIPPED (E6-S3, 2026-07-22, doc 17 §8)
+
+**Real finding, and a real bug caught mid-drill:** doc 17 is zero-wire-change by design — profiles are
+local-policy constant presets and, for the train profile, a genuinely different *contact topology*
+(a conductor walking a fixed carriage sequence, doc 17 §3.2) that `mmp-sim`'s existing uniform-random
+`run_random_meetings` cannot express at all. This story needed one new simulator primitive, not just
+new test parameters.
+
+**What shipped:**
+- `mmp-sim/src/lib.rs`: `Sim::run_conductor_round(conductor, stops, travel_ms)` — a scheduled,
+  deterministic meeting sequence (conductor meets each stop in order), the train topology's actual
+  mechanism, as opposed to random pairing. Also `Sim::is_delivered(id)`, per-message delivery detail
+  beneath `delivery_ratio()`'s aggregate (needed for D-8's near-vs-far-carriage comparison).
+- `mmp-sim/src/tests_deployment.rs` (new): `train_profile_a_misdeployment_drill` (D-8) and
+  `campus_profile_delivery_drill` (D-9), both `#[ignore]`d.
+
+**D-8 real bug, found and fixed during this story's own verify-fix cycle:** the first version tracked
+round-trip delivery receipts (`Sim::is_delivered`, the same metric E6-S1 uses) and got stuck at ratio
+0.000 through 10 rounds — not a tuning problem, a wrong metric. Tracing individual contacts (temporary
+per-round `eprintln!` of store sizes and raw events, same debugging technique the routing bugs in this
+handbook's bug ledger used) showed the conductor reliably received every carriage's telemetry within
+round 0 (`Event::MessageReceived` fired correctly) — the return trip stalled because minting 8 receipts
+back-to-back in one round hits the conductor's own per-origin admission bucket, a real rate-limiting
+mechanism unrelated to this drill's subject. Doc 17 §8's D-8 band is actually about **one-way arrival at
+the conductor** ("telemetry reaches the conductor within ≤2 conductor rounds"), not a round-trip receipt
+— fixing the test to track `Event::MessageReceived` at the conductor directly (via captured `meet()`
+events, not `Sim`'s aggregate tracking) resolved it cleanly: conforming ratio 1.000, far-carriage
+(positions ≥4) arrival 100% conforming vs. **0%** misdeployed (single lead-carriage anchor) — the
+≥50%-degradation band doc 17 §8 sets is exceeded, not merely met.
+
+**D-9:** reused `run_random_meetings` (a building's cross-floor mixing is ordinary passenger-equivalent
+mobility, doc 17 §5 — no scheduled-ferry mechanism like the train's, so no new primitive needed). Three
+tuning passes on meeting count (150 → 250 → 420, gap fixed at a dense hallway-cadence 1–3 s) to clear
+the 0.85-ratio-within-15-simulated-minutes band: landed at ratio 1.0, 13.9 simulated minutes.
+
+**Interpretation calls, documented rather than assumed:** telemetry/announcement propagation is modeled
+with ordinary class-1 direct bundles, not the full AuthCert/class-5 apparatus (doc 18) — the
+conductor-round propagation latency these drills measure is a property of the session mechanism
+(SUMMARY→RECONCILE→TRANSFER, doc 03 §5.2) common to every bundle class, so wiring up real AuthCerts
+would add setup complexity without changing what D-8 measures. Sensor identities are treated as
+operator-provisioned (`introduce()` bootstrap), matching doc 17 §3.3's AuthCert-subject framing, the
+same shortcut every other scale scenario in this crate uses for its tracked send pairs.
+
+**Explicitly out of scope, tracked as follow-on:** the misdeployed far-sensor↔conductor contact's 60%
+drop rate is a stated, not measured, stand-in for "brief walking-past pass vs. persistent same-carriage
+co-presence" — real figures need `mmp-tal` field data, not sim tuning. Neither drill wires up a real
+AuthCert/announcement flow end-to-end (see above). The urban-scale profile (doc 17 §6) remains explicitly
+out of that doc's own scope and isn't attempted here either.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
