@@ -15,6 +15,30 @@ omitted rather than invented.
 
 ---
 
+## [Specification] 2026-07-22 — E1-S6 registry sweeps
+
+### Added
+- **doc 10** §4.6: pointer-only row for class-5 announcements (owned by doc 18 §3). §9: docs 16–18
+  added to the cross-references list.
+- **doc 13** new §3.1: three ⚠-tagged workload rows — album-thumbnail eager-fetch (doc 16 §5/§10),
+  full-file pull (doc 16 §1/§10), AuthCert/announcement traffic (doc 18 §2/§3) — quantifying the
+  "rounding error against the message-plane baseline" claims those docs already made in prose,
+  rather than asserting them for the first time here.
+- **doc 14** §1: F23/F24, pointer rows for doc 18 §7's A6 (stolen operator root key) and A7
+  (declared-priority queue-jump), mirroring the existing F21/F22 pointer-row pattern. §3: D-8/D-9
+  pointer rows for doc 17 §8's train/campus deployment drills (doc 17 §12 already expected these to
+  exist here).
+
+### Fixed
+- **Terminology drift:** `specification/research/open-questions.md` OQ-17's Round-2-bis annotation
+  said "issuer-signed kill-cert" — retired in favor of the field's actual name, `REVOCATION_LIST`
+  (claim field `0x08`, doc 18 §6), matching the shipped code and doc 18's own terminology.
+
+This unblocks **E6-S3** (deployment-profile presets, doc 17), the only backlog item that depended
+on this story.
+
+---
+
 ## [Implementation] 2026-07-22 — E6-S1 1k-node scale validation
 
 ### Added
