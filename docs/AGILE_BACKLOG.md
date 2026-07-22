@@ -154,17 +154,17 @@ Panic audit found all non-test `.expect()`s provably unreachable, but the discip
 
 > Buildable specs already exist: handbook §4.1 (peripheral), §4.2 (CLI wiring). Exit gate (roadmap §3.A): two machines exchange a message + receipt over real BLE.
 
-**E3-S1 · `mmp-tal-peripheral` crate (M5b) · L · Deps: none (schema-frozen GATT layout in handbook §4.1)**
+**E3-S1 · `mmp-tal-peripheral` crate (M5b) · L · Deps: none (schema-frozen GATT layout in handbook §4.1) · DONE (backlog marker corrected 2026-07-22; shipped Wave 3/Phase A, 2026-07-16 per project memory)**
 New crate, feature-gated `bluez` (Linux, `bluer`) and `winrt` (Windows) backends; API `new / advertise(beacon) / events() / notify(link, bytes)`; GATT layout byte-matching `mmp-tal-btleplug`'s dev constants; LinkId = BLAKE3(central connection id), same recipe as central crate; chunking floor 20 B.
-**Acceptance:** handbook §4.1's acceptance verbatim — unit tests for chunk arithmetic + LinkId determinism (no hardware in CI); hardware path behind an example binary.
+**Acceptance:** handbook §4.1's acceptance verbatim — unit tests for chunk arithmetic + LinkId determinism (no hardware in CI); hardware path behind an example binary. **Verified 2026-07-22** (this backlog entry had no DONE marker despite being shipped): `crates/mmp-tal-peripheral/src/linux.rs` (real BlueZ backend) + `unsupported.rs` (Windows/macOS stub with a WinRT design sketch); `framing.rs` has `chunk_size_is_always_mtu_minus_att_header_above_the_floor`/`remainder_produces_a_short_final_chunk`/etc.; `lib.rs` has `mint_link_id_is_deterministic_for_the_same_peer` — exactly the acceptance criteria named above.
 
-**E3-S2 · `mmp-cli` radio wiring: `listen` / `connect` / `send` · M · Deps: E3-S1**
+**E3-S2 · `mmp-cli` radio wiring: `listen` / `connect` / `send` · M · Deps: E3-S1 · DONE (backlog marker corrected 2026-07-22; shipped Wave 3/Phase A, 2026-07-16 per project memory)**
 Handbook §4.2's drive loop (~100 lines, heavily commented — it is the reference host implementation).
-**Acceptance:** Phase A exit gate on real hardware (user-executed; agent delivers the runnable binary + a written test protocol); `--help` documents every subcommand.
+**Acceptance:** Phase A exit gate on real hardware (user-executed; agent delivers the runnable binary + a written test protocol); `--help` documents every subcommand. **Verified 2026-07-22:** `mmp-cli`'s `main.rs` dispatches `"connect" => cmd_connect`, `"send" => cmd_send`, `"listen" => cmd_listen`, all implemented. The real-hardware exit-gate confirmation itself remains outstanding (needs the user to actually run it on two machines) — that half was never claimable by an agent regardless.
 
-**E3-S3 · GATT UUID reconciliation · S · Deps: E3-S1**
+**E3-S3 · GATT UUID reconciliation · S · Deps: E3-S1 · DONE (2026-07-22)**
 Central + peripheral + `MOBILE_INTEGRATION.md` must pin the same UUID set (still dev placeholders; SIG assignment is E8-S1, not this story). **Do:** single `consts`-style source of truth for the dev UUIDs consumed by both TAL crates and quoted verbatim in `MOBILE_INTEGRATION.md` §4–5.
-**Acceptance:** one grep finds exactly one definition site; docs match it.
+**Acceptance:** one grep finds exactly one definition site; docs match it. **Done:** the three dev UUID constants now live once, in `mmp-tal` (the shared base crate both `mmp-tal-btleplug` and `mmp-tal-peripheral` already depended on); both downstream crates re-export/const-alias from there instead of each carrying its own literal. Removed the now-redundant `gatt_uuids_match_central_crate_byte_for_byte` cross-check test (byte-identity is enforced by construction now, not by comparing two independent literals) and the `mmp-tal-btleplug` dev-dependency it existed for. `MOBILE_INTEGRATION.md` §4.2 now quotes the actual UUID values, pointing at `mmp_tal::DEV_SERVICE_UUID` as the source, rather than referencing them by name only.
 
 ---
 

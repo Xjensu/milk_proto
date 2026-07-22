@@ -15,6 +15,29 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-22 — E3-S3 GATT UUID reconciliation + Epic 3 marker sweep
+
+### Added
+- **Single source of truth for the dev GATT UUIDs (E3-S3, doc 09 §5.1):** `DEV_SERVICE_UUID`,
+  `DEV_TX_CHARACTERISTIC_UUID`, `DEV_RX_CHARACTERISTIC_UUID` now live once, in `mmp-tal` (the
+  shared base crate both TAL implementations already depended on). `mmp-tal-btleplug` re-exports
+  them directly; `mmp-tal-peripheral` re-exports the service UUID and const-aliases its own
+  perspective-renamed characteristic constants to the same canonical values. `MOBILE_INTEGRATION.md`
+  §4.2 now quotes the actual UUID values against the named Rust source, not by name only.
+
+### Fixed
+- **Duplicated UUID literals, found while implementing E3-S3.** `mmp-tal-btleplug` and
+  `mmp-tal-peripheral` each carried their own independent `pub const` copy of the same three UUID
+  strings, cross-checked only by a unit test asserting the two literals matched — two sources that
+  happen to agree is not one source. Removed the now-vacuous cross-check test and the
+  `mmp-tal-btleplug` dev-dependency it existed for.
+- **Stale backlog markers for E3-S1/E3-S2.** Both stories (`mmp-tal-peripheral` crate, `mmp-cli`
+  radio wiring) were fully shipped — verified against code (chunk-arithmetic/LinkId-determinism
+  tests, `connect`/`send`/`listen` subcommands) — but carried no `DONE` marker in
+  `docs/AGILE_BACKLOG.md`, the same staleness class as the earlier E5-S3/E5-S7 gaps. Corrected.
+
+---
+
 ## [Documentation] 2026-07-22 — E6-S4 external security review package
 
 ### Added

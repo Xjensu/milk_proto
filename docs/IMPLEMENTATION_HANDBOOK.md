@@ -266,9 +266,15 @@ Removal takes effect as the network reconverges — this is a physics bound, not
 Each spec: context → structures → algorithm → memory → acceptance. Sizes refer to
 `docs/ROADMAP_TO_PRODUCTION.md` phases.
 
-### 4.1 M5b: PC peripheral role (Phase A)
+### 4.1 M5b: PC peripheral role (Phase A) — SHIPPED (E3-S1; backlog marker corrected 2026-07-22)
 
-**Context.** `mmp-tal-btleplug` is central-only (the library cannot advertise/serve GATT). For
+**Shipped, matching the spec below exactly:** `mmp-tal-peripheral` (Linux/`bluer` + Windows/macOS
+stub with a WinRT design sketch), `mint_link_id` (same BLAKE3 recipe as the central crate),
+`framing::chunks` (20 B floor). This backlog story carried no `DONE` marker despite being complete
+— found and corrected during an Epic 3 sweep (2026-07-22), same staleness class as the earlier
+Epic 5 E5-S3/S7 marker gaps.
+
+**Context (original spec, retained for design rationale).** `mmp-tal-btleplug` is central-only (the library cannot advertise/serve GATT). For
 PC↔PC radio contact one side must be a peripheral. Platform APIs: BlueZ (Linux) via the `bluer`
 crate supports GATT server + advertising; Windows via `windows` crate WinRT
 (`GattServiceProvider`, `BluetoothLEAdvertisementPublisher`); macOS peripheral is possible but
@@ -302,7 +308,11 @@ emit `LinkDown` and forget.
 text and its receipt over real radio. Unit tests: chunk arithmetic, LinkId determinism (no
 hardware). Hardware path behind an example binary, never in CI.
 
-### 4.2 mmp-cli radio wiring (Phase A)
+### 4.2 mmp-cli radio wiring (Phase A) — SHIPPED (E3-S2; backlog marker corrected 2026-07-22)
+
+**Shipped:** `mmp-cli`'s `connect`/`send`/`listen` subcommands, matching the drive loop below. The
+real-hardware half of the exit gate (two machines actually exchanging a message over BLE) was
+never agent-claimable and remains outstanding — it needs the user to run it.
 
 Add subcommands. The drive loop is THE reference implementation of "how to host a node" — keep it
 under ~100 lines and heavily commented:
@@ -1011,6 +1021,36 @@ drop rate is a stated, not measured, stand-in for "brief walking-past pass vs. p
 co-presence" — real figures need `mmp-tal` field data, not sim tuning. Neither drill wires up a real
 AuthCert/announcement flow end-to-end (see above). The urban-scale profile (doc 17 §6) remains explicitly
 out of that doc's own scope and isn't attempted here either.
+
+---
+
+### 4.14 GATT UUID reconciliation — SHIPPED (E3-S3, 2026-07-22, doc 09 §5.1)
+
+**Found during an Epic 3 documentation-hygiene sweep** (prompted by discovering E3-S1/S2 were
+shipped but never marked `DONE` in the backlog): the three dev GATT UUIDs actually had **two**
+independent literal definitions — `mmp-tal-btleplug` and `mmp-tal-peripheral` each carried their
+own `pub const` copies of the same three UUID strings, cross-checked only by a unit test
+(`gatt_uuids_match_central_crate_byte_for_byte`) asserting the two literals matched. Two
+independent sources that happen to agree, checked by a test, is not the same as one source — the
+literal E3-S3 gap the backlog names ("single source of truth... one grep finds exactly one
+definition site").
+
+**Shipped:** the three constants (`DEV_SERVICE_UUID`, `DEV_TX_CHARACTERISTIC_UUID`,
+`DEV_RX_CHARACTERISTIC_UUID`) now live once, in `mmp-tal` — the shared base crate both
+`mmp-tal-btleplug` and `mmp-tal-peripheral` already depended on for real (non-dev) reasons, so no
+new dependency edge was needed. `mmp-tal-btleplug` re-exports them directly; `mmp-tal-peripheral`
+re-exports the service UUID and const-aliases its own perspective-renamed
+`DEV_CENTRAL_TX_CHARACTERISTIC_UUID`/`DEV_CENTRAL_RX_CHARACTERISTIC_UUID` to the same canonical
+values (the perspective renaming is meaningful domain content — peripheral's inbound path is what
+the central calls "TX" — so it was kept; only the *literal* was deduplicated). Removed the
+now-vacuous cross-check test and the `mmp-tal-btleplug` dev-dependency it existed for (peripheral
+keeps `uuid` as a dev-dependency for its separate `gatt_uuids_parse` test). `MOBILE_INTEGRATION.md`
+§4.2 now quotes the actual UUID values against `mmp_tal::DEV_SERVICE_UUID` as the named source,
+rather than referencing "the MMP service UUID" without ever stating what it is.
+
+**Verification:** `cargo test --workspace` green (159 passed / 0 failed / 4 ignored — one fewer
+passed than before this change, from removing the now-vacuous cross-check test, not a regression);
+`clippy --workspace --all-targets -D warnings` clean; `layer-check` OK.
 
 ---
 
