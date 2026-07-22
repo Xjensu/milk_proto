@@ -89,22 +89,12 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use uuid::Uuid;
 
 pub use btleplug::platform::PeripheralId;
-pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
+pub use mmp_tal::{
+    LinkId, LinkQuality, TalEvent, DEV_RX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
+    DEV_TX_CHARACTERISTIC_UUID,
+};
 
 pub mod framing;
-
-/// Development-time 128-bit service UUID under the `mmp1` namespace — a
-/// SIG-assigned 16-bit UUID is a production (not MVP) release blocker (OQ-12).
-pub const DEV_SERVICE_UUID: &str = "6d6d7031-0000-4d4d-5031-6d6573686d6c";
-
-/// Development-time TX characteristic (client→server, Write Without
-/// Response). Doc 09 §5.1 does not pin a UUID; see module docs for how this
-/// placeholder was derived and what still needs reconciling.
-pub const DEV_TX_CHARACTERISTIC_UUID: &str = "6d6d7031-0001-4d4d-5031-6d6573686d6c";
-
-/// Development-time RX characteristic (server→client, Notify). See
-/// [`DEV_TX_CHARACTERISTIC_UUID`] docs.
-pub const DEV_RX_CHARACTERISTIC_UUID: &str = "6d6d7031-0002-4d4d-5031-6d6573686d6c";
 
 /// Conservative default per-link chunk size: 23-byte ATT MTU floor minus the
 /// 3-byte ATT header. See module docs ("Chunk size / MTU") for why this

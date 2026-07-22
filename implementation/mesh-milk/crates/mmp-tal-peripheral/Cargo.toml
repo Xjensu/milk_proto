@@ -34,10 +34,10 @@ bluer = { version = "0.17", default-features = false, features = ["bluetoothd"] 
 futures = "0.3"
 
 [dev-dependencies]
-# ONLY for the byte-compatibility tests: the GATT UUID constants here must
-# match the central crate's forever (see tests in src/lib.rs). Keeping it a
-# dev-dependency means shipping code never links the central stack.
-mmp-tal-btleplug = { path = "../mmp-tal-btleplug" }
+# UUID-parseability test only (src/lib.rs) — the byte-compatibility with the
+# central crate is now enforced by construction (E3-S3: both re-export the
+# same mmp-tal constants), not by a duplicated-literal cross-check, so this
+# crate no longer needs mmp-tal-btleplug as a dev-dependency at all.
 uuid = "1"
 
 [lints]

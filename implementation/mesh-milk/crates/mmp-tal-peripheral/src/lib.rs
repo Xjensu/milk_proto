@@ -91,22 +91,24 @@ mod unsupported;
 #[cfg(not(target_os = "linux"))]
 pub use unsupported::PeripheralRole;
 
-/// Development-time 128-bit service UUID — MUST stay byte-identical to
-/// `mmp_tal_btleplug::DEV_SERVICE_UUID` (asserted in tests below). A
-/// SIG-assigned 16-bit UUID is a production release blocker (OQ-12); doc 09
-/// §2 pins only this service UUID, not the characteristic UUIDs.
-pub const DEV_SERVICE_UUID: &str = "6d6d7031-0000-4d4d-5031-6d6573686d6c";
+/// Single source of truth for the dev service UUID (E3-S3): re-exported from
+/// `mmp-tal` rather than a separate literal, so this crate and the central
+/// (`mmp-tal-btleplug`) can never drift. A SIG-assigned 16-bit UUID is a
+/// production release blocker (OQ-12); doc 09 §2 pins only this service UUID,
+/// not the characteristic UUIDs.
+pub use mmp_tal::DEV_SERVICE_UUID;
 
-/// The characteristic the central crate calls "TX" (`DEV_TX_CHARACTERISTIC_UUID`):
+/// The characteristic the central crate calls "TX" (`mmp_tal::DEV_TX_CHARACTERISTIC_UUID`):
 /// the central WRITES here (Write Without Response). **For this peripheral it
 /// is the INBOUND path** — each write we accept becomes [`TalEvent::LinkData`].
-/// Named from the central's perspective to make the role inversion explicit.
-pub const DEV_CENTRAL_TX_CHARACTERISTIC_UUID: &str = "6d6d7031-0001-4d4d-5031-6d6573686d6c";
+/// Named from the central's perspective to make the role inversion explicit;
+/// same underlying UUID, single source of truth (E3-S3).
+pub const DEV_CENTRAL_TX_CHARACTERISTIC_UUID: &str = mmp_tal::DEV_TX_CHARACTERISTIC_UUID;
 
-/// The characteristic the central crate calls "RX" (`DEV_RX_CHARACTERISTIC_UUID`):
+/// The characteristic the central crate calls "RX" (`mmp_tal::DEV_RX_CHARACTERISTIC_UUID`):
 /// the central SUBSCRIBES here (Notify). **For this peripheral it is the
 /// OUTBOUND path** — [`PeripheralRole::notify`] pushes chunks through it.
-pub const DEV_CENTRAL_RX_CHARACTERISTIC_UUID: &str = "6d6d7031-0002-4d4d-5031-6d6573686d6c";
+pub const DEV_CENTRAL_RX_CHARACTERISTIC_UUID: &str = mmp_tal::DEV_RX_CHARACTERISTIC_UUID;
 
 /// Everything that can go wrong advertising, serving, or notifying.
 ///
@@ -189,22 +191,6 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The coupling this crate lives or dies by: the GATT identifiers must be
-    /// byte-for-byte what the central crate dials. Import the central's
-    /// constants and compare — this test IS the documentation of the coupling.
-    #[test]
-    fn gatt_uuids_match_central_crate_byte_for_byte() {
-        assert_eq!(DEV_SERVICE_UUID.as_bytes(), mmp_tal_btleplug::DEV_SERVICE_UUID.as_bytes());
-        assert_eq!(
-            DEV_CENTRAL_TX_CHARACTERISTIC_UUID.as_bytes(),
-            mmp_tal_btleplug::DEV_TX_CHARACTERISTIC_UUID.as_bytes()
-        );
-        assert_eq!(
-            DEV_CENTRAL_RX_CHARACTERISTIC_UUID.as_bytes(),
-            mmp_tal_btleplug::DEV_RX_CHARACTERISTIC_UUID.as_bytes()
-        );
-    }
 
     /// The three constants must also be *parseable* UUIDs (the Linux backend
     /// parses them at startup; catch a typo on every platform's test run).

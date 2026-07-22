@@ -134,7 +134,14 @@ A **foreground service** with a persistent notification is the only honest way t
 
 ### 4.2 GATT mapping (doc 09 §5.1)
 
-* One primary service (128-bit dev UUID until SIG assignment — OQ-12).
+* One primary service (128-bit dev UUID until SIG assignment — OQ-12). **Single source of truth
+  (E3-S3):** `mmp_tal::DEV_SERVICE_UUID` (`implementation/mesh-milk/crates/mmp-tal/src/lib.rs`) —
+  both the central (`mmp-tal-btleplug`) and peripheral (`mmp-tal-peripheral`) Rust TAL crates
+  re-export it rather than each carrying their own literal, so this doc quotes the same values they
+  do, not an independently-hand-copied one:
+  * Service: `6d6d7031-0000-4d4d-5031-6d6573686d6c`
+  * TX (client→server, Write Without Response): `6d6d7031-0001-4d4d-5031-6d6573686d6c`
+  * RX (server→client, Notify): `6d6d7031-0002-4d4d-5031-6d6573686d6c`
 * **TX characteristic**: client writes with *Write Without Response*; feed each write into `node.linkData(link, bytes, now)`. The core reassembles frames internally with a hard 4 KiB bound — you never buffer.
 * **RX characteristic**: *Notify*; drain `node.pollSend()` into ≤(MTU−3)-byte notifications, in order.
 * Request MTU 247+, 2M PHY, DLE; proceed gracefully on 23-byte floors — the core doesn't care, only throughput does.

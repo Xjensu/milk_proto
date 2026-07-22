@@ -1273,7 +1273,6 @@ dependencies = [
  "bluer",
  "futures",
  "mmp-tal",
- "mmp-tal-btleplug",
  "mmp-types",
  "tokio",
  "uuid",
