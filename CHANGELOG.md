@@ -15,6 +15,23 @@ omitted rather than invented.
 
 ---
 
+## [Documentation] 2026-07-22 — E4-S4 stale backlog text corrected
+
+### Fixed
+- **`docs/AGILE_BACKLOG.md` §A3 item 4 and the E4-S4 story both still said "default: don't persist
+  ratchet state"** — a decision `specification/08-crypto-spec.md` §5.3 reversed on 2026-07-16 (persist,
+  keystore-wrapped). `docs/ROADMAP_TO_PRODUCTION.md` already carried the correction (its own addendum,
+  same date); only the backlog text was stale and self-contradicting its own cited source.
+- **E4-S4's real status, verified against code rather than assumed:** claims and group-state
+  persistence are done (`mmp-store`'s `MMPSNAP2` format). The ratchet-persistence *decision* is done.
+  Two sub-items are genuinely still open: SeenIndex/ReceiptFilter persistence (zero hits in
+  `mmp-store` — pure Rust, agent-buildable now) and the ratchet persistence *wiring*
+  (`mmp_crypto::ratchet::bump_epoch` exists but has zero call sites in `mmp-node` — the bump-epoch
+  wiring itself is pure Rust and agent-buildable; the keystore-wrapped encryption needs native
+  Android/iOS/Windows platform code, Epic 4's job, not the Rust workspace's).
+
+---
+
 ## [Implementation] 2026-07-22 — E3-S3 GATT UUID reconciliation + Epic 3 marker sweep
 
 ### Added
