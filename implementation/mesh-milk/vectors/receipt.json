@@ -1,0 +1,6 @@
+{
+  "description": "receipt MAC (doc 05 §7): MAC = receipt_mac(receipt_key(conv_root), delivered_id). The derived key is a secret and is intentionally omitted.",
+  "conv_root": "3333333333333333333333333333333333333333333333333333333333333333",
+  "delivered_id": "44444444444444444444444444444444",
+  "mac": "f7bbfcf5587ab711cb122eccc5bbdd04"
+}

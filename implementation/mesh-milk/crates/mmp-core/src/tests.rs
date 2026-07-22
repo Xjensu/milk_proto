@@ -429,6 +429,10 @@ fn hello() -> Hello {
     Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
 }
 
+fn hello_with_suites(suites: Vec<u8>) -> Hello {
+    Hello { ver: 1, suites, tier: 2, flags: 0, credits: 8, psm: 0 }
+}
+
 /// Pump both engines until quiescent; returns pumped byte count.
 fn pump(
     a: &mut SessionEngine,
@@ -509,4 +513,25 @@ fn handshake_timeout_closes_session() {
     assert_ne!(a.phase(), crate::session::Phase::Closed);
     a.tick(1000 + 5_001);
     assert_eq!(a.phase(), crate::session::Phase::Closed);
+}
+
+#[test]
+fn handshake_refuses_peer_with_no_common_cipher_suite() {
+    // E6-S2 cipher-agility exercise (doc 03 §8): a build advertising only a
+    // suite id this side does not implement must be refused end-to-end at
+    // the session layer, with no Established event and no store access,
+    // rather than silently proceeding under whatever primitives happen to
+    // be compiled in.
+    let ia = identity(1);
+    let ib = identity(2);
+    let mut ha = TestHost::new(ia.node_id());
+    let mut hb = TestHost::new(ib.node_id());
+
+    let mut a = SessionEngine::initiator(&ia, &hello_with_suites(vec![0x02]), 1000).unwrap();
+    let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+    pump(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+    assert_eq!(b.phase(), crate::session::Phase::Closed);
+    let ev_b: Vec<_> = core::iter::from_fn(|| b.poll_event()).collect();
+    assert!(!ev_b.iter().any(|e| matches!(e, SessionEvent::Established { .. })));
 }

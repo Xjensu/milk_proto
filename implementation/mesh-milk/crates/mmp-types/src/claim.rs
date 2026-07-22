@@ -17,6 +17,10 @@ pub mod field {
     pub const GROUP_EPOCH_ANCHOR: u8 = 0x06;
     pub const AUTHCERT: u8 = 0x07;
     pub const REVOCATION_LIST: u8 = 0x08;
+    /// General identity revocation + succession (doc 06 §4.1, handbook §4.6,
+    /// E5-S3). Distinct from `REVOCATION_LIST` (0x08, doc 18 §6): that field
+    /// revokes an AuthCert *grant*; this one revokes the *identity itself*.
+    pub const REVOCATION: u8 = 0x09;
 }
 
 /// `owner key32, field u8, seq u32, body varbytes, sig64` — signed under
@@ -141,5 +145,220 @@ impl EpochAnchor {
         let mut member_root = [0u8; 32];
         member_root.copy_from_slice(root);
         Ok(EpochAnchor { gid, epoch, member_root })
+    }
+}
+
+/// Identity revocation & succession claim body (claim field `0x09`, doc 06
+/// §4.1, handbook §4.6): `revoked_key: key32, reason: u8, has_successor: u8
+/// (0x00/0x01), [successor: key32, successor_countersig: sig64]` — the last
+/// two fields are present iff `has_successor == 0x01`; any other flag byte
+/// value is rejected (strict parsing, doc 10 §6.1's "one valid encoding"
+/// rule). Signed by the REVOKED identity as the outer [`Claim`]'s owner,
+/// under the ordinary `mmp1/claim` domain (`Claim::signed_object`) — this
+/// struct is only the tombstone body. The succession *counter*-signature is a
+/// separate signature, by the SUCCESSOR key, over
+/// [`succession_signed_object`], also under `mmp1/claim`; verifying it is
+/// `mmp-core`'s job (stateful — needs the successor's own public key), not
+/// this crate's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Revocation {
+    pub revoked_key: Key32,
+    pub reason: u8,
+    /// `None` unless a valid, counter-signed successor accompanies this
+    /// revocation. Present/absent together with `successor_countersig`.
+    pub successor: Option<Key32>,
+    pub successor_countersig: Option<Sig64>,
+}
+
+impl Revocation {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 1 + 1 + 32 + 64);
+        out.extend_from_slice(&self.revoked_key.0);
+        out.push(self.reason);
+        match (self.successor, self.successor_countersig) {
+            (Some(successor), Some(sig)) => {
+                out.push(0x01);
+                out.extend_from_slice(&successor.0);
+                out.extend_from_slice(&sig.0);
+            }
+            _ => out.push(0x00),
+        }
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Revocation, WireError> {
+        let mut r = Reader::new(bytes);
+        let revoked_key = r.key32()?;
+        let reason = r.u8()?;
+        let has_successor = r.u8()?;
+        let (successor, successor_countersig) = match has_successor {
+            0x00 => (None, None),
+            0x01 => (Some(r.key32()?), Some(r.sig64()?)),
+            _ => return Err(WireError::BadValue("revocation.has_successor")),
+        };
+        r.finish()?;
+        Ok(Revocation { revoked_key, reason, successor, successor_countersig })
+    }
+}
+
+/// Friendship claim body (claim field `0x05`, doc 04 §4.1, doc 06 §4.1,
+/// handbook §4.5): `friend key32, since u64, countersig sig64` — the outer
+/// [`Claim`]'s `owner` is the DEPENDENT; `friend` is the PATRON. `countersig`
+/// is the patron's Ed25519 signature, under `SigDomain::Friend`, over
+/// [`friendship_signed_object`] — proof the patron actually agreed to buffer
+/// for `owner`, not merely that `owner` claims so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Friendship {
+    pub friend: Key32,
+    pub since: u64,
+    pub countersig: Sig64,
+}
+
+impl Friendship {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(32 + 8 + 64);
+        out.extend_from_slice(&self.friend.0);
+        out.put_u64(self.since);
+        out.extend_from_slice(&self.countersig.0);
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Friendship, WireError> {
+        let mut r = Reader::new(bytes);
+        let friendship =
+            Friendship { friend: r.key32()?, since: r.u64()?, countersig: r.sig64()? };
+        r.finish()?;
+        Ok(friendship)
+    }
+}
+
+/// The 72-byte countersig preimage for a friendship, signed by the PATRON
+/// (`friend`) under `SigDomain::Friend`: `owner ‖ friend ‖ since`, with
+/// `since` as a fixed-width 8-byte big-endian integer — deliberately NOT the
+/// crate's usual little-endian wire convention ([`crate::wire::BufExt`]):
+/// this is a signed preimage, not a wire encoding, so it doesn't inherit that
+/// convention, and a fixed explicit layout avoids ever conflating the two.
+/// Shared between the FRIEND_OFFER/FRIEND_ACK handshake (session layer,
+/// `mmp-core`/`mmp-node`) and this claim body's own countersig check
+/// (`ClaimStore::merge`) — sign and verify must always call this same
+/// function.
+pub fn friendship_signed_object(owner: &Key32, friend: &Key32, since: u64) -> Vec<u8> {
+    let mut o = Vec::with_capacity(72);
+    o.extend_from_slice(&owner.0);
+    o.extend_from_slice(&friend.0);
+    o.extend_from_slice(&since.to_be_bytes());
+    o
+}
+
+/// The `object_bytes` for a succession counter-signature under `mmp1/claim`
+/// (signed by the SUCCESSOR key — distinct from the outer [`Claim`]'s owner
+/// signature, which is by the REVOKED key): `revoked_key ‖ successor`, 64 B.
+pub fn succession_signed_object(revoked_key: &Key32, successor: &Key32) -> Vec<u8> {
+    let mut o = Vec::with_capacity(64);
+    o.extend_from_slice(&revoked_key.0);
+    o.extend_from_slice(&successor.0);
+    o
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn revocation_no_successor() -> Revocation {
+        Revocation { revoked_key: Key32([1; 32]), reason: 3, successor: None, successor_countersig: None }
+    }
+
+    fn revocation_with_successor() -> Revocation {
+        Revocation {
+            revoked_key: Key32([1; 32]),
+            reason: 0,
+            successor: Some(Key32([2; 32])),
+            successor_countersig: Some(Sig64([9; 64])),
+        }
+    }
+
+    #[test]
+    fn revocation_roundtrip_without_successor() {
+        let r = revocation_no_successor();
+        let bytes = r.encode();
+        assert_eq!(bytes.len(), 32 + 1 + 1); // no successor/countersig tail
+        assert_eq!(bytes[33], 0x00);
+        assert_eq!(Revocation::decode(&bytes).unwrap(), r);
+    }
+
+    #[test]
+    fn revocation_roundtrip_with_successor() {
+        let r = revocation_with_successor();
+        let bytes = r.encode();
+        assert_eq!(bytes.len(), 32 + 1 + 1 + 32 + 64);
+        assert_eq!(bytes[33], 0x01);
+        assert_eq!(Revocation::decode(&bytes).unwrap(), r);
+    }
+
+    #[test]
+    fn revocation_decode_rejects_bad_flag_byte() {
+        let mut bytes = revocation_no_successor().encode();
+        bytes[33] = 0x02; // neither 0x00 nor 0x01
+        assert_eq!(Revocation::decode(&bytes), Err(WireError::BadValue("revocation.has_successor")));
+    }
+
+    #[test]
+    fn revocation_decode_rejects_truncated_body() {
+        // Flag says a successor follows, but the bytes stop short of it.
+        let mut bytes = revocation_no_successor().encode();
+        bytes[33] = 0x01;
+        assert_eq!(Revocation::decode(&bytes), Err(WireError::Truncated));
+
+        // Also truncated before even the fixed revoked_key/reason/flag prefix.
+        assert_eq!(Revocation::decode(&[0u8; 10]), Err(WireError::Truncated));
+    }
+
+    #[test]
+    fn revocation_decode_rejects_trailing_bytes() {
+        let mut bytes = revocation_with_successor().encode();
+        bytes.push(0);
+        assert_eq!(Revocation::decode(&bytes), Err(WireError::Trailing));
+    }
+
+    #[test]
+    fn friendship_roundtrip() {
+        let f = Friendship { friend: Key32([2; 32]), since: 1_700_000_000, countersig: Sig64([3; 64]) };
+        let bytes = f.encode();
+        assert_eq!(bytes.len(), 32 + 8 + 64);
+        assert_eq!(Friendship::decode(&bytes).unwrap(), f);
+    }
+
+    #[test]
+    fn friendship_decode_rejects_truncated_body() {
+        let bytes = Friendship { friend: Key32([2; 32]), since: 1, countersig: Sig64([3; 64]) }.encode();
+        assert_eq!(Friendship::decode(&bytes[..bytes.len() - 1]), Err(WireError::Truncated));
+    }
+
+    #[test]
+    fn friendship_decode_rejects_trailing_bytes() {
+        let mut bytes = Friendship { friend: Key32([2; 32]), since: 1, countersig: Sig64([3; 64]) }.encode();
+        bytes.push(0);
+        assert_eq!(Friendship::decode(&bytes), Err(WireError::Trailing));
+    }
+
+    #[test]
+    fn friendship_signed_object_is_owner_friend_since_be() {
+        let owner = Key32([5; 32]);
+        let friend = Key32([6; 32]);
+        let pre = friendship_signed_object(&owner, &friend, 0x0102_0304_0506_0708);
+        assert_eq!(pre.len(), 72);
+        assert_eq!(&pre[..32], &owner.0);
+        assert_eq!(&pre[32..64], &friend.0);
+        assert_eq!(&pre[64..], &[1, 2, 3, 4, 5, 6, 7, 8]); // big-endian
+    }
+
+    #[test]
+    fn succession_signed_object_is_revoked_key_then_successor() {
+        let revoked = Key32([7; 32]);
+        let successor = Key32([8; 32]);
+        let pre = succession_signed_object(&revoked, &successor);
+        assert_eq!(pre.len(), 64);
+        assert_eq!(&pre[..32], &revoked.0);
+        assert_eq!(&pre[32..], &successor.0);
     }
 }

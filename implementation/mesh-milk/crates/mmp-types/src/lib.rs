@@ -27,13 +27,13 @@ pub mod wire;
 
 pub use beacon::Beacon;
 pub use bundle::{class, Bundle};
-pub use claim::{Claim, PrekeyBatch};
+pub use claim::{Claim, Friendship, PrekeyBatch, Revocation};
 pub use domain::{signed_preimage, SigDomain};
 pub use err::WireError;
 pub use frame::{Frame, Hello, Range, Summary};
 pub use ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 pub use manifest::{FileEntry, FileManifest};
-pub use payload::{AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload};
+pub use payload::{AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 pub use tlv::Ext;
 
 #[cfg(test)]

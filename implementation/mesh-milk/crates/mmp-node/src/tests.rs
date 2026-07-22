@@ -1,14 +1,16 @@
 //! Node integration tests (HANDOFF M3): two in-memory nodes exchange direct +
 //! group messages, receipts purge; a 3-node chain relays store-carry-forward.
 
+use mmp_core::store::{BundleMeta, SlotState};
 use mmp_core::MemStore;
 use mmp_tal::TalEvent;
 use mmp_types::authcert::AuthCert;
-use mmp_types::bundle::prio;
+use mmp_types::bundle::{class, prio};
+use mmp_types::consts::FRIENDSHIP_TTL_MS;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
 
-use crate::{DeliveryState, Event, Node, Tier};
+use crate::{DeliveryState, Event, Node, SendError, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
@@ -211,6 +213,97 @@ fn blocked_peer_is_silently_denied() {
     assert!(
         !evs.iter().any(|e| matches!(e, Event::Established { .. })),
         "no session with a blocked peer: {evs:?}"
+    );
+}
+
+/// Handbook §4.6 acceptance case: "session attempt from a revoked key is
+/// silently denied." Mirrors `blocked_peer_is_silently_denied`'s shape exactly
+/// — a revocation reaches Alice the same way a QR-ceremony claim would (here,
+/// out-of-band via `own_claims`/`ingest_claim`, same as `introduce`), and the
+/// next contact attempt must not establish.
+#[test]
+fn revoked_peer_session_is_silently_denied() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    bob.revoke_identity(0);
+    for c in bob.own_claims() {
+        alice.ingest_claim(c, true);
+    }
+    drain(&mut alice);
+    drain(&mut bob);
+
+    contact(&mut alice, &mut bob, 1, 10_000);
+    let evs = drain(&mut alice);
+    assert!(
+        !evs.iter().any(|e| matches!(e, Event::Established { .. })),
+        "no session with a revoked peer: {evs:?}"
+    );
+}
+
+/// Handbook §4.6: a prekey batch already on file for a peer must not be used
+/// to initiate X3DH once that peer is revoked — even though the tombstone
+/// merge rule only blocks NEW claims, not ones already stored before the
+/// revocation arrived.
+#[test]
+fn revoked_peers_stored_prekey_batch_is_not_used_to_initiate() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    introduce(&mut alice, &mut bob); // alice already holds bob's prekey batch
+    drain(&mut alice);
+    drain(&mut bob);
+
+    bob.revoke_identity(0);
+    for c in bob.own_claims() {
+        alice.ingest_claim(c, true);
+    }
+    drain(&mut alice);
+
+    let err = alice.send_text(&bob.node_id(), "too late").unwrap_err();
+    assert_eq!(err, SendError::PeerRevoked);
+}
+
+/// A valid succession counter-signature surfaces on `Event::PeerRevoked`;
+/// this exercises the full gossip path (not just `ClaimStore::successor`
+/// directly, which `mmp-core`'s own tests already cover).
+#[test]
+fn peer_revoked_event_carries_the_verified_successor() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    let carol = node(3); // bob's chosen successor
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    // Sign the countersig with carol's own identity (same seed `node(3)` used
+    // to construct her `Node` — deterministic, so this is genuinely "carol's
+    // key," not a stand-in).
+    let carol_identity = mmp_crypto::Identity::from_seed(&[3; 32]);
+    let sig = carol_identity.sign(
+        SigDomain::Claim,
+        &mmp_types::claim::succession_signed_object(&bob.public_key(), &carol.public_key()),
+    );
+    let body = mmp_types::claim::Revocation {
+        revoked_key: bob.public_key(),
+        reason: 0,
+        successor: Some(carol.public_key()),
+        successor_countersig: Some(sig),
+    };
+    bob.publish_claim(mmp_types::claim::field::REVOCATION, 1, body.encode());
+    for c in bob.own_claims() {
+        alice.ingest_claim(c, true);
+    }
+    let evs = drain(&mut alice);
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            Event::PeerRevoked { peer, successor: Some(s) }
+                if *peer == bob.node_id() && *s == carol.public_key()
+        )),
+        "expected a verified successor on PeerRevoked: {evs:?}"
     );
 }
 
@@ -429,4 +522,340 @@ fn revocation_gossip_clamps_a_previously_elevated_subject_and_stays_sticky() {
         _ => None,
     });
     assert_eq!(ann3, Some(prio::NORMAL), "sticky: an omitting later list must not restore admission");
+}
+
+// -------------------------------------------------- E5-S2: friendship ------
+// Handbook §4.5 acceptance. `n.core.<field>` reaches into private `NodeCore`
+// state directly — this test module is a descendant of the crate root where
+// `Node`/`NodeCore` are defined, so ordinary Rust privacy allows it; used
+// here (a) to fabricate deterministic "junk" quota pressure without relying
+// on the router's probabilistic spray timing, and (b) to assert on
+// patron-side pin bookkeeping (`friends[dependent].buffered`/`quota_used`)
+// that has no other public surface.
+
+/// Drop a synthetic, unsigned bundle straight into `n`'s store — bypassing
+/// ingest entirely. `enforce_quota`/eviction only look at `BundleMeta`, never
+/// bundle content, so this is a faithful, deterministic stand-in for "some
+/// unrelated relay traffic filled the store" without depending on the
+/// router's probabilistic spray/utility timing to generate real pressure.
+fn inject_junk(n: &mut Node, id: Id16, size: u32, now: u64) {
+    let meta = BundleMeta {
+        id,
+        class: class::DIRECT,
+        origin: Id16([0xEE; 16]),
+        dest: Id16([0xEE; 16]), // an unrelated stranger — never anyone's friend
+        priority: 1,
+        effective_priority: 1,
+        size,
+        stored_at: now,
+        expires_at: now + mmp_types::consts::LIFETIME_MESSAGE_MS,
+        budget: 1,
+        own_origin: false,
+        slot: SlotState::Stored,
+    };
+    n.core.store.put(meta, &vec![0u8; size as usize]);
+}
+
+/// The handbook §4.5 positive acceptance case: A sends class-1 to phone B
+/// while B is offline; F (B's patron) buffers it, pinned past its own
+/// eviction pressure; B comes online, syncs from F, and B's receipt purges
+/// (and unpins) F's copy.
+#[test]
+fn friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt() {
+    let mut a = node(1); // sender
+    let mut b = node(2); // dependent (offline phone)
+    let mut f = node(3); // patron (always-on PC)
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    // Friendship handshake: F whitelists B, B solicits F as patron, one
+    // contact carries FRIEND_OFFER/FRIEND_ACK (piggybacked right after
+    // SUMMARY, handbook §4.5) and mints B's field-0x05 claim.
+    f.allow_friendship_from(b.public_key());
+    b.request_friendship(f.public_key());
+    contact(&mut b, &mut f, 1, 10_000);
+    let b_events = drain(&mut b);
+    let f_events = drain(&mut f);
+    assert!(
+        b_events.iter().any(
+            |e| matches!(e, Event::FriendshipEstablished { peer, .. } if *peer == f.node_id())
+        ),
+        "dependent sees FriendshipEstablished: {b_events:?}"
+    );
+    assert!(
+        f_events.iter().any(
+            |e| matches!(e, Event::FriendshipEstablished { peer, .. } if *peer == b.node_id())
+        ),
+        "patron sees FriendshipEstablished: {f_events:?}"
+    );
+
+    // A sends to B while B is offline; the message relays onto F (ordinary
+    // D3 spray path, same mechanics as `three_node_store_carry_forward`),
+    // where F's friend-buffer admission pins it for B.
+    let msg_id = a.send_text(&b.node_id(), "buffered while offline").unwrap();
+    contact(&mut a, &mut f, 2, 20_000);
+    drain(&mut a);
+    drain(&mut f);
+    assert!(f.core.store.meta(&msg_id).is_some(), "sanity: F carries the message");
+    assert!(
+        f.core.friends.get(&b.node_id()).unwrap().buffered.contains(&msg_id),
+        "the message is pinned in F's friend-buffer bookkeeping"
+    );
+
+    // Quota pressure: shrink F's quota to the smallest possible value and
+    // pile on junk relay traffic — anything NOT pinned must go.
+    f.core.quota = 1;
+    inject_junk(&mut f, Id16([0xA1; 16]), 2000, 20_000);
+    inject_junk(&mut f, Id16([0xA2; 16]), 2000, 20_000);
+    inject_junk(&mut f, Id16([0xA3; 16]), 2000, 20_000);
+    f.tick(21_000);
+
+    assert!(f.core.store.meta(&Id16([0xA1; 16])).is_none(), "junk #1 evicted under pressure");
+    assert!(f.core.store.meta(&Id16([0xA2; 16])).is_none(), "junk #2 evicted under pressure");
+    assert!(f.core.store.meta(&Id16([0xA3; 16])).is_none(), "junk #3 evicted under pressure");
+    assert!(
+        f.core.store.meta(&msg_id).is_some(),
+        "the friend-pinned bundle survives even quota=1 eviction pressure"
+    );
+
+    // B comes online and syncs from F: the buffered message delivers.
+    contact(&mut b, &mut f, 3, 30_000);
+    let b_events = drain(&mut b);
+    assert!(
+        b_events.iter().any(
+            |e| matches!(e, Event::MessageReceived { body, .. } if body == b"buffered while offline")
+        ),
+        "B received the buffered message via F: {b_events:?}"
+    );
+
+    // B's receipt (created during that ingest) propagates back to F on the
+    // NEXT contact (same WANT-driven-ordering shape as
+    // `direct_message_delivery_and_receipt`) — purging and unpinning F's copy.
+    contact(&mut b, &mut f, 4, 40_000);
+    drain(&mut b);
+    drain(&mut f);
+
+    assert!(f.core.store.meta(&msg_id).is_none(), "F's copy purged once B's receipt arrives");
+    let state = f.core.friends.get(&b.node_id()).expect("friendship still on file");
+    assert!(state.buffered.is_empty(), "unpinned: buffered set empty after purge");
+    assert_eq!(state.quota_used, 0, "quota_used refunded after purge");
+}
+
+/// The handbook §4.5 negative acceptance case: under the same quota
+/// pressure, a bundle carried for a NON-friend has no pin protection and
+/// evicts like any other relay copy.
+#[test]
+fn non_friend_bundle_evicts_under_the_same_quota_pressure() {
+    let mut a = node(1);
+    let mut b = node(2);
+    let mut f = node(3); // relay only — no friendship with b this time
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let msg_id = a.send_text(&b.node_id(), "not buffered").unwrap();
+    contact(&mut a, &mut f, 1, 10_000);
+    drain(&mut a);
+    drain(&mut f);
+    assert!(f.core.store.meta(&msg_id).is_some(), "sanity: F still carries a plain relay copy");
+    assert!(f.core.friends.is_empty(), "sanity: no friendship exists at F");
+
+    f.core.quota = 1;
+    inject_junk(&mut f, Id16([0xB1; 16]), 2000, 10_000);
+    inject_junk(&mut f, Id16([0xB2; 16]), 2000, 10_000);
+    f.tick(11_000);
+
+    assert!(
+        f.core.store.meta(&msg_id).is_none(),
+        "without a friendship, the relay copy is fully eviction-eligible under pressure"
+    );
+}
+
+/// Handbook §4.5 expiry: a friendship past `FRIENDSHIP_TTL_MS` is pruned
+/// lazily on `tick`, and its formerly-pinned bundles revert to ordinary
+/// eviction candidacy (no renewal happened).
+#[test]
+fn expired_friendship_unpins_its_buffered_bundle() {
+    let mut a = node(1);
+    let mut b = node(2);
+    let mut f = node(3);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    f.allow_friendship_from(b.public_key());
+    b.request_friendship(f.public_key());
+    contact(&mut b, &mut f, 1, 10_000);
+    drain(&mut b);
+    drain(&mut f);
+
+    let msg_id = a.send_text(&b.node_id(), "will outlive the friendship").unwrap();
+    contact(&mut a, &mut f, 2, 20_000);
+    drain(&mut a);
+    drain(&mut f);
+    assert!(
+        f.core.friends.get(&b.node_id()).unwrap().buffered.contains(&msg_id),
+        "sanity: pinned before expiry"
+    );
+
+    // Advance well past the TTL (measured from the offer's `since`, ~10_000)
+    // without ever renewing the friendship.
+    let past_ttl = 10_000 + FRIENDSHIP_TTL_MS + 1_000;
+    f.tick(past_ttl);
+    assert!(
+        !f.core.friends.contains_key(&b.node_id()),
+        "lapsed friendship is pruned from `friends`"
+    );
+
+    // The formerly-pinned bundle is now an ordinary eviction candidate.
+    f.core.quota = 1;
+    f.tick(past_ttl + 1_000);
+    assert!(
+        f.core.store.meta(&msg_id).is_none(),
+        "unpinned bundle evicts once the friendship has lapsed"
+    );
+}
+
+// --------------------------------------------------- blob plane (E5-S1) --
+
+/// Doc 16 / handbook §4.4 padding-edge cases: empty file, exactly one
+/// stripe's worth, and a non-multiple length all round UP to a whole number
+/// of stripes (never truncate, never zero for an empty file).
+#[test]
+fn stripes_for_size_padding_edges() {
+    use crate::blob::stripes_for_size;
+    use mmp_types::consts::STRIPE_DATA_BYTES;
+
+    assert_eq!(stripes_for_size(0), 1, "empty file still gets one zero stripe");
+    assert_eq!(stripes_for_size(1), 1, "one byte still needs a whole stripe");
+    assert_eq!(stripes_for_size(STRIPE_DATA_BYTES as u32), 1, "exactly one stripe's worth");
+    assert_eq!(
+        stripes_for_size(STRIPE_DATA_BYTES as u32 + 1),
+        2,
+        "one byte over one stripe rounds up to a second"
+    );
+    assert_eq!(
+        stripes_for_size((STRIPE_DATA_BYTES * 3) as u32 - 1),
+        3,
+        "non-multiple length rounds up, never down"
+    );
+}
+
+/// E5-S1 acceptance (decision D8): `send_file` → the manifest arrives as a
+/// verified `FileOffered` → `fetch_file` absorbs the already-delivered
+/// symbols and reassembles bit-exact bytes on disk → a second `send_file` of
+/// the identical bytes mints zero new class-4 bundles (dedup, decision D6).
+#[test]
+fn send_file_fetch_reassembles_bit_exact_and_dedups() {
+    let mut a = node(1);
+    let mut b = node(2);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    // One stripe's worth minus a bit, so this is a genuine non-multiple-length
+    // single-stripe file (RS_DATA_K=32 data symbols + 8 parity = 40 total).
+    let data: Vec<u8> = (0..3000u32).map(|i| (i % 251) as u8).collect();
+
+    let dest_dir = std::env::temp_dir().join("mmp-node-blob-test");
+    std::fs::create_dir_all(&dest_dir).expect("create temp dir");
+    let dest_path = dest_dir.join(format!("recv-{}-{}.bin", std::process::id(), line!()));
+    let _ = std::fs::remove_file(&dest_path);
+    let part_path = {
+        let mut name = dest_path.file_name().unwrap().to_os_string();
+        name.push(".part");
+        dest_path.with_file_name(name)
+    };
+    let _ = std::fs::remove_file(&part_path);
+
+    let sent = a.send_file(&b.node_id(), "test.bin", "application/octet-stream", &data).unwrap();
+
+    contact(&mut a, &mut b, 1, 10_000);
+    drain(&mut a);
+    let b_events = drain(&mut b);
+
+    let offered = b_events
+        .iter()
+        .find_map(|e| match e {
+            Event::FileOffered { entries, .. } => Some(entries.clone()),
+            _ => None,
+        })
+        .expect("bob received the file offer");
+    assert_eq!(offered.len(), 1);
+    assert_eq!(offered[0].root, sent.root);
+    assert_eq!(offered[0].size, data.len() as u32);
+
+    b.fetch_file(&sent.root, &dest_path).unwrap();
+    // Idempotent re-call while active.
+    assert!(b.fetch_file(&sent.root, &dest_path).is_ok());
+
+    let progress = b.file_progress(&sent.root).expect("assembly exists");
+    assert_eq!(
+        progress.state,
+        crate::BlobState::Assembled,
+        "every symbol was already delivered in the single contact above: {progress:?}"
+    );
+
+    let b_events2 = drain(&mut b);
+    assert!(
+        b_events2.iter().any(|e| matches!(e, Event::FileReady { root, .. } if *root == sent.root)),
+        "FileReady fired: {b_events2:?}"
+    );
+
+    let written = std::fs::read(&dest_path).expect("assembled file exists");
+    assert_eq!(written, data, "reassembled bytes are bit-exact");
+    assert!(!part_path.exists(), ".part is renamed away on success");
+
+    // Dedup by content address (decision D6): identical bytes ⇒ zero new
+    // class-4 bundles minted, only a fresh manifest message.
+    let symbol_count = |n: &Node| {
+        n.core.store.all_meta().iter().filter(|m| m.class == mmp_types::bundle::class::SYMBOL).count()
+    };
+    let before = symbol_count(&a);
+    let resent = a.send_file(&b.node_id(), "test.bin", "application/octet-stream", &data).unwrap();
+    let after = symbol_count(&a);
+    assert_eq!(before, after, "identical content is deduped, no new symbol bundles minted");
+    assert_eq!(resent.root, sent.root, "same content address");
+
+    let _ = std::fs::remove_file(&dest_path);
+    let _ = std::fs::remove_file(&part_path);
+}
+
+/// `Node::cancel_fetch` moves an active (not-yet-complete) assembly to
+/// `Abandoned` and fires `FileFailed`. Uses a directly-injected offer (rather
+/// than a real contact) so the assembly is deterministically still `Wanted`
+/// (no symbols delivered) at the moment of cancellation — a real contact
+/// tends to deliver everything and finish the file in one pass at this small
+/// test scale, which would make cancellation a documented no-op instead
+/// (`cancel_fetch` never un-assembles a completed file).
+#[test]
+fn cancel_fetch_abandons_and_fires_event() {
+    let mut b = node(2);
+    let root = mmp_types::ids::Id16([42; 16]);
+    b.core.offers.insert(
+        root,
+        crate::blob::FileOfferInfo {
+            size: 1000,
+            full_hash: [0; 32],
+            sharer: mmp_types::ids::Key32([1; 32]),
+        },
+    );
+
+    let dest = std::env::temp_dir().join(format!("mmp-node-cancel-{}.bin", std::process::id()));
+    b.fetch_file(&root, &dest).unwrap();
+    assert_eq!(b.file_progress(&root).unwrap().state, crate::BlobState::Wanted);
+
+    b.cancel_fetch(&root);
+    assert_eq!(b.file_progress(&root).unwrap().state, crate::BlobState::Abandoned);
+    let events = drain(&mut b);
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::FileFailed { root: r, reason } if *r == root && *reason == crate::FileFailReason::Abandoned
+        )),
+        "cancel fires FileFailed{{Abandoned}}: {events:?}"
+    );
+
+    let _ = std::fs::remove_file(&dest);
 }

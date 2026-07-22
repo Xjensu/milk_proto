@@ -148,6 +148,28 @@ impl Reconciler {
     }
 
     /// Handle a peer's terminal ID list for `[lo, hi]`.
+    ///
+    /// Pre-existing bug fixed here (found during E5-S1 blob-plane
+    /// acceptance testing, not part of that story's own design): the peer
+    /// reaching a terminal list only proves THEIR side of `[lo, hi]` is small
+    /// (`on_range`'s own size check is an OR over both sides, by design —
+    /// either side alone being small ends that side's recursion). It says
+    /// nothing about how many IDs WE hold in that same range. Unconditionally
+    /// echoing `ours` back here — the previous behavior — could dump
+    /// thousands of IDs into a single `Frame::ReconIds` (16 B/ID), silently
+    /// exceeding `MAX_FRAME_PAYLOAD`: `debug_assert!` in `encode_payload`/
+    /// `write_envelope` catches this in debug builds only, so a release build
+    /// would emit a real oversized envelope, and the receiver's
+    /// `read_envelope` rejects it outright (`WireError::Oversize`) — an
+    /// immediate, silent session kill (`protocol_error`) with NO retry, right
+    /// as the largest domain's reconciliation was about to pay off. A file
+    /// share's class-4 domain is exactly the case that triggers this: a
+    /// fresh holder starts at 0 items, so `on_range` terminates on ITS side
+    /// after one hop, and the sender's hundreds of symbol IDs used to be
+    /// dumped in one shot right here. Fix: mirror `on_range`'s own
+    /// size discipline — split rather than list when OUR side exceeds
+    /// `RBSR_T_LIST`, recursing (via the same `split_ranges`/`B_F` machinery)
+    /// until every leaf is wire-safe.
     pub fn on_ids(&mut self, lo: &Id16, hi: &Id16, ids: &[Id16], src: &mut impl IdSource) -> Vec<Frame> {
         self.open = self.open.saturating_sub(1);
         for id in ids {
@@ -159,6 +181,14 @@ impl Reconciler {
             return Vec::new();
         }
         let ours = src.ids_in(self.domain, lo, hi);
+        if ours.len() > RBSR_T_LIST {
+            let mut ranges = Vec::with_capacity(RBSR_B_F);
+            for (rlo, rhi, sub) in split_ranges(lo, hi, &ours, RBSR_B_F) {
+                ranges.push(Range { lo: rlo, hi: rhi, count: sub.len() as u32, fp: fingerprint(&sub) });
+            }
+            self.open += ranges.len();
+            return alloc::vec![Frame::ReconRange { domain: self.domain, ranges }];
+        }
         self.list_frames(lo, hi, ours)
     }
 

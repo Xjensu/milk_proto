@@ -16,22 +16,28 @@
 //! while borrowing the identity immutably — three disjoint fields, no aliasing.
 
 pub mod authority_bucket;
+mod blob;
 mod conv;
 pub mod diag;
 mod group;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+pub use blob::BlobState;
+
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::{Path, PathBuf};
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use mmp_core::authority::{effective_class5_priority, AuthorityStore};
+use mmp_core::bloom::{Bloom, INTERNAL_SALT};
 use mmp_core::ingest::{ingest, Disposition};
 use mmp_core::store::{BundleMeta, BundleStore, SlotState};
 use mmp_core::{
     ClaimStore, IdSource, ReceiptFilter, SeenIndex, SessionEngine, SessionEvent, SessionHost,
 };
 use mmp_crypto::group::SenderKeyDist;
+use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, MerklePath};
 use mmp_crypto::prekey::{recipient_agree, sender_agree, PrekeyStore};
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_router::{
@@ -41,19 +47,25 @@ use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, RevocationLis
 use mmp_types::bundle::{
     class, prio, Bundle, FLAG_ASYNC_KEYS, FLAG_HAS_PARENTS, FLAG_WANTS_RECEIPT, LIFETIME_OFFSET,
 };
-use mmp_types::claim::{field, Claim, PrekeyBatch};
+use mmp_types::claim::{field, friendship_signed_object, Claim, Friendship, PrekeyBatch, Revocation};
 use mmp_types::consts::{
-    EPHEM_SLOT_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE,
-    OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD,
+    BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS,
+    FILE_MAX, FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA,
+    LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE, MAX_PATRONS, MIME_MAX,
+    NAME_MAX, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD, RS_DATA_K,
+    RS_TOTAL_N, STRIPE_DATA_BYTES,
 };
 use mmp_types::domain::SigDomain;
-use mmp_types::frame::{ClaimDigestEntry, Hello, Summary};
+use mmp_types::frame::{
+    ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody, Summary,
+};
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::{apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload};
+use mmp_types::payload::{apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::{TLV_AUTHCERT_ATTACH, TLV_SCOPE_INFO};
-use mmp_types::{Beacon, Ext};
+use mmp_types::{Beacon, Ext, FileEntry, FileManifest};
 
 use authority_bucket::AuthorityBuckets;
+use blob::{BlobAssembly, FileOfferInfo};
 use conv::{msg_context, Conv};
 use diag::{DiagLog, JourneyEvent};
 use group::GroupState;
@@ -90,6 +102,21 @@ pub enum Event {
     ClaimUpdated { owner: NodeId, field: u8 },
     /// Equal-seq conflicting claims — normative UX duty (doc 07 §6.4).
     CompromiseWarning { owner: NodeId },
+    /// A valid identity revocation (claim field `0x09`, handbook §4.6)
+    /// arrived for `peer`. `successor` is `Some` only when the succession
+    /// counter-signature verified (`ClaimStore::successor`) — this is the
+    /// hook for the app to OFFER "trust successor," never a trigger to
+    /// migrate a petname automatically (petname model: user confirmation
+    /// only). Sessions with `peer` are already refused and its prekey
+    /// claims already unusable by the time this fires — see `accept_peer`
+    /// and `send_app`.
+    PeerRevoked { peer: NodeId, successor: Option<Key32> },
+    /// A friendship (handbook §4.5, claim field `0x05`) was established or
+    /// renewed with `peer` — fires on BOTH sides: the patron (after
+    /// countersigning an offer) and the dependent (after verifying the
+    /// resulting FRIEND_ACK). `since` is the relationship's start time, used
+    /// for the `FRIENDSHIP_TTL_MS` expiry check.
+    FriendshipEstablished { peer: NodeId, since: u64 },
     ContactSeen { peer: NodeId },
     Established { peer: NodeId },
     GroupInvite { gid: Id16, from: NodeId },
@@ -116,6 +143,74 @@ pub enum Event {
         /// TLV 0x82 SCOPE_INFO, display-only, never trusted (doc 18 §3).
         scope_name_hint: Option<Vec<u8>>,
     },
+    /// A `FileManifest` (doc 16 §2, apptype 0x01) decrypted from a class 1/2
+    /// body parsed and verified successfully — fired IN ADDITION to the
+    /// ordinary `MessageReceived` (existing consumers unaffected). Any parse
+    /// or verification failure is a silent no-op for this event path (doc 16
+    /// §3.1 fail-safe: `MessageReceived` alone still fires, nothing errors).
+    FileOffered { conv: Id16, from: NodeId, sharer: Key32, entries: Vec<FileOffer> },
+    /// A pull-fetched file (`Node::fetch_file`) finished assembling and
+    /// passed its whole-file BLAKE3 check; `path` is where it was written.
+    FileReady { root: Id16, path: PathBuf },
+    /// A blob assembly moved to ABANDONED (doc 11 §6): either the whole-file
+    /// hash check failed after all stripes decoded, or the assembly's
+    /// `BLOB_INTEREST_TTL_MS` lapsed / `Node::cancel_fetch` was called.
+    FileFailed { root: Id16, reason: FileFailReason },
+}
+
+/// One file offer inside a verified `FileManifest` (doc 16 §2 `FileEntry`,
+/// trimmed to what an app needs to render an offer / call `fetch_file`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileOffer {
+    pub name: Vec<u8>,
+    pub mime: Vec<u8>,
+    pub size: u32,
+    pub root: Id16,
+    pub thumb_root: Option<Id16>,
+}
+
+/// Why a blob assembly reached ABANDONED (`Event::FileFailed`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileFailReason {
+    /// All stripes decoded but the whole-file BLAKE3 check did not match the
+    /// manifest's `full_hash` — a lying manifest or a corrupt symbol set that
+    /// somehow passed per-symbol Merkle verification (decision D2 finalize).
+    HashMismatch,
+    /// TTL lapsed, `Node::cancel_fetch` was called, or a filesystem error
+    /// prevented finalizing (rename/remove failure) — the assembly is dead
+    /// but its partial symbols remain servable via `blob_index` until their
+    /// own bundle-level expiry (doc 11 §6 residual, decision D3).
+    Abandoned,
+}
+
+/// `Node::fetch_file`'s error surface — deliberately small: a fetch of an
+/// already-active root is idempotent `Ok(())`, never an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchError {
+    /// No cached, verified offer for this root (`Node::fetch_file` requires
+    /// having seen the manifest first — doc 16 §7.1 role-gated pull policy).
+    UnknownRoot,
+    /// A filesystem error setting up the incremental `.part` write target.
+    Io,
+}
+
+/// Result of a successful [`Node::send_file`] call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileSend {
+    /// BundleID of the `FileManifest` message (track via `Node::message_state`).
+    pub message_id: Id16,
+    /// The file's content-addressed Merkle root — what `fetch_file` names.
+    pub root: Id16,
+}
+
+/// Snapshot of one blob assembly's progress (`Node::file_progress`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FileProgress {
+    pub state: BlobState,
+    pub have_symbols: u32,
+    pub total_symbols: u32,
+    pub stripes_done: u16,
+    pub stripes: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -130,6 +225,10 @@ pub enum SendError {
     UnknownPeer,
     /// Body exceeds MAX_BUNDLE after framing.
     TooLarge,
+    /// `peer` has published a valid identity revocation (handbook §4.6) —
+    /// refuse to open a new conversation or use their prekey batch, even if
+    /// one is still on file from before the revocation.
+    PeerRevoked,
 }
 
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
@@ -148,6 +247,23 @@ impl IdSource for SyncView {
     }
     fn has(&mut self, id: &Id16) -> bool {
         self.entries.binary_search_by(|(e, _)| e.cmp(id)).is_ok()
+    }
+}
+
+/// Per-dependent bookkeeping on the patron side of a friendship (handbook
+/// §4.5). `since` mirrors the offer/ack timestamp the countersig was made
+/// over — used for `FRIENDSHIP_TTL_MS` expiry, doc 04 §4.4.
+struct FriendState {
+    since: u64,
+    quota_used: u64,
+    buffered: BTreeSet<Id16>,
+}
+
+impl FriendState {
+    /// True iff this friendship is still live and has room left to buffer
+    /// `size` more bytes (TTL: doc 04 §4.4; quota: handbook §4.5 item 2).
+    fn has_room(&self, now: u64, size: u64) -> bool {
+        now.saturating_sub(self.since) < FRIENDSHIP_TTL_MS && self.quota_used + size <= FRIEND_QUOTA
     }
 }
 
@@ -191,6 +307,49 @@ struct NodeCore {
     rng: StdRng,
     now: u64,
     sync_view: SyncView,
+    /// Identities learned via ID_PROOF (doc 08 §3.2, recorded in
+    /// `accept_peer`) — resolves a session peer's `NodeId` back to its
+    /// Ed25519 identity key for the friendship handshake, which the
+    /// `SessionHost` seam only carries `NodeId` for (handbook §4.5).
+    known_identities: HashMap<NodeId, Key32>,
+    /// Dependents we buffer for, patron side (handbook §4.5).
+    friends: HashMap<NodeId, FriendState>,
+    /// Patrons buffering for us, dependent side: peer → since.
+    patrons: HashMap<NodeId, u64>,
+    /// Dependent side: peers we want as a patron, offer queued for the next
+    /// Established session with them.
+    pending_offers: HashSet<NodeId>,
+    /// Dependent side: the `since` value of our most recently sent
+    /// FRIEND_OFFER per peer — needed to reconstruct
+    /// `friendship_signed_object` when the FRIEND_ACK arrives (the ack body
+    /// carries only the countersig, not `since`).
+    offered_since: HashMap<NodeId, u64>,
+    /// Patron side allowlist: identities we'll countersign an offer from —
+    /// no auto-accept (doc 04 §4 security note).
+    friend_allowlist: HashSet<NodeId>,
+    /// Advisory PROXY_SUMMARY hints: patron → dependents it claims to
+    /// buffer for. Spray-suppression only, never authoritative (doc 06 §7
+    /// MVP, same Hint/Purge asymmetry as AUDIT F11).
+    proxy_hints: HashMap<NodeId, HashSet<NodeId>>,
+    /// Dependent side: our own next `seq` for republishing the field-0x05
+    /// claim (renewal bumps it — doc 06 §4.2 LWW rule).
+    next_friendship_seq: u32,
+
+    // -------------------------------------------------- blob plane (E5-S1) --
+    /// Requester-side doc 11 §6 FSM instance per root (decision D2/D3).
+    assemblies: HashMap<Id16, BlobAssembly>,
+    /// Holder-side index: root → sym_no → BundleID, maintained on every
+    /// class-4 `Stored` disposition and pruned on expiry/eviction (decision D2).
+    blob_index: HashMap<Id16, BTreeMap<u16, Id16>>,
+    /// Reverse index for O(1) prune: BundleID → (root, sym_no).
+    symbol_of: HashMap<Id16, (Id16, u16)>,
+    /// Cached, verified `FileManifest` facts per `file_root`, FIFO-capped at
+    /// `FILE_OFFER_CACHE` (decision D2/D8).
+    offers: HashMap<Id16, FileOfferInfo>,
+    offer_order: VecDeque<Id16>,
+    /// Per-peer-per-contact serve counter (decision D4/D5), reset in
+    /// `accept_peer`.
+    blob_served: HashMap<NodeId, u32>,
 }
 
 pub struct Node {
@@ -212,7 +371,7 @@ impl Node {
         let quota = if tier == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
         let mut beacon_salt = [0u8; 16];
         beacon_salt.copy_from_slice(&blake3::derive_key("mmp1 beacon-seed", &seed)[..16]);
-        let core = NodeCore {
+        let mut core = NodeCore {
             node_id: identity.node_id(),
             public: identity.public(),
             exchange: identity.exchange_public(),
@@ -241,7 +400,26 @@ impl Node {
             rng,
             now: 0,
             sync_view: SyncView { entries: Vec::new() },
+            known_identities: HashMap::new(),
+            friends: HashMap::new(),
+            patrons: HashMap::new(),
+            pending_offers: HashSet::new(),
+            offered_since: HashMap::new(),
+            friend_allowlist: HashSet::new(),
+            proxy_hints: HashMap::new(),
+            next_friendship_seq: 1,
+            assemblies: HashMap::new(),
+            blob_index: HashMap::new(),
+            symbol_of: HashMap::new(),
+            offers: HashMap::new(),
+            offer_order: VecDeque::new(),
+            blob_served: HashMap::new(),
         };
+        // Handbook §4.4 D2: rebuild the holder-side symbol index from
+        // whatever the store already holds (a restored `SnapshotStore`, or —
+        // in the MVP — simply nothing on a fresh `MemStore`). Bounded by
+        // quota, runs once at startup, mirrors how claims/groups restore.
+        core.rebuild_blob_index();
         let mut node = Node {
             identity,
             core,
@@ -259,6 +437,16 @@ impl Node {
 
     pub fn enable_diagnostics(&mut self) {
         self.core.diag = DiagLog::new(true);
+    }
+
+    /// Override the store quota (bytes) that [`Node::tick`] enforces. The
+    /// production quota is fixed by tier (doc 04 §2); this exists so tests and
+    /// the simulator can drive real eviction pressure at a small, CI-fast
+    /// scale instead of the tens of thousands of bundles a tier-sized quota
+    /// (128 MiB) would require. Not part of the protocol surface — never
+    /// called from the wire or FFI paths.
+    pub fn set_store_quota(&mut self, quota_bytes: u64) {
+        self.core.quota = quota_bytes;
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -303,6 +491,29 @@ impl Node {
         self.core.blocklist.insert(peer);
     }
 
+    /// Dependent side (handbook §4.5): solicit `peer_identity` as a patron —
+    /// a FRIEND_OFFER is sent on the next Established session with them.
+    /// Enforces `MAX_PATRONS` (doc 04 §4.4): a call once already at the cap
+    /// across live patrons + outstanding offers is a silent no-op, the same
+    /// fire-and-forget shape as [`Node::block`].
+    pub fn request_friendship(&mut self, peer_identity: Key32) {
+        let peer = node_id_of(&peer_identity);
+        if self.core.patrons.contains_key(&peer) || self.core.pending_offers.contains(&peer) {
+            return;
+        }
+        if self.core.patrons.len() + self.core.pending_offers.len() >= MAX_PATRONS {
+            return;
+        }
+        self.core.pending_offers.insert(peer);
+    }
+
+    /// Patron side (handbook §4.5): whitelist `peer_identity` to countersign
+    /// a friendship offer from them. No auto-accept (doc 04 §4 security
+    /// note) — without this call, offers from `peer_identity` are ignored.
+    pub fn allow_friendship_from(&mut self, peer_identity: Key32) {
+        self.core.friend_allowlist.insert(node_id_of(&peer_identity));
+    }
+
     /// Feed the host's wall clock (unix seconds) for doc 18 `not_after`
     /// checks — the only place in this crate that isn't driven by `tick`'s
     /// monotonic `now_ms`. Never called ⇒ every AuthCert reads as expired
@@ -334,16 +545,39 @@ impl Node {
     }
 
     /// Publish a signed profile claim about ourselves (doc 06 §4) and gossip
-    /// it as a class-3 bundle.
-    pub fn publish_claim(&mut self, field_id: u8, seq: u32, body: Vec<u8>) {
-        let mut claim = Claim { owner: self.core.public, field: field_id, seq, body, sig: Sig64::ZERO };
-        claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
-        self.core.learn_claim(claim.clone(), true);
-        self.core.gossip_claim(&claim);
+    /// it as a class-3 bundle. Returns the claim's encoded bytes (e.g. for
+    /// [`Node::revoke_identity`], which needs them to hand back to the caller).
+    pub fn publish_claim(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
+        self.core.publish_claim_now(field_id, seq, body)
     }
 
     pub fn set_nickname(&mut self, name: &str, seq: u32) {
         self.publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec());
+    }
+
+    /// Publish a self-revocation claim (field `0x09`, handbook §4.6) —
+    /// tombstones every other claim we own, in every node that adopts it:
+    /// they refuse new sessions with us (`accept_peer`) and stop using our
+    /// prekey batch for X3DH (`send_app`), via `ClaimStore::merge`'s
+    /// tombstone rule. Irreversible once gossiped and adopted — there is no
+    /// "un-revoke." No successor: this is a pure "this identity is dead"
+    /// tombstone. A succession claim needs the successor's own
+    /// counter-signature (`succession_signed_object`) and is out of scope for
+    /// this single-call entry point — build a [`Revocation`] with `successor`
+    /// / `successor_countersig` set and call [`Node::publish_claim`] directly
+    /// if succession is needed. Returns the claim's encoded bytes.
+    pub fn revoke_identity(&mut self, reason: u8) -> Vec<u8> {
+        let body = Revocation {
+            revoked_key: self.core.public,
+            reason,
+            successor: None,
+            successor_countersig: None,
+        }
+        .encode();
+        // A revocation is a one-shot tombstone (immutable once adopted, doc
+        // 06 §4.6) — unlike `set_nickname`'s host-tracked seq, there is never
+        // a second write to race against, so a fixed seq is correct here.
+        self.publish_claim(field::REVOCATION, 1, body)
     }
 
     /// Inject an out-of-band-verified claim (QR ceremony, doc 07 §6.1) or a
@@ -414,6 +648,40 @@ impl Node {
 
     pub fn message_state(&self, id: &Id16) -> Option<DeliveryState> {
         self.core.sent.get(id).map(|m| m.state)
+    }
+
+    // -------------------------------------------------- blob plane (§4.4) --
+
+    /// Share `data` (≤ `FILE_MAX`) into the 1:1 conversation with `peer`:
+    /// RS-encode → Merkle → mint class-4 symbol bundles (deduped by content
+    /// address, decision D6) → send the signed `FileManifest` as an
+    /// apptype-0x01 class-1 message (doc 16, decision D8).
+    pub fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
+        self.core.send_file(peer, name, mime, data)
+    }
+
+    /// Explicit user pull (doc 16 §7.1 role-gated policy): requires a cached
+    /// verified offer for `root` (i.e. a `FileOffered` event must have
+    /// arrived first) — registers the doc 11 §6 assembly (`Wanted`), absorbs
+    /// any symbols already in the store, then repairs via BLOB_HAVE on the
+    /// next session with a holder. Idempotent `Ok(())` if `root` already has
+    /// an active (`Wanted`/`Fetching`) assembly.
+    pub fn fetch_file(&mut self, root: &Id16, dest: &Path) -> Result<(), FetchError> {
+        self.core.fetch_file(root, dest)
+    }
+
+    /// Cancel an in-progress fetch: → `Abandoned`. Already-downloaded
+    /// partial symbols stay servable to other peers via the store's ordinary
+    /// TTL, per doc 11 §6.
+    pub fn cancel_fetch(&mut self, root: &Id16) {
+        self.core.cancel_fetch(root);
+    }
+
+    /// Snapshot of one blob assembly's progress, or `None` if `root` has no
+    /// assembly (never fetched, or GC'd after `Abandoned` with nothing left
+    /// to serve).
+    pub fn file_progress(&self, root: &Id16) -> Option<FileProgress> {
+        self.core.file_progress(root)
     }
 
     // --------------------------------------------------------- announcements
@@ -595,20 +863,29 @@ impl Node {
     /// session timers, quota eviction.
     pub fn tick(&mut self, now_ms: u64) {
         self.core.now = now_ms;
-        for id in self.core.store.expire(now_ms) {
-            self.core.diag.log(id, JourneyEvent::Expired, now_ms);
-            if let Some(m) = self.core.sent.get_mut(&id) {
+        let expired = self.core.store.expire(now_ms);
+        for id in &expired {
+            self.core.diag.log(*id, JourneyEvent::Expired, now_ms);
+            if let Some(m) = self.core.sent.get_mut(id) {
                 if m.state != DeliveryState::Delivered {
                     m.state = DeliveryState::Expired;
                     self.core
                         .events
-                        .push_back(Event::DeliveryProgress { id, state: DeliveryState::Expired });
+                        .push_back(Event::DeliveryProgress { id: *id, state: DeliveryState::Expired });
                 }
             }
         }
+        // Handbook §4.5: `store.expire` already deleted the bytes, so unpin
+        // any friend-buffered ids that just expired before recomputing quota.
+        self.core.unpin_expired(&expired);
+        // Decision D2: same treatment for the blob symbol index.
+        self.core.prune_expired_symbols(&expired);
         self.core.seen.rotate(now_ms);
         self.core.receipts.rotate(now_ms);
         self.core.claims.expire(now_ms);
+        self.core.prune_expired_friendships(now_ms);
+        // Decision D3: assemblies past BLOB_INTEREST_TTL_MS → Abandoned.
+        self.core.sweep_blob_ttl(now_ms);
         self.core.enforce_quota();
 
         let links: Vec<LinkId> = self.sessions.keys().copied().collect();
@@ -654,14 +931,35 @@ impl NodeCore {
                             self.authority.merge_revocation_list(&claim_owner, &list);
                         }
                     }
+                    field::REVOCATION => {
+                        // Handbook §4.6: `successor` is only `Some` once the
+                        // counter-signature (by the SUCCESSOR's own key) has
+                        // verified — a hook for explicit user confirmation,
+                        // never an automatic petname migration.
+                        let successor = self.claims.successor(&owner);
+                        self.events.push_back(Event::PeerRevoked { peer: owner, successor });
+                    }
                     _ => {}
                 }
             }
             mmp_core::ClaimMerge::Conflict { .. } => {
                 self.events.push_back(Event::CompromiseWarning { owner });
             }
-            mmp_core::ClaimMerge::Stale => {}
+            mmp_core::ClaimMerge::Stale | mmp_core::ClaimMerge::Rejected => {}
         }
+    }
+
+    /// Sign, learn, and gossip a claim — [`Node::publish_claim`] delegates
+    /// here, and it's also used directly from inside the `SessionHost` seam
+    /// (`on_friend_ack`, handbook §4.5), which only has `&mut NodeCore`, not
+    /// the outer `Node`.
+    fn publish_claim_now(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
+        let mut claim = Claim { owner: self.public, field: field_id, seq, body, sig: Sig64::ZERO };
+        claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
+        let encoded = claim.encode();
+        self.learn_claim(claim.clone(), true);
+        self.gossip_claim(&claim);
+        encoded
     }
 
     /// Wrap a claim in a class-3 bundle so it gossips through sync (D0).
@@ -850,6 +1148,12 @@ impl NodeCore {
 
     /// The shared class-1 sending machinery (also used for sender-key dists).
     fn send_app(&mut self, peer: &NodeId, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
+        if self.claims.revocation(peer).is_some() {
+            // Handbook §4.6: never open a new conversation, nor use a
+            // prekey batch already on file, for a revoked identity — checked
+            // up front so it also gates the X3DH first-contact path below.
+            return Err(SendError::PeerRevoked);
+        }
         let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
         let conv_id = conversation_id(&self.public, &peer_pub);
 
@@ -982,6 +1286,12 @@ impl NodeCore {
         if app == apptype::SENDER_KEY {
             self.handle_sender_key(&from, &msg);
         } else {
+            // Doc 16 §3.1 / decision D8: manifest parsing happens IN
+            // ADDITION to the existing MessageReceived — never in place of
+            // it, so old and new consumers alike see the raw tagged body.
+            if app == apptype::FILE_MANIFEST {
+                self.try_offer_file(&conv_id, &from, &msg);
+            }
             self.events.push_back(Event::MessageReceived {
                 conv: conv_id,
                 from,
@@ -1124,6 +1434,9 @@ impl NodeCore {
         if let Some(m) = self.store.meta(&rp.delivered) {
             if m.dest == bundle.origin_node() {
                 self.store.remove(&rp.delivered);
+                // Handbook §4.5 unpin/GC: end-to-end receipt purge is the
+                // normal way a friend's buffered copy stops being pinned.
+                self.unpin_friend_buffer(&m.dest, &rp.delivered, m.size as u64);
                 self.diag.log(rp.delivered, JourneyEvent::Purged, self.now);
             }
         }
@@ -1148,17 +1461,550 @@ impl NodeCore {
             .push_back(Event::DeliveryProgress { id: rp.delivered, state: DeliveryState::Delivered });
     }
 
-    /// Quota eviction (doc 04 §2).
+    /// Quota eviction (doc 04 §2). Bundles pinned by a live friendship
+    /// (handbook §4.5 — buffered for a dependent, up to `FRIEND_QUOTA`) are
+    /// excluded from eviction candidacy entirely; if that leaves nothing
+    /// left to evict, this breaks rather than looping forever (a node can
+    /// legitimately sit above `quota` while `friends.len() * FRIEND_QUOTA`
+    /// bytes are pinned — an accepted MVP bound, handbook §4.5).
     fn enforce_quota(&mut self) {
         while self.store.total_bytes() > self.quota {
-            let metas = self.store.all_meta();
+            let pinned: HashSet<Id16> =
+                self.friends.values().flat_map(|s| s.buffered.iter().copied()).collect();
+            let metas: Vec<BundleMeta> =
+                self.store.all_meta().into_iter().filter(|m| !pinned.contains(&m.id)).collect();
             let order = eviction_order(&metas, |id| self.receipts.signal(id), self.now);
             let Some(victim) = order.first().copied() else { break };
             if !self.store.remove(&victim) {
                 break;
             }
+            self.deindex_symbol(&victim);
             self.diag.log(victim, JourneyEvent::Evicted, self.now);
         }
+    }
+
+    // ------------------------------------------------- friendship (§4.5) ----
+
+    /// Drop `id` from `dependent`'s buffered set and refund its bytes from
+    /// `quota_used` — the receipt-purge GC path (handbook §4.5 unpin/GC), a
+    /// no-op if `dependent` isn't a live friend or never had `id` pinned.
+    fn unpin_friend_buffer(&mut self, dependent: &NodeId, id: &Id16, size: u64) {
+        if let Some(state) = self.friends.get_mut(dependent) {
+            if state.buffered.remove(id) {
+                state.quota_used = state.quota_used.saturating_sub(size);
+            }
+        }
+    }
+
+    /// Recompute `quota_used` for `dependent` from the bytes still on file
+    /// for its buffered set — used wherever store-driven removal (expiry)
+    /// hands us only an id, not the size that was removed with it.
+    fn resync_friend_quota(&mut self, dependent: &NodeId) {
+        let Some(state) = self.friends.get(dependent) else { return };
+        let used: u64 =
+            state.buffered.iter().filter_map(|id| self.store.meta(id)).map(|m| m.size as u64).sum();
+        if let Some(state) = self.friends.get_mut(dependent) {
+            state.quota_used = used;
+        }
+    }
+
+    /// `store.expire()` already deleted `expired`'s bytes before handing us
+    /// the ids — drop them from every friend's buffered set and resync that
+    /// friend's `quota_used` from what's actually still on file.
+    fn unpin_expired(&mut self, expired: &[Id16]) {
+        if expired.is_empty() {
+            return;
+        }
+        let affected: Vec<NodeId> = self
+            .friends
+            .iter()
+            .filter(|(_, s)| expired.iter().any(|id| s.buffered.contains(id)))
+            .map(|(n, _)| *n)
+            .collect();
+        for dependent in affected {
+            if let Some(state) = self.friends.get_mut(&dependent) {
+                for id in expired {
+                    state.buffered.remove(id);
+                }
+            }
+            self.resync_friend_quota(&dependent);
+        }
+    }
+
+    /// TTL expiry for friendship relationships (doc 04 §4.4, handbook §4.5).
+    /// A lapsed entry is simply dropped: on the patron side, its buffered ids
+    /// fall out of `enforce_quota`'s pinned set immediately and revert to
+    /// ordinary eviction candidacy — no separate unpin bookkeeping needed. On
+    /// the dependent side, it just means we no longer believe we have that
+    /// patron; renewal is a fresh offer/ack (handshake flow step 5).
+    fn prune_expired_friendships(&mut self, now_ms: u64) {
+        self.friends.retain(|_, s| now_ms.saturating_sub(s.since) < FRIENDSHIP_TTL_MS);
+        self.patrons.retain(|_, since| now_ms.saturating_sub(*since) < FRIENDSHIP_TTL_MS);
+    }
+
+    /// Advisory spray-suppression signal (doc 06 §7 MVP): does `peer` look
+    /// like it already buffers for `dest` — either a verified FRIENDSHIP
+    /// claim (owner = dest, friend = peer) or a PROXY_SUMMARY hint we
+    /// received from `peer` naming `dest`? Never authoritative — only nudges
+    /// `load_for_handoff`'s utility (a false positive here wastes a spray
+    /// copy, never causes a drop — the AUDIT F11 Hint/Purge shape).
+    fn peer_buffers_for(&self, peer: &NodeId, dest: &NodeId) -> bool {
+        if let Some(claim) = self.claims.get(dest, field::FRIENDSHIP) {
+            if let Ok(f) = Friendship::decode(&claim.body) {
+                if node_id_of(&f.friend) == *peer {
+                    return true;
+                }
+            }
+        }
+        self.proxy_hints.get(peer).is_some_and(|deps| deps.contains(dest))
+    }
+
+    // ---------------------------------------------------- blob plane (§4.4) --
+
+    /// Startup rebuild of `blob_index`/`symbol_of` from whatever class-4
+    /// bundles the store already holds (decision D2) — mirrors how claims
+    /// and groups restore from a persisted snapshot.
+    fn rebuild_blob_index(&mut self) {
+        for meta in self.store.all_meta() {
+            if meta.class != class::SYMBOL {
+                continue;
+            }
+            let Some((_, bytes)) = self.store.get(&meta.id) else { continue };
+            let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
+            self.index_symbol_bundle(&bundle, meta.id);
+        }
+    }
+
+    /// Insert `id` into `blob_index`/`symbol_of` if its SYMBOL_INFO is
+    /// well-formed and in-bounds (decision D1: `k/n/sym/block` sanity —
+    /// out-of-bounds symbols are still stored/forwarded opaquely by the
+    /// ordinary bundle pipeline, just not indexed here). Returns the derived
+    /// `(root, sym_no)` on success.
+    fn index_symbol_bundle(&mut self, bundle: &Bundle, id: Id16) -> Option<(Id16, u16)> {
+        let (root, block, sym, k, n) = bundle.exts.iter().find_map(|e| match *e {
+            Ext::SymbolInfo { root, block, sym, k, n } => Some((root, block, sym, k, n)),
+            _ => None,
+        })?;
+        if k as usize != RS_DATA_K
+            || n as usize != RS_TOTAL_N
+            || sym as usize >= RS_TOTAL_N
+            || block as usize >= FILE_MAX_STRIPES
+        {
+            return None;
+        }
+        let sym_no = block * RS_TOTAL_N as u16 + sym;
+        self.blob_index.entry(root).or_default().insert(sym_no, id);
+        self.symbol_of.insert(id, (root, sym_no));
+        Some((root, sym_no))
+    }
+
+    /// Remove `id` from both blob indices — used on Merkle-verification
+    /// failure and index prune (expiry/eviction).
+    fn deindex_symbol(&mut self, id: &Id16) {
+        if let Some((root, sym_no)) = self.symbol_of.remove(id) {
+            if let Some(idx) = self.blob_index.get_mut(&root) {
+                idx.remove(&sym_no);
+                if idx.is_empty() {
+                    self.blob_index.remove(&root);
+                    // Decision D3 residual 2 GC rule: once an ABANDONED
+                    // assembly's last servable symbol is gone, drop the
+                    // assembly entry too.
+                    if matches!(self.assemblies.get(&root).map(|a| a.state), Some(BlobState::Abandoned)) {
+                        self.assemblies.remove(&root);
+                    }
+                }
+            }
+        }
+    }
+
+    /// `store.expire()`-driven prune (called from `Node::tick`, mirrors
+    /// `unpin_expired`'s shape).
+    fn prune_expired_symbols(&mut self, expired: &[Id16]) {
+        for id in expired {
+            self.deindex_symbol(id);
+        }
+    }
+
+    /// TTL sweep for blob assemblies (doc 11 §6 "lifetime of interest",
+    /// decision D3) — `Wanted`/`Fetching` past `BLOB_INTEREST_TTL_MS` become
+    /// `Abandoned`; partial symbols stay servable via `blob_index`.
+    fn sweep_blob_ttl(&mut self, now_ms: u64) {
+        let mut failed = Vec::new();
+        for (root, a) in self.assemblies.iter_mut() {
+            if matches!(a.state, BlobState::Wanted | BlobState::Fetching)
+                && now_ms.saturating_sub(a.started_at) > BLOB_INTEREST_TTL_MS
+            {
+                a.state = BlobState::Abandoned;
+                failed.push(*root);
+            }
+        }
+        for root in failed {
+            self.events.push_back(Event::FileFailed { root, reason: FileFailReason::Abandoned });
+        }
+    }
+
+    /// `Node::send_file`: RS-encode, Merkle-root, mint class-4 symbol
+    /// bundles (dedup by content address, decision D6), then send the signed
+    /// `FileManifest` as an apptype-0x01 class-1 message (decision D8).
+    fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
+        if data.len() as u64 > FILE_MAX {
+            return Err(SendError::TooLarge);
+        }
+        if name.len() > NAME_MAX || mime.len() > MIME_MAX {
+            return Err(SendError::TooLarge);
+        }
+        let stripes = blob::stripes_for_size(data.len() as u32);
+        let mut padded = data.to_vec();
+        padded.resize(stripes as usize * STRIPE_DATA_BYTES, 0);
+        let full_hash = *blake3::hash(data).as_bytes();
+
+        // Per-stripe systematic RS encode: symbols 0..k are the data itself.
+        let mut all_symbols: Vec<Vec<u8>> = Vec::with_capacity(stripes as usize * RS_TOTAL_N);
+        for stripe_bytes in padded.chunks(STRIPE_DATA_BYTES) {
+            let data_syms: Vec<Vec<u8>> = stripe_bytes.chunks(mmp_types::consts::SYMBOL_SIZE).map(<[u8]>::to_vec).collect();
+            all_symbols.extend(mmp_rs_code::encode(&data_syms, RS_TOTAL_N));
+        }
+        // Leaves = hash_block(symbol) for every symbol (data then parity
+        // within each stripe), in global sym_no order (decision D1).
+        let leaves: Vec<[u8; 32]> = all_symbols.iter().map(|s| hash_block(s)).collect();
+        let root32 = merkle_root(&leaves);
+        let mut root_bytes = [0u8; 16];
+        root_bytes.copy_from_slice(&root32[..16]);
+        let file_root = Id16(root_bytes);
+
+        // Dedup by content address (decision D6): mint nothing if every
+        // symbol for this root is already in our own index.
+        let total_symbols = stripes as usize * RS_TOTAL_N;
+        let already_complete =
+            self.blob_index.get(&file_root).is_some_and(|m| m.len() >= total_symbols);
+        if !already_complete {
+            for (sym_no, sym) in all_symbols.iter().enumerate() {
+                let block = (sym_no / RS_TOTAL_N) as u16;
+                let sym_in_stripe = (sym_no % RS_TOTAL_N) as u16;
+                let path = merkle_path(&leaves, sym_no).encode();
+                let payload = SymbolPayload { path, symbol: sym.clone() }.encode();
+                let mut bundle = Bundle {
+                    class: class::SYMBOL,
+                    flags: 0,
+                    origin: self.public,
+                    dest: Id16(peer.0),
+                    lifetime_ms: LIFETIME_MESSAGE_MS,
+                    priority: prio::BULK,
+                    exts: vec![Ext::SymbolInfo {
+                        root: file_root,
+                        block,
+                        sym: sym_in_stripe,
+                        k: RS_DATA_K as u8,
+                        n: RS_TOTAL_N as u8,
+                    }],
+                    payload,
+                    signature: Sig64::ZERO,
+                };
+                bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+                debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
+                let budget = origin_budget(self.utility.n_hat(self.now));
+                let id = self.store_own(bundle, budget);
+                self.blob_index.entry(file_root).or_default().insert(sym_no as u16, id);
+                self.symbol_of.insert(id, (file_root, sym_no as u16));
+            }
+        }
+
+        let entry = FileEntry {
+            name: name.as_bytes().to_vec(),
+            mime: mime.as_bytes().to_vec(),
+            size: data.len() as u32,
+            file_root,
+            rs_k: RS_DATA_K as u8,
+            rs_n: RS_TOTAL_N as u8,
+            full_hash,
+            thumb_root: None,
+        };
+        let mut manifest =
+            FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
+        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
+        let message_id = self.send_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
+        Ok(FileSend { message_id, root: file_root })
+    }
+
+    /// Manifest hook (decision D8), called from `deliver_direct` on
+    /// `apptype::FILE_MANIFEST`: parse + verify + cache; silent no-op on any
+    /// failure (doc 16 §3.1 fail-safe — `MessageReceived` still fires from
+    /// the caller either way).
+    fn try_offer_file(&mut self, conv: &Id16, from: &NodeId, msg: &[u8]) {
+        let Ok(manifest) = FileManifest::decode(msg) else { return };
+        if mmp_crypto::verify(
+            SigDomain::Manifest,
+            &manifest.sharer,
+            &manifest.signed_object(),
+            &manifest.sig,
+        )
+        .is_err()
+        {
+            return;
+        }
+        let mut offers = Vec::with_capacity(manifest.entries.len());
+        for e in &manifest.entries {
+            if !self.offers.contains_key(&e.file_root) {
+                if self.offer_order.len() >= FILE_OFFER_CACHE {
+                    if let Some(evict) = self.offer_order.pop_front() {
+                        self.offers.remove(&evict);
+                    }
+                }
+                self.offer_order.push_back(e.file_root);
+            }
+            self.offers.insert(
+                e.file_root,
+                FileOfferInfo { size: e.size, full_hash: e.full_hash, sharer: manifest.sharer },
+            );
+            offers.push(FileOffer {
+                name: e.name.clone(),
+                mime: e.mime.clone(),
+                size: e.size,
+                root: e.file_root,
+                thumb_root: e.thumb_root,
+            });
+        }
+        self.events.push_back(Event::FileOffered {
+            conv: *conv,
+            from: *from,
+            sharer: manifest.sharer,
+            entries: offers,
+        });
+    }
+
+    /// `Node::fetch_file`: register a `Wanted` assembly from a cached
+    /// verified offer, absorb whatever symbols are already in our own
+    /// `blob_index` (already-verified — reproven from the store, cheap at
+    /// MVP scale), and try any stripe that's already complete. Repair beyond
+    /// that rides `blob_frames`' BLOB_HAVE on the next session (decision D4).
+    fn fetch_file(&mut self, root: &Id16, dest: &Path) -> Result<(), FetchError> {
+        if let Some(a) = self.assemblies.get(root) {
+            if matches!(a.state, BlobState::Wanted | BlobState::Fetching) {
+                return Ok(()); // idempotent
+            }
+        }
+        let Some(offer) = self.offers.get(root) else { return Err(FetchError::UnknownRoot) };
+        let mut assembly =
+            BlobAssembly::new(*root, offer.size, offer.full_hash, offer.sharer, dest.to_path_buf(), self.now);
+
+        if let Some(idx) = self.blob_index.get(root).cloned() {
+            for (sym_no, id) in idx {
+                if self.symbol_verifies_for(root, sym_no, &id) {
+                    assembly.set_have_bit(sym_no);
+                }
+            }
+        }
+        let stripes = assembly.stripes;
+        self.assemblies.insert(*root, assembly);
+        for s in 0..stripes {
+            self.maybe_decode_stripe(root, s);
+        }
+        Ok(())
+    }
+
+    /// `Node::cancel_fetch`: → Abandoned; partials stay servable (decision D3/D8).
+    fn cancel_fetch(&mut self, root: &Id16) {
+        if let Some(a) = self.assemblies.get_mut(root) {
+            if !matches!(a.state, BlobState::Assembled) {
+                a.state = BlobState::Abandoned;
+                self.events.push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+            }
+        }
+    }
+
+    /// Re-verify a stored symbol bundle's Merkle path against `root`/`sym_no`
+    /// (decision D1 checks a+b) — used both for absorbing already-stored
+    /// symbols on `fetch_file` and for the live receive path.
+    fn symbol_verifies_for(&self, root: &Id16, sym_no: u16, id: &Id16) -> bool {
+        let Some((_, bytes)) = self.store.get(id) else { return false };
+        let Ok(bundle) = Bundle::decode_canonical(&bytes) else { return false };
+        symbol_payload_verifies(&bundle, root, sym_no)
+    }
+
+    /// Class-4 receive hook (`on_bundle`'s dispatch, decision D8): index (all
+    /// nodes) then, if an active assembly matches, D1-verify, count, and try
+    /// decoding the stripe. A Merkle-failing symbol is removed from the store
+    /// and pruned from both indices (doc 11 §8 uniform verify-before-serve).
+    fn handle_symbol(&mut self, bundle: &Bundle) {
+        let id = bundle.id();
+        let Some((root, sym_no)) = self.index_symbol_bundle(bundle, id) else { return };
+
+        let Some(assembly) = self.assemblies.get(&root) else { return };
+        if !matches!(assembly.state, BlobState::Wanted | BlobState::Fetching) || assembly.have_bit(sym_no) {
+            return;
+        }
+
+        if !symbol_payload_verifies(bundle, &root, sym_no) {
+            self.store.remove(&id);
+            self.deindex_symbol(&id);
+            if let Some(a) = self.assemblies.get_mut(&root) {
+                a.bad_symbols += 1;
+            }
+            return;
+        }
+
+        let block = sym_no / RS_TOTAL_N as u16;
+        if let Some(a) = self.assemblies.get_mut(&root) {
+            a.set_have_bit(sym_no);
+            if a.state == BlobState::Wanted {
+                a.state = BlobState::Fetching;
+            }
+        }
+        self.maybe_decode_stripe(&root, block);
+    }
+
+    /// Once a stripe has ≥`RS_DATA_K` verified symbols, pull them from the
+    /// store, RS-decode, and write the stripe to `part` (decision D2 memory
+    /// bound: one stripe, ≤64 KiB, ever held at once). Finalizes the
+    /// assembly once every stripe is done.
+    fn maybe_decode_stripe(&mut self, root: &Id16, stripe: u16) {
+        let Some(assembly) = self.assemblies.get(root) else { return };
+        if assembly.stripe_done_bit(stripe) || assembly.stripe_have_count(stripe) < RS_DATA_K {
+            return;
+        }
+        let base = stripe as u32 * RS_TOTAL_N as u32;
+        let mut pairs: Vec<(u8, Vec<u8>)> = Vec::with_capacity(RS_DATA_K);
+        if let Some(idx) = self.blob_index.get(root) {
+            for j in 0..RS_TOTAL_N as u32 {
+                if pairs.len() >= RS_DATA_K {
+                    break;
+                }
+                let sym_no = (base + j) as u16;
+                if !assembly.have_bit(sym_no) {
+                    continue;
+                }
+                let Some(bid) = idx.get(&sym_no) else { continue };
+                let Some((_, bytes)) = self.store.get(bid) else { continue };
+                let Ok(b) = Bundle::decode_canonical(&bytes) else { continue };
+                let Ok(sp) = SymbolPayload::decode(&b.payload) else { continue };
+                pairs.push((j as u8, sp.symbol));
+            }
+        }
+        if pairs.len() < RS_DATA_K {
+            return; // defensive: have-count said K but the store didn't yield K
+        }
+        let Some(data_syms) = mmp_rs_code::decode(&pairs, RS_DATA_K) else { return };
+        let mut concat = Vec::with_capacity(STRIPE_DATA_BYTES);
+        for s in &data_syms {
+            concat.extend_from_slice(s);
+        }
+        let Some(assembly) = self.assemblies.get_mut(root) else { return };
+        if assembly.write_stripe(stripe, &concat).is_err() {
+            return; // disk error: try again next time a symbol nudges this stripe
+        }
+        assembly.set_stripe_done(stripe);
+        if assembly.all_stripes_done() {
+            self.finalize_assembly(root);
+        }
+    }
+
+    /// Truncate/hash/compare, then rename-or-remove the `.part` file
+    /// (decision D2 finalize) and emit the terminal event.
+    fn finalize_assembly(&mut self, root: &Id16) {
+        let Some(assembly) = self.assemblies.get_mut(root) else { return };
+        let dest_path = assembly.dest_path.clone();
+        let part_path = assembly.part_path();
+        match assembly.finalize() {
+            Ok(true) => {
+                let renamed = std::fs::rename(&part_path, &dest_path).is_ok();
+                if let Some(a) = self.assemblies.get_mut(root) {
+                    a.state = if renamed { BlobState::Assembled } else { BlobState::Abandoned };
+                }
+                if renamed {
+                    self.events.push_back(Event::FileReady { root: *root, path: dest_path });
+                } else {
+                    self.events
+                        .push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+                }
+            }
+            Ok(false) => {
+                let _ = std::fs::remove_file(&part_path);
+                if let Some(a) = self.assemblies.get_mut(root) {
+                    a.state = BlobState::Abandoned;
+                }
+                self.events
+                    .push_back(Event::FileFailed { root: *root, reason: FileFailReason::HashMismatch });
+            }
+            Err(_) => {
+                if let Some(a) = self.assemblies.get_mut(root) {
+                    a.state = BlobState::Abandoned;
+                }
+                self.events
+                    .push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+            }
+        }
+    }
+
+    /// `Node::file_progress` snapshot.
+    fn file_progress(&self, root: &Id16) -> Option<FileProgress> {
+        self.assemblies.get(root).map(|a| FileProgress {
+            state: a.state,
+            have_symbols: (0..a.stripes).map(|s| a.stripe_have_count(s) as u32).sum(),
+            total_symbols: a.stripes as u32 * RS_TOTAL_N as u32,
+            stripes_done: a.done_count,
+            stripes: a.stripes,
+        })
+    }
+
+    /// Decision D4 responder logic, shared by `on_blob_have`/`on_blob_req`:
+    /// `serve = { sym ∈ blob_index[root] : wanted(sym) }`, ordered by
+    /// ascending `sym_no`, capped at the remaining per-contact serve budget.
+    fn blob_serve_candidates(
+        &mut self,
+        peer: &NodeId,
+        root: &Id16,
+        block: u16,
+        bitmap: &[u8],
+        wants_set_bits: bool,
+    ) -> Vec<Id16> {
+        if !bitmap.len().is_multiple_of(5) {
+            return Vec::new(); // decision D4: malformed bitmap length, ignore
+        }
+        let served = self.blob_served.get(peer).copied().unwrap_or(0);
+        let remaining = BLOB_SERVE_MAX_PER_CONTACT.saturating_sub(served);
+        if remaining == 0 {
+            return Vec::new();
+        }
+        let base = u32::from(block) * RS_TOTAL_N as u32;
+        let covered = (bitmap.len() / 5) as u32 * RS_TOTAL_N as u32;
+        let lo = u16::try_from(base).unwrap_or(u16::MAX);
+        let mut out = Vec::new();
+        if let Some(idx) = self.blob_index.get(root) {
+            for (&sym_no, id) in idx.range(lo..) {
+                let sym_no_u32 = u32::from(sym_no);
+                if sym_no_u32 < base {
+                    continue;
+                }
+                let rel = sym_no_u32 - base;
+                if rel >= covered {
+                    break; // sorted by sym_no; nothing further is covered
+                }
+                let byte = (rel / 8) as usize;
+                let bit_set = bitmap.get(byte).is_some_and(|b| b & (1 << (rel % 8)) != 0);
+                if bit_set == wants_set_bits {
+                    out.push(*id);
+                    if out.len() as u32 >= remaining {
+                        break;
+                    }
+                }
+            }
+        }
+        self.blob_served.insert(*peer, served + out.len() as u32);
+        out
+    }
+}
+
+/// D1 symbol verification (checks a+b): the Merkle path must connect the
+/// symbol's hash to the SYMBOL_INFO root's 16-byte prefix, AND the path's own
+/// proven leaf index must equal the SYMBOL_INFO-derived `sym_no` — closing the
+/// forged-position replay hole a membership-only check would leave open.
+fn symbol_payload_verifies(bundle: &Bundle, root: &Id16, sym_no: u16) -> bool {
+    let Ok(sp) = SymbolPayload::decode(&bundle.payload) else { return false };
+    let Ok(path) = MerklePath::decode(&sp.path) else { return false };
+    let leaf = hash_block(&sp.symbol);
+    match compute_root(&leaf, &path) {
+        Ok(computed) => computed[..16] == root.0 && path.leaf_index() == u64::from(sym_no),
+        Err(_) => false,
     }
 }
 
@@ -1212,7 +2058,13 @@ impl SessionHost for NodeCore {
         let (mut meta, mut bytes) = self.store.get(id)?;
         let peer_is_dest = meta.dest == *peer;
         let u_self = self.utility.utility(&meta.dest, self.now);
-        let u_peer = if peer_is_dest { 1.0 } else { 0.0 };
+        let mut u_peer: f32 = if peer_is_dest { 1.0 } else { 0.0 };
+        // Doc 06 §7 MVP proxy-summary hint: prefer a peer that already
+        // buffers for this bundle's destination (advisory only, AUDIT F11
+        // Hint/Purge shape — never causes a drop, only a routing nudge).
+        if !peer_is_dest && self.peer_buffers_for(peer, &meta.dest) {
+            u_peer = u_peer.max(0.9);
+        }
         let decision = handoff_decision(
             &meta,
             peer,
@@ -1257,13 +2109,58 @@ impl SessionHost for NodeCore {
     fn on_bundle(&mut self, peer: &NodeId, bytes: &[u8]) {
         let now = self.now;
         let node_id = self.node_id;
+        let size = bytes.len() as u64;
         let (disposition, bundle) = {
             let buckets = &mut self.buckets;
             let blocklist = &self.blocklist;
             let utility = &self.utility;
+            let friends = &self.friends;
+            let assemblies = &self.assemblies;
             let mut admission = |b: &Bundle, origin: &NodeId| {
                 if blocklist.contains(origin) {
                     return false;
+                }
+                // Friend-buffering bypass (handbook §4.5 item 2): a live
+                // patron relationship admits class-1 bundles for its
+                // dependent without charging the origin bucket at all,
+                // bounded by FRIEND_QUOTA instead. Over quota (or expired)
+                // falls through to the ordinary charged path below.
+                if b.class == class::DIRECT {
+                    if let Some(state) = friends.get(&b.dest) {
+                        if state.has_room(now, size) {
+                            return true;
+                        }
+                    }
+                }
+                // Requester-side solicited bypass (decision D5): a class-4
+                // symbol we're actively fetching (Wanted|Fetching) and don't
+                // already hold is admitted without charging the origin
+                // bucket — bounded, solicited traffic; duplicates die at
+                // SeenIndex, junk dies at Merkle verify (`handle_symbol`) and
+                // is removed. Relays get NO such exemption (D5): this bypass
+                // only ever fires on the requester's own node, where an
+                // assembly actually exists.
+                if b.class == class::SYMBOL {
+                    let info = b.exts.iter().find_map(|e| match *e {
+                        Ext::SymbolInfo { root, block, sym, k, n } => Some((root, block, sym, k, n)),
+                        _ => None,
+                    });
+                    if let Some((root, block, sym, k, n)) = info {
+                        if k as usize == RS_DATA_K
+                            && n as usize == RS_TOTAL_N
+                            && (sym as usize) < RS_TOTAL_N
+                            && (block as usize) < FILE_MAX_STRIPES
+                        {
+                            let sym_no = block * RS_TOTAL_N as u16 + sym;
+                            if let Some(a) = assemblies.get(&root) {
+                                if matches!(a.state, BlobState::Wanted | BlobState::Fetching)
+                                    && !a.have_bit(sym_no)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
                 }
                 let wot = utility.contact(origin).map(|s| s.verified).unwrap_or(false);
                 buckets.admit(origin, (b.payload.len() + 124) as u32, now, wot)
@@ -1281,6 +2178,19 @@ impl SessionHost for NodeCore {
             _ => return,
         };
         self.diag.log(bundle.id(), JourneyEvent::Stored, now);
+        // Friend-buffer pin bookkeeping (handbook §4.5 item 2), post-store:
+        // re-checks the SAME predicate the admission bypass used above, so
+        // only bundles that actually rode the friend-quota path get pinned —
+        // one admitted via the ordinary charged path (quota exhausted or
+        // friendship expired) is left fully eviction-eligible.
+        if bundle.class == class::DIRECT {
+            if let Some(state) = self.friends.get_mut(&bundle.dest) {
+                if state.has_room(now, size) {
+                    state.buffered.insert(bundle.id());
+                    state.quota_used += size;
+                }
+            }
+        }
         match bundle.class {
             class::CONTROL => self.handle_receipt(&bundle, to_self),
             class::DIRECT if to_self => self.deliver_direct(&bundle),
@@ -1300,6 +2210,7 @@ impl SessionHost for NodeCore {
                 }
             }
             class::ANNOUNCEMENT => self.handle_announcement(&bundle),
+            class::SYMBOL => self.handle_symbol(&bundle),
             _ => {} // unknown classes: store-and-forward only (doc 03 §8)
         }
     }
@@ -1330,8 +2241,118 @@ impl SessionHost for NodeCore {
         if self.blocklist.contains(node) {
             return false; // silent deny (doc 07 §6.5)
         }
-        let _ = identity;
+        if self.claims.revocation(node).is_some() {
+            // Handbook §4.6: refuse new sessions from (or to) a revoked
+            // identity — same silent-deny shape as the blocklist above.
+            // `accept_peer` runs symmetrically on both sides of a session
+            // (doc 11 §3's Binding phase, both ID_PROOFs), so this covers
+            // inbound and outbound alike.
+            return false;
+        }
+        // Handbook §4.5: the host's own NodeId → identity map, learned here
+        // so the friendship handshake (keyed on NodeId at the SessionHost
+        // seam) can resolve the peer's Ed25519 key when it needs to sign or
+        // verify a countersig.
+        self.known_identities.insert(*node, *identity);
+        // Decision D4/D5: per-contact blob serve budget resets on every new
+        // contact with this peer.
+        self.blob_served.remove(node);
         true
+    }
+
+    fn on_friend_offer(&mut self, peer: &NodeId, body: &[u8]) -> Option<Vec<u8>> {
+        // No auto-accept (doc 04 §4 security note): silently ignore an offer
+        // from anyone not explicitly allowlisted.
+        if !self.friend_allowlist.contains(peer) {
+            return None;
+        }
+        let offer = FriendOfferBody::decode(body).ok()?;
+        let dependent_key = *self.known_identities.get(peer)?;
+        let preimage = friendship_signed_object(&dependent_key, &self.public, offer.since);
+        let countersig = self.identity.sign(SigDomain::Friend, &preimage);
+        let state = self.friends.entry(*peer).or_insert_with(|| FriendState {
+            since: offer.since,
+            quota_used: 0,
+            buffered: BTreeSet::new(),
+        });
+        state.since = offer.since; // renewal: refresh TTL, keep existing pins
+        self.events.push_back(Event::FriendshipEstablished { peer: *peer, since: offer.since });
+        Some(FriendAckBody { countersig }.encode())
+    }
+
+    fn on_friend_ack(&mut self, peer: &NodeId, body: &[u8]) {
+        // Only meaningful if we actually have an outstanding offer to this
+        // peer — `offered_since` also supplies the `since` value the ack's
+        // countersig was made over (the ack body itself only carries the
+        // signature, doc 04 §4.1 wire shape).
+        let Some(&since) = self.offered_since.get(peer) else { return };
+        let Some(&patron_key) = self.known_identities.get(peer) else { return };
+        let Ok(ack) = FriendAckBody::decode(body) else { return };
+        let preimage = friendship_signed_object(&self.public, &patron_key, since);
+        if mmp_crypto::verify(SigDomain::Friend, &patron_key, &preimage, &ack.countersig).is_err() {
+            return; // invalid countersig → ignore (handbook §4.5 step 4)
+        }
+        self.patrons.insert(*peer, since);
+        self.pending_offers.remove(peer);
+        self.offered_since.remove(peer);
+        let seq = self.next_friendship_seq;
+        self.next_friendship_seq += 1;
+        let body = Friendship { friend: patron_key, since, countersig: ack.countersig }.encode();
+        self.publish_claim_now(field::FRIENDSHIP, seq, body);
+        self.events.push_back(Event::FriendshipEstablished { peer: *peer, since });
+    }
+
+    fn on_proxy_summary(&mut self, peer: &NodeId, body: &[u8]) {
+        let Ok(summary) = ProxySummaryBody::decode(body) else { return };
+        self.proxy_hints.entry(*peer).or_default().insert(summary.dependent);
+    }
+
+    fn friend_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
+        let mut out = Vec::new();
+        // Dependent side: solicit a patron we've asked for, once per contact.
+        if self.pending_offers.contains(peer) && !self.patrons.contains_key(peer) {
+            let since = self.now;
+            self.offered_since.insert(*peer, since);
+            out.push(Frame::FriendOffer(FriendOfferBody { since }.encode()));
+        }
+        // Patron side: advertise buffered dependents to every peer we sync
+        // with (spray-suppression hint, doc 06 §7 MVP — a full poll-schedule
+        // is deferred, see the handbook §4.5 shipped note).
+        for (dependent, state) in &self.friends {
+            if state.buffered.is_empty() {
+                continue;
+            }
+            let mut bloom = Bloom::with_capacity(state.buffered.len());
+            for id in &state.buffered {
+                bloom.insert(id, &INTERNAL_SALT);
+            }
+            let wire_body =
+                ProxySummaryBody { dependent: *dependent, bloom: bloom.folded(BLOOM_SUMMARY_MAX) }
+                    .encode();
+            out.push(Frame::ProxySummary(wire_body));
+        }
+        out
+    }
+
+    fn on_blob_have(&mut self, peer: &NodeId, root: &Id16, block: u16, bitmap: &[u8]) -> Vec<Id16> {
+        self.blob_serve_candidates(peer, root, block, bitmap, false)
+    }
+
+    fn on_blob_req(&mut self, peer: &NodeId, root: &Id16, block: u16, bitmap: &[u8]) -> Vec<Id16> {
+        self.blob_serve_candidates(peer, root, block, bitmap, true)
+    }
+
+    /// MVP requesters emit only BLOB_HAVE, one per active (`Wanted`/`Fetching`)
+    /// assembly — the requester's in-RAM `have` vec is byte-identical to the
+    /// wire bitmap form (decision D4), so this is a straight copy. BLOB_REQ
+    /// send-side is receive-only in this MVP (decision D4 residual).
+    fn blob_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
+        let _ = peer;
+        self.assemblies
+            .values()
+            .filter(|a| matches!(a.state, BlobState::Wanted | BlobState::Fetching))
+            .map(|a| Frame::BlobHave { root: a.root, block: 0, bitmap: a.have.clone() })
+            .collect()
     }
 }
 

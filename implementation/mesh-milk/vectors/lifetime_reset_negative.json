@@ -1,0 +1,6 @@
+{
+  "description": "lifetime reset yields identical BundleID (AUDIT F1): lifetime_ms is excluded from the ID, so both lifetimes below hash to bundle_id.",
+  "lifetime_ms_a": 3600000,
+  "lifetime_ms_b": 999,
+  "bundle_id": "4a6ba300f196e13ced75a166bef84d37"
+}

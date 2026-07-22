@@ -287,3 +287,75 @@ fn group_remove_and_set_tier_roundtrip() {
     let pk = alice.public_key();
     assert_eq!(pk.len(), 32, "identity public key is exactly 32 bytes");
 }
+
+/// Handbook §4.5 (E5-S2), FFI surface: a friendship handshake driven purely
+/// through `requestFriendship`/`allowFriendshipFrom` produces
+/// `FfiEvent::FriendshipEstablished` on both sides after one contact.
+#[test]
+fn friendship_handshake_via_ffi_surface() {
+    let bob = node(1); // dependent
+    let carol = node(2); // patron
+    introduce(&bob, &carol);
+    drain(&bob);
+    drain(&carol);
+
+    carol.allow_friendship_from(bob.public_key()).expect("32-byte key");
+    bob.request_friendship(carol.public_key()).expect("32-byte key");
+    contact(&bob, &carol, 1, 10_000);
+
+    let bob_events = drain(&bob);
+    let carol_events = drain(&carol);
+    assert!(
+        bob_events.iter().any(|e| matches!(
+            e,
+            FfiEvent::FriendshipEstablished { peer, .. } if *peer == carol.node_id()
+        )),
+        "dependent sees FriendshipEstablished: {bob_events:?}"
+    );
+    assert!(
+        carol_events.iter().any(|e| matches!(
+            e,
+            FfiEvent::FriendshipEstablished { peer, .. } if *peer == bob.node_id()
+        )),
+        "patron sees FriendshipEstablished: {carol_events:?}"
+    );
+}
+
+/// `revoke_identity` (doc handbook §4.6, E5-S3): the returned bytes are a
+/// well-formed `Claim` at field `0x09`; once the peer learns it (mirroring
+/// how `introduce` delivers any claim out-of-band), it surfaces as
+/// `FfiEvent::PeerRevoked` and further sends to the revoked peer fail with
+/// `FfiError::UnknownPeer` (the coarse FFI mapping for `SendError::PeerRevoked`
+/// — see `map_send_error`'s doc comment).
+#[test]
+fn revoke_identity_surfaces_as_peer_revoked_and_blocks_further_sends() {
+    let alice = node(1);
+    let bob = node(2);
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    let bob_id = bob.node_id();
+    // Sanity: alice can message bob before the revocation.
+    alice.send_text(bob_id.clone(), "before".to_string()).expect("known peer, not yet revoked");
+
+    let claim_bytes = bob.revoke_identity(3);
+    let claim = mmp_types::claim::Claim::decode(&claim_bytes).expect("well-formed claim");
+    assert_eq!(claim.field, mmp_types::claim::field::REVOCATION);
+    assert_eq!(claim.owner.0.to_vec(), bob.public_key());
+
+    for c in bob.own_claims() {
+        alice.ingest_claim(c, true).expect("well-formed claim");
+    }
+    let evs = drain(&alice);
+    assert!(
+        evs.iter().any(|e| matches!(
+            e,
+            FfiEvent::PeerRevoked { peer, successor: None } if *peer == bob_id
+        )),
+        "expected PeerRevoked with no successor: {evs:?}"
+    );
+
+    let err = alice.send_text(bob_id, "after".to_string()).unwrap_err();
+    assert_eq!(err, super::FfiError::UnknownPeer);
+}

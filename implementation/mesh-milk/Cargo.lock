@@ -1122,6 +1122,7 @@ version = "0.0.0"
 dependencies = [
  "blake3",
  "mmp-core",
+ "mmp-crypto",
  "mmp-node",
  "mmp-store",
  "mmp-tal",
@@ -1178,6 +1179,7 @@ dependencies = [
  "mmp-core",
  "mmp-crypto",
  "mmp-router",
+ "mmp-rs-code",
  "mmp-store",
  "mmp-tal",
  "mmp-types",
@@ -1213,6 +1215,7 @@ name = "mmp-sim"
 version = "0.0.0"
 dependencies = [
  "mmp-core",
+ "mmp-crypto",
  "mmp-node",
  "mmp-tal",
  "mmp-types",

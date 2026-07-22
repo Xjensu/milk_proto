@@ -23,6 +23,11 @@ pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 /// Snow message overhead headroom (two AEAD tags + two public keys).
 const HS_OVERHEAD: usize = 128;
 
+/// Cipher suites this build can speak (doc 03 §8: 1-byte registry pinned in
+/// the handshake). Only 0x01 has a real construction; 0x02 (hybrid ML-KEM)
+/// is reserved and unimplemented (OQ-11) — advertising it here would be a lie.
+pub const SUPPORTED_SUITES: &[u8] = &[0x01];
+
 /// What a completed handshake yields alongside the transport channel.
 #[derive(Debug, Clone)]
 pub struct PeerIntro {
@@ -115,7 +120,13 @@ impl NoiseHandshake {
         let mut payload = alloc::vec![0u8; incoming.len().max(HS_OVERHEAD)];
         let n = hs.read_message(incoming, &mut payload).map_err(|_| CryptoError::Noise)?;
         if n > 0 {
-            self.remote_intro = Some(parse_payload(&payload[..n])?);
+            let (peer_pk, hello) = parse_payload(&payload[..n])?;
+            // Cipher-agility gate (doc 03 §8): refuse rather than silently
+            // fall back if the peer names no suite this build can speak.
+            if !hello.suites.iter().any(|s| SUPPORTED_SUITES.contains(s)) {
+                return Err(CryptoError::Noise);
+            }
+            self.remote_intro = Some((peer_pk, hello));
         }
 
         if hs.is_handshake_finished() {

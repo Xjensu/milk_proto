@@ -17,7 +17,10 @@ use mmp_core::MemStore;
 pub use mmp_node::{Event, Node, Tier};
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_types::consts::{MAX_BUNDLE, QUOTA_ANCHOR, QUOTA_STANDARD};
+use mmp_types::frame::FT_BUNDLE;
 use mmp_types::ids::{Id16, NodeId};
+
+pub mod adversary;
 
 /// Deterministic xorshift64* PRNG — good enough statistical spread for
 /// picking meeting pairs and jittering the clock; not cryptographic.
@@ -118,6 +121,18 @@ impl Sim {
 
     pub fn store_len(&self, i: usize) -> usize {
         self.nodes[i].store_len()
+    }
+
+    /// Mutable access to one node — the adversary harness (E5-S7, handbook
+    /// §4.8) needs this to enable diagnostics, tick a node directly outside a
+    /// `meet()` pump, and drive `adversary::adversary_contact` against it.
+    pub fn node_mut(&mut self, i: usize) -> &mut Node {
+        &mut self.nodes[i]
+    }
+
+    /// Read-only access to one node (diagnostics inspection, id queries).
+    pub fn node(&self, i: usize) -> &Node {
+        &self.nodes[i]
     }
 
     pub fn counters(&self) -> Counters {
@@ -226,6 +241,90 @@ impl Sim {
         out
     }
 
+    /// Like [`Sim::meet`], but the contact can be cut short — simulating a
+    /// radio link that drops mid-transfer — the moment a `Frame::Bundle`
+    /// envelope would be sent, with probability `drop_pct/100` evaluated
+    /// once per such envelope (E5-S1 blob-plane acceptance test, handbook
+    /// §4.4). The frame TYPE byte (`bytes[2]`) sits outside the AEAD channel
+    /// by construction (doc 10 §2) — the same wire-level inspection the
+    /// handbook's bug ledger recommends for a test pump — so this can target
+    /// `FT_BUNDLE` without decrypting.
+    ///
+    /// **Why "cut short" rather than "skip this one frame and keep going"**
+    /// (an interpretation call, found while building this test): the
+    /// session's post-handshake channel (`mmp_crypto::noise::NoiseChannel`,
+    /// wrapping `snow::TransportState`) uses a strict monotonic AEAD nonce
+    /// counter per direction — standard Noise transport behavior, not
+    /// specific to this crate. Silently discarding an already-encrypted
+    /// envelope while continuing to feed LATER envelopes on the same
+    /// direction desyncs the receiver's expected nonce from the sender's
+    /// actual one, so EVERY subsequent `decrypt()` on that direction fails
+    /// and the session protocol-errors closed almost immediately — not a
+    /// realistic packet-loss model, and not what any real BLE transport
+    /// would do either (ATT writes/notifies are locally reliable; loss there
+    /// manifests as a dropped or shortened CONNECTION, not a silently
+    /// skipped in-stream message.) Ending the whole contact at the drop
+    /// point — both directions, no more envelopes exchanged — mirrors a
+    /// dropped connection instead, which is both realistic and leaves the
+    /// Noise channel invariant untouched. It cannot distinguish class-4
+    /// SYMBOL bundles from other classes riding the same frame type
+    /// (manifest, receipts): at file-transfer scale that is a close proxy
+    /// for "class-4 loss specifically" anyway (a multi-hundred-symbol
+    /// transfer dwarfs the handful of other bundles in the same contact).
+    pub fn meet_with_bundle_loss(&mut self, i: usize, j: usize, dt_ms: u64, drop_pct: u64) -> Vec<(usize, Event)> {
+        assert_ne!(i, j, "a node cannot meet itself");
+        assert!(drop_pct <= 100);
+        let link = self.next_link;
+        self.next_link += 1;
+        let now = self.now_ms;
+
+        let (lo, hi) = if i < j { (i, j) } else { (j, i) };
+        let (left, right) = self.nodes.split_at_mut(hi);
+        let (a, b) = (&mut left[lo], &mut right[0]);
+        let (a_idx, b_idx) = if i < j { (i, j) } else { (j, i) };
+
+        a.tick(now);
+        b.tick(now);
+        a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() });
+        b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() });
+        'contact: for _ in 0..1200 {
+            let mut quiet = true;
+            while let Some((l, bytes)) = a.poll_send() {
+                quiet = false;
+                if Self::drop_bundle_frame(&bytes, drop_pct, &mut self.rng) {
+                    break 'contact;
+                }
+                b.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            while let Some((l, bytes)) = b.poll_send() {
+                quiet = false;
+                if Self::drop_bundle_frame(&bytes, drop_pct, &mut self.rng) {
+                    break 'contact;
+                }
+                a.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            if quiet {
+                break;
+            }
+        }
+        a.on_tal_event(TalEvent::LinkDown { link });
+        b.on_tal_event(TalEvent::LinkDown { link });
+
+        let mut out = Vec::new();
+        for (idx, n) in [(a_idx, &mut *a), (b_idx, &mut *b)] {
+            for ev in drain(n) {
+                out.push((idx, ev));
+            }
+        }
+        self.counters.meetings_run += 1;
+        self.now_ms += dt_ms;
+        out
+    }
+
+    fn drop_bundle_frame(envelope: &[u8], drop_pct: u64, rng: &mut Rng) -> bool {
+        envelope.get(2) == Some(&FT_BUNDLE) && rng.below(100) < drop_pct
+    }
+
     /// Run `count` meetings between uniformly random distinct node pairs,
     /// each followed by a `min_gap_ms..max_gap_ms` clock advance. Discards
     /// events (use `meet` directly when the scenario needs to inspect a
@@ -264,3 +363,7 @@ fn drain(n: &mut Node) -> Vec<Event> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_adversarial;
+#[cfg(test)]
+mod tests_blob;

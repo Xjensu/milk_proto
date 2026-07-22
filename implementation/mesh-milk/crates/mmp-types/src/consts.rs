@@ -94,6 +94,33 @@ pub const MIME_MAX: usize = 64;
 /// Nickname claim body cap (doc 06 §4.1). ⚠
 pub const NICKNAME_MAX: usize = 32;
 
+/// Blob plane / file transfer (doc 16, handbook §4.4, E5-S1). ⚠
+pub const SYMBOL_SIZE: usize = 2048;
+pub const RS_DATA_K: usize = 32;
+pub const RS_PARITY_R: usize = 8;
+pub const RS_TOTAL_N: usize = RS_DATA_K + RS_PARITY_R;
+pub const STRIPE_DATA_BYTES: usize = SYMBOL_SIZE * RS_DATA_K;
+/// `FILE_MAX / STRIPE_DATA_BYTES`, rounded up — the widest a manifest's
+/// `stripes` count can legitimately be for an 8 MiB file.
+pub const FILE_MAX_STRIPES: usize = 128;
+/// Doc 11 §6 "lifetime of interest" before an assembly is ABANDONED.
+pub const BLOB_INTEREST_TTL_MS: u64 = 7 * 24 * HOUR_MS;
+/// Per-peer-per-contact cap on symbols served in response to a BLOB_HAVE/REQ
+/// (honest §8 sub-budget substitute — no per-domain airtime accounting exists
+/// yet, see the E5-S1 handbook SHIPPED note).
+pub const BLOB_SERVE_MAX_PER_CONTACT: u32 = 64;
+/// Cached, verified `FileManifest` facts retained for `Node::fetch_file`,
+/// FIFO-evicted beyond this cap.
+pub const FILE_OFFER_CACHE: usize = 256;
+
+/// Friendship / proxy buffering (handbook §4.5, doc 04 §4.4). ⚠
+/// Per-dependent buffer quota a patron holds, bytes.
+pub const FRIEND_QUOTA: u64 = 16 * 1024 * 1024;
+/// Friendship relationship lifetime before renewal (fresh offer/ack) is required.
+pub const FRIENDSHIP_TTL_MS: u64 = 24 * HOUR_MS;
+/// Maximum patrons a dependent may hold concurrently (doc 04 §4.4).
+pub const MAX_PATRONS: usize = 3;
+
 /// Authority/announcement caps (doc 18). ⚠
 /// Cap on entries per REVOCATION_LIST update (doc 18 §6) — overflow means the
 /// issuer should rotate its root instead of growing the list further.

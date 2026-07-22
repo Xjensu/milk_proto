@@ -10,6 +10,9 @@ mmp-types = { path = "../mmp-types" }
 mmp-core = { path = "../mmp-core" }
 mmp-node = { path = "../mmp-node" }
 mmp-tal = { path = "../mmp-tal", features = ["std"] }
+# Adversary (E5-S7, handbook §4.8) bypasses `Node` and speaks raw frames: it
+# needs the Noise XX handshake driver + Ed25519 signing directly.
+mmp-crypto = { path = "../mmp-crypto" }
 
 [lints]
 workspace = true

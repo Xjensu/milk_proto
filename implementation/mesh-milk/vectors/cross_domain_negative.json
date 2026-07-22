@@ -1,0 +1,8 @@
+{
+  "description": "cross-signing-domain reuse MUST reject (AUDIT F4, doc 10 §3.1). The signature is the mmp1/bundle signature from bundle.json; verified against the same canonical bytes and pubkey under each listed domain it must fail.",
+  "pubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "object": "1102d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787372222222222222222222222222222222200000000000200001500676f6c64656e20766563746f72207061796c6f6164",
+  "signature": "de865e61d838f6dfea0bbc64ef090c8a2253f7c553692e912c06a260a098ef4e3a5faf108ff252e95daa22c954a884be221fba889b7b9ca1780dedcd24f7d90a",
+  "valid_domain": "mmp1/bundle",
+  "must_reject_domains": ["mmp1/claim", "mmp1/manifest", "mmp1/authcert", "mmp1/announce"]
+}

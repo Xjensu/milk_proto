@@ -16,10 +16,14 @@
 //! returns public keys, NodeIDs, ciphertext-free app events, or wire bytes
 //! that are already encrypted by the core before they reach [`MmpNode::poll_send`].
 
+use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use mmp_core::MemStore;
-use mmp_node::{DeliveryState, Event, Node, SendError, Tier};
+use mmp_node::{
+    BlobState, DeliveryState, Event, FetchError, FileFailReason, FileProgress, FileSend, Node,
+    SendError, Tier,
+};
 use mmp_store::SnapshotStore;
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_types::authcert::AuthCert;
@@ -75,6 +79,25 @@ fn map_send_error(e: SendError) -> FfiError {
         // "Too large" is caller-controlled input, not a protocol-unknown
         // condition — surface it as a bad argument.
         SendError::TooLarge => FfiError::BadArg,
+        // Deliberately folded into `UnknownPeer` rather than growing the
+        // (deliberately coarse, see `FfiError`'s own doc comment) FFI error
+        // enum: from the host's point of view a revoked peer is exactly as
+        // unusable as one it never had claims for. The distinguishing signal
+        // — WHY the peer became unusable — is `Event::PeerRevoked`, already
+        // surfaced separately and with more detail (successor, if any) than
+        // an error variant could carry.
+        SendError::PeerRevoked => FfiError::UnknownPeer,
+    }
+}
+
+fn map_fetch_error(e: FetchError) -> FfiError {
+    match e {
+        // No cached, verified offer for this root — a caller-supplied
+        // argument mismatch (should have `fetch_file`d only a root that
+        // arrived via a `FfiEvent::FileOffered`), same "bad argument" shape
+        // as a malformed byte slice.
+        FetchError::UnknownRoot => FfiError::BadArg,
+        FetchError::Io => FfiError::Internal,
     }
 }
 
@@ -141,6 +164,100 @@ impl From<DeliveryState> for FfiDeliveryState {
     }
 }
 
+/// Blob assembly state (mirrors [`BlobState`], doc 11 §6 / handbook §4.4).
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiBlobState {
+    Wanted,
+    Fetching,
+    Assembled,
+    Abandoned,
+}
+
+impl From<BlobState> for FfiBlobState {
+    fn from(s: BlobState) -> Self {
+        match s {
+            BlobState::Wanted => FfiBlobState::Wanted,
+            BlobState::Fetching => FfiBlobState::Fetching,
+            BlobState::Assembled => FfiBlobState::Assembled,
+            BlobState::Abandoned => FfiBlobState::Abandoned,
+        }
+    }
+}
+
+/// Why a blob assembly reached `Abandoned` (mirrors [`FileFailReason`]).
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiFileFailReason {
+    HashMismatch,
+    Abandoned,
+}
+
+impl From<FileFailReason> for FfiFileFailReason {
+    fn from(r: FileFailReason) -> Self {
+        match r {
+            FileFailReason::HashMismatch => FfiFileFailReason::HashMismatch,
+            FileFailReason::Abandoned => FfiFileFailReason::Abandoned,
+        }
+    }
+}
+
+/// One file offer inside a verified `FileManifest` (mirrors
+/// [`mmp_node::FileOffer`]).
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFileOffer {
+    pub name: Vec<u8>,
+    pub mime: Vec<u8>,
+    pub size: u32,
+    pub root: Vec<u8>,
+    pub thumb_root: Option<Vec<u8>>,
+}
+
+impl From<mmp_node::FileOffer> for FfiFileOffer {
+    fn from(o: mmp_node::FileOffer) -> Self {
+        FfiFileOffer {
+            name: o.name,
+            mime: o.mime,
+            size: o.size,
+            root: o.root.0.to_vec(),
+            thumb_root: o.thumb_root.map(|t| t.0.to_vec()),
+        }
+    }
+}
+
+/// Result of a successful [`MmpNode::send_file`] (mirrors [`FileSend`]).
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiFileSend {
+    pub message_id: Vec<u8>,
+    pub root: Vec<u8>,
+}
+
+impl From<FileSend> for FfiFileSend {
+    fn from(s: FileSend) -> Self {
+        FfiFileSend { message_id: s.message_id.0.to_vec(), root: s.root.0.to_vec() }
+    }
+}
+
+/// Snapshot of one blob assembly's progress (mirrors [`FileProgress`]).
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiFileProgress {
+    pub state: FfiBlobState,
+    pub have_symbols: u32,
+    pub total_symbols: u32,
+    pub stripes_done: u16,
+    pub stripes: u16,
+}
+
+impl From<FileProgress> for FfiFileProgress {
+    fn from(p: FileProgress) -> Self {
+        FfiFileProgress {
+            state: p.state.into(),
+            have_symbols: p.have_symbols,
+            total_symbols: p.total_symbols,
+            stripes_done: p.stripes_done,
+            stripes: p.stripes,
+        }
+    }
+}
+
 /// One outbound wire frame: write `bytes` to `link` (fragment to MTU on the
 /// host side; the core already ordered them — write in poll order).
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
@@ -160,6 +277,15 @@ pub enum FfiEvent {
     DeliveryProgress { id: Vec<u8>, state: FfiDeliveryState },
     ClaimUpdated { owner: Vec<u8>, field: u8 },
     CompromiseWarning { owner: Vec<u8> },
+    /// A valid identity revocation arrived for `peer` (doc handbook §4.6).
+    /// `successor` is present only when the succession counter-signature
+    /// verified — offer "trust successor" to the user; never migrate a
+    /// petname automatically.
+    PeerRevoked { peer: Vec<u8>, successor: Option<Vec<u8>> },
+    /// A friendship (handbook §4.5) was established or renewed with `peer` —
+    /// fires on both the patron and dependent side; see
+    /// `mmp_node::Event::FriendshipEstablished`'s doc comment.
+    FriendshipEstablished { peer: Vec<u8>, since: u64 },
     ContactSeen { peer: Vec<u8> },
     Established { peer: Vec<u8> },
     GroupInvite { gid: Vec<u8>, from: Vec<u8> },
@@ -180,6 +306,16 @@ pub enum FfiEvent {
         effective_priority: u8,
         scope_name_hint: Option<Vec<u8>>,
     },
+    /// A `FileManifest` (doc 16 §2) arrived and verified — offer the files to
+    /// the user; call `MmpNode::fetch_file` on a `root` to pull it (see
+    /// `mmp_node::Event::FileOffered`'s doc comment).
+    FileOffered { conv: Vec<u8>, from: Vec<u8>, sharer: Vec<u8>, entries: Vec<FfiFileOffer> },
+    /// A pull-fetched file finished assembling and passed its whole-file
+    /// integrity check; `path` is where it was written.
+    FileReady { root: Vec<u8>, path: String },
+    /// A blob assembly reached `Abandoned` (hash mismatch, TTL, or explicit
+    /// `MmpNode::cancel_fetch`).
+    FileFailed { root: Vec<u8>, reason: FfiFileFailReason },
 }
 
 impl From<Event> for FfiEvent {
@@ -205,6 +341,13 @@ impl From<Event> for FfiEvent {
             }
             Event::CompromiseWarning { owner } => {
                 FfiEvent::CompromiseWarning { owner: owner.0.to_vec() }
+            }
+            Event::PeerRevoked { peer, successor } => FfiEvent::PeerRevoked {
+                peer: peer.0.to_vec(),
+                successor: successor.map(|s| s.0.to_vec()),
+            },
+            Event::FriendshipEstablished { peer, since } => {
+                FfiEvent::FriendshipEstablished { peer: peer.0.to_vec(), since }
             }
             Event::ContactSeen { peer } => FfiEvent::ContactSeen { peer: peer.0.to_vec() },
             Event::Established { peer } => FfiEvent::Established { peer: peer.0.to_vec() },
@@ -242,6 +385,18 @@ impl From<Event> for FfiEvent {
                 effective_priority,
                 scope_name_hint,
             },
+            Event::FileOffered { conv, from, sharer, entries } => FfiEvent::FileOffered {
+                conv: conv.0.to_vec(),
+                from: from.0.to_vec(),
+                sharer: sharer.0.to_vec(),
+                entries: entries.into_iter().map(FfiFileOffer::from).collect(),
+            },
+            Event::FileReady { root, path } => {
+                FfiEvent::FileReady { root: root.0.to_vec(), path: path.to_string_lossy().into_owned() }
+            }
+            Event::FileFailed { root, reason } => {
+                FfiEvent::FileFailed { root: root.0.to_vec(), reason: reason.into() }
+            }
         }
     }
 }
@@ -504,6 +659,71 @@ impl MmpNode {
         let peer = id16_from(&peer)?;
         self.lock().block(peer);
         Ok(())
+    }
+
+    // ------------------------------------------------- friendship (§4.5) ----
+
+    /// Dependent side: solicit `peer`'s 32-byte identity key as a patron —
+    /// a FRIEND_OFFER is sent on the next Established session with them.
+    /// Silently capped at `MAX_PATRONS` (doc 04 §4.4), same fire-and-forget
+    /// shape as [`Self::block`].
+    pub fn request_friendship(&self, peer: Vec<u8>) -> Result<(), FfiError> {
+        let peer = key32_from(&peer)?;
+        self.lock().request_friendship(peer);
+        Ok(())
+    }
+
+    /// Patron side: whitelist `peer`'s 32-byte identity key to countersign a
+    /// friendship offer from them. No auto-accept (doc 04 §4) — without this
+    /// call, offers from `peer` are ignored.
+    pub fn allow_friendship_from(&self, peer: Vec<u8>) -> Result<(), FfiError> {
+        let peer = key32_from(&peer)?;
+        self.lock().allow_friendship_from(peer);
+        Ok(())
+    }
+
+    /// Publish a self-revocation claim (doc handbook §4.6): tombstones every
+    /// other claim we own — nodes that adopt it refuse new sessions with us
+    /// and stop using our prekey batch for X3DH. Irreversible once gossiped
+    /// and adopted. No successor (see [`mmp_node::Node::revoke_identity`]'s
+    /// doc comment for why that's out of scope here). Returns the encoded
+    /// claim, already queued into gossip — the return value is for local
+    /// display/logging, not something the caller needs to re-submit.
+    pub fn revoke_identity(&self, reason: u8) -> Vec<u8> {
+        self.lock().revoke_identity(reason)
+    }
+
+    // ------------------------------------------------------ blob plane (§4.4) --
+
+    /// Share `data` (≤ `FILE_MAX`, 8 MiB) into the 1:1 conversation with
+    /// `peer`: RS-encode → Merkle → mint class-4 symbol bundles (deduped by
+    /// content address) → send the signed `FileManifest` (doc 16).
+    pub fn send_file(&self, peer: Vec<u8>, name: String, mime: String, data: Vec<u8>) -> Result<FfiFileSend, FfiError> {
+        let peer = id16_from(&peer)?;
+        self.lock().send_file(&peer, &name, &mime, &data).map(FfiFileSend::from).map_err(map_send_error)
+    }
+
+    /// Explicit user pull for a `root` previously seen via
+    /// `FfiEvent::FileOffered`; writes the assembled file to `dest` once
+    /// `FfiEvent::FileReady` fires. Idempotent on an already-active fetch.
+    pub fn fetch_file(&self, root: Vec<u8>, dest: String) -> Result<(), FfiError> {
+        let root = id16_from(&root)?;
+        self.lock().fetch_file(&root, Path::new(&dest)).map_err(map_fetch_error)
+    }
+
+    /// Cancel an in-progress fetch (→ `Abandoned`); already-downloaded
+    /// partial symbols stay servable to other peers per their ordinary TTL.
+    pub fn cancel_fetch(&self, root: Vec<u8>) -> Result<(), FfiError> {
+        let root = id16_from(&root)?;
+        self.lock().cancel_fetch(&root);
+        Ok(())
+    }
+
+    /// Snapshot of one blob assembly's progress, or `None` if `root` has no
+    /// assembly (never fetched, or GC'd after `Abandoned`).
+    pub fn file_progress(&self, root: Vec<u8>) -> Result<Option<FfiFileProgress>, FfiError> {
+        let root = id16_from(&root)?;
+        Ok(self.lock().file_progress(&root).map(FfiFileProgress::from))
     }
 
     /// Current 24-byte beacon payload to advertise over BLE.

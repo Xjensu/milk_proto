@@ -8,6 +8,7 @@ description = "PC node + debugging/inspection tool"
 [dependencies]
 mmp-node = { path = "../mmp-node" }
 mmp-core = { path = "../mmp-core" }
+mmp-crypto = { path = "../mmp-crypto" }
 mmp-store = { path = "../mmp-store" }
 mmp-tal = { path = "../mmp-tal", features = ["std"] }
 mmp-tal-btleplug = { path = "../mmp-tal-btleplug" }

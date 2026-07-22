@@ -31,6 +31,10 @@ fn hello() -> Hello {
     Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
 }
 
+fn hello_with_suites(suites: Vec<u8>) -> Hello {
+    Hello { ver: 1, suites, tier: 2, flags: 0, credits: 8, psm: 0 }
+}
+
 #[test]
 fn sign_verify_and_cross_domain_rejects() {
     let alice = id(1);
@@ -79,6 +83,45 @@ fn noise_xx_handshake_agrees_and_binds() {
     assert_eq!(chan_b.decrypt(&ct).unwrap(), b"ping");
     let ct = chan_b.encrypt(b"pong").unwrap();
     assert_eq!(chan_a.decrypt(&ct).unwrap(), b"pong");
+}
+
+#[test]
+fn noise_xx_handshake_refuses_disjoint_suite_from_initiator() {
+    // E6-S2 cipher-agility exercise (doc 03 §8): a build advertising only a
+    // suite id this side does not implement must be refused, not silently
+    // accepted under whatever primitives happen to be compiled in.
+    let alice = id(1);
+    let bob = id(2);
+    // msg1 (`-> e`) carries no payload; the initiator's HELLO only reaches
+    // the responder inside msg3, so the refusal surfaces on that read.
+    let (msg1, mut a) = NoiseHandshake::initiator(&alice, &hello_with_suites(vec![0x02])).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
+    let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
+    let msg3 = a.advance(&msg2).unwrap().reply.unwrap();
+    assert!(matches!(b.advance(&msg3), Err(CryptoError::Noise)));
+}
+
+#[test]
+fn noise_xx_handshake_refuses_disjoint_suite_from_responder() {
+    let alice = id(1);
+    let bob = id(2);
+    let (msg1, mut a) = NoiseHandshake::initiator(&alice, &hello()).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello_with_suites(vec![0x02])).unwrap();
+    let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
+    assert!(matches!(a.advance(&msg2), Err(CryptoError::Noise)));
+}
+
+#[test]
+fn noise_xx_handshake_accepts_overlapping_multi_suite_list() {
+    // A future build may advertise several suites; overlap on just one
+    // (0x01, the only real suite today) must still succeed.
+    let alice = id(1);
+    let bob = id(2);
+    let (msg1, mut a) = NoiseHandshake::initiator(&alice, &hello_with_suites(vec![0x02, 0x01])).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
+    let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
+    let out_a = a.advance(&msg2).unwrap();
+    assert!(out_a.channel.is_some());
 }
 
 #[test]
@@ -218,6 +261,66 @@ fn merkle_path_verifies_and_corruption_fails() {
     let path = merkle::merkle_path(&leaves, 5);
     let bad_leaf = merkle::hash_block(b"corrupted");
     assert!(merkle::verify_path(&root, &bad_leaf, &path).is_err());
+}
+
+/// E5-S1 decision D1: `MerklePath::encode`/`decode` round-trips, and
+/// `leaf_index` reconstructs the exact index `merkle_path` was built for.
+#[test]
+fn merkle_path_wire_roundtrip_and_leaf_index() {
+    let blocks: Vec<Vec<u8>> = (0..20u8).map(|i| vec![i; 16]).collect();
+    let leaves: Vec<[u8; 32]> = blocks.iter().map(|b| merkle::hash_block(b)).collect();
+    for i in [0usize, 1, 5, 13, 19] {
+        let path = merkle::merkle_path(&leaves, i);
+        let wire = path.encode();
+        let decoded = merkle::MerklePath::decode(&wire).unwrap();
+        assert_eq!(decoded, path);
+        assert_eq!(decoded.leaf_index(), i as u64);
+    }
+}
+
+/// Strict decode: trailing bytes, a depth over the cap, and an
+/// out-of-range `pos`/`nsib` are all rejected (crate-wide canonical-decode
+/// discipline).
+#[test]
+fn merkle_path_decode_rejects_malformed_input() {
+    let blocks: Vec<Vec<u8>> = (0..5u8).map(|i| vec![i; 8]).collect();
+    let leaves: Vec<[u8; 32]> = blocks.iter().map(|b| merkle::hash_block(b)).collect();
+    let path = merkle::merkle_path(&leaves, 2);
+    let wire = path.encode();
+
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert!(merkle::MerklePath::decode(&trailing).is_err());
+
+    let mut over_depth = wire.clone();
+    over_depth[0] = (merkle::MERKLE_PATH_MAX_LEVELS + 1) as u8;
+    assert!(merkle::MerklePath::decode(&over_depth).is_err());
+
+    // Truncated mid-level.
+    assert!(merkle::MerklePath::decode(&wire[..wire.len() - 1]).is_err());
+}
+
+/// E5-S1 decision D1 check (b) — position binding: a syntactically valid
+/// path that genuinely proves leaf `i` must be rejected when checked against
+/// a DIFFERENT claimed `sym_no`, even though `compute_root` alone (a
+/// membership-only check) would happily accept it. This is exactly the
+/// forged-position replay hole the `leaf_index` check closes.
+#[test]
+fn forged_position_path_is_rejected_by_leaf_index_check() {
+    let blocks: Vec<Vec<u8>> = (0..20u8).map(|i| vec![i; 16]).collect();
+    let leaves: Vec<[u8; 32]> = blocks.iter().map(|b| merkle::hash_block(b)).collect();
+    let root = merkle::merkle_root(&leaves);
+    let true_index = 5usize;
+    let claimed_sym_no = 9u64; // attacker relabels this symbol as index 9
+    let path = merkle::merkle_path(&leaves, true_index);
+
+    // Membership alone still verifies (the path IS valid for the leaf it
+    // actually proves) — this is exactly why membership alone isn't enough.
+    assert!(merkle::verify_path(&root, &leaves[true_index], &path).is_ok());
+    // But the path does not prove the claimed position: this is the check
+    // `mmp-node`'s `symbol_payload_verifies` (D1 check b) relies on.
+    assert_ne!(path.leaf_index(), claimed_sym_no);
+    assert_eq!(path.leaf_index(), true_index as u64);
 }
 
 #[test]

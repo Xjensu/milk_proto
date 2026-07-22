@@ -41,6 +41,64 @@ pub trait SessionHost {
     fn wants(&mut self, peer: &NodeId) -> Vec<Id16>;
     /// Admission on identity reveal: false ⇒ silent close (doc 07 §6.5).
     fn accept_peer(&mut self, identity: &Key32, node: &NodeId) -> bool;
+
+    // --------------------------------------------------- friendship (§4.5) --
+    // Default impls are a no-op so every existing `SessionHost` keeps
+    // compiling unchanged (handbook §4.5) — the engine stays grammar-only,
+    // opaque bodies pass straight through to whichever host cares to
+    // interpret them (mmp-node's `NodeCore`, currently the only one that does).
+
+    /// FRIEND_OFFER arrived from `peer`. `Some(ack body)` ⇒ the engine sends
+    /// FRIEND_ACK with that body right back; `None` ⇒ silently ignored (e.g.
+    /// not on our allowlist — doc 04 §4 "no auto-accept").
+    fn on_friend_offer(&mut self, peer: &NodeId, body: &[u8]) -> Option<Vec<u8>> {
+        let _ = (peer, body);
+        None
+    }
+    /// FRIEND_ACK arrived from `peer`.
+    fn on_friend_ack(&mut self, peer: &NodeId, body: &[u8]) {
+        let _ = (peer, body);
+    }
+    /// PROXY_SUMMARY arrived from `peer`.
+    fn on_proxy_summary(&mut self, peer: &NodeId, body: &[u8]) {
+        let _ = (peer, body);
+    }
+    /// Outbound friendship frames (FRIEND_OFFER solicitation, PROXY_SUMMARY
+    /// advertisement) to send `peer`, polled once right after Established
+    /// (after SUMMARY).
+    fn friend_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
+        let _ = peer;
+        Vec::new()
+    }
+
+    // -------------------------------------------------------- blob plane (E5-S1) --
+    // Default impls are a no-op, mirroring the friendship seam above, so every
+    // existing `SessionHost` keeps compiling unchanged — the engine stays
+    // grammar-only, opaque bitmaps pass straight through to whichever host
+    // cares to interpret them.
+
+    /// BLOB_HAVE arrived: `peer`'s have-state for `root` — an implicit
+    /// request for everything absent. Returns BundleIDs of symbol bundles to
+    /// serve this peer (already capped by the host); the engine ships each
+    /// via the same `load_for_handoff` → BUNDLE + BUDGET path the WANT arm
+    /// uses (doc 16 §4.1, handbook §4.4 D4).
+    fn on_blob_have(&mut self, peer: &NodeId, root: &Id16, block: u16, bitmap: &[u8]) -> Vec<Id16> {
+        let _ = (peer, root, block, bitmap);
+        Vec::new()
+    }
+    /// BLOB_REQ arrived: explicit want-bitmap. Same return contract as
+    /// [`SessionHost::on_blob_have`].
+    fn on_blob_req(&mut self, peer: &NodeId, root: &Id16, block: u16, bitmap: &[u8]) -> Vec<Id16> {
+        let _ = (peer, root, block, bitmap);
+        Vec::new()
+    }
+    /// Outbound blob frames (one BLOB_HAVE per active assembly) to send
+    /// `peer`, polled once right after Established, immediately after
+    /// [`SessionHost::friend_frames`], on both sides.
+    fn blob_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
+        let _ = peer;
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,6 +316,17 @@ impl SessionEngine {
                 // (doc 03 §5.2).
                 let summary = host.summary(&peer_node);
                 self.send_frame(&Frame::Summary(summary));
+                // Friendship offers/proxy summaries piggyback right after
+                // SUMMARY, both sides (handbook §4.5) — polled once per
+                // contact, not gated on `self.initiator`.
+                for f in host.friend_frames(&peer_node) {
+                    self.send_frame(&f);
+                }
+                // Blob-plane BLOB_HAVE advertisement (handbook §4.4 D4),
+                // polled once right after friendship frames, both sides.
+                for f in host.blob_frames(&peer_node) {
+                    self.send_frame(&f);
+                }
                 if self.initiator {
                     self.start_domain(host);
                 }
@@ -311,14 +380,30 @@ impl SessionEngine {
                 // Receive-side clamp (AUDIT F3) — silent, never an error.
                 host.on_budget(&peer, &id, granted.min(L_MAX));
             }
-            Frame::BlobReq { .. } | Frame::BlobHave { .. } => {
-                // Blob plane transfers symbols as class-4 bundles; availability
-                // frames are advisory in the MVP.
+            Frame::BlobReq { root, block, bitmap } => {
+                for id in host.on_blob_req(&peer, &root, block, &bitmap) {
+                    if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
+                        self.send_frame(&Frame::Bundle(bytes));
+                        // BUDGET immediately follows its BUNDLE (doc 10 §2.5).
+                        self.send_frame(&Frame::Budget { id, granted });
+                    }
+                }
             }
-            Frame::FriendOffer(_) | Frame::FriendAck(_) | Frame::ProxySummary(_) => {
-                // Wire types parse; the buffering agent is stubbed (HANDOFF §0):
-                // policy answer is "no friendship" — ignore.
+            Frame::BlobHave { root, block, bitmap } => {
+                for id in host.on_blob_have(&peer, &root, block, &bitmap) {
+                    if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
+                        self.send_frame(&Frame::Bundle(bytes));
+                        self.send_frame(&Frame::Budget { id, granted });
+                    }
+                }
             }
+            Frame::FriendOffer(body) => {
+                if let Some(ack_body) = host.on_friend_offer(&peer, &body) {
+                    self.send_frame(&Frame::FriendAck(ack_body));
+                }
+            }
+            Frame::FriendAck(body) => host.on_friend_ack(&peer, &body),
+            Frame::ProxySummary(body) => host.on_proxy_summary(&peer, &body),
             Frame::Close => self.close_silently(),
             Frame::Error { .. } => self.close_silently(),
             Frame::Hs(_) | Frame::IdProof { .. } => self.protocol_error(errcode::PROTOCOL),

@@ -6,7 +6,7 @@
 
 use alloc::vec::Vec;
 
-use crate::consts::MAX_BUNDLE;
+use crate::consts::{MAX_BUNDLE, SYMBOL_SIZE};
 use crate::err::WireError;
 use crate::ids::{Id16, Key32, Sig64};
 use crate::wire::{BufExt, Reader};
@@ -171,4 +171,45 @@ pub mod apptype {
     /// Group sender-key distribution, sent over the pairwise channel
     /// (doc 08 §6.1; implementation-assigned tag, invisible to relays).
     pub const SENDER_KEY: u8 = 0x02;
+}
+
+/// Class-4 (`class::SYMBOL`) bundle payload (E5-S1 decision D1): the Merkle
+/// inclusion path for this symbol, then the symbol bytes themselves.
+/// Positioning (root/stripe/index-in-stripe) lives ONLY in the sibling
+/// `Ext::SymbolInfo` TLV — never duplicated here — so this struct carries
+/// exactly what SYMBOL_INFO cannot: the variable-length proof.
+///
+/// Wire: `u16 path_len(LE) ‖ MerklePath wire bytes (path_len B) ‖ symbol
+/// bytes (exactly SYMBOL_SIZE)`. `path` is kept as opaque bytes here (not
+/// `mmp_crypto::merkle::MerklePath`) because `mmp-types` sits below
+/// `mmp-crypto` in the layering — the codec for the path's *contents* lives
+/// next to the type in `mmp-crypto/src/merkle.rs`; this is only the outer
+/// framing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolPayload {
+    pub path: Vec<u8>,
+    pub symbol: Vec<u8>,
+}
+
+/// Cap on `path_len` before any allocation (§9.3 discipline): a Merkle path
+/// at the maximum depth (`MERKLE_PATH_MAX_LEVELS = 8`, `mmp-crypto`) encodes
+/// to at most `1 + 8*(2+3*32) = 785` bytes; 1024 leaves comfortable headroom
+/// without opening an unbounded-allocation avenue for attacker input.
+const SYMBOL_PATH_MAX: usize = 1024;
+
+impl SymbolPayload {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(2 + self.path.len() + self.symbol.len());
+        out.put_var(&self.path);
+        out.extend_from_slice(&self.symbol);
+        out
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<SymbolPayload, WireError> {
+        let mut r = Reader::new(bytes);
+        let path = r.varbytes(SYMBOL_PATH_MAX)?.to_vec();
+        let symbol = r.take(SYMBOL_SIZE)?.to_vec();
+        r.finish()?;
+        Ok(SymbolPayload { path, symbol })
+    }
 }

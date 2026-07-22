@@ -11,6 +11,8 @@
 //! Exit codes: 0 success, 1 ran fine but the watched goal wasn't reached
 //! (`send` timed out without delivery), 2 usage/setup error.
 
+mod vectors;
+
 use std::collections::HashSet;
 use std::env;
 use std::fmt::Write as _;
@@ -34,6 +36,8 @@ USAGE:
     mmp-cli keygen <file>                  generate a 32-byte identity seed, write hex to <file>
     mmp-cli demo                           run a two-node in-memory exchange and print what happens
     mmp-cli inspect <path>                 print a mmp-store snapshot's bundle table
+    mmp-cli vectors [<dir>]                 (re)generate the golden test vectors into <dir>
+                                            (default: the repo's vectors/ directory)
     mmp-cli connect <seedfile> [--store <path>]
                                             central role: scan, dial newly-seen peers, drive the
                                             node over real BLE until Ctrl-C
@@ -73,6 +77,7 @@ fn main() -> ExitCode {
         "keygen" => cmd_keygen(&args[1..]),
         "demo" => cmd_demo(),
         "inspect" => cmd_inspect(&args[1..]),
+        "vectors" => cmd_vectors(&args[1..]),
         "connect" => cmd_connect(&args[1..]),
         "send" => cmd_send(&args[1..]),
         "listen" => cmd_listen(&args[1..]),
@@ -104,6 +109,33 @@ fn cmd_keygen(args: &[String]) -> ExitCode {
     let node = Node::new(seed, Box::new(MemStore::new()), Tier::Leaf);
     println!("wrote identity seed to {path}");
     println!("node id: {}", hex(node.node_id().as_bytes()));
+    ExitCode::SUCCESS
+}
+
+// ----------------------------------------------------------------- vectors --
+
+/// Regenerate the golden test vectors (E5-S4, handbook §4.7). Deterministic:
+/// re-running overwrites the files with byte-identical content unless a codec
+/// changed — which is exactly the review signal the consuming test asserts on.
+/// The default output directory is the repo's `vectors/` (resolved from this
+/// crate's manifest dir), so `mmp-cli vectors` with no argument just refreshes
+/// the committed set in place.
+fn cmd_vectors(args: &[String]) -> ExitCode {
+    let default_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors");
+    let dir = args.first().map(String::as_str).unwrap_or(default_dir);
+
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("mmp-cli vectors: cannot create '{dir}': {e}");
+        return ExitCode::from(2);
+    }
+    for vf in vectors::generate() {
+        let path = format!("{dir}/{}", vf.name);
+        if let Err(e) = std::fs::write(&path, vf.json.as_bytes()) {
+            eprintln!("mmp-cli vectors: failed to write '{path}': {e}");
+            return ExitCode::from(2);
+        }
+        println!("wrote {path}");
+    }
     ExitCode::SUCCESS
 }
 

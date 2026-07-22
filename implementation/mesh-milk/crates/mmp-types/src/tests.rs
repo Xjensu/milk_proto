@@ -145,6 +145,33 @@ fn frames_roundtrip() {
 }
 
 #[test]
+fn friend_frame_bodies_roundtrip() {
+    let offer = FriendOfferBody { since: 1_700_000_000 };
+    assert_eq!(FriendOfferBody::decode(&offer.encode()).unwrap(), offer);
+
+    let ack = FriendAckBody { countersig: Sig64([9; 64]) };
+    assert_eq!(FriendAckBody::decode(&ack.encode()).unwrap(), ack);
+
+    let summary = ProxySummaryBody { dependent: Id16([4; 16]), bloom: vec![1, 2, 3] };
+    assert_eq!(ProxySummaryBody::decode(&summary.encode()).unwrap(), summary);
+}
+
+#[test]
+fn friend_frame_bodies_reject_trailing_bytes() {
+    let mut bytes = FriendOfferBody { since: 1 }.encode();
+    bytes.push(0);
+    assert_eq!(FriendOfferBody::decode(&bytes), Err(WireError::Trailing));
+
+    let mut bytes = FriendAckBody { countersig: Sig64::ZERO }.encode();
+    bytes.push(0);
+    assert_eq!(FriendAckBody::decode(&bytes), Err(WireError::Trailing));
+
+    let mut bytes = ProxySummaryBody { dependent: Id16([1; 16]), bloom: vec![] }.encode();
+    bytes.push(0);
+    assert_eq!(ProxySummaryBody::decode(&bytes), Err(WireError::Trailing));
+}
+
+#[test]
 fn envelope_oversize_prefix_rejected() {
     // AUDIT F10: a length prefix over the cap must be an error, not a grow.
     let mut wire = Vec::new();
@@ -213,6 +240,29 @@ fn payload_schemas_roundtrip() {
     assert_eq!(GroupPayload::decode(&g.encode()).unwrap(), g);
     let rp = ReceiptPayload { delivered: Id16([3; 16]), mac: [0xCD; 16] };
     assert_eq!(ReceiptPayload::decode(&rp.encode()).unwrap(), rp);
+}
+
+/// E5-S1 decision D1: `u16 path_len ‖ path ‖ symbol` — decode requires an
+/// EXACT match (`2 + path_len + SYMBOL_SIZE`), not merely "at least".
+#[test]
+fn symbol_payload_roundtrip_and_strict_length() {
+    let sp = SymbolPayload { path: vec![0xAB; 40], symbol: vec![0x11; crate::consts::SYMBOL_SIZE] };
+    let wire = sp.encode();
+    assert_eq!(wire.len(), 2 + 40 + crate::consts::SYMBOL_SIZE);
+    assert_eq!(SymbolPayload::decode(&wire).unwrap(), sp);
+
+    // Trailing byte beyond the exact symbol length is rejected (crate-wide
+    // strict-decode discipline — `Reader::finish`).
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert_eq!(SymbolPayload::decode(&trailing), Err(WireError::Trailing));
+
+    // Truncated symbol (short by one byte) is rejected, not zero-padded.
+    let short = &wire[..wire.len() - 1];
+    assert_eq!(SymbolPayload::decode(short), Err(WireError::Truncated));
+
+    // Empty input.
+    assert_eq!(SymbolPayload::decode(&[]), Err(WireError::Truncated));
 }
 
 #[test]

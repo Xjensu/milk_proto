@@ -1,0 +1,6 @@
+{
+  "description": "RBSR range fingerprint of a known Id16 set (doc 06 §3) — order- and content-sensitive u64",
+  "ids": ["01010101010101010101010101010101", "02020202020202020202020202020202", "03030303030303030303030303030303"],
+  "fingerprint_u64": 3917991961735418229,
+  "fingerprint_hex": "75511348ee805f36"
+}

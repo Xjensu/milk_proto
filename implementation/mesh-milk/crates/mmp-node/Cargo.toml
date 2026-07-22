@@ -12,6 +12,7 @@ mmp-core = { path = "../mmp-core" }
 mmp-router = { path = "../mmp-router", features = ["std"] }
 mmp-store = { path = "../mmp-store" }
 mmp-tal = { path = "../mmp-tal" }
+mmp-rs-code = { path = "../mmp-rs-code" }
 blake3 = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }

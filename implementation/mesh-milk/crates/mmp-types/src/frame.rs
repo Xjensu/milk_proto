@@ -84,6 +84,74 @@ pub struct WantHeads {
     pub heads: Vec<Id16>,
 }
 
+/// FRIEND_OFFER body (handbook §4.5, doc 04 §4.1): `since u64`. No signature
+/// inside — the session is mutually authenticated post-ID_PROOF, so offer
+/// authenticity comes from the AEAD channel, not a body signature. Direction:
+/// the dependent solicits from the patron.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FriendOfferBody {
+    pub since: u64,
+}
+
+impl FriendOfferBody {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8);
+        out.put_u64(self.since);
+        out
+    }
+    pub fn decode(bytes: &[u8]) -> Result<FriendOfferBody, WireError> {
+        let mut r = Reader::new(bytes);
+        let since = r.u64()?;
+        r.finish()?;
+        Ok(FriendOfferBody { since })
+    }
+}
+
+/// FRIEND_ACK body (handbook §4.5): `countersig sig64` — the patron's
+/// signature over [`crate::claim::friendship_signed_object`] under
+/// `SigDomain::Friend`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FriendAckBody {
+    pub countersig: Sig64,
+}
+
+impl FriendAckBody {
+    pub fn encode(&self) -> Vec<u8> {
+        self.countersig.0.to_vec()
+    }
+    pub fn decode(bytes: &[u8]) -> Result<FriendAckBody, WireError> {
+        let mut r = Reader::new(bytes);
+        let countersig = r.sig64()?;
+        r.finish()?;
+        Ok(FriendAckBody { countersig })
+    }
+}
+
+/// PROXY_SUMMARY body (handbook §4.5): `dependent id16, bloom varbytes` — one
+/// frame per dependent the patron currently buffers for; advisory
+/// spray-suppression hint only (doc 06 §7 MVP, AUDIT F11 Hint/Purge shape).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxySummaryBody {
+    pub dependent: Id16,
+    pub bloom: Vec<u8>,
+}
+
+impl ProxySummaryBody {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(16 + 2 + self.bloom.len());
+        out.extend_from_slice(&self.dependent.0);
+        out.put_var(&self.bloom);
+        out
+    }
+    pub fn decode(bytes: &[u8]) -> Result<ProxySummaryBody, WireError> {
+        let mut r = Reader::new(bytes);
+        let dependent = r.id16()?;
+        let bloom = r.varbytes(MAX_FRAME_PAYLOAD)?.to_vec();
+        r.finish()?;
+        Ok(ProxySummaryBody { dependent, bloom })
+    }
+}
+
 /// HELLO, carried inside the Noise handshake payloads (doc 10 §2.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hello {
