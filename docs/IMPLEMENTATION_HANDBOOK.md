@@ -350,8 +350,22 @@ shippable):
 2. **Group state** (`GroupState` per group): members OR-Set ops since last anchor, epoch, local
    sender key, remote sender keys, dists. All content already has canonical encodings
    (`SenderKeyDist::encode`, membership ops) — persist those, never ad-hoc formats.
-3. **SeenIndex / ReceiptFilter**: persist bucket epochs + raw bloom bit arrays + the exact-receipt
-   map (~240 KiB + exact map). Cheap and prevents post-restart duplicate delivery.
+3. **SeenIndex / ReceiptFilter — SHIPPED (2026-07-23).** Persist bucket epochs + raw bloom bit
+   arrays + the exact-receipt map. Both types already live in `mmp-core` (a crate `mmp-store`
+   already depends on for `BundleMeta` etc.), so — unlike group state — they're persisted as typed
+   records, not opaque blobs: `Bloom::encode`/`decode` (`m:u32 ‖ count:u32 ‖ bits`, plus
+   `decode_prefix` for embedding several in a stream), `SeenIndex::encode`/`decode`,
+   `ReceiptFilter::encode`/`decode` (`mmp-core`); `SnapshotStore` record kinds `RECORD_SEEN_INDEX=3`/
+   `RECORD_RECEIPT_FILTER=4` (`mmp-store`, no `MAGIC` bump needed — the existing kind-tagged framing
+   is already forward-compatible with new kinds); `Node::seen_index`/`restore_seen_index`,
+   `Node::receipt_filter`/`restore_receipt_filter` (`mmp-node`, `SeenIndex`/`ReceiptFilter` gained
+   `Clone`); staged in `MmpNode::persist_now` and restored in `MmpNode::new` right alongside claims
+   and groups (`mmp-ffi`). Verified end-to-end, not just in isolation: `mmp-ffi::tests::
+   seen_index_survives_restart_and_dedups_a_replayed_bundle` drives a real two-node contact, kills
+   and reopens the node, then replays the same bundle and asserts `MessageReceived` does NOT fire a
+   second time — the actual handbook acceptance below, not just a byte round-trip. `cargo test
+   --workspace`: 169 passed / 0 failed / 4 ignored (up from 159), clippy/layer-check clean, first
+   verify cycle.
 4. **Ratchet state — DECIDED: persist, keystore-wrapped.** Normative decision + full rationale:
    **doc 08 §5.3 (amendment 2026-07-16)**. The earlier "(a) don't persist" default here was wrong
    because its assumed recovery path doesn't exist: a sender holding a `Conv` never re-runs X3DH,

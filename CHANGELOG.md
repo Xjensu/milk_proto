@@ -15,6 +15,33 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-23 — E4-S4 SeenIndex/ReceiptFilter persistence
+
+### Added
+- **`SeenIndex`/`ReceiptFilter` now survive restart** (handbook §4.3 step 3): `Bloom` gained
+  `encode`/`decode`/`decode_prefix` (persistence wire form: `m:u32 ‖ count:u32 ‖ bits`);
+  `SeenIndex`/`ReceiptFilter` gained matching `encode`/`decode` and `Clone` (`mmp-core`).
+  `SnapshotStore` gained two new typed record kinds, `RECORD_SEEN_INDEX`/`RECORD_RECEIPT_FILTER`
+  (no `MAGIC` bump needed — the existing kind-tagged framing already skips unknown kinds
+  forward-compatibly), with `seen_index()`/`set_seen_index()` and
+  `receipt_filter()`/`set_receipt_filter()` accessors (`mmp-store`). `Node` gained
+  `seen_index()`/`restore_seen_index()` and `receipt_filter()`/`restore_receipt_filter()`
+  (`mmp-node`). `MmpNode::persist_now`/`MmpNode::new` stage and restore both alongside claims and
+  group state (`mmp-ffi`).
+- New tests: `mmp-core` (4, encode/decode roundtrip + truncation/trailing-byte rejection),
+  `mmp-store` (2, full snapshot roundtrip + corruption-drop), `mmp-ffi` (1, the real acceptance
+  test — a live two-node contact, restart, and bundle replay, asserting no duplicate
+  `MessageReceived`). `cargo test --workspace`: 169 passed / 0 failed / 4 ignored (up from 159),
+  clippy/layer-check clean, first verify cycle (no fixes needed).
+
+### Fixed
+- **A stale doc comment on `MmpNode`** claimed `SeenIndex`/`ReceiptFilter` do not survive restart
+  "by design." Corrected to describe what's now persisted and why it's safe (both are pure
+  protocol bookkeeping with no secret material, unlike ratchet state, so persisting them carries
+  no PCS/forward-secrecy cost).
+
+---
+
 ## [Documentation] 2026-07-22 — E4-S4 stale backlog text corrected
 
 ### Fixed
