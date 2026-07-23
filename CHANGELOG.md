@@ -15,6 +15,46 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-23 — E4-S4 bump_epoch wiring
+
+### Added
+- **The opportunistic ratchet epoch bump (doc 08 §5.2/§5.3) is now wired into the live-session
+  path.** `mmp-core::session::SessionEngine` gained `session_material()`/`peer_identity()` (both
+  `None` before `Established`, both still valid all the way to link-down — `chan` outlives
+  `Established`, unlike `hs`/`recon`). `mmp-node`'s `TalEvent::LinkDown` handler now bumps both
+  directions of an existing `Conv` on every REPEAT live session with a peer, tracked via a new
+  `established_convs: HashSet<Id16>` field ("have we met before," independent of whether a `Conv`
+  object currently exists). `Node::conv_epoch(peer)` (test/diagnostic seam, mirrors
+  `Node::set_store_quota`'s "never called from wire/FFI" convention) exposes `(send_epoch,
+  recv_epoch)` for verification.
+
+### Fixed (two real bugs found during this story's own verify-fix cycle, not assumed away)
+- **Bumping at session START (`Established`), not END (`LinkDown`), orphans a brand-new
+  conversation's own first-contact message.** A message queued asynchronously before a session
+  (e.g. group sender-key dist gossip via `group_remove`) is encrypted under whatever epoch/index
+  the chain was at *before* that session began. Bumping at `Established` — which fires before
+  RECONCILE/TRANSFER even starts — moves the receiver's recv chain to a new epoch before it ever
+  sees that message, and `RecvChain::key_for` has no skipped-key entry for an epoch it jumped over
+  rather than incrementally advanced through, so decryption fails. Caught by
+  `mmp-node::tests::group_create_invite_and_message` failing even though debug tracing showed both
+  sides' epochs advancing in perfect, symmetric lockstep — the ordering was wrong, not the sync.
+  Fixed by moving the bump to `TalEvent::LinkDown`, after the contact's own message exchange has
+  fully drained.
+- **The very first-ever contact with a brand-new `Conv` must never bump** (nothing to heal yet —
+  a fresh async-negotiated `CK0` is already fresh). Fixed by tracking "met before" in
+  `established_convs` separately from "does a `Conv` exist right now," which also makes the
+  mechanism correct for a future restored-from-disk `Conv` (once real disk persistence lands): a
+  restore step would mark the restored conv's id as already-established so its first post-restart
+  contact still bumps correctly.
+
+### Still not shipped
+- Actual disk persistence of ratchet state (keystore-wrapped encryption, discard-on-load past
+  `RATCHET_PERSIST_TTL_MS`) — this story's `bump_epoch` wiring was only ever that feature's
+  prerequisite (doc 08 §5.3), now satisfied. The disk-persistence half needs native Android
+  Keystore / iOS Keychain / DPAPI integration, tracked separately under E4-S4.
+
+---
+
 ## [Implementation] 2026-07-23 — E4-S4 SeenIndex/ReceiptFilter persistence
 
 ### Added

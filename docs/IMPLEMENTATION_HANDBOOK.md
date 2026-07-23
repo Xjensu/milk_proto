@@ -377,9 +377,30 @@ shippable):
    under a platform-keystore-wrapped key (Android Keystore / iOS Keychain / DPAPI) — never in the
    clear, and never CK₀ (erase it once `Conv::new` has derived both chains). Stamp the blob with
    written-at time; on load discard anything older than `RATCHET_PERSIST_TTL_MS =
-   LIFETIME_MESSAGE_MS` (new local constant) and fall back to fresh X3DH. Prerequisite: wire
+   LIFETIME_MESSAGE_MS` (new local constant) and fall back to fresh X3DH. ~~Prerequisite: wire
    `bump_epoch` into the live-session path (doc 08 §5.2) so the first contact after a restore heals
-   the on-disk exposure. Where no keystore exists, and on Core/`no_std`: build nothing (RAM only).
+   the on-disk exposure.~~ **Prerequisite SHIPPED (2026-07-23):** `mmp-node`'s `TalEvent::LinkDown`
+   handler now bumps both directions of an existing `Conv` on every REPEAT live session with a peer
+   (tracked via a new `established_convs: HashSet<Id16>` — "have we met before," independent of
+   whether a `Conv` object exists yet), using `SessionEngine::session_material()`/`peer_identity()`
+   (both new — `chan` outlives `Established` all the way to link-down, unlike `hs`/`recon`).
+   **Two real bugs found and fixed during this story's own verify-fix cycle, not assumed away:**
+   (1) bumping at `Established` (session start) rather than link-down (session end) desyncs a
+   brand-new conversation's very first live session — a queued async first-contact message (e.g.
+   group dist gossip, encrypted before the session even began) gets orphaned the moment the
+   receiver's recv chain jumps to a new epoch before ever decrypting it; caught by
+   `mmp-node::tests::group_create_invite_and_message` failing with debug tracing showing symmetric,
+   correctly-progressing epochs yet still-failing decryption — the ordering, not the sync, was
+   wrong. (2) the first-ever contact with a brand-new `Conv` must never bump at all (nothing to
+   heal yet) — solved by tracking "met before" separately from "conv exists," so a future
+   restored-from-disk `Conv` (once actual ratchet persistence lands) can be marked established at
+   restore time and still bump correctly on its first post-restart contact. New test:
+   `mmp-node::tests::ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt` (first contact
+   must not bump; second contact bumps both sides symmetrically; a message encrypted after the bump
+   still decrypts). **Still NOT shipped:** the actual disk persistence (keystore-wrapped encryption,
+   `RATCHET_PERSIST_TTL_MS` discard-on-load) — this item was only ever the wiring prerequisite for
+   that, tracked separately; native Keystore/Keychain APIs are needed, not just Rust. Where no
+   keystore exists, and on Core/`no_std`: build nothing (RAM only).
 
 **Acceptance:** kill -9 during a sync session; restart; node resumes with same claims/groups; a
 previously-received bundle re-offered by a peer is deduped (proves SeenIndex survived); test in
