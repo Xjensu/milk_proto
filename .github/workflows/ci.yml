@@ -41,6 +41,10 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - run: cargo build --workspace --all-features
       - run: cargo test --workspace --all-features
+      # docs/AGILE_BACKLOG.md E2-S1: clippy was previously enforced only by
+      # local practice, not CI. Proven locally to catch a real violation
+      # (needless_bool/bool_comparison) before being wired in here.
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   android-check:
     runs-on: ubuntu-latest
