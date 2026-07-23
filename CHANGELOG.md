@@ -15,6 +15,40 @@ omitted rather than invented.
 
 ---
 
+## [Governance/Implementation] 2026-07-23 — Epic 2/8 doc audit + E2-S1 clippy gate
+
+### Added
+- **`cargo clippy --workspace --all-targets --all-features -- -D warnings` added to
+  `.github/workflows/ci.yml`'s `host` job** (all three OS legs), closing `docs/AGILE_BACKLOG.md`
+  E2-S1. The clean claim was previously enforced only by local practice. Proven locally (no
+  GitHub Actions runner available in this environment) by introducing a scratch
+  `clippy::needless_bool`/`clippy::bool_comparison` violation in `mmp-types/src/lib.rs`, confirming
+  the exact new CI command fails on it, then reverting (`git diff` confirmed zero residual change)
+  before making the real edit.
+- **A real, code-grounded local-only-diagnostics policy statement** (E8-S4) replacing a circular
+  reference: `docs/API_REFERENCE.md` §5.8 pointed to `docs/ROADMAP_TO_PRODUCTION.md` Phase E for
+  "the operational diagnostics policy," but that section previously only stated the outstanding
+  task, not an actual confirmed statement. Now states the policy and grounds it in code:
+  `mmp-node/src/diag.rs`'s `DiagLog` has no file/socket I/O; only the TAL crates touch a network
+  socket at all (handbook §0 rule 3) and never see diagnostic records.
+
+### Fixed (documentation staleness, Epic 2/8 sweep per the standing audit directive)
+- `docs/AGILE_BACKLOG.md` E2-S2 (UniFFI bindgen in CI) had no `DONE` marker despite being fully
+  shipped (`ci.yml`'s `mobile-bindings` job) and despite `docs/ROADMAP_TO_PRODUCTION.md` already
+  citing it as done — backlog corrected to match.
+- `docs/AGILE_BACKLOG.md` E8-S5 (v2 handoff) marked "artifact done, human review still open" —
+  `V2_FEATURES.md` Part I already covers exactly the R5/R6/R7/R10/R13/R14/R16/R20 items asked for;
+  only the human review sign-off remains, same shape as E3-S2's real-hardware half.
+- E2-S1/S3/S4/S5 and E8-S1/S2/S3 re-verified against actual CI/repo state and confirmed genuinely
+  still open (no staleness found there) — full findings in `docs/IMPLEMENTATION_HANDBOOK.md` §4.15.
+
+### Noted, not fixed
+- `mmp-tal-mobile` (pre-existing since the initial scaffold commit, deliberately thin per its own
+  doc comment) is absent from the handbook's crate-layering diagram and the backlog's architecture
+  tables. Cosmetic; left for a future pass.
+
+---
+
 ## [Implementation] 2026-07-23 — E4-S4 bump_epoch wiring
 
 ### Added

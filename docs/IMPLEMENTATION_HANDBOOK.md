@@ -1089,6 +1089,60 @@ passed than before this change, from removing the now-vacuous cross-check test, 
 
 ---
 
+### 4.15 CI clippy gate + Epic 2/8 documentation sweep — SHIPPED (E2-S1, 2026-07-23); E2-S2/E8-S4/E8-S5 marker fixes
+
+**Documentation audit (before any code change), scoped to Epics 2 and 8 per the standing directive
+that these hadn't been re-verified against code since early sessions:**
+- **E2-S2 (UniFFI bindgen in CI)** was already fully shipped in code — `.github/workflows/ci.yml`'s
+  `mobile-bindings` job builds `mmp-ffi --release` and runs its `cli`-feature-gated
+  `uniffi-bindgen` binary for both Kotlin and Swift, uploading both under one artifact — and
+  `docs/ROADMAP_TO_PRODUCTION.md` §3 Phase A already said so, but `docs/AGILE_BACKLOG.md`'s own
+  E2-S2 entry carried no `DONE` marker. Corrected.
+- **E8-S4 (local-only diagnostics policy)** had a real gap, not just a missing marker:
+  `docs/API_REFERENCE.md` §5.8 pointed at `docs/ROADMAP_TO_PRODUCTION.md` Phase E for "the
+  operational diagnostics policy," but that Phase E bullet was only the *task description*
+  ("confirm and document...") — a circular reference with no actual statement at the end of it.
+  Fixed by verifying the claim against code (`mmp-node/src/diag.rs`'s `DiagLog` is a pure in-memory
+  `Vec<JourneyRecord>` with no file/socket I/O; per handbook §0 rule 3 only the TAL crates touch a
+  network socket at all, and they never see diagnostic records) and replacing the roadmap bullet
+  with the actual confirmed policy statement, marked `DONE`.
+- **E8-S5 (v2 handoff)** — `implementation/mesh-milk/V2_FEATURES.md` Part I already enumerates
+  exactly the R5/R6/R7/R10/R13/R14/R16/R20 items the story asks for. Marked "artifact done, human
+  review still open" rather than a plain `DONE` — the review itself isn't an agent's to close, same
+  shape as E3-S2's real-hardware half.
+- **E2-S1 (clippy gate) and E2-S3/S4/S5/E8-S1/S2/S3 were re-checked and confirmed genuinely still
+  open** (no clippy step in `ci.yml`'s `host` job; no `rust-version` anywhere and `rust-toolchain.toml`
+  still pins a moving `channel = "stable"`; zero per-crate READMEs; zero `#![warn(missing_docs)]`;
+  the `no-std-size-gate` job is still explicitly informational; no AAR/XCFramework CI job or script
+  exists; no `cargo-audit`/signed-artifact step exists) — these backlog entries were already
+  accurate, not stale.
+- Also noted, not fixed (too small to warrant a story, but a real gap): `mmp-tal-mobile` — a
+  deliberately-thin, pre-existing (present since the initial scaffold commit, `6b5d56a`) crate that
+  only re-exports `mmp-tal` types and a `MOBILE_INTEGRATION.md §4/§5`-referenced `att_chunk` helper
+  — doesn't appear in this handbook's §1.1 crate-layering diagram or `docs/AGILE_BACKLOG.md` A1/A2's
+  architecture tables, even though it's a real, permanent workspace member (referenced normatively
+  in `specification/12-rust-blueprint.md` and `layer-check`'s banned-package list). Cosmetic; left
+  for a future documentation pass rather than expanded into its own story.
+
+**Shipped (E2-S1):** `.github/workflows/ci.yml`'s `host` job (all three OS legs) gained
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` after the existing
+build/test steps. Proven locally, since no GitHub Actions runner is available in this environment
+and the story's own acceptance text asks for exactly this proof: a scratch
+`if x == true { true } else { false }` was added to `mmp-types/src/lib.rs`,
+`cargo clippy -p mmp-types --all-targets -- -D warnings` failed with real
+`clippy::needless_bool`/`clippy::bool_comparison` errors (both cite `-D warnings` as the reason),
+then the scratch code was reverted and `git diff` confirmed zero residual change before the real CI
+edit was made.
+
+**Verification:** `cargo test --workspace` (167 passed / 0 failed / 4 ignored — the new ground
+truth for this session; prior docs cited 156/159/169 at various older snapshots) and
+`cargo test --workspace --all-features` both green and identical;
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` (the exact new CI command)
+clean; `layer-check` OK (`7 lower-layer crates clean of [tokio, mmp-tal-btleplug, mmp-tal-mobile,
+mmp-tal-embedded, mmp-tal-peripheral] and [std::time, tokio::]`).
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
