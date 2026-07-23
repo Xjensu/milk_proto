@@ -1143,6 +1143,52 @@ mmp-tal-embedded, mmp-tal-peripheral] and [std::time, tokio::]`).
 
 ---
 
+### 4.16 no_std size gate hardened, real embedded-build bug fixed — SHIPPED (E2-S4, 2026-07-23)
+
+**A real, previously-unverified CI bug, found by actually trying to reproduce the job locally
+rather than trusting its "wired" status:** the `no-std-size-gate` job's build command —
+`cargo build --release --target thumbv7em-none-eabihf -p mmp-types -p mmp-crypto -p mmp-core
+-p mmp-router -p mmp-rs-code` — had never actually succeeded. `mmp-crypto` and `mmp-core` each
+carry `default = ["std"]` (gating the Noise/`snow` session layer on the desktop/mobile side) and
+correctly disable it on their own internal path-dependency declarations
+(`mmp-core`'s `mmp-crypto = { path = "../mmp-crypto", default-features = false }`, same pattern one
+level down for `mmp-router → mmp-core`) — but naming multiple packages via `-p` in one cargo
+invocation activates *each named package's own* default feature set independently of how anything
+else in the graph depends on it. So the top-level `-p mmp-crypto`/`-p mmp-core` selections
+re-enabled `std` regardless, and the build reached for `getrandom`/`subtle`'s `std`-only code paths
+on a target (`thumbv7em-none-eabihf`) that has no `std` at all — `error[E0463]: can't find crate
+for 'std'`, reproduced directly. This is the same failure shape as E2-S0 (a CI job that looked
+wired but had never actually run) — `layer-check`'s source-text banned-import scan doesn't catch
+it because the problem is a *feature-flag* default, not an import.
+
+**Fixed:** added `--no-default-features` to the build command. Confirmed clean locally
+(`cargo build --release --target thumbv7em-none-eabihf --no-default-features -p mmp-types
+-p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code` → `Finished release profile`, one
+pre-existing unrelated `dead_code` warning on `mmp-crypto`'s `exchange_secret_bytes`, not a hard
+error, out of this story's scope since the embedded build isn't `-D warnings`-gated).
+
+**Shipped (the actual E2-S4 ask):** a hard per-crate rlib size budget replacing the prior
+"informational" `ls -l`. Budgets are baseline × 1.2 (rounded up to the next byte), measured on this
+session's actual build: `libmmp_types.rlib` 576566→691880, `libmmp_crypto.rlib` 259022→310827,
+`libmmp_core.rlib` 722684→867221, `libmmp_router.rlib` 219670→263604, `libmmp_rs_code.rlib`
+25896→31076 bytes — the "agent proposes, orchestrator confirms" numbers the backlog story asks for,
+confirmed in this same session. **Explicitly a proxy, not the doc 12 §7.6 flash number itself:** an
+`.rlib` archive carries debug info and unstripped/unmonomorphized-yet code a final linked image
+doesn't, so these thresholds are individually larger than 256 KiB split five ways by design — they
+exist to catch a crate regressing in size over time, not to prove the real flash budget (that needs
+a linked nRF52-profile image, still tracked under Epic 7). Proven both directions locally (no
+GitHub Actions runner in this environment): the check script passes against the real baseline
+sizes and fails with the documented `::error::` line when a budget is deliberately set below a
+measured size.
+
+**Verification:** the fixed build command succeeds where the old one hard-failed (direct
+repro/fix, not inferred); the new size-gate shell logic proven to both pass and fail correctly
+against real measured rlib sizes; `.github/workflows/ci.yml` re-validated as well-formed YAML
+(`yaml.safe_load`); the rest of the workspace (host job's build/test/clippy, layer-test) is
+untouched by this change and remains green per §4.15's verification above.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
@@ -1152,6 +1198,7 @@ mmp-tal-embedded, mmp-tal-peripheral] and [std::time, tokio::]`).
 | WoT multiplier ignored on first admission | initial bucket fill computed before multiplier | fixed in `quota.rs`; test covers first-contact admission |
 | LWW test asserted stale claim | test re-merged the wrong object after conflict adoption | deterministic-tie-break test in mmp-core |
 | Flaky CI | wall-clock assert in sim | banned by rule §0.6 |
+| `no-std-size-gate` CI job never actually built | multi-`-p` build re-activates each named package's own `default = ["std"]`, bypassing internal `default-features = false` dep edges | `--no-default-features` on the build command; §4.16 |
 
 Debugging technique that found the first two: the envelope type byte (`bytes[2]`) is outside the
 AEAD — a test pump can print the frame-type dialogue without decrypting. Reach for this first

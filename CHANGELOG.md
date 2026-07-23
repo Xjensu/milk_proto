@@ -15,6 +15,33 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-23 — E2-S4 no_std size gate hardened
+
+### Fixed
+- **The `no-std-size-gate` CI job had never actually succeeded.** Its build command
+  (`cargo build --release --target thumbv7em-none-eabihf -p mmp-types -p mmp-crypto -p mmp-core
+  -p mmp-router -p mmp-rs-code`) reached for `getrandom`/`subtle`'s `std`-only code paths and hard
+  errored (`can't find crate for 'std'`) on a target that has no `std`, because naming multiple
+  packages via `-p` in one invocation re-activates each named package's own `default = ["std"]`
+  regardless of the `default-features = false` already correctly set on their *internal*
+  path-dependency edges (`mmp-core → mmp-crypto`, `mmp-router → mmp-core`). Same failure shape as
+  E2-S0 (a CI job that looked wired but had never actually run). Fixed with `--no-default-features`
+  on the build command; confirmed clean locally afterward.
+
+### Added
+- **Hard per-crate rlib size budget** replacing the previous informational `ls -l`: baseline × 1.2
+  (rounded up) for each of the five Core-tier crates, computed from this session's real embedded
+  build (`mmp_types` 576566→691880, `mmp_crypto` 259022→310827, `mmp_core` 722684→867221,
+  `mmp_router` 219670→263604, `mmp_rs_code` 25896→31076 bytes). Proven both directions locally: the
+  gate passes at the real baseline and fails with the documented error line when a budget is
+  deliberately undercut. Explicitly a trend-regression proxy, not the doc 12 §7.6 ≤256 KiB flash
+  figure itself (an rlib carries debug/monomorphization overhead a linked+stripped image doesn't) —
+  the real flash measurement still needs a linked nRF52-profile image, tracked under Epic 7.
+
+Full writeup: `docs/IMPLEMENTATION_HANDBOOK.md` §4.16.
+
+---
+
 ## [Governance/Implementation] 2026-07-23 — Epic 2/8 doc audit + E2-S1 clippy gate
 
 ### Added
