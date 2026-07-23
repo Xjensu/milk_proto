@@ -15,6 +15,33 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-23 — E2-S3 publication hygiene (partial)
+
+### Added
+- MSRV declared (`rust-version = "1.96"` in `[workspace.package]`, inherited by all
+  16 crates), plus real `repository`/`homepage` metadata (the actual configured git
+  remote, `https://github.com/Xjensu/milk_proto`) and tailored `keywords`/
+  `categories` per crate.
+- A real README.md for all 16 crates (what it is, its actual declared dependency
+  edges, its real `no_std`/`std` status).
+- `rust-toolchain.toml` gained a comment recording a real environment constraint hit
+  while pinning it harder: forcing an exact-version channel (vs. rolling `stable`)
+  tried to install a second toolchain copy and failed on disk space in this
+  environment (337 MB free of 180 GB) — reverted to `stable`; the MSRV floor is
+  `rust-version` in Cargo.toml, which needed no extra install.
+
+### Deferred (split into a new story, `docs/AGILE_BACKLOG.md` E2-S7, not silently
+folded back into "done")
+- `#![warn(missing_docs)]` on the 7 public-facing crates: measured real fallout
+  first (3,023 warnings total across `mmp-types`/`mmp-crypto`/`mmp-core`/
+  `mmp-router`/`mmp-tal`/`mmp-node`/`mmp-ffi`) — an order of magnitude past the
+  original story's implied size — then reverted the scratch lint additions rather
+  than either rush 3,000+ doc comments or leave the lint half-applied.
+
+Full writeup: `docs/IMPLEMENTATION_HANDBOOK.md` §4.17.
+
+---
+
 ## [Implementation] 2026-07-23 — E2-S4 no_std size gate hardened
 
 ### Fixed

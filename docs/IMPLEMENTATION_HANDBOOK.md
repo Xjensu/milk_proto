@@ -1189,6 +1189,49 @@ untouched by this change and remains green per §4.15's verification above.
 
 ---
 
+### 4.17 Publication hygiene — PARTIALLY SHIPPED (E2-S3, 2026-07-23); missing_docs split to E2-S7
+
+**Shipped:** MSRV declared as `rust-version = "1.96"` in `[workspace.package]`
+(`implementation/mesh-milk/Cargo.toml`), inherited by all 16 crates via
+`rust-version.workspace = true`. Kept deliberately independent of
+`rust-toolchain.toml`'s channel — that file stays on rolling `stable`. **A real
+environment limit surfaced trying to pin it harder:** pinning the channel to a
+literal version string (`"1.96.1"`, matching the locally-installed stable at the
+time) makes rustup treat it as a distinct toolchain from the already-installed
+`stable` alias, even though they resolve to the same release, and rustup tried to
+download/install that second copy — which failed here (`error: failed to extract
+package: Недостаточно места на диске`, i.e. out of disk space; `df -h` showed 337 MB
+free on a 180 GB drive). Reverted to `channel = "stable"` rather than fight a
+resource constraint unrelated to the story's substance; the comment in
+`rust-toolchain.toml` records why, so a future session doesn't retry the same thing
+and hit the same wall. `repository`/`homepage` (both
+`https://github.com/Xjensu/milk_proto`, confirmed via `git remote -v` before use — not
+invented) added the same way. Tailored `keywords`/`categories` added per crate.
+**16/16 crates got a real README.md** (what the crate is, its actual dependency
+edges as declared in its own `Cargo.toml` — not assumed from the architecture
+diagram — and its real `no_std`/`std` status). `cargo package --list -p mmp-types
+--allow-dirty` confirmed sane (README.md included, correct file list).
+
+**Deliberately not shipped this session, split into E2-S7:** `#![warn(missing_docs)]`
+on the 7 named crates. Test-added to all 7 to measure the real fallout before
+committing to it (methodology: don't round a partial finding up to done, and don't
+grind through a surprise-sized task under time pressure without saying so) —
+`cargo build -p <crate> --all-features` warning counts: `mmp-types` 291, `mmp-crypto`
+335, `mmp-core` 430, `mmp-router` 422, `mmp-tal` 306, `mmp-node` 577, `mmp-ffi` 662,
+**3,023 total**, roughly 10x what the story's "M-sized... fix fallout" framing
+implied. Writing 3,000+ real (non-filler) doc comments is its own multi-session
+effort; the lint additions were reverted (`git checkout`, confirmed zero residual
+diff via `git diff --stat`) rather than left half-applied or satisfied with
+low-value doc-comment filler. See `docs/AGILE_BACKLOG.md` E2-S7 for the split-out
+story and suggested per-crate, dependency-ordered attack sequence.
+
+**Verification:** `cargo build --workspace` clean after the toolchain revert;
+`cargo test --workspace` (167/0/4, unchanged) and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings` both clean;
+`layer-check` OK; `cargo package --list -p mmp-types --allow-dirty` sane.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
