@@ -66,10 +66,22 @@ jobs:
 
   # The no_std proof + size gate: the Core-profile crates must build for
   # thumbv7em-none-eabihf. Budget (doc 12 §7.6): mmp-types+crypto+core+router
-  # ≤ 256 KiB flash / ≤ 48 KiB static RAM ⚠. A real gate needs a linked image
-  # (nRF52 profile, tracked as E7); until then this job proves no_std builds and
-  # reports rlib sizes for trend visibility — wired, informational (E2-S4 will
-  # turn this into a hard-enforced threshold).
+  # ≤ 256 KiB flash / ≤ 48 KiB static RAM ⚠. A real gate needs a linked+stripped
+  # image (nRF52 profile, tracked as E7); until then, E2-S4 hardens this into a
+  # per-crate rlib-size regression gate — a proxy, not the literal flash number
+  # (an rlib archive carries debug/monomorphization overhead a linked image
+  # doesn't, so these thresholds are deliberately larger than 256 KiB split five
+  # ways; they exist to catch a crate suddenly bloating, not to prove the flash
+  # budget itself — that still needs the real E7 linked-image measurement).
+  #
+  # --no-default-features is required here: mmp-crypto/mmp-core each default to
+  # `std` (gating the Noise/snow session layer) and correctly disable it via
+  # `default-features = false` on their *internal* path deps, but `-p`-selecting
+  # them directly in one invocation re-activates each named package's own
+  # default feature set regardless of that internal wiring. Without this flag
+  # the build fails outright (`getrandom`/`subtle` reach for `std`, which
+  # doesn't exist on this target) — found while implementing this story: the
+  # gate had never actually produced rlibs to size in real CI at all.
   no-std-size-gate:
     runs-on: ubuntu-latest
     steps:
@@ -78,10 +90,34 @@ jobs:
         with:
           targets: thumbv7em-none-eabihf
       - run: >
-          cargo build --release --target thumbv7em-none-eabihf
+          cargo build --release --target thumbv7em-none-eabihf --no-default-features
           -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
-      - name: report rlib sizes (informational until E2-S4)
-        run: ls -l target/thumbv7em-none-eabihf/release/*.rlib
+      - name: enforce rlib size budget (E2-S4)
+        run: |
+          set -e
+          cd target/thumbv7em-none-eabihf/release
+          # Budget = measured baseline (2026-07-23, this toolchain/dependency
+          # set) * 1.2, rounded up to the next byte. Re-baseline deliberately,
+          # not by nudging the multiplier, if a change legitimately needs more
+          # room (e.g. a new crypto primitive) — see docs/AGILE_BACKLOG.md E2-S4.
+          declare -A BUDGET=(
+            [libmmp_types.rlib]=691880    # baseline 576566
+            [libmmp_crypto.rlib]=310827   # baseline 259022
+            [libmmp_core.rlib]=867221     # baseline 722684
+            [libmmp_router.rlib]=263604   # baseline 219670
+            [libmmp_rs_code.rlib]=31076   # baseline 25896
+          )
+          fail=0
+          for f in "${!BUDGET[@]}"; do
+            size=$(stat -c%s "$f")
+            budget=${BUDGET[$f]}
+            echo "$f: $size bytes (budget $budget)"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error::$f exceeds its rlib size budget: $size > $budget"
+              fail=1
+            fi
+          done
+          exit $fail
 
   deny:
     runs-on: ubuntu-latest
