@@ -182,6 +182,24 @@ impl SessionEngine {
         self.peer_node
     }
 
+    /// Fresh session-unique entropy for the conversation-ratchet opportunistic
+    /// epoch bump (doc 08 §5.2/§5.3, E4-S4 bump_epoch wiring) — `None` before
+    /// `Established` fires. The host reads this at session teardown (`chan`
+    /// outlives `Established` all the way to `Closed`/link-down — only `hs`
+    /// and `recon` are cleared then), alongside `peer_identity`, to bump any
+    /// existing `Conv` with this peer once the contact's own message
+    /// exchange has fully drained.
+    pub fn session_material(&self) -> Option<[u8; 32]> {
+        self.chan.as_ref().map(|c| c.session_material())
+    }
+
+    /// The peer's proven identity key, available from `Established` onward
+    /// (same lifetime as [`SessionEngine::session_material`]) — `conv_id`
+    /// needs this, not just the `NodeId` [`SessionEngine::peer`] returns.
+    pub fn peer_identity(&self) -> Option<Key32> {
+        self.chan.as_ref().map(|c| c.peer.identity)
+    }
+
     /// Wire bytes ready to send (drain in order).
     pub fn poll_out(&mut self) -> Option<Vec<u8>> {
         self.out.pop_front()

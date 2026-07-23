@@ -291,6 +291,16 @@ struct NodeCore {
     /// NORMAL and renders nothing official, rather than trusting anything.
     wall_unix_s: u32,
     convs: HashMap<Id16, Conv>,
+    /// Conv IDs for which a live session has completed at least once before
+    /// (E4-S4 bump_epoch wiring). RAM-only bookkeeping, not the conversation
+    /// itself: distinguishes "we've met before" (bump the ratchet epoch, doc
+    /// 08 §5.2) from "this conv was just created moments ago by this very
+    /// session's own async first-contact send/receive" (bumping here would
+    /// desync the two sides — a fresh conv is already fresh, nothing to
+    /// heal). Once ratchet state gains real disk persistence, restoring a
+    /// `Conv` with prior history should also insert its id here so the next
+    /// contact still bumps it correctly.
+    established_convs: HashSet<Id16>,
     groups: HashMap<Id16, GroupState>,
     prekeys: PrekeyStore,
     /// (conv → X3DH material) consumed by the first outgoing message.
@@ -386,6 +396,7 @@ impl Node {
             auth_buckets: AuthorityBuckets::new(),
             wall_unix_s: 0,
             convs: HashMap::new(),
+            established_convs: HashSet::new(),
             groups: HashMap::new(),
             prekeys,
             pending_async: HashMap::new(),
@@ -447,6 +458,16 @@ impl Node {
     /// called from the wire or FFI paths.
     pub fn set_store_quota(&mut self, quota_bytes: u64) {
         self.core.quota = quota_bytes;
+    }
+
+    /// `(send_epoch, recv_epoch)` of our conversation with `peer`, if one
+    /// exists — test/diagnostic seam for the E4-S4 bump_epoch mechanism (doc
+    /// 08 §5.2/§5.3). Not part of the protocol surface — never called from
+    /// the wire or FFI paths, same convention as [`Node::set_store_quota`].
+    pub fn conv_epoch(&self, peer: &NodeId) -> Option<(u16, u16)> {
+        let peer_pub = self.core.resolve_peer_key(peer)?;
+        let conv_id = conversation_id(&self.core.public, &peer_pub);
+        self.core.convs.get(&conv_id).map(|c| (c.send.epoch, c.recv.epoch()))
     }
 
     pub fn node_id(&self) -> NodeId {
@@ -849,6 +870,33 @@ impl Node {
                 self.pump_link(link);
             }
             TalEvent::LinkDown { link } => {
+                // Opportunistic ratchet epoch bump (doc 08 §5.2/§5.3, E4-S4
+                // bump_epoch wiring): applied here, at contact TEARDOWN, not
+                // at `Established` — a message queued moments before this
+                // contact (e.g. `group_remove`'s re-key send) was encrypted
+                // under whatever epoch the chain was at BEFORE this contact
+                // began, and must still be transmitted and decrypted THIS
+                // SAME contact before the epoch moves on for next time.
+                // Bumping at session start would orphan it: the receiver's
+                // recv chain would already be past the epoch that message
+                // was encrypted under. `chan` (unlike `hs`/`recon`) survives
+                // all the way from `Established` to here, so the material
+                // and peer identity are both still available.
+                if let Some(engine) = self.sessions.get(&link) {
+                    if let (Some(material), Some(identity)) =
+                        (engine.session_material(), engine.peer_identity())
+                    {
+                        let conv_id = conversation_id(&self.core.public, &identity);
+                        let met_before = self.core.established_convs.contains(&conv_id);
+                        self.core.established_convs.insert(conv_id);
+                        if met_before {
+                            if let Some(conv) = self.core.convs.get_mut(&conv_id) {
+                                conv.send.bump_epoch(&material);
+                                conv.recv.bump_epoch(&material);
+                            }
+                        }
+                    }
+                }
                 self.sessions.remove(&link);
             }
         }

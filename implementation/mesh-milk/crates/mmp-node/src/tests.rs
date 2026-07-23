@@ -87,6 +87,64 @@ fn direct_message_delivery_and_receipt() {
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Delivered));
 }
 
+/// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session
+/// with a brand-new conversation must NOT bump (nothing to heal yet — the
+/// bug this drill caught: bumping too early, before that first session's own
+/// async message is even processed, desyncs the two sides); every REPEAT
+/// contact after that must bump both sides symmetrically, and messages sent
+/// under the bumped epoch must still decrypt correctly.
+#[test]
+fn ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    // Contact 1: brand-new Conv (async X3DH, first-ever contact) — no bump.
+    alice.send_text(&bob.node_id(), "first").unwrap();
+    contact(&mut alice, &mut bob, 1, 10_000);
+    drain(&mut alice);
+    let bob_events = drain(&mut bob);
+    assert!(
+        bob_events.iter().any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"first")),
+        "the first message must cross before any epoch bump: {bob_events:?}"
+    );
+    assert_eq!(
+        alice.conv_epoch(&bob.node_id()),
+        Some((0, 0)),
+        "first-ever contact must not bump the epoch"
+    );
+    assert_eq!(bob.conv_epoch(&alice.node_id()), Some((0, 0)));
+
+    // Contact 2: both sides have now met before — bump fires, symmetrically.
+    contact(&mut alice, &mut bob, 2, 20_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    assert_eq!(
+        alice.conv_epoch(&bob.node_id()),
+        Some((1, 1)),
+        "a repeat contact must bump the epoch"
+    );
+    assert_eq!(
+        bob.conv_epoch(&alice.node_id()),
+        Some((1, 1)),
+        "both sides must bump in lockstep, or decryption breaks"
+    );
+
+    // A message sent AFTER the bump must still cross correctly under epoch 1.
+    alice.send_text(&bob.node_id(), "second, after the bump").unwrap();
+    contact(&mut alice, &mut bob, 3, 30_000);
+    let bob_events2 = drain(&mut bob);
+    assert!(
+        bob_events2
+            .iter()
+            .any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"second, after the bump")),
+        "a message encrypted under the bumped epoch must still decrypt: {bob_events2:?}"
+    );
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((2, 2)), "the third contact bumps again");
+}
+
 #[test]
 fn three_node_store_carry_forward() {
     // A meets R (relay), then R meets B — the DTN path over space AND time.
