@@ -15,7 +15,13 @@ name = "mmp-tal-peripheral"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "PC BLE peripheral role (GATT server + advertiser): Linux/BlueZ via bluer; Windows/macOS stubs"
+keywords = ["bluetooth", "ble", "bluez", "peripheral"]
+categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 mmp-tal = { path = "../mmp-tal" }

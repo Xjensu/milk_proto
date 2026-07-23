@@ -3,7 +3,13 @@ name = "mmp-tal-mobile"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "Android/iOS BLE glue behind UniFFI callbacks (doc 12 s6)"
+keywords = ["ble", "android", "ios", "mobile"]
+categories = ["network-programming"]
 
 [dependencies]
 mmp-tal = { path = "../mmp-tal" }

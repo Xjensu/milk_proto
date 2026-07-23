@@ -3,7 +3,13 @@ name = "mmp-router"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "spray/utility/quotas/eviction (doc 05)"
+keywords = ["routing", "dtn", "mesh", "no-std"]
+categories = ["no-std", "network-programming"]
 
 [features]
 default = []

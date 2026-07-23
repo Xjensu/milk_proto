@@ -3,7 +3,13 @@ name = "mmp-rs-code"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "no_std GF(256) Reed-Solomon (doc 08 s8; OQ-7 bench lives here)"
+keywords = ["reed-solomon", "erasure-coding", "no-std"]
+categories = ["algorithms", "no-std", "encoding"]
 
 [features]
 default = []

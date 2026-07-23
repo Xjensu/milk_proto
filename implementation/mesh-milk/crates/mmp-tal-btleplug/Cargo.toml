@@ -3,7 +3,13 @@ name = "mmp-tal-btleplug"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "PC BLE (Linux/Windows/macOS) via btleplug"
+keywords = ["bluetooth", "ble", "btleplug"]
+categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 mmp-tal = { path = "../mmp-tal" }

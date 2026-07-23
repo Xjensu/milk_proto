@@ -3,7 +3,13 @@ name = "mmp-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "PC node + debugging/inspection tool"
+keywords = ["ble", "mesh", "cli"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 mmp-node = { path = "../mmp-node" }

@@ -3,7 +3,13 @@ name = "mmp-sim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "discrete-event simulator (OQ-4/OQ-5, doc 12 s8)"
+keywords = ["simulation", "ble", "mesh", "dtn"]
+categories = ["simulation"]
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }

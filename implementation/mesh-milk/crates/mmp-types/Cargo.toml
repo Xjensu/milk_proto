@@ -3,7 +3,13 @@ name = "mmp-types"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "ids, frames, bundles, canonical codec (doc 10)"
+keywords = ["ble", "mesh", "protocol", "codec", "no-std"]
+categories = ["encoding", "no-std", "network-programming"]
 
 [features]
 default = []

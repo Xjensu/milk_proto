@@ -3,7 +3,13 @@ name = "mmp-crypto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "suite 0x01, ratchets, sealed/prekey (doc 08)"
+keywords = ["cryptography", "ed25519", "x25519", "noise", "no-std"]
+categories = ["cryptography", "no-std"]
 
 [features]
 # `std` gates the snow-based Noise XX session layer; everything else is

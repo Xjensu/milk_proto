@@ -3,7 +3,13 @@ name = "mmp-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "UniFFI bindings: Kotlin/Swift API surface"
+keywords = ["uniffi", "ffi", "kotlin", "swift", "mobile"]
+categories = ["network-programming", "external-ffi-bindings"]
 
 [lib]
 # cdylib for Android (.so) / iOS (.dylib via xcframework), staticlib for iOS

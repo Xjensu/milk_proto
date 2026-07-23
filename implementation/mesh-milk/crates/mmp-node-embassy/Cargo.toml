@@ -3,7 +3,13 @@ name = "mmp-node-embassy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "embedded orchestration on the Embassy executor"
+keywords = ["embassy", "embedded", "async"]
+categories = ["embedded", "no-std", "asynchronous"]
 
 [dependencies]
 mmp-core = { path = "../mmp-core" }

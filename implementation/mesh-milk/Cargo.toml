@@ -7,6 +7,11 @@ version = "0.0.0"
 edition = "2021"
 # Provisional license pending a project decision — the Rust-ecosystem default.
 license = "MIT OR Apache-2.0"
+# MSRV (docs/AGILE_BACKLOG.md E2-S3): pinned alongside rust-toolchain.toml's
+# exact channel, not independently — bump both together.
+rust-version = "1.96"
+repository = "https://github.com/Xjensu/milk_proto"
+homepage = "https://github.com/Xjensu/milk_proto"
 
 [workspace.dependencies]
 # Suite 0x01 primitives (doc 08 §1, doc 12 §4).
