@@ -132,6 +132,74 @@ fn receipt_filter_hint_never_purges() {
     assert_eq!(rf.signal(&id), SuppressSignal::Purge); // exact D0 receipt
 }
 
+/// E4-S4 persistence completion (handbook §4.3 step 3): a `SeenIndex`
+/// surviving restart must still recognize IDs it saw before — the whole
+/// point of persisting it, per doc 04 §7's "prevent post-restart duplicate
+/// delivery" acceptance.
+#[test]
+fn seen_index_survives_encode_decode_roundtrip() {
+    let mut seen = SeenIndex::new();
+    let hot = Id16([1; 16]); // stays in the exact ring
+    let bucketed = Id16([2; 16]);
+    seen.insert(&hot, class::DIRECT, 1000);
+    seen.insert(&bucketed, class::CLAIM, 1000); // a different class-max bucket
+
+    let bytes = seen.encode();
+    let restored = SeenIndex::decode(&bytes).expect("well-formed encoding must decode");
+
+    assert!(restored.contains(&hot));
+    assert!(restored.contains(&bucketed));
+    assert!(!restored.contains(&Id16([9; 16])));
+}
+
+#[test]
+fn seen_index_decode_rejects_truncated_and_trailing_bytes() {
+    let mut seen = SeenIndex::new();
+    seen.insert(&Id16([1; 16]), class::DIRECT, 1000);
+    let bytes = seen.encode();
+
+    assert!(SeenIndex::decode(&bytes[..bytes.len() - 1]).is_none(), "truncated tail must not decode");
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(SeenIndex::decode(&trailing).is_none(), "trailing bytes must not decode");
+}
+
+/// Mirrors `seen_index_survives_encode_decode_roundtrip` for `ReceiptFilter`:
+/// both the Bloom-hint buckets and the exact-purge map must survive restart,
+/// preserving the hint-vs-purge asymmetry `receipt_filter_hint_never_purges`
+/// establishes.
+#[test]
+fn receipt_filter_survives_encode_decode_roundtrip() {
+    let mut rf = ReceiptFilter::new();
+    let hinted = Id16([1; 16]);
+    let purged = Id16([2; 16]);
+
+    let mut other = ReceiptFilter::new();
+    other.note_verified_receipt(&hinted, 5000);
+    let buckets = other.summary_buckets(1);
+    rf.union_from_peer(buckets[0].bucket_epoch, &buckets[0].bloom, 5000);
+    rf.note_verified_receipt(&purged, 6000);
+
+    let bytes = rf.encode();
+    let restored = ReceiptFilter::decode(&bytes).expect("well-formed encoding must decode");
+
+    assert_eq!(restored.signal(&hinted), SuppressSignal::Hint);
+    assert_eq!(restored.signal(&purged), SuppressSignal::Purge);
+    assert_eq!(restored.signal(&Id16([9; 16])), SuppressSignal::None);
+}
+
+#[test]
+fn receipt_filter_decode_rejects_truncated_and_trailing_bytes() {
+    let mut rf = ReceiptFilter::new();
+    rf.note_verified_receipt(&Id16([1; 16]), 5000);
+    let bytes = rf.encode();
+
+    assert!(ReceiptFilter::decode(&bytes[..bytes.len() - 1]).is_none(), "truncated tail must not decode");
+    let mut trailing = bytes.clone();
+    trailing.push(0);
+    assert!(ReceiptFilter::decode(&trailing).is_none(), "trailing bytes must not decode");
+}
+
 #[test]
 fn claims_lww_merge_is_deterministic_and_flags_conflicts() {
     let alice = identity(1);

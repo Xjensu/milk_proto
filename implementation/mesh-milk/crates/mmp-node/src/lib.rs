@@ -631,6 +631,31 @@ impl Node {
         true
     }
 
+    /// A snapshot of the current `SeenIndex`, for persistence (`mmp-store`,
+    /// handbook §4.3 step 3) — the resurrection-replay defense (AUDIT F1)
+    /// this exists to protect only works across restart if it survives one.
+    pub fn seen_index(&self) -> SeenIndex {
+        self.core.seen.clone()
+    }
+
+    /// Restore a previously-persisted `SeenIndex`, typically once per
+    /// [`Node::new`] right after opening the snapshot, before any traffic is
+    /// processed — mirrors [`Node::restore_group`]'s call-site convention.
+    pub fn restore_seen_index(&mut self, seen: SeenIndex) {
+        self.core.seen = seen;
+    }
+
+    /// A snapshot of the current `ReceiptFilter` — mirrors [`Node::seen_index`].
+    pub fn receipt_filter(&self) -> ReceiptFilter {
+        self.core.receipts.clone()
+    }
+
+    /// Restore a previously-persisted `ReceiptFilter` — mirrors
+    /// [`Node::restore_seen_index`].
+    pub fn restore_receipt_filter(&mut self, receipts: ReceiptFilter) {
+        self.core.receipts = receipts;
+    }
+
     // ------------------------------------------------------------- sending --
 
     /// Send a text message to `peer`; returns the BundleID to track.

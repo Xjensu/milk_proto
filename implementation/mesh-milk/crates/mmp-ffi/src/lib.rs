@@ -424,18 +424,24 @@ impl From<Event> for FfiEvent {
 ///   because that *is* the `BundleStore` contents; the full `ClaimStore`
 ///   contents (every claim currently held, not just what re-arrives as
 ///   class-3 gossip bundles — re-verified on load, a tampered claim is
-///   dropped); and group membership (which groups we belong to, current
-///   epoch, admin flag — handbook §4.3 steps 1–2).
-/// - **Does NOT survive restart:** `SeenIndex` (dedup/replay window),
-///   `ReceiptFilter`, and all session/ratchet state (conversation keys,
+///   dropped); group membership (which groups we belong to, current epoch,
+///   admin flag); and, as of E4-S4, `SeenIndex` (the resurrection-replay
+///   dedup window, AUDIT F1) and `ReceiptFilter` (the hint/purge dedup
+///   filter) — both are pure protocol bookkeeping with no secret material,
+///   so persisting them has no PCS/forward-secrecy cost, only upside: it
+///   prevents exactly the post-restart duplicate-delivery window a restart
+///   would otherwise silently reopen (handbook §4.3 steps 1–3).
+/// - **Does NOT survive restart:** session/ratchet state (conversation keys,
 ///   X3DH state, group sender-key ratchets — including group members'
 ///   sender-key distributions). This is intentional, not an oversight:
-///   session-security state is designed to rebuild itself from the mesh
-///   rather than persist across restarts — the network is the backup. A
-///   restarted node re-establishes sessions, and re-derives a fresh local
-///   sender key per restored group (remote members' sender keys re-sync via
-///   the normal dist-gossip path on next contact) the same way a
-///   freshly-invited member would.
+///   persisting *secret* session material trades against post-compromise
+///   security unless done very carefully (doc 08 §5.3's ratchet-persistence
+///   amendment covers phones/PC specifically, keystore-wrapped — not yet
+///   wired into this FFI layer, tracked separately). A restarted node
+///   re-establishes sessions, and re-derives a fresh local sender key per
+///   restored group (remote members' sender keys re-sync via the normal
+///   dist-gossip path on next contact) the same way a freshly-invited member
+///   would.
 #[derive(uniffi::Object)]
 pub struct MmpNode {
     inner: Mutex<Node>,
@@ -476,14 +482,16 @@ impl MmpNode {
     /// the snapshot lock is touched, so the fixed node-then-snapshot order
     /// (`store.rs` module docs) holds even though this now touches both.
     fn persist_now(&self, snap: &Arc<Mutex<SnapshotStore>>, now_ms: u64) -> std::io::Result<()> {
-        let (claims, group_blobs) = {
+        let (claims, group_blobs, seen_index, receipt_filter) = {
             let node = self.lock();
-            (node.all_claims(), node.all_group_blobs())
+            (node.all_claims(), node.all_group_blobs(), node.seen_index(), node.receipt_filter())
         };
         let result = {
             let mut s = snap.lock().unwrap_or_else(|poison| poison.into_inner());
             s.set_claims(claims);
             s.set_group_blobs(group_blobs);
+            s.set_seen_index(seen_index);
+            s.set_receipt_filter(receipt_filter);
             s.persist()
         };
         let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -530,6 +538,16 @@ impl MmpNode {
             }
             for blob in guard.group_blobs() {
                 node.restore_group(blob);
+            }
+            // SeenIndex/ReceiptFilter (handbook §4.3 step 3): restore if a
+            // prior snapshot had one, otherwise the node just keeps the
+            // fresh-empty default `Node::new` already constructed — same
+            // "nothing to restore" posture as claims/groups above.
+            if let Some(seen) = guard.seen_index() {
+                node.restore_seen_index(seen.clone());
+            }
+            if let Some(rf) = guard.receipt_filter() {
+                node.restore_receipt_filter(rf.clone());
             }
         }
         Ok(Arc::new(MmpNode {

@@ -6,19 +6,24 @@
 //! so resume ≡ reboot. A redb-backed store slots in behind the same trait when
 //! store sizes outgrow snapshot writes (doc 12 §4 alternative noted).
 //!
-//! Beyond the `BundleStore` contents, the same file also carries two more
+//! Beyond the `BundleStore` contents, the same file also carries four more
 //! record kinds under the same MAGIC/checksum/skip-corrupt discipline
-//! (handbook §4.3 "persistence completion", steps 1–2): every currently-held
+//! (handbook §4.3 "persistence completion", steps 1–3): every currently-held
 //! `Claim` (re-verified on load — a claim that fails signature verification
-//! is dropped exactly like a corrupt record) and an opaque blob per group,
+//! is dropped exactly like a corrupt record); an opaque blob per group,
 //! produced/consumed by `mmp-node`'s `GroupState::encode`/`decode` (this
 //! crate does not depend on `mmp-node`, so it treats those blobs as opaque
-//! bytes). One file, one framing, three record kinds — never three formats.
+//! bytes); and — unlike groups — a typed `SeenIndex` and `ReceiptFilter`,
+//! since both types already live in `mmp-core`, a crate this one already
+//! depends on for `BundleMeta` etc., so there is no layering reason to treat
+//! them as opaque. One file, one framing, five record kinds — never five
+//! formats.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState};
+use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
 use mmp_types::bundle::{class, prio};
 use mmp_types::claim::Claim;
@@ -37,6 +42,11 @@ pub struct SnapshotStore {
     /// Opaque `GroupState::encode()` blobs, same staging discipline as
     /// `claims` (see [`SnapshotStore::set_group_blobs`]).
     group_blobs: Vec<Vec<u8>>,
+    /// Singleton (at most one per node), same staging discipline as `claims`
+    /// (see [`SnapshotStore::set_seen_index`]). `None` until staged or loaded.
+    seen_index: Option<SeenIndex>,
+    /// Singleton, mirrors `seen_index` (see [`SnapshotStore::set_receipt_filter`]).
+    receipt_filter: Option<ReceiptFilter>,
 }
 
 /// Bumped from `MMPSNAP1`: pre-existing snapshot files only ever held bundle
@@ -52,13 +62,23 @@ const RECORD_BUNDLE: u8 = 0;
 const RECORD_CLAIM: u8 = 1;
 /// Record-kind tag: an opaque `mmp_node::group::GroupState::encode()` payload.
 const RECORD_GROUP: u8 = 2;
+/// Record-kind tag: a `SeenIndex::encode()` payload (E4-S4, handbook §4.3 step 3).
+const RECORD_SEEN_INDEX: u8 = 3;
+/// Record-kind tag: a `ReceiptFilter::encode()` payload (E4-S4, handbook §4.3 step 3).
+const RECORD_RECEIPT_FILTER: u8 = 4;
 
 impl SnapshotStore {
     /// Open (or create) a snapshot at `path`. Corrupt records are skipped.
     pub fn open(path: impl Into<PathBuf>) -> SnapshotStore {
         let path = path.into();
-        let mut store =
-            SnapshotStore { mem: MemStore::new(), path, claims: Vec::new(), group_blobs: Vec::new() };
+        let mut store = SnapshotStore {
+            mem: MemStore::new(),
+            path,
+            claims: Vec::new(),
+            group_blobs: Vec::new(),
+            seen_index: None,
+            receipt_filter: None,
+        };
         store.load();
         store
     }
@@ -109,6 +129,20 @@ impl SnapshotStore {
                 RECORD_GROUP => {
                     self.group_blobs.push(payload.to_vec());
                 }
+                RECORD_SEEN_INDEX => {
+                    // A malformed record is dropped exactly like a corrupt
+                    // record — the node just starts with an empty SeenIndex,
+                    // same safe-direction posture as never having persisted
+                    // one at all.
+                    if let Some(seen) = SeenIndex::decode(payload) {
+                        self.seen_index = Some(seen);
+                    }
+                }
+                RECORD_RECEIPT_FILTER => {
+                    if let Some(rf) = ReceiptFilter::decode(payload) {
+                        self.receipt_filter = Some(rf);
+                    }
+                }
                 _ => {} // unknown kind: forward-compat, skip rather than fail closed
             }
         }
@@ -140,6 +174,16 @@ impl SnapshotStore {
                 let mut record = Vec::with_capacity(1 + blob.len());
                 record.push(RECORD_GROUP);
                 record.extend_from_slice(blob);
+                write_record(&mut f, &record)?;
+            }
+            if let Some(seen) = &self.seen_index {
+                let mut record = vec![RECORD_SEEN_INDEX];
+                record.extend_from_slice(&seen.encode());
+                write_record(&mut f, &record)?;
+            }
+            if let Some(rf) = &self.receipt_filter {
+                let mut record = vec![RECORD_RECEIPT_FILTER];
+                record.extend_from_slice(&rf.encode());
                 write_record(&mut f, &record)?;
             }
             f.sync_all()?;
@@ -177,6 +221,31 @@ impl SnapshotStore {
     /// [`SnapshotStore::persist`] — mirrors [`SnapshotStore::set_claims`].
     pub fn set_group_blobs(&mut self, blobs: Vec<Vec<u8>>) {
         self.group_blobs = blobs;
+    }
+
+    /// The `SeenIndex` present in the store: after [`SnapshotStore::open`],
+    /// whatever survived load (`None` if never persisted, or the persisted
+    /// record was corrupt); after [`SnapshotStore::set_seen_index`], whatever
+    /// was most recently staged.
+    pub fn seen_index(&self) -> Option<&SeenIndex> {
+        self.seen_index.as_ref()
+    }
+
+    /// Stage the `SeenIndex` to write on the next [`SnapshotStore::persist`]
+    /// — mirrors [`SnapshotStore::set_claims`]'s staging discipline.
+    pub fn set_seen_index(&mut self, seen: SeenIndex) {
+        self.seen_index = Some(seen);
+    }
+
+    /// The `ReceiptFilter` present in the store — mirrors [`SnapshotStore::seen_index`].
+    pub fn receipt_filter(&self) -> Option<&ReceiptFilter> {
+        self.receipt_filter.as_ref()
+    }
+
+    /// Stage the `ReceiptFilter` to write on the next [`SnapshotStore::persist`]
+    /// — mirrors [`SnapshotStore::set_seen_index`].
+    pub fn set_receipt_filter(&mut self, rf: ReceiptFilter) {
+        self.receipt_filter = Some(rf);
     }
 }
 
@@ -463,5 +532,63 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.group_blobs().len() < 2, "the corrupted group-blob record must not survive load");
+    }
+
+    /// E4-S4 acceptance (handbook §4.3 step 3): a previously-received bundle
+    /// re-offered by a peer after restart must be deduped — proving the
+    /// `SeenIndex` actually survived, not just that its bytes round-trip in
+    /// isolation (already covered directly in `mmp-core::tests`).
+    #[test]
+    fn seen_index_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("seen.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut seen = mmp_core::SeenIndex::new();
+        seen.insert(&Id16([7; 16]), class::DIRECT, 1000);
+
+        let mut s = SnapshotStore::open(&path);
+        s.set_seen_index(seen);
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        assert!(s2.seen_index().unwrap().contains(&Id16([7; 16])));
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 10] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.seen_index().is_none(), "the corrupted SeenIndex record must not survive load");
+    }
+
+    /// Mirrors `seen_index_roundtrip_and_corruption_drop` for `ReceiptFilter`.
+    #[test]
+    fn receipt_filter_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("receipts.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut rf = mmp_core::ReceiptFilter::new();
+        rf.note_verified_receipt(&Id16([8; 16]), 5000);
+
+        let mut s = SnapshotStore::open(&path);
+        s.set_receipt_filter(rf);
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        assert_eq!(
+            s2.receipt_filter().unwrap().signal(&Id16([8; 16])),
+            mmp_core::SuppressSignal::Purge
+        );
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 5] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.receipt_filter().is_none(), "the corrupted ReceiptFilter record must not survive load");
     }
 }

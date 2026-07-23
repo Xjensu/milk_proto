@@ -237,6 +237,61 @@ fn claims_and_group_membership_survive_restart() {
     assert!(msg.is_ok(), "bob's exchange-key/prekey claims must have survived the restart: {msg:?}");
 }
 
+/// The real acceptance test for handbook §4.3 step 3 ("SeenIndex ...
+/// persistence"): a bundle bob re-offers after alice restarts must not fire
+/// `MessageReceived` a second time — proving the resurrection/replay dedup
+/// window (AUDIT F1) survived the restart, not just that its bytes
+/// round-trip in isolation (already covered directly in `mmp-store::tests`
+/// and `mmp-core::tests`).
+#[test]
+fn seen_index_survives_restart_and_dedups_a_replayed_bundle() {
+    let dir = TempDir::new("seen-index-survives-restart");
+    let path = dir.file("alice.mmp");
+    let seed = vec![13u8; 32];
+
+    let bob = node(30);
+    let msg_id;
+
+    {
+        let alice =
+            MmpNode::new(seed.clone(), FfiTier::Relay, Some(path.clone())).expect("valid seed");
+        introduce(&alice, &bob);
+        drain(&alice);
+        drain(&bob);
+
+        msg_id = bob
+            .send_text(alice.node_id(), "replay me".to_string())
+            .expect("alice's claims known");
+        contact(&bob, &alice, 1, 1000);
+        let alice_events = drain(&alice);
+        assert!(
+            alice_events
+                .iter()
+                .any(|e| matches!(e, FfiEvent::MessageReceived { id, .. } if *id == msg_id)),
+            "alice must receive the message before restart"
+        );
+
+        alice.flush().expect("flush to a writable temp dir must succeed");
+        assert_eq!(alice.last_persist_error(), None);
+        // alice is dropped here — simulates process death after a successful flush.
+    }
+
+    let alice2 =
+        MmpNode::new(seed, FfiTier::Relay, Some(path)).expect("reopen the same snapshot path");
+
+    // Bob never purged the bundle (no receipt round-trip modeled here), so it
+    // re-offers on a fresh contact exactly like an honest relay replaying
+    // stale inventory would.
+    contact(&bob, &alice2, 2, 2000);
+    let alice2_events = drain(&alice2);
+    assert!(
+        !alice2_events
+            .iter()
+            .any(|e| matches!(e, FfiEvent::MessageReceived { id, .. } if *id == msg_id)),
+        "SeenIndex must have survived restart: a replayed bundle must not fire MessageReceived twice"
+    );
+}
+
 /// A scanned beacon is accepted without panicking. Beacon ingestion (see
 /// `mmp-node`'s `on_tal_event` / `TalEvent::Beacon` arm, crates/mmp-node/src/lib.rs
 /// around line 423) only folds the decoded ephemeral ID into the population

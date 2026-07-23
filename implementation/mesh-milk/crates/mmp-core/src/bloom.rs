@@ -83,6 +83,41 @@ impl Bloom {
     pub fn count(&self) -> u32 {
         self.count
     }
+
+    /// Persistence wire form (E4-S4 SeenIndex/ReceiptFilter persistence):
+    /// `m:u32 LE ‖ count:u32 LE ‖ bits (m.div_ceil(8) bytes)` — `bits.len()`
+    /// is derivable from `m`, so it isn't stored twice.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(8 + self.bits.len());
+        out.extend_from_slice(&self.m.to_le_bytes());
+        out.extend_from_slice(&self.count.to_le_bytes());
+        out.extend_from_slice(&self.bits);
+        out
+    }
+
+    /// Strict decode: `None` on truncation or trailing bytes — a malformed
+    /// persisted filter is exactly as untrusted as a corrupt disk record
+    /// (mmp-store drops it, never panics on it).
+    pub fn decode(bytes: &[u8]) -> Option<Bloom> {
+        let (bloom, consumed) = Self::decode_prefix(bytes)?;
+        if consumed != bytes.len() {
+            return None; // trailing bytes: not a lone encoded Bloom
+        }
+        Some(bloom)
+    }
+
+    /// Like [`Bloom::decode`], but for embedding a `Bloom` inside a larger
+    /// stream (`SeenIndex`/`ReceiptFilter` persistence, both of which hold a
+    /// list of `(epoch, Bloom)` buckets): returns how many bytes were
+    /// consumed so the caller can keep reading past it, rather than
+    /// requiring the whole remaining buffer to be exactly one `Bloom`.
+    pub fn decode_prefix(bytes: &[u8]) -> Option<(Bloom, usize)> {
+        let m = u32::from_le_bytes(bytes.get(0..4)?.try_into().ok()?);
+        let count = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+        let bits_len = (m as usize).div_ceil(8);
+        let bits = bytes.get(8..8 + bits_len)?;
+        Some((Bloom { bits: bits.to_vec(), m, count }, 8 + bits_len))
+    }
 }
 
 /// Fixed salt for filters that are never broadcast (SeenIndex, ReceiptFilter

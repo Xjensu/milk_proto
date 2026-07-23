@@ -23,6 +23,9 @@ pub enum SuppressSignal {
     Purge,
 }
 
+/// `Clone` so `mmp-node`/`mmp-store` can stage a snapshot for persistence
+/// (E4-S4, handbook §4.3 step 3) without borrowing the live filter.
+#[derive(Clone)]
 pub struct ReceiptFilter {
     /// (bucket_epoch, bloom), ascending; epoch = receipt-time / 6 h.
     buckets: VecDeque<(u64, Bloom)>,
@@ -115,5 +118,54 @@ impl ReceiptFilter {
             }
         }
         self.exact.retain(|_, expiry| *expiry > now_ms);
+    }
+
+    /// Persistence wire form (E4-S4, handbook §4.3 step 3): `bucket_count:u32
+    /// LE ‖ buckets× (epoch:u64 LE, Bloom::encode()) ‖ exact_count:u32 LE ‖
+    /// exact× (Id16, expiry:u64 LE)`.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&(self.buckets.len() as u32).to_le_bytes());
+        for (epoch, bloom) in &self.buckets {
+            out.extend_from_slice(&epoch.to_le_bytes());
+            out.extend_from_slice(&bloom.encode());
+        }
+        out.extend_from_slice(&(self.exact.len() as u32).to_le_bytes());
+        for (id, expiry) in &self.exact {
+            out.extend_from_slice(&id.0);
+            out.extend_from_slice(&expiry.to_le_bytes());
+        }
+        out
+    }
+
+    /// Strict decode: `None` on any truncation or trailing bytes — dropped
+    /// exactly like any other corrupt disk record, never panics on it.
+    pub fn decode(bytes: &[u8]) -> Option<ReceiptFilter> {
+        let mut pos = 0usize;
+        let bucket_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
+        pos += 4;
+        let mut buckets = VecDeque::with_capacity(bucket_count);
+        for _ in 0..bucket_count {
+            let epoch = u64::from_le_bytes(bytes.get(pos..pos + 8)?.try_into().ok()?);
+            pos += 8;
+            let (bloom, consumed) = Bloom::decode_prefix(bytes.get(pos..)?)?;
+            pos += consumed;
+            buckets.push_back((epoch, bloom));
+        }
+        let exact_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
+        pos += 4;
+        let mut exact = BTreeMap::new();
+        for _ in 0..exact_count {
+            let mut a = [0u8; 16];
+            a.copy_from_slice(bytes.get(pos..pos + 16)?);
+            pos += 16;
+            let expiry = u64::from_le_bytes(bytes.get(pos..pos + 8)?.try_into().ok()?);
+            pos += 8;
+            exact.insert(Id16(a), expiry);
+        }
+        if pos != bytes.len() {
+            return None; // trailing bytes
+        }
+        Some(ReceiptFilter { buckets, exact })
     }
 }
