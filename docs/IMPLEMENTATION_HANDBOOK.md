@@ -1232,6 +1232,65 @@ story and suggested per-crate, dependency-ordered attack sequence.
 
 ---
 
+### 4.18 missing_docs fallout across all 7 crates — SHIPPED (E2-S7, 2026-07-24)
+
+**Approach:** 7 parallel agents, one per crate, dispatched per the dependency-order
+plan `docs/AGILE_BACKLOG.md` E2-S7 laid out (`mmp-types` → `mmp-tal` → `mmp-crypto` →
+`mmp-router` → `mmp-core` → `mmp-node` → `mmp-ffi`), each told to add
+`#![warn(missing_docs)]` and write real doc comments until its own crate hit zero
+warnings, with an explicit warning that the workspace's `-D warnings` clippy gate
+(E2-S1) would turn any leftover warning into a hard CI failure.
+
+**A real coordination hazard, not silently absorbed:** the 7 agents shared one
+working tree (no `git worktree` isolation), and — separately, discovered mid-run —
+this repository already had an unrelated concurrent process running in its own
+worktree (`.worktrees/course-foundation-audit`, branch `codex/course-foundation-audit`
+— a different, unrelated task, not touched). `git stash` is repo-wide state, not
+per-worktree, so it was a shared hazard across both. One dispatched agent
+(`mmp-router`) ran exploratory `git stash` / `git apply --3way` commands mid-task to
+investigate a clippy propagation question, which reverted its own and sibling
+crates' (`mmp-tal`, `mmp-crypto`) in-progress edits; those three agents each detected
+the revert via their own periodic `git diff` checks, reapplied their edits, and
+re-verified before reporting. The account also hit its session-limit twice across
+two dispatch rounds (`resets 4pm` then `resets 9pm Moscow`); agents cut off
+mid-verification in round two (`mmp-types`, `mmp-node`, `mmp-ffi`) had, on
+inspection, already finished their actual doc-writing and were only running a final
+confirmation step when killed.
+
+**Verified directly, not trusted from self-reports:** re-ran
+`cargo build -p <crate> --all-features 2>&1 | grep -c "missing documentation"` for
+all 7 crates independently. Six were genuinely at 0. `mmp-core` had a real 14-item
+gap (`bloom.rs::bytes`/`count`, `claims.rs`'s `ClaimMerge`/`ClaimStore` and 5 of its
+methods, `dag.rs`'s `ConversationDag` and 4 of its methods) — exactly where its agent
+had been cut off (it had gotten through `authority.rs`/`ingest.rs`/`lib.rs`/`orset.rs`
+/`rbsr.rs`/`receiptfilter.rs`/`seen.rs`/`session.rs`/`store.rs` before dying).
+Finished those 14 directly rather than redispatching a whole new agent for a
+14-item remainder. Also removed a stray untracked scratch file (`build_out.txt`, an
+agent's redirected build-log) and confirmed no crate ended up with a duplicate
+`#![warn(missing_docs)]` line from the two dispatch rounds (`grep -c` — exactly 1 per
+crate). Spot-checked doc quality directly in the two largest diffs (`mmp-ffi` 174
+lines, `mmp-node` 235 lines): comments cite real internal function names (e.g.
+`NodeCore::deliver_direct`, `NodeCore::handle_receipt`) and existing doc-N
+§-references rather than generic filler — consistent with the agents having actually
+read the code, not guessed.
+
+**One redundant stash left for the user, not auto-dropped:** the mid-incident
+`git stash` (`stash@{0}`, "WIP on master: ef9ee70...") was confirmed redundant —
+its per-file diff sizes matched or were a strict subset of the final working-tree
+state for every file checked (e.g. `mmp-crypto` matched exactly; `mmp-node` had grown
+further past the stash snapshot) — but `git stash drop` was denied by the permission
+classifier as a destructive git operation, correctly; left for the user to drop.
+A second, older, unrelated stash (`stash@{1}`, dated to a much earlier commit,
+containing what looks like an abandoned WIP for the identity-revocation feature)
+was deliberately left untouched — not from this session's work, not this session's
+call to make.
+
+**Verification:** `cargo test --workspace` 167 passed/0 failed/4 ignored (unchanged
+from before this story); `cargo clippy --workspace --all-targets --all-features --
+-D warnings` (the exact CI gate command) clean; `layer-check` OK.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |

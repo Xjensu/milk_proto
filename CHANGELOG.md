@@ -15,6 +15,38 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-24 — E2-S7 missing_docs fallout across all 7 crates
+
+### Added
+- `#![warn(missing_docs)]` on `mmp-types`, `mmp-crypto`, `mmp-core`, `mmp-router`,
+  `mmp-tal`, `mmp-node`, `mmp-ffi`, plus real `///` doc comments for every
+  previously-undocumented public item (~1,150 lines across the 7 crates), closing
+  the gap `docs/AGILE_BACKLOG.md` E2-S3 split out as E2-S7 after measuring the real
+  fallout at 3,023 warnings.
+
+### Process note (a real coordination hazard, recovered from, not hidden)
+- 7 parallel agents shared one working tree; an unrelated concurrent process
+  already running in a separate git worktree (`.worktrees/course-foundation-audit`)
+  meant `git stash` (repo-wide, not per-worktree state) was a shared hazard. One
+  agent's own exploratory `git stash`/`git apply --3way` mid-task reverted its and
+  two sibling crates' in-progress edits; all three detected it via their own
+  verification passes, reapplied their edits, and re-verified. The account also hit
+  its session limit twice across two dispatch rounds; crates cut off mid-verification
+  had, on inspection, already finished their actual doc-writing.
+- Independently re-verified every crate's warning count after all agents finished
+  rather than trusting self-reports: 6 of 7 were genuinely clean; `mmp-core` had a
+  real 14-item gap exactly where its agent was cut off (`bloom.rs`/`claims.rs`/
+  `dag.rs`), finished directly.
+- A redundant stash from the mid-incident (confirmed via diff comparison to be a
+  strict subset of the final working tree) was left for the user to drop — dropping
+  it was correctly denied by the permission classifier as a destructive git
+  operation. An unrelated, older stash was left untouched.
+
+`cargo test --workspace` (167/0/4, unchanged), the exact CI clippy gate command, and
+`layer-check` all green. Full writeup: `docs/IMPLEMENTATION_HANDBOOK.md` §4.18.
+
+---
+
 ## [Implementation] 2026-07-23 — E2-S3 publication hygiene (partial)
 
 ### Added
