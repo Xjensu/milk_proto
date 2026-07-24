@@ -15,6 +15,35 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-25 — E8-S2 signed release artifacts + cargo-audit in CI
+
+### Added
+- `cargo-audit` CI job. Verified locally, not just wired: `cargo audit`
+  (v0.22.2) against this workspace's real `Cargo.lock` — 0 vulnerabilities
+  across 259 crate dependencies. Genuinely redundant with `deny.toml`'s
+  `[advisories]` block (same RustSec database, already checked by the `deny`
+  job) — added anyway because the story names `cargo-audit` specifically.
+- A `release` CI job (tag-triggered, `refs/tags/v*`, gated on `host` passing
+  first) building and **keylessly signing** `mmp-cli` release binaries for all
+  three host OSes via Sigstore/cosign: `id-token: write` lets the workflow
+  trade its own short-lived GitHub OIDC token for an ephemeral Fulcio
+  certificate, with the signature recorded in the public Rekor transparency
+  log. No private key was generated, requested from the user, or stored as a
+  secret anywhere — a deliberate design call in place of the GPG-key-handoff
+  the story's framing implied, since keyless signing removes the key-custody
+  question entirely rather than answering it.
+
+### Honest gap
+- Cosign's signing step cannot be verified outside a real GitHub Actions run —
+  keyless signing needs the ambient OIDC token a CI job provides, which
+  structurally doesn't exist locally. First real tag-triggered run is the
+  outstanding verification.
+
+`cargo test --workspace`, the clippy gate, and `layer-check` all unaffected
+(no crate source touched). Full writeup: `docs/IMPLEMENTATION_HANDBOOK.md` §4.20.
+
+---
+
 ## [Implementation] 2026-07-24 — E2-S5 Android AAR / iOS XCFramework build automation
 
 ### Added

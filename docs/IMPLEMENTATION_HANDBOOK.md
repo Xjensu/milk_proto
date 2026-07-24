@@ -1332,6 +1332,54 @@ this story — only new scripts, CI YAML, and docs); `cargo clippy --workspace
 
 ---
 
+### 4.20 Signed release artifacts + cargo-audit in CI — SHIPPED (E8-S2, 2026-07-25)
+
+**`cargo-audit`, fully verified locally (not just wired):** installed
+`cargo-audit v0.22.2` and ran it directly against this workspace's real
+`Cargo.lock` — `Loaded 1169 security advisories`, `Scanning Cargo.lock for
+vulnerabilities (259 crate dependencies)`, exit 0, zero findings. Genuinely
+redundant with `deny.toml`'s `[advisories]` block (same RustSec database,
+already checked by the existing `deny` CI job) — added as its own CI job anyway
+because the backlog story names `cargo-audit` by name, not because it closes a
+real coverage gap.
+
+**Signed release artifacts — a design call made instead of asking for a
+key.** The user's own instruction was either stop and name the keys to
+generate, or generate them directly. Neither was taken: for CI-signed
+artifacts, the current best-practice answer is **keyless signing** (Sigstore/
+cosign) — there is no long-lived private key to generate, hand over, store as
+a GitHub secret, or ever risk leaking. `id-token: write` lets the new `release`
+job's `cosign sign-blob` step exchange the workflow's own short-lived GitHub
+OIDC token for an ephemeral certificate from Sigstore's public Fulcio CA;
+the signature is recorded in the public Rekor transparency log, so
+verification is against that public log rather than a key distributed to
+verifiers. This sidesteps the key-custody question entirely rather than
+answering it either of the two ways offered.
+
+**Scope decision:** the `release` job (gated `if: startsWith(github.ref,
+'refs/tags/v')` and `needs: host`, so nothing signs unless the main test
+matrix already passed) builds and signs `mmp-cli` release binaries for all
+three host OSes — the one standalone consumer-facing binary this workspace
+produces today. The mobile artifacts (`mmp-ffi.aar`, `MmpCore.xcframework`,
+E2-S2/E2-S5) are not re-signed here; publishing to an actual GitHub Release
+(rather than the workflow artifacts this job produces) is a natural follow-on,
+not attempted.
+
+**Honestly unverified beyond CI-YAML/local-tool checks — a different flavor of
+gap than E2-S5's:** `cargo-audit` above was fully run and verified locally;
+cosign's signing step structurally cannot be — keyless signing needs the
+ambient GitHub Actions OIDC token, which does not exist outside a real
+workflow run, no local workaround possible (this isn't a missing-toolchain gap
+like NDK/Xcode; it's that the credential itself only exists inside CI). First
+real tag-triggered run is the outstanding verification.
+
+**Verification:** `cargo audit` run directly (see above, real result, not
+assumed); `.github/workflows/ci.yml` re-validated as well-formed YAML with all
+14 jobs present; `cargo test --workspace`, the clippy gate, and `layer-check`
+unaffected (no crate source touched).
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
