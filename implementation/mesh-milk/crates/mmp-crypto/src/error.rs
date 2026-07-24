@@ -1,6 +1,8 @@
 //! Crypto-layer errors. Deliberately coarse: callers drop, they don't diagnose
 //! an attacker's inputs.
 
+/// A crypto-layer failure. Variants are coarse by design (see module docs):
+/// callers drop the offending input rather than branch on why it was rejected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CryptoError {
     /// Malformed public key.

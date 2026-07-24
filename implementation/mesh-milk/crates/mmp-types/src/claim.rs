@@ -9,13 +9,21 @@ use crate::wire::{BufExt, Reader};
 
 /// Claim field registry (doc 06 §4.1; 0x07/0x08 are rev-B store-don't-interpret).
 pub mod field {
+    /// Display nickname claim body (raw UTF-8 bytes, capped by `NICKNAME_MAX`).
     pub const NICKNAME: u8 = 0x01;
+    /// Content-addressed avatar root claim body.
     pub const AVATAR_ROOT: u8 = 0x02;
+    /// X25519 exchange (key-agreement) public key claim body.
     pub const EXCHANGE_KEY: u8 = 0x03;
+    /// [`super::PrekeyBatch`] claim body.
     pub const PREKEY_BATCH: u8 = 0x04;
+    /// [`super::Friendship`] claim body.
     pub const FRIENDSHIP: u8 = 0x05;
+    /// Group epoch anchor claim body (`super::EpochAnchor`).
     pub const GROUP_EPOCH_ANCHOR: u8 = 0x06;
+    /// `crate::authcert::AuthCert` claim body (rev-B: store-don't-interpret).
     pub const AUTHCERT: u8 = 0x07;
+    /// `crate::authcert::RevocationList` claim body (rev-B: store-don't-interpret).
     pub const REVOCATION_LIST: u8 = 0x08;
     /// General identity revocation + succession (doc 06 §4.1, handbook §4.6,
     /// E5-S3). Distinct from `REVOCATION_LIST` (0x08, doc 18 §6): that field
@@ -27,14 +35,21 @@ pub mod field {
 /// `mmp1/claim` over `owner ‖ field ‖ seq ‖ body` (doc 10 §3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claim {
+    /// The claim's single-writer identity — the [`field`] register belongs to
+    /// this key, and this key's signature (`sig`) is what authenticates it.
     pub owner: Key32,
+    /// Which [`field`] register this claim updates.
     pub field: u8,
+    /// Monotonic sequence number; higher `seq` wins on merge (LWW).
     pub seq: u32,
+    /// The field-specific body bytes (format depends on `field`).
     pub body: Vec<u8>,
+    /// Owner's signature over [`Claim::signed_object`] under `SigDomain::Claim`.
     pub sig: Sig64,
 }
 
 impl Claim {
+    /// Encode to `owner ‖ field ‖ seq ‖ body(varbytes) ‖ sig`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 1 + 4 + 2 + self.body.len() + 64);
         out.extend_from_slice(&self.owner.0);
@@ -45,6 +60,7 @@ impl Claim {
         out
     }
 
+    /// Strict canonical decode of the wire form produced by [`Claim::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Claim, WireError> {
         let mut r = Reader::new(bytes);
         let claim = Claim {
@@ -74,12 +90,18 @@ impl Claim {
 /// `spk_sig` is under `mmp1/prekey` over `signed_prekey ‖ count ‖ prekeys…`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrekeyBatch {
+    /// The medium-term signed prekey (X3DH), signed by the identity key.
     pub signed_prekey: Key32,
+    /// Signature over `signed_prekey ‖ count ‖ prekeys…`, proving the identity
+    /// key vouches for `signed_prekey`.
     pub spk_sig: Sig64,
+    /// One-time prekeys offered for first-contact key establishment
+    /// (doc 08 §4.2), capped at [`crate::consts::PREKEY_BATCH`].
     pub prekeys: Vec<Key32>,
 }
 
 impl PrekeyBatch {
+    /// Encode to `signed_prekey ‖ spk_sig ‖ count(u8) ‖ prekeys…`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 64 + 1 + 32 * self.prekeys.len());
         out.extend_from_slice(&self.signed_prekey.0);
@@ -91,6 +113,7 @@ impl PrekeyBatch {
         out
     }
 
+    /// Strict decode; rejects a `count` exceeding [`crate::consts::PREKEY_BATCH`].
     pub fn decode(bytes: &[u8]) -> Result<PrekeyBatch, WireError> {
         let mut r = Reader::new(bytes);
         let signed_prekey = r.key32()?;
@@ -122,12 +145,16 @@ impl PrekeyBatch {
 /// Group epoch anchor claim body (doc 06 §8.3): `gid id16, epoch u16, member-set root [32]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EpochAnchor {
+    /// The group this epoch anchor belongs to.
     pub gid: crate::ids::Id16,
+    /// The sender-key epoch this anchor commits to.
     pub epoch: u16,
+    /// Root committing to the epoch's member set.
     pub member_root: [u8; 32],
 }
 
 impl EpochAnchor {
+    /// Encode to `gid ‖ epoch ‖ member_root`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(16 + 2 + 32);
         out.extend_from_slice(&self.gid.0);
@@ -136,6 +163,7 @@ impl EpochAnchor {
         out
     }
 
+    /// Strict decode of the wire form produced by [`EpochAnchor::encode`].
     pub fn decode(bytes: &[u8]) -> Result<EpochAnchor, WireError> {
         let mut r = Reader::new(bytes);
         let gid = r.id16()?;
@@ -162,15 +190,22 @@ impl EpochAnchor {
 /// this crate's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Revocation {
+    /// The identity key being revoked — signed (as the outer [`Claim`]'s
+    /// `owner`) by this same key.
     pub revoked_key: Key32,
+    /// Caller-defined revocation reason code; not interpreted by this crate.
     pub reason: u8,
     /// `None` unless a valid, counter-signed successor accompanies this
     /// revocation. Present/absent together with `successor_countersig`.
     pub successor: Option<Key32>,
+    /// Successor's counter-signature over [`succession_signed_object`],
+    /// present iff `successor` is `Some`.
     pub successor_countersig: Option<Sig64>,
 }
 
 impl Revocation {
+    /// Encode to `revoked_key ‖ reason ‖ has_successor(0x00/0x01) [‖
+    /// successor ‖ successor_countersig]`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 1 + 1 + 32 + 64);
         out.extend_from_slice(&self.revoked_key.0);
@@ -186,6 +221,8 @@ impl Revocation {
         out
     }
 
+    /// Strict decode; rejects any `has_successor` flag byte other than
+    /// `0x00`/`0x01` (doc 10 §6.1's one-valid-encoding rule).
     pub fn decode(bytes: &[u8]) -> Result<Revocation, WireError> {
         let mut r = Reader::new(bytes);
         let revoked_key = r.key32()?;
@@ -209,12 +246,18 @@ impl Revocation {
 /// for `owner`, not merely that `owner` claims so.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Friendship {
+    /// The PATRON's identity key — the outer [`Claim`]'s `owner` is the
+    /// dependent.
     pub friend: Key32,
+    /// Timestamp the friendship began, per [`friendship_signed_object`].
     pub since: u64,
+    /// The patron's signature (`SigDomain::Friend`) over
+    /// [`friendship_signed_object`], proving the patron agreed to buffer.
     pub countersig: Sig64,
 }
 
 impl Friendship {
+    /// Encode to `friend ‖ since ‖ countersig`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(32 + 8 + 64);
         out.extend_from_slice(&self.friend.0);
@@ -223,6 +266,7 @@ impl Friendship {
         out
     }
 
+    /// Strict decode of the wire form produced by [`Friendship::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Friendship, WireError> {
         let mut r = Reader::new(bytes);
         let friendship =

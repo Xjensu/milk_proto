@@ -30,6 +30,10 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Derive the full identity (Ed25519 signing key, X25519 exchange key,
+    /// node id) from a 32-byte seed. The exchange secret is derived via
+    /// `blake3::derive_key("mmp1 exchange-x25519 v1", seed)`, so the same
+    /// seed always reconstructs the same identity.
     pub fn from_seed(seed: &[u8; 32]) -> Identity {
         let signing = SigningKey::from_bytes(seed);
         let x_seed = Zeroizing::new(blake3::derive_key("mmp1 exchange-x25519 v1", seed));
@@ -40,14 +44,17 @@ impl Identity {
         Identity { signing, exchange, public, exchange_public, node_id }
     }
 
+    /// The Ed25519 public identity key.
     pub fn public(&self) -> Key32 {
         self.public
     }
 
+    /// The X25519 exchange public key (also the Noise XX static public key).
     pub fn exchange_public(&self) -> Key32 {
         self.exchange_public
     }
 
+    /// The node id derived from the identity's public key.
     pub fn node_id(&self) -> NodeId {
         self.node_id
     }

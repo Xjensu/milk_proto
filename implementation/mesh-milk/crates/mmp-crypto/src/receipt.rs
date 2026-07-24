@@ -4,6 +4,9 @@
 use mmp_types::ids::Id16;
 use zeroize::Zeroizing;
 
+/// Derive the receipt MAC key from the conversation root:
+/// `derive_key("mmp1 receipt", conv_root)`. Only conversation-key holders
+/// can compute this, so only they can mint valid receipts.
 pub fn receipt_key(conv_root: &[u8; 32]) -> Zeroizing<[u8; 32]> {
     Zeroizing::new(blake3::derive_key("mmp1 receipt", conv_root))
 }

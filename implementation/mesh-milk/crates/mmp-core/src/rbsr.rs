@@ -22,6 +22,9 @@ use mmp_types::ids::Id16;
 /// High bit of the wire `domain` byte marks a resolution echo.
 pub const DOMAIN_REPLY_FLAG: u8 = 0x80;
 
+/// `FP(range) = BLAKE3(xor_fold(ids) ‖ count)[0..8]` (doc 06 §3): a
+/// commutative (order-independent) fingerprint of a set of IDs, used to
+/// compare a range against a peer's without exchanging the full ID list.
 pub fn fingerprint(ids: &[Id16]) -> u64 {
     let mut fold = [0u8; 16];
     for id in ids {
@@ -82,6 +85,7 @@ fn split_ranges(lo: &Id16, hi: &Id16, ids: &[Id16], parts: usize) -> Vec<(Id16, 
 
 /// One domain's reconciliation state on one side of a session.
 pub struct Reconciler {
+    /// The wire domain byte this reconciler is running RBSR for.
     pub domain: u8,
     /// Ranges we already sent our full ID list for.
     listed: BTreeSet<(Id16, Id16)>,
@@ -93,11 +97,16 @@ pub struct Reconciler {
 
 /// The reconciler asks the host for its sorted IDs per range through this seam.
 pub trait IdSource {
+    /// The host's sorted local IDs for `domain` within `[lo, hi]` inclusive.
     fn ids_in(&mut self, domain: u8, lo: &Id16, hi: &Id16) -> Vec<Id16>;
+    /// Whether the host already holds `id` (used to turn a peer's ID list
+    /// into WANTs for the ones we lack).
     fn has(&mut self, id: &Id16) -> bool;
 }
 
 impl Reconciler {
+    /// Builds a fresh reconciler for `domain`: nothing listed, no ranges
+    /// open, nothing known missing yet.
     pub fn new(domain: u8) -> Reconciler {
         Reconciler { domain, listed: BTreeSet::new(), open: 0, missing: BTreeSet::new() }
     }
@@ -113,6 +122,7 @@ impl Reconciler {
         }
     }
 
+    /// Whether every range opened for this domain has been resolved.
     pub fn is_done(&self) -> bool {
         self.open == 0
     }

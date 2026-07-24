@@ -9,6 +9,7 @@
 //! Secrets zeroize on drop; RNG only via injected `rand_core::CryptoRngCore`.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 

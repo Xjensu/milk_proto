@@ -10,37 +10,62 @@ use crate::err::WireError;
 use crate::ids::{Id16, Key32, Sig64};
 use crate::wire::{BufExt, Reader};
 
+/// Frame type: HS (handshake payload carrier, doc 10 §2.1).
 pub const FT_HS: u8 = 0x01;
+/// Frame type: ID_PROOF (post-handshake identity proof, doc 10 §2.1).
 pub const FT_ID_PROOF: u8 = 0x02;
+/// Frame type: CREDIT (session credit grant).
 pub const FT_CREDIT: u8 = 0x03;
+/// Frame type: SUMMARY (RBSR reconciliation summary, doc 10 §2.3).
 pub const FT_SUMMARY: u8 = 0x10;
+/// Frame type: RECON_INIT (RBSR range-reconciliation start, doc 10 §2.4).
 pub const FT_RECON_INIT: u8 = 0x11;
+/// Frame type: RECON_RANGE (RBSR sub-range offer, doc 10 §2.4).
 pub const FT_RECON_RANGE: u8 = 0x12;
+/// Frame type: RECON_IDS (RBSR terminal ID list, doc 10 §2.4).
 pub const FT_RECON_IDS: u8 = 0x13;
+/// Frame type: WANT (explicit bundle-ID request).
 pub const FT_WANT: u8 = 0x14;
+/// Frame type: BUNDLE (raw bundle bytes).
 pub const FT_BUNDLE: u8 = 0x20;
+/// Frame type: BUDGET (per-bundle forwarding-copy budget grant).
 pub const FT_BUDGET: u8 = 0x21;
+/// Frame type: BLOB_REQ (blob-plane symbol request).
 pub const FT_BLOB_REQ: u8 = 0x30;
+/// Frame type: BLOB_HAVE (blob-plane symbol availability advertisement).
 pub const FT_BLOB_HAVE: u8 = 0x31;
+/// Frame type: FRIEND_OFFER (friendship/proxy-buffering solicitation, handbook §4.5).
 pub const FT_FRIEND_OFFER: u8 = 0x40;
+/// Frame type: FRIEND_ACK (friendship offer countersigned acceptance, handbook §4.5).
 pub const FT_FRIEND_ACK: u8 = 0x41;
+/// Frame type: PROXY_SUMMARY (patron's per-dependent buffering hint, handbook §4.5).
 pub const FT_PROXY_SUMMARY: u8 = 0x42;
+/// Frame type: ERROR (session error notice, doc 10 §2).
 pub const FT_ERROR: u8 = 0x7e;
+/// Frame type: CLOSE (session termination).
 pub const FT_CLOSE: u8 = 0x7f;
 
 /// ERROR codes (doc 10 §2: `code u8 + varbytes detail`).
 pub mod errcode {
+    /// Peer sent a frame type this implementation does not support.
     pub const UNSUPPORTED: u8 = 0x01;
+    /// Peer violated the session protocol (malformed frame, bad sequencing, …).
     pub const PROTOCOL: u8 = 0x02;
+    /// Peer's frame exceeded a size cap.
     pub const OVERSIZE: u8 = 0x03;
 }
 
 /// RBSR range descriptor: `lo id16, hi id16, count u32, fp u64` (doc 10 §2.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
+    /// Inclusive lower bound of the ID range.
     pub lo: Id16,
+    /// Inclusive upper bound of the ID range.
     pub hi: Id16,
+    /// Number of items the sender believes fall in `[lo, hi]`.
     pub count: u32,
+    /// Fingerprint (e.g. XOR/hash accumulator) of the items in `[lo, hi]`,
+    /// used to detect mismatches without listing every ID.
     pub fp: u64,
 }
 
@@ -59,28 +84,43 @@ impl Range {
 /// SUMMARY contents (doc 10 §2.3).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Summary {
+    /// Per-epoch receipt Bloom buckets (ReceiptFilter hint, doc 06 §6/§9).
     pub receipt_buckets: Vec<SummaryBucket>,
+    /// Per-node claim sequence digest, for claim-store reconciliation.
     pub claim_digest: Vec<ClaimDigestEntry>,
+    /// Group IDs this peer has hints about.
     pub group_hints: Vec<Id16>,
+    /// Per-conversation causal-DAG head hints.
     pub want_heads: Vec<WantHeads>,
 }
 
+/// One receipt-filter Bloom bucket entry within a [`Summary`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SummaryBucket {
+    /// Which time bucket (see `crate::consts::FILTER_BUCKETS`) this covers.
     pub bucket_epoch: u16,
+    /// OR-folded Bloom filter bytes for this bucket, capped at
+    /// `crate::consts::BLOOM_SUMMARY_MAX`.
     pub bloom: Vec<u8>,
 }
 
+/// One claim-store digest entry within a [`Summary`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ClaimDigestEntry {
+    /// Truncated prefix of the claim owner's NodeID/key, for compactness.
     pub node_prefix: u32,
+    /// Which claim [`crate::claim::field`] this entry digests.
     pub field: u8,
+    /// The sender's known sequence number for this owner/field pair.
     pub seq: u32,
 }
 
+/// One conversation's causal-DAG head hint within a [`Summary`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WantHeads {
+    /// The conversation these heads belong to.
     pub conv: Id16,
+    /// BundleIDs the sender believes are current causal-DAG heads.
     pub heads: Vec<Id16>,
 }
 
@@ -90,15 +130,18 @@ pub struct WantHeads {
 /// the dependent solicits from the patron.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FriendOfferBody {
+    /// Timestamp the dependent proposes the friendship begin at.
     pub since: u64,
 }
 
 impl FriendOfferBody {
+    /// Encode to `since`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(8);
         out.put_u64(self.since);
         out
     }
+    /// Strict decode of the wire form produced by [`FriendOfferBody::encode`].
     pub fn decode(bytes: &[u8]) -> Result<FriendOfferBody, WireError> {
         let mut r = Reader::new(bytes);
         let since = r.u64()?;
@@ -112,13 +155,16 @@ impl FriendOfferBody {
 /// `SigDomain::Friend`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FriendAckBody {
+    /// The patron's countersignature accepting the friendship.
     pub countersig: Sig64,
 }
 
 impl FriendAckBody {
+    /// Encode to `countersig`.
     pub fn encode(&self) -> Vec<u8> {
         self.countersig.0.to_vec()
     }
+    /// Strict decode of the wire form produced by [`FriendAckBody::encode`].
     pub fn decode(bytes: &[u8]) -> Result<FriendAckBody, WireError> {
         let mut r = Reader::new(bytes);
         let countersig = r.sig64()?;
@@ -132,17 +178,21 @@ impl FriendAckBody {
 /// spray-suppression hint only (doc 06 §7 MVP, AUDIT F11 Hint/Purge shape).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProxySummaryBody {
+    /// The dependent this buffering hint is about.
     pub dependent: Id16,
+    /// Bloom filter of BundleIDs the patron is currently buffering for `dependent`.
     pub bloom: Vec<u8>,
 }
 
 impl ProxySummaryBody {
+    /// Encode to `dependent ‖ bloom(varbytes)`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(16 + 2 + self.bloom.len());
         out.extend_from_slice(&self.dependent.0);
         out.put_var(&self.bloom);
         out
     }
+    /// Strict decode of the wire form produced by [`ProxySummaryBody::encode`].
     pub fn decode(bytes: &[u8]) -> Result<ProxySummaryBody, WireError> {
         let mut r = Reader::new(bytes);
         let dependent = r.id16()?;
@@ -155,15 +205,22 @@ impl ProxySummaryBody {
 /// HELLO, carried inside the Noise handshake payloads (doc 10 §2.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Hello {
+    /// Wire version this node speaks.
     pub ver: u8,
+    /// Cipher suites this node supports, most-preferred first.
     pub suites: Vec<u8>,
+    /// This node's device/battery tier (doc 04).
     pub tier: u8,
+    /// Feature/capability bitfield.
     pub flags: u16,
+    /// Initial forwarding-copy credit offered to the peer.
     pub credits: u8,
+    /// L2CAP PSM (BLE) this node listens on for follow-up connections.
     pub psm: u16,
 }
 
 impl Hello {
+    /// Encode to `ver ‖ suites(varbytes) ‖ tier ‖ flags ‖ credits ‖ psm`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(9 + self.suites.len());
         out.push(self.ver);
@@ -174,6 +231,7 @@ impl Hello {
         out.put_u16(self.psm);
         out
     }
+    /// Strict decode of the wire form produced by [`Hello::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Hello, WireError> {
         let mut r = Reader::new(bytes);
         let hello = Hello {
@@ -189,31 +247,99 @@ impl Hello {
     }
 }
 
+/// One decoded session frame's payload (doc 10 §2) — the type tag on the wire
+/// is derived from the variant via [`Frame::typ`], never stored redundantly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Frame {
+    /// Noise handshake message bytes, opaque to this crate.
     Hs(Vec<u8>),
-    IdProof { identity: Key32, sig: Sig64 },
+    /// Post-handshake identity proof.
+    IdProof {
+        /// The proving node's Ed25519 identity public key.
+        identity: Key32,
+        /// Signature proving possession of `identity`'s private key.
+        sig: Sig64,
+    },
+    /// Forwarding-copy credit grant.
     Credit(u8),
+    /// RBSR reconciliation summary.
     Summary(Summary),
-    ReconInit { domain: u8, window: u8, range: Range },
-    ReconRange { domain: u8, ranges: Vec<Range> },
-    ReconIds { domain: u8, lo: Id16, hi: Id16, ids: Vec<Id16> },
+    /// Start of an RBSR range reconciliation.
+    ReconInit {
+        /// Which reconciliation domain (bundle store, claim store, …) this covers.
+        domain: u8,
+        /// Reconciliation window parameter.
+        window: u8,
+        /// The initial range being reconciled.
+        range: Range,
+    },
+    /// RBSR sub-range offer in response to a mismatch.
+    ReconRange {
+        /// Which reconciliation domain this covers.
+        domain: u8,
+        /// The offered sub-ranges.
+        ranges: Vec<Range>,
+    },
+    /// RBSR terminal ID list (below the list-threshold, sent directly).
+    ReconIds {
+        /// Which reconciliation domain this covers.
+        domain: u8,
+        /// Inclusive lower bound of the listed range.
+        lo: Id16,
+        /// Inclusive upper bound of the listed range.
+        hi: Id16,
+        /// The IDs present in `[lo, hi]`.
+        ids: Vec<Id16>,
+    },
+    /// Explicit request for the listed BundleIDs.
     Want(Vec<Id16>),
     /// Raw bundle bytes; canonical decode happens at ingest, not framing.
     Bundle(Vec<u8>),
-    Budget { id: Id16, granted: u8 },
-    BlobReq { root: Id16, block: u16, bitmap: Vec<u8> },
-    BlobHave { root: Id16, block: u16, bitmap: Vec<u8> },
+    /// Per-bundle forwarding-copy budget grant.
+    Budget {
+        /// The BundleID this grant applies to.
+        id: Id16,
+        /// Number of forwarding copies granted.
+        granted: u8,
+    },
+    /// Blob-plane symbol request.
+    BlobReq {
+        /// Blob root ID being requested.
+        root: Id16,
+        /// Stripe (block) index within the blob.
+        block: u16,
+        /// Bitmap of requested symbol indices within the stripe.
+        bitmap: Vec<u8>,
+    },
+    /// Blob-plane symbol availability advertisement.
+    BlobHave {
+        /// Blob root ID being advertised.
+        root: Id16,
+        /// Stripe (block) index within the blob.
+        block: u16,
+        /// Bitmap of available symbol indices within the stripe.
+        bitmap: Vec<u8>,
+    },
     /// Friendship frames: wire types parse (peers must not choke), agent is
     /// stubbed for MVP (HANDOFF §0) — payloads kept opaque.
     FriendOffer(Vec<u8>),
+    /// See [`Frame::FriendOffer`].
     FriendAck(Vec<u8>),
+    /// See [`Frame::FriendOffer`].
     ProxySummary(Vec<u8>),
-    Error { code: u8, detail: Vec<u8> },
+    /// Session error notice.
+    Error {
+        /// One of the [`errcode`] constants.
+        code: u8,
+        /// Free-form detail bytes.
+        detail: Vec<u8>,
+    },
+    /// Session termination.
     Close,
 }
 
 impl Frame {
+    /// The wire type tag (one of the `FT_*` constants) for this frame's variant.
     pub fn typ(&self) -> u8 {
         match self {
             Frame::Hs(_) => FT_HS,
@@ -236,6 +362,7 @@ impl Frame {
         }
     }
 
+    /// Encode just this frame's payload bytes (without the `len ‖ typ` envelope).
     pub fn encode_payload(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
@@ -329,6 +456,9 @@ impl Frame {
         out
     }
 
+    /// Decode a frame's payload given its already-extracted type byte; the
+    /// inverse of [`Frame::typ`] + [`Frame::encode_payload`]. Rejects any
+    /// `typ` not among the `FT_*` constants.
     pub fn decode_payload(typ: u8, payload: &[u8]) -> Result<Frame, WireError> {
         let mut r = Reader::new(payload);
         let frame = match typ {
@@ -459,6 +589,9 @@ pub const MAX_ENVELOPE_PAYLOAD: usize = MAX_FRAME_PAYLOAD + 32;
 /// `(frame type, payload slice, total bytes consumed)`.
 pub type EnvelopeParts<'a> = (u8, &'a [u8], usize);
 
+/// Try to read one envelope (`len ‖ typ ‖ payload`) off the front of `buf`.
+/// Returns `Ok(None)` if `buf` doesn't yet hold a complete frame; the caller
+/// should read more bytes and retry. See [`EnvelopeParts`] for the success shape.
 pub fn read_envelope(buf: &[u8]) -> Result<Option<EnvelopeParts<'_>>, WireError> {
     if buf.len() < 3 {
         return Ok(None);

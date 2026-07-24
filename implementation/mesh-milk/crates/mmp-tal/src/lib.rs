@@ -7,6 +7,7 @@
 //! (AUDIT F10), so a TAL never buffers more than one radio burst.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -36,6 +37,8 @@ pub const DEV_RX_CHARACTERISTIC_UUID: &str = "6d6d7031-0002-4d4d-5031-6d6573686d
 /// Link-quality hints for transfer scheduling (doc 05 §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LinkQuality {
+    /// Maximum bytes the link will carry in one write (ATT MTU for BLE
+    /// backends, or an equivalent framing ceiling for other transports).
     pub mtu: u16,
     /// EWMA goodput estimate, bits/s.
     pub goodput_bps: u32,
@@ -52,13 +55,34 @@ impl Default for LinkQuality {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TalEvent {
     /// A beacon advertisement was scanned.
-    Beacon { payload: Vec<u8>, rssi: i8 },
+    Beacon {
+        /// The raw advertisement payload as scanned, undecoded.
+        payload: Vec<u8>,
+        /// Received signal strength of the advertisement, in dBm.
+        rssi: i8,
+    },
     /// A reliable, ordered link came up (we dialed if `initiator`).
-    LinkUp { link: LinkId, initiator: bool, quality: LinkQuality },
+    LinkUp {
+        /// Host-assigned identifier of the link that came up.
+        link: LinkId,
+        /// `true` if this side dialed the link, `false` if it accepted an
+        /// incoming connection.
+        initiator: bool,
+        /// Link-quality hints to seed the transfer scheduler with.
+        quality: LinkQuality,
+    },
     /// Bytes arrived on a link.
-    LinkData { link: LinkId, bytes: Vec<u8> },
+    LinkData {
+        /// The link the bytes arrived on.
+        link: LinkId,
+        /// The raw bytes received, undecoded.
+        bytes: Vec<u8>,
+    },
     /// The link dropped (any reason — the protocol treats all alike).
-    LinkDown { link: LinkId },
+    LinkDown {
+        /// The link that dropped.
+        link: LinkId,
+    },
 }
 
 /// In-memory duplex link pair for tests and `mmp-sim` — the same seam real
@@ -70,26 +94,32 @@ pub struct MemLink {
 }
 
 impl MemLink {
+    /// Creates an empty link pair with both queues drained.
     pub fn new() -> MemLink {
         MemLink::default()
     }
 
+    /// Queues `bytes` as sent from side A, to be read back by [`MemLink::recv_b`].
     pub fn send_a(&mut self, bytes: Vec<u8>) {
         self.a_to_b.push_back(bytes);
     }
 
+    /// Queues `bytes` as sent from side B, to be read back by [`MemLink::recv_a`].
     pub fn send_b(&mut self, bytes: Vec<u8>) {
         self.b_to_a.push_back(bytes);
     }
 
+    /// Pops the oldest byte chunk sent by side B, if any is queued.
     pub fn recv_a(&mut self) -> Option<Vec<u8>> {
         self.b_to_a.pop_front()
     }
 
+    /// Pops the oldest byte chunk sent by side A, if any is queued.
     pub fn recv_b(&mut self) -> Option<Vec<u8>> {
         self.a_to_b.pop_front()
     }
 
+    /// `true` when neither direction has any bytes queued.
     pub fn is_quiet(&self) -> bool {
         self.a_to_b.is_empty() && self.b_to_a.is_empty()
     }

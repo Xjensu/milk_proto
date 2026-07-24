@@ -20,12 +20,18 @@ use mmp_types::ids::{Id16, Key32};
 /// Doc 18 §2 verification failure reasons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CertReject {
+    /// `cert.suite` isn't the one supported suite (`0x01`).
     BadSuite,
+    /// The `mmp1/authcert` signature over `cert.signed_object()` doesn't
+    /// verify under the pinned issuer key.
     BadSignature,
     /// No pinned root for the cert's scope, or the cert's `issuer` doesn't
     /// match the one pinned for it.
     UntrustedIssuer,
+    /// `now_unix_s` is past `cert.not_after` (plus `NOT_AFTER_SKEW_S`).
     Expired,
+    /// The `(subject, scope)` pair is on the sticky revocation list as of
+    /// `now_unix_s`.
     Revoked,
 }
 
@@ -34,6 +40,8 @@ pub enum CertReject {
 /// variant is reserved so the enum doesn't need to change when it lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RootTrust {
+    /// The root was pinned locally (e.g. via a QR-ceremony) rather than
+    /// learned from gossip.
     Pinned,
 }
 
@@ -52,6 +60,8 @@ pub struct AuthorityStore {
 }
 
 impl AuthorityStore {
+    /// Builds an empty store: no subscriptions, no pinned roots, no certs,
+    /// no revocations.
     pub fn new() -> AuthorityStore {
         AuthorityStore::default()
     }
@@ -61,10 +71,14 @@ impl AuthorityStore {
         self.subscribed.insert(scope);
     }
 
+    /// Reverses [`AuthorityStore::subscribe`]: `scope` no longer passes the
+    /// local subscription filter.
     pub fn unsubscribe(&mut self, scope: &Id16) {
         self.subscribed.remove(scope);
     }
 
+    /// Whether `scope` currently passes the local subscription filter set by
+    /// [`AuthorityStore::subscribe`]/[`AuthorityStore::unsubscribe`].
     pub fn is_subscribed(&self, scope: &Id16) -> bool {
         self.subscribed.contains(scope)
     }

@@ -14,13 +14,18 @@ use crate::wire::{BufExt, Reader};
 /// Class 1 direct message: `conv id16, ratchet_epoch u16, msg_index u32, ct varbytes`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectPayload {
+    /// Conversation ID, selecting which ratchet state to use.
     pub conv: Id16,
+    /// Ratchet epoch, for key selection on decrypt.
     pub epoch: u16,
+    /// Message index within the ratchet epoch, for key selection on decrypt.
     pub index: u32,
+    /// AEAD ciphertext (the doc-16 apptype byte and body live inside it).
     pub ct: Vec<u8>,
 }
 
 impl DirectPayload {
+    /// Encode to `conv ‖ epoch ‖ index ‖ ct(varbytes)`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(16 + 2 + 4 + 2 + self.ct.len());
         out.extend_from_slice(&self.conv.0);
@@ -29,6 +34,7 @@ impl DirectPayload {
         out.put_var(&self.ct);
         out
     }
+    /// Strict decode of the wire form produced by [`DirectPayload::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
         let p = DirectPayload {
@@ -47,15 +53,30 @@ impl DirectPayload {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AsyncPayload {
     /// `mode 0x00, eph key32, ct varbytes`.
-    Sealed { eph: Key32, ct: Vec<u8> },
+    Sealed {
+        /// Sender's ephemeral X25519 public key for this sealed message.
+        eph: Key32,
+        /// AEAD ciphertext.
+        ct: Vec<u8>,
+    },
     /// `mode 0x01, prekey_id u16, sender_xpk key32, eph key32, ct varbytes`.
     /// `sender_xpk` is the sender's static exchange key, carried in clear (as
     /// in X3DH's first message) because the receiver needs it for the DH set
     /// before it can decrypt — it is public claim data anyway (doc 08 §4.2).
-    Prekey { prekey_id: u16, sender_xpk: Key32, eph: Key32, ct: Vec<u8> },
+    Prekey {
+        /// Which of the receiver's published one-time prekeys was consumed.
+        prekey_id: u16,
+        /// Sender's static X25519 exchange key, carried in clear (see variant doc).
+        sender_xpk: Key32,
+        /// Sender's ephemeral X25519 public key for this X3DH exchange.
+        eph: Key32,
+        /// AEAD ciphertext.
+        ct: Vec<u8>,
+    },
 }
 
 impl AsyncPayload {
+    /// Encode to the mode-tagged wire form (see variant docs for each mode's layout).
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
@@ -74,6 +95,7 @@ impl AsyncPayload {
         }
         out
     }
+    /// Strict decode; rejects any mode byte other than `0x00`/`0x01`.
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
         let p = match r.u8()? {
@@ -95,15 +117,23 @@ impl AsyncPayload {
 /// `gid id16, epoch u16, member id16, chain_index u32, ct varbytes, member_sig sig64`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupPayload {
+    /// Group ID.
     pub gid: Id16,
+    /// Sender-key epoch, for key selection on decrypt.
     pub epoch: u16,
+    /// Sending member's ID within the group.
     pub member: Id16,
+    /// Message index within this member's sender-key chain.
     pub chain_index: u32,
+    /// AEAD ciphertext.
     pub ct: Vec<u8>,
+    /// Sending member's signature (`SigDomain::GroupMsg`, under the member's
+    /// group signature key) over [`GroupPayload::signed_object`].
     pub member_sig: Sig64,
 }
 
 impl GroupPayload {
+    /// Encode to `gid ‖ epoch ‖ member ‖ chain_index ‖ ct(varbytes) ‖ member_sig`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(16 + 2 + 16 + 4 + 2 + self.ct.len() + 64);
         out.extend_from_slice(&self.gid.0);
@@ -114,6 +144,7 @@ impl GroupPayload {
         out.extend_from_slice(&self.member_sig.0);
         out
     }
+    /// Strict decode of the wire form produced by [`GroupPayload::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
         let p = GroupPayload {
@@ -142,17 +173,21 @@ impl GroupPayload {
 /// Class 0 receipt (doc 10 §4.3): `delivered id16, mac [u8;16]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReceiptPayload {
+    /// BundleID of the bundle this receipt confirms delivery of.
     pub delivered: Id16,
+    /// MAC binding this receipt to its delivery (prevents forged receipts).
     pub mac: [u8; 16],
 }
 
 impl ReceiptPayload {
+    /// Encode to `delivered ‖ mac`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(32);
         out.extend_from_slice(&self.delivered.0);
         out.extend_from_slice(&self.mac);
         out
     }
+    /// Strict decode of the wire form produced by [`ReceiptPayload::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
         let delivered = r.id16()?;
@@ -166,7 +201,9 @@ impl ReceiptPayload {
 
 /// Body-interior application type tags (doc 16 §3.1).
 pub mod apptype {
+    /// Plain UTF-8 text message body.
     pub const TEXT: u8 = 0x00;
+    /// [`crate::manifest::FileManifest`] body.
     pub const FILE_MANIFEST: u8 = 0x01;
     /// Group sender-key distribution, sent over the pairwise channel
     /// (doc 08 §6.1; implementation-assigned tag, invisible to relays).
@@ -187,7 +224,10 @@ pub mod apptype {
 /// framing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SymbolPayload {
+    /// Opaque Merkle inclusion-path bytes (decoded by `mmp-crypto`), capped
+    /// at [`SYMBOL_PATH_MAX`].
     pub path: Vec<u8>,
+    /// The symbol's raw bytes, always exactly [`SYMBOL_SIZE`] long.
     pub symbol: Vec<u8>,
 }
 
@@ -198,6 +238,7 @@ pub struct SymbolPayload {
 const SYMBOL_PATH_MAX: usize = 1024;
 
 impl SymbolPayload {
+    /// Encode to `path(varbytes) ‖ symbol`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(2 + self.path.len() + self.symbol.len());
         out.put_var(&self.path);
@@ -205,6 +246,8 @@ impl SymbolPayload {
         out
     }
 
+    /// Strict decode; rejects a `path` longer than [`SYMBOL_PATH_MAX`] and
+    /// requires exactly [`SYMBOL_SIZE`] trailing symbol bytes.
     pub fn decode(bytes: &[u8]) -> Result<SymbolPayload, WireError> {
         let mut r = Reader::new(bytes);
         let path = r.varbytes(SYMBOL_PATH_MAX)?.to_vec();

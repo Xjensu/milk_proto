@@ -20,18 +20,30 @@ use crate::ids::{node_id_of, Id16, Key32, NodeId, Sig64, U40_MAX};
 use crate::tlv::{decode_exts, encode_exts, Ext, TLV_PARENTS};
 use crate::wire::{BufExt, Reader};
 
+/// Current wire version (4-bit nibble); decode rejects any other value.
 pub const WIRE_VERSION: u8 = 1;
+/// Length of the trailing Ed25519 signature, bytes.
 pub const SIG_LEN: usize = 64;
+/// Byte offset of the 5-byte `lifetime_ms` field within the encoded bundle —
+/// the span [`zero_lifetime`] blanks out for BundleID/signature purposes.
 pub const LIFETIME_OFFSET: usize = 50;
+/// Length of the fixed (pre-TLV, pre-payload, pre-signature) bundle header,
+/// bytes — everything up to and including the `ext_len` field.
 pub const FIXED_HEADER_LEN: usize = 58;
 
 /// Bundle classes (doc 03 §4.1; class 5 defined by doc 18, relay-blind here).
 pub mod class {
+    /// Class 0: control traffic (receipts, acks).
     pub const CONTROL: u8 = 0;
+    /// Class 1: direct (1:1) message.
     pub const DIRECT: u8 = 1;
+    /// Class 2: group message.
     pub const GROUP: u8 = 2;
+    /// Class 3: claim record (LWW register update).
     pub const CLAIM: u8 = 3;
+    /// Class 4: blob-plane erasure-coded symbol.
     pub const SYMBOL: u8 = 4;
+    /// Class 5: authority announcement (doc 18).
     pub const ANNOUNCEMENT: u8 = 5;
 }
 
@@ -39,33 +51,51 @@ pub mod class {
 /// field itself is unchanged wire (doc 03 §4.1, values 0-3); this just names
 /// the values class-5 admission (doc 18 §5.2) cares about.
 pub mod prio {
+    /// Highest priority: safety emergencies.
     pub const EMERGENCY: u8 = 0;
+    /// Operational priority (e.g. platform-change announcements).
     pub const OPERATIONAL: u8 = 1;
+    /// Normal priority.
     pub const NORMAL: u8 = 2;
+    /// Lowest priority: bulk/non-urgent traffic.
     pub const BULK: u8 = 3;
 }
 
 /// Defined flag bits; all others are reserved-zero (doc 10 §6.1).
+/// Set iff the bundle carries a `Parents` TLV; decode cross-checks this bit
+/// against the TLVs actually present (canonical single-encoding rule).
 pub const FLAG_HAS_PARENTS: u8 = 0b001;
+/// Set when the sender requests a class-0 delivery receipt for this bundle.
 pub const FLAG_WANTS_RECEIPT: u8 = 0b010;
 /// Async first-contact key establishment payload form (doc 10 §4.1).
 pub const FLAG_ASYNC_KEYS: u8 = 0b100;
 const FLAGS_KNOWN: u8 = FLAG_HAS_PARENTS | FLAG_WANTS_RECEIPT | FLAG_ASYNC_KEYS;
 
+/// The bundle: MMP/1's one on-wire unit of store-and-forward traffic (doc 10
+/// §3). Carries its own routing header, extensions, opaque payload, and
+/// signature; see the module doc for the exact byte layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bundle {
+    /// Low nibble of the version/class byte — one of the [`class`] constants.
     pub class: u8,
+    /// Bitfield of `FLAG_*` constants; reserved bits must be zero (checked on decode).
     pub flags: u8,
     /// Origin's full Ed25519 identity public key, inline (AUDIT F2) —
     /// verify-before-forward is unconditional.
     pub origin: Key32,
+    /// Destination NodeID, or a group/broadcast ID depending on `class`.
     pub dest: Id16,
     /// REMAINING lifetime; relay-mutable, excluded from ID and signature.
     pub lifetime_ms: u64,
+    /// Forwarding priority, 0-3 (see [`prio`] for class-5 naming); rejected
+    /// above 3 on decode.
     pub priority: u8,
     /// Strictly ascending by TLV type (enforced on decode, asserted on encode).
     pub exts: Vec<Ext>,
+    /// Opaque, class-specific body bytes (see `mmp-types::payload` for the
+    /// per-class schemas this typically holds).
     pub payload: Vec<u8>,
+    /// Origin's Ed25519 signature over [`Bundle::signing_message`].
     pub signature: Sig64,
 }
 
@@ -125,6 +155,8 @@ impl Bundle {
         node_id_of(&self.origin)
     }
 
+    /// The bundle's causal-parent BundleIDs from its `Parents` TLV, or an
+    /// empty slice if it carries none.
     pub fn parents(&self) -> &[Id16] {
         for ext in &self.exts {
             if let Ext::Parents(p) = ext {

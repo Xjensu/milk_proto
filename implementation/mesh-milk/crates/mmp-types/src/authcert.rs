@@ -19,6 +19,8 @@ use crate::wire::{BufExt, Reader};
 /// "absent bit1 caps the subject at prio 1 (OPERATIONAL)", i.e. EMERGENCY
 /// requires BOTH bits. Bits 2-7 reserved.
 pub const CAP_ANNOUNCE: u8 = 0b01;
+/// See [`CAP_ANNOUNCE`] — the second capability bit, required (together with
+/// `CAP_ANNOUNCE`) to declare EMERGENCY/0 priority.
 pub const CAP_PRIORITY_EMERGENCY: u8 = 0b10;
 
 /// Doc 18 §2. Wire: `suite(1) subject(32) scope(16) caps(1) priority_budget(2)
@@ -34,6 +36,7 @@ pub struct AuthCert {
     pub subject: Key32,
     /// scope_id (`scope_id_of`) this cert is valid for.
     pub scope: Id16,
+    /// Bitfield of `CAP_*` constants granted to `subject`.
     pub caps: u8,
     /// Elevated-priority admissions per hour (doc 18 §5.2/§5.3). ⚠
     pub priority_budget: u16,
@@ -47,6 +50,7 @@ pub struct AuthCert {
 }
 
 impl AuthCert {
+    /// Encode to the fixed 152-byte wire form (see module doc for layout).
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(152);
         out.push(self.suite);
@@ -60,6 +64,7 @@ impl AuthCert {
         out
     }
 
+    /// Strict decode of the wire form produced by [`AuthCert::encode`].
     pub fn decode(bytes: &[u8]) -> Result<AuthCert, WireError> {
         let mut r = Reader::new(bytes);
         let cert = AuthCert {
@@ -97,6 +102,7 @@ impl AuthCert {
 /// than silently "fixed" in the doc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnouncementBody {
+    /// Cipher-agility selector; see [`AuthCert::suite`] for the same rationale.
     pub suite: u8,
     /// 0 delay, 1 platform_change, 2 safety_emergency, 3.. reserved.
     pub ann_type: u8,
@@ -115,6 +121,8 @@ pub struct AnnouncementBody {
 }
 
 impl AnnouncementBody {
+    /// Encode to `suite ‖ ann_type ‖ scope ‖ not_after ‖ text(varbytes) ‖
+    /// sig` — note this WIRE order differs from [`AnnouncementBody::signed_object`]'s.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(1 + 1 + 16 + 4 + 2 + self.text.len() + 64);
         out.push(self.suite);
@@ -126,6 +134,8 @@ impl AnnouncementBody {
         out
     }
 
+    /// Strict decode of the wire form produced by [`AnnouncementBody::encode`];
+    /// `text` is capped at [`ANNOUNCE_TEXT_MAX`].
     pub fn decode(bytes: &[u8]) -> Result<AnnouncementBody, WireError> {
         let mut r = Reader::new(bytes);
         let body = AnnouncementBody {
@@ -159,8 +169,12 @@ impl AnnouncementBody {
 /// One entry of a REVOCATION_LIST body (doc 18 §6). 52 B.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RevEntry {
+    /// The AuthCert `subject` this entry revokes.
     pub subject: Key32,
+    /// The AuthCert `scope` this entry revokes within.
     pub scope: Id16,
+    /// The revoked cert's `not_after` — identifies WHICH grant is revoked
+    /// (a subject may hold multiple certs for the same scope over time).
     pub not_after: u32,
 }
 
@@ -170,11 +184,14 @@ pub struct RevEntry {
 /// authenticated by the claim wrapper's ordinary `mmp1/claim` owner signature.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RevocationList {
+    /// Cipher-agility selector; see [`AuthCert::suite`] for the same rationale.
     pub suite: u8,
+    /// The issuer's currently-revoked grants, capped at [`REVLIST_MAX`].
     pub entries: Vec<RevEntry>,
 }
 
 impl RevocationList {
+    /// Encode to `suite ‖ count(u8) ‖ entries…`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(2 + 52 * self.entries.len());
         out.push(self.suite);
@@ -187,6 +204,7 @@ impl RevocationList {
         out
     }
 
+    /// Strict decode; rejects an entry `count` exceeding [`REVLIST_MAX`].
     pub fn decode(bytes: &[u8]) -> Result<RevocationList, WireError> {
         let mut r = Reader::new(bytes);
         let suite = r.u8()?;

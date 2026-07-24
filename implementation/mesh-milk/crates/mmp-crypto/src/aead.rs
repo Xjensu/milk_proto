@@ -8,6 +8,8 @@ use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 
 use crate::error::CryptoError;
 
+/// Seal `plaintext` under `key` with associated data `ad`, using the fixed
+/// zero nonce (sound here because every key is single-use, see module docs).
 pub fn seal(key: &[u8; 32], ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
@@ -15,6 +17,8 @@ pub fn seal(key: &[u8; 32], ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
         .expect("chacha20poly1305 encrypt is infallible for in-memory buffers")
 }
 
+/// Open `ciphertext` under `key` with associated data `ad`, using the fixed
+/// zero nonce. Fails with [`CryptoError::Aead`] if the tag does not verify.
 pub fn open(key: &[u8; 32], ad: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher

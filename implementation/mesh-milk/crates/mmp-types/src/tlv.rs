@@ -10,9 +10,13 @@ use crate::err::WireError;
 use crate::ids::Id16;
 use crate::wire::{BufExt, Reader};
 
+/// TLV type 0x01: causal-parent references (see [`Ext::Parents`]).
 pub const TLV_PARENTS: u8 = 0x01;
+/// TLV type 0x02: group key epoch (see [`Ext::GroupEpoch`]).
 pub const TLV_GROUP_EPOCH: u8 = 0x02;
+/// TLV type 0x03: blob symbol coordinates (see [`Ext::SymbolInfo`]).
 pub const TLV_SYMBOL_INFO: u8 = 0x03;
+/// TLV type 0x80: traffic-shape padding (see [`Ext::Padding`]).
 pub const TLV_PADDING: u8 = 0x80;
 /// Optional-range (doc 18 §5.2.1): a self-contained AuthCert attached to an
 /// elevated-priority announcement. Deliberately NOT a typed `Ext` variant — a
@@ -25,8 +29,13 @@ pub const TLV_AUTHCERT_ATTACH: u8 = 0x81;
 /// variant" treatment as `TLV_AUTHCERT_ATTACH`.
 pub const TLV_SCOPE_INFO: u8 = 0x82;
 
+/// Maximum causal parents a single `Parents` TLV may carry.
 pub const MAX_PARENTS: usize = 4;
 
+/// One decoded bundle extension TLV. Variants below `0x80` are critical
+/// (unknown critical types reject the whole bundle on decode); `0x80` and
+/// above are optional and unknown ones round-trip opaquely via
+/// [`Ext::Optional`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ext {
     /// 0x01 — causal references, 1–4 BundleIDs (conversation DAG, doc 06 §5).
@@ -34,14 +43,31 @@ pub enum Ext {
     /// 0x02 — group key epoch (class 2).
     GroupEpoch(u16),
     /// 0x03 — blob symbol coordinates (class 4).
-    SymbolInfo { root: Id16, block: u16, sym: u16, k: u8, n: u8 },
+    SymbolInfo {
+        /// Blob root ID this symbol belongs to.
+        root: Id16,
+        /// Stripe (block) index within the blob.
+        block: u16,
+        /// Symbol index within the stripe.
+        sym: u16,
+        /// Reed-Solomon data-symbol count for this stripe.
+        k: u8,
+        /// Reed-Solomon total (data + parity) symbol count for this stripe.
+        n: u8,
+    },
     /// 0x80 — traffic-shape padding (value bytes preserved verbatim).
     Padding(Vec<u8>),
     /// 0x81–0xFF — unknown optional, parse-and-ignore but re-encodable.
-    Optional { typ: u8, val: Vec<u8> },
+    Optional {
+        /// The unrecognized TLV type byte.
+        typ: u8,
+        /// The TLV's raw value bytes, kept opaque for re-encoding.
+        val: Vec<u8>,
+    },
 }
 
 impl Ext {
+    /// The TLV type byte this extension encodes/decoded as.
     pub fn typ(&self) -> u8 {
         match self {
             Ext::Parents(_) => TLV_PARENTS,

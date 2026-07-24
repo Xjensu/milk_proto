@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 
 use crate::error::CryptoError;
 
+/// Branching factor of the Merkle tree: each internal node hashes 4 children.
 pub const ARITY: usize = 4;
 
 /// Maximum inclusion-path depth the wire codec accepts (E5-S1 decision D1).
@@ -14,6 +15,7 @@ pub const ARITY: usize = 4;
 /// `mmp-types/src/consts.rs`.
 pub const MERKLE_PATH_MAX_LEVELS: usize = 8;
 
+/// BLAKE3 hash of one source block — a Merkle leaf.
 pub fn hash_block(block: &[u8]) -> [u8; 32] {
     *blake3::hash(block).as_bytes()
 }
@@ -43,12 +45,17 @@ pub fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
 /// sibling hashes in group order (excluding ours).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathLevel {
+    /// Our position within the sibling group at this level (`0..ARITY`).
     pub pos: u8,
+    /// Sibling hashes at this level, in group order, excluding our own.
     pub siblings: Vec<[u8; 32]>,
 }
 
+/// An inclusion path from one leaf up to the tree root: one [`PathLevel`] per
+/// level of the tree, leaf-adjacent level first.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MerklePath {
+    /// The path levels, ordered from the leaf's level up to the root.
     pub levels: Vec<PathLevel>,
 }
 

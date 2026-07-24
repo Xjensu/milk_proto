@@ -29,6 +29,8 @@ pub struct PrekeyStore {
 }
 
 impl PrekeyStore {
+    /// Generate a fresh signed-prekey and `count` one-time prekeys, ids
+    /// numbered `0..count`.
     pub fn generate(rng: &mut impl CryptoRngCore, count: usize) -> PrekeyStore {
         let spk = x25519_dalek::StaticSecret::random_from_rng(&mut *rng);
         let spk_public = Key32(x25519_dalek::PublicKey::from(&spk).to_bytes());
@@ -55,8 +57,12 @@ impl PrekeyStore {
 
 /// Sender-side agreement output.
 pub struct SenderAgreement {
+    /// The sender's fresh ephemeral X25519 public key, to be sent to the
+    /// recipient alongside the message.
     pub eph_pub: Key32,
+    /// The one-time prekey id consumed, or [`PREKEY_NONE`] if none was used.
     pub prekey_id: u16,
+    /// The derived initial conversation chain key.
     pub ck0: Zeroizing<[u8; 32]>,
 }
 

@@ -15,6 +15,9 @@ struct MsgNode {
     height: u32,
 }
 
+/// Causal partial order over one conversation's messages via the PARENTS TLV
+/// (doc 06 §5): tracks per-message height, the current heads (frontier), and
+/// gaps (referenced parents not yet held).
 #[derive(Default)]
 pub struct ConversationDag {
     nodes: BTreeMap<Id16, MsgNode>,
@@ -25,6 +28,7 @@ pub struct ConversationDag {
 }
 
 impl ConversationDag {
+    /// An empty DAG (no messages, no heads, no gaps).
     pub fn new() -> ConversationDag {
         ConversationDag::default()
     }
@@ -76,14 +80,17 @@ impl ConversationDag {
         ids
     }
 
+    /// Whether `id` is already known to this DAG.
     pub fn contains(&self, id: &Id16) -> bool {
         self.nodes.contains_key(id)
     }
 
+    /// Number of messages currently held (does not count unresolved gaps).
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    /// True if no messages have been inserted yet.
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }

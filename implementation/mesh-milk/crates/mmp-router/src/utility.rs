@@ -26,14 +26,27 @@ struct Predict {
     last_used: u64,
 }
 
+/// Locally-observed history for one peer in the ContactGraph, feeding social
+/// `tie` (see [`UtilityState::tie`]) — capped in count at `CONTACT_GRAPH_CAP`
+/// by `note_contact`'s LRU-style eviction of unverified strangers.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ContactStats {
+    /// Number of completed contacts recorded with this peer so far.
     pub encounters: u32,
+    /// Sum of all recorded contact durations with this peer, in ms.
     pub total_duration_ms: u64,
+    /// `now_ms` of the most recent recorded contact (0 if never encountered,
+    /// e.g. a QR-bootstrap `verified` contact with no radio history yet).
     pub last_seen: u64,
+    /// Whether this peer's identity has been out-of-band verified (e.g. QR
+    /// bootstrap), granting the `tie` bonus regardless of radio history.
     pub verified: bool,
 }
 
+/// Per-node routing state: the PRoPHET predictability table, the local
+/// ContactGraph, the rolling windows behind `n_hat`, and the smoothed
+/// estimate itself. All bounded (`P_TABLE_CAP`, `CONTACT_GRAPH_CAP`, 24 h
+/// windows) so state stays flat at 10k-node scale.
 pub struct UtilityState {
     p_table: BTreeMap<NodeId, Predict>,
     contacts: BTreeMap<NodeId, ContactStats>,
@@ -51,6 +64,7 @@ impl Default for UtilityState {
 }
 
 impl UtilityState {
+    /// Fresh state: empty P-table and ContactGraph, N̂ = 0.
     pub fn new() -> UtilityState {
         UtilityState {
             p_table: BTreeMap::new(),
@@ -90,15 +104,20 @@ impl UtilityState {
         self.trim_windows(now_ms);
     }
 
+    /// Record an unresolved ephemeral-id sighting into the 24 h N̂ window,
+    /// for peers seen over the radio but not yet identity-resolved.
     pub fn note_ephem(&mut self, ephem: [u8; 8], now_ms: u64) {
         self.ephem_seen.push_back((now_ms, ephem));
         self.trim_windows(now_ms);
     }
 
+    /// Flag `peer` as out-of-band verified (e.g. QR bootstrap), creating a
+    /// ContactGraph entry if none exists yet.
     pub fn mark_verified(&mut self, peer: &NodeId) {
         self.contacts.entry(*peer).or_default().verified = true;
     }
 
+    /// Look up the raw ContactGraph stats recorded for `peer`, if any.
     pub fn contact(&self, peer: &NodeId) -> Option<&ContactStats> {
         self.contacts.get(peer)
     }

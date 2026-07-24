@@ -8,24 +8,37 @@ use crate::err::WireError;
 use crate::ids::{Id16, Key32, Sig64};
 use crate::wire::{BufExt, Reader};
 
+/// One shared file's metadata within a [`FileManifest`] (doc 16 §2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
+    /// File name, capped at [`NAME_MAX`] bytes.
     pub name: Vec<u8>,
+    /// MIME type string, capped at [`MIME_MAX`] bytes.
     pub mime: Vec<u8>,
+    /// Full file size, bytes.
     pub size: u32,
+    /// Blob-plane Merkle root identifying this file's erasure-coded content.
     pub file_root: Id16,
+    /// Reed-Solomon data-symbol count for this file's stripes.
     pub rs_k: u8,
+    /// Reed-Solomon total (data + parity) symbol count for this file's stripes.
     pub rs_n: u8,
+    /// BLAKE3 hash of the full plaintext file, for post-assembly verification.
     pub full_hash: [u8; 32],
     /// Present iff flags bit0 (has_thumbnail).
     pub thumb_root: Option<Id16>,
 }
 
+/// A signed share of 1..16 files (doc 16 §2), carried as apptype `0x01`
+/// inside a class 1/2 bundle payload's plaintext body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileManifest {
+    /// Cipher-agility selector; see `crate::authcert::AuthCert::suite` for
+    /// the same rationale.
     pub suite: u8,
     /// Original sharer's identity key, inline — verifies standalone (CR2bis-1).
     pub sharer: Key32,
+    /// The 1..[`ALBUM_MAX_FILES`] files in this share.
     pub entries: Vec<FileEntry>,
     /// `mmp1/manifest` over `suite ‖ sharer ‖ count ‖ entries`.
     pub sig: Sig64,
@@ -65,6 +78,7 @@ impl FileEntry {
 }
 
 impl FileManifest {
+    /// Encode to `suite ‖ sharer ‖ count(u8) ‖ entries… ‖ sig`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         out.push(self.suite);
@@ -77,6 +91,8 @@ impl FileManifest {
         out
     }
 
+    /// Strict decode; rejects an entry `count` of zero or above
+    /// [`ALBUM_MAX_FILES`].
     pub fn decode(bytes: &[u8]) -> Result<FileManifest, WireError> {
         let mut r = Reader::new(bytes);
         let suite = r.u8()?;

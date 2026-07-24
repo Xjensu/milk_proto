@@ -9,14 +9,35 @@ use alloc::vec::Vec;
 
 use mmp_types::ids::{Id16, NodeId};
 
+/// A unique tag stamped on each ADD op, used to reference it from a later
+/// REMOVE and to distinguish concurrent adds of the same member.
 pub type Tag = u64;
 
+/// An admin-signed group-membership CRDT operation (doc 06 §8). Signature
+/// verification happens one layer up (node/group service); `OrSet` only
+/// applies already-verified ops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MembershipOp {
-    Add { member: NodeId, tag: Tag },
-    Remove { tags: Vec<Tag> },
+    /// Adds `member` to the set under a fresh `tag`, unless that tag is
+    /// already tombstoned.
+    Add {
+        /// The node being added to the group.
+        member: NodeId,
+        /// The unique tag stamped on this add, later referenced by a REMOVE.
+        tag: Tag,
+    },
+    /// Tombstones every tag in `tags`, removing it from every member's live
+    /// add-set (add-wins: a member with no live tags left is no longer a
+    /// member).
+    Remove {
+        /// The add-tags being tombstoned.
+        tags: Vec<Tag>,
+    },
 }
 
+/// Add-wins group membership CRDT (doc 06 §8): each member's presence is the
+/// union of live (non-tombstoned) add-tags, epoch anchors serve as GC
+/// checkpoints, and compaction below an anchor discards resolved history.
 #[derive(Default, Debug, Clone)]
 pub struct OrSet {
     /// member → live add-tags.
@@ -25,10 +46,15 @@ pub struct OrSet {
 }
 
 impl OrSet {
+    /// Builds an empty set: no members, no tombstones.
     pub fn new() -> OrSet {
         OrSet::default()
     }
 
+    /// Applies one already-verified [`MembershipOp`]: `Add` inserts the tag
+    /// unless it's already tombstoned; `Remove` tombstones each tag, strips
+    /// it from every member's live set, and drops any member left with no
+    /// live tags.
     pub fn apply(&mut self, op: &MembershipOp) {
         match op {
             MembershipOp::Add { member, tag } => {
@@ -53,10 +79,12 @@ impl OrSet {
         self.adds.get(member).map(|s| s.iter().copied().collect()).unwrap_or_default()
     }
 
+    /// Every member with at least one live add-tag.
     pub fn members(&self) -> Vec<NodeId> {
         self.adds.keys().copied().collect()
     }
 
+    /// Whether `member` currently has at least one live add-tag.
     pub fn contains(&self, member: &NodeId) -> bool {
         self.adds.contains_key(member)
     }

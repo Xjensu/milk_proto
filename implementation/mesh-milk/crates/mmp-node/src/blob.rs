@@ -23,9 +23,18 @@ use mmp_types::ids::{Id16, Key32};
 /// (doc 16 §3.1 fail-safe), so that spec edge is unreachable here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlobState {
+    /// Registered via `Node::fetch_file` but no verified symbol has arrived
+    /// for it yet.
     Wanted,
+    /// At least one symbol has been Merkle-verified and set in `have`; still
+    /// short of a full assembly.
     Fetching,
+    /// Every stripe decoded, the whole-file BLAKE3 check passed, and the
+    /// `.part` file was renamed to its final destination.
     Assembled,
+    /// Terminal failure state: whole-file hash mismatch, TTL lapse,
+    /// `Node::cancel_fetch`, or a filesystem error prevented finalizing.
+    /// Already-verified partial symbols remain servable via `blob_index`.
     Abandoned,
 }
 

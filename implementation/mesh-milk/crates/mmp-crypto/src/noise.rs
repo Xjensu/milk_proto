@@ -19,6 +19,9 @@ use mmp_types::ids::{Key32, Sig64};
 use crate::error::CryptoError;
 use crate::identity::{verify, Identity};
 
+/// The Noise protocol name this crate speaks — standard, formally analyzed
+/// XX with X25519, ChaCha20-Poly1305, and BLAKE2s (see module docs for why
+/// BLAKE3 is not substituted here).
 pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 /// Snow message overhead headroom (two AEAD tags + two public keys).
 const HS_OVERHEAD: usize = 128;
@@ -35,6 +38,7 @@ pub struct PeerIntro {
     pub identity: Key32,
     /// Peer's Noise static = its X25519 exchange key.
     pub exchange: Key32,
+    /// The peer's HELLO carried inside the handshake payload.
     pub hello: Hello,
 }
 
@@ -46,6 +50,7 @@ pub struct NoiseHandshake {
     remote_intro: Option<(Key32, Hello)>,
 }
 
+/// Result of driving one step of [`NoiseHandshake::advance`].
 pub struct HandshakeOutcome {
     /// Next HS frame payload to send, if any.
     pub reply: Option<Vec<u8>>,
@@ -166,12 +171,17 @@ impl NoiseHandshake {
 /// AEAD transport channel after a completed XX handshake.
 pub struct NoiseChannel {
     transport: snow::TransportState,
+    /// Noise handshake hash — session-unique transcript binding, reused as
+    /// the ID_PROOF preimage input and as ratchet epoch-bump material.
     pub handshake_hash: [u8; 32],
+    /// Whether the local side was the Noise XX initiator.
     pub initiator: bool,
+    /// The peer's proven-after-ID_PROOF identity and exchange keys.
     pub peer: PeerIntro,
 }
 
 impl NoiseChannel {
+    /// Encrypt one transport message (adds the Noise AEAD tag).
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
         let mut out = alloc::vec![0u8; plaintext.len() + 16];
         let n = self.transport.write_message(plaintext, &mut out).map_err(|_| CryptoError::Noise)?;
@@ -179,6 +189,7 @@ impl NoiseChannel {
         Ok(out)
     }
 
+    /// Decrypt one transport message.
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
         let mut out = alloc::vec![0u8; ciphertext.len()];
         let n = self.transport.read_message(ciphertext, &mut out).map_err(|_| CryptoError::Noise)?;

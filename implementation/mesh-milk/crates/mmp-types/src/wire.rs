@@ -9,20 +9,25 @@ use alloc::vec::Vec;
 use crate::err::WireError;
 use crate::ids::{Id16, Key32, Sig64};
 
+/// A cursor over a byte slice that decodes MMP/1's canonical little-endian
+/// primitives, tracking position and rejecting reads past the end.
 pub struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
 }
 
 impl<'a> Reader<'a> {
+    /// Start a reader at the beginning of `buf`.
     pub fn new(buf: &'a [u8]) -> Self {
         Reader { buf, pos: 0 }
     }
 
+    /// Bytes not yet consumed.
     pub fn remaining(&self) -> usize {
         self.buf.len() - self.pos
     }
 
+    /// Take the next `n` bytes, or [`WireError::Truncated`] if fewer remain.
     pub fn take(&mut self, n: usize) -> Result<&'a [u8], WireError> {
         if self.remaining() < n {
             return Err(WireError::Truncated);
@@ -32,25 +37,30 @@ impl<'a> Reader<'a> {
         Ok(s)
     }
 
+    /// Read one byte.
     pub fn u8(&mut self) -> Result<u8, WireError> {
         Ok(self.take(1)?[0])
     }
 
+    /// Read a little-endian `u16`.
     pub fn u16(&mut self) -> Result<u16, WireError> {
         let b = self.take(2)?;
         Ok(u16::from_le_bytes([b[0], b[1]]))
     }
 
+    /// Read a little-endian `u32`.
     pub fn u32(&mut self) -> Result<u32, WireError> {
         let b = self.take(4)?;
         Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
     }
 
+    /// Read a little-endian 5-byte (`u40`) value, widened into a `u64`.
     pub fn u40(&mut self) -> Result<u64, WireError> {
         let b = self.take(5)?;
         Ok(u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], 0, 0, 0]))
     }
 
+    /// Read a little-endian `u64`.
     pub fn u64(&mut self) -> Result<u64, WireError> {
         let b = self.take(8)?;
         let mut a = [0u8; 8];
@@ -58,6 +68,7 @@ impl<'a> Reader<'a> {
         Ok(u64::from_le_bytes(a))
     }
 
+    /// Read a fixed 16-byte [`Id16`].
     pub fn id16(&mut self) -> Result<Id16, WireError> {
         let b = self.take(16)?;
         let mut a = [0u8; 16];
@@ -65,6 +76,7 @@ impl<'a> Reader<'a> {
         Ok(Id16(a))
     }
 
+    /// Read a fixed 32-byte [`Key32`].
     pub fn key32(&mut self) -> Result<Key32, WireError> {
         let b = self.take(32)?;
         let mut a = [0u8; 32];
@@ -72,6 +84,7 @@ impl<'a> Reader<'a> {
         Ok(Key32(a))
     }
 
+    /// Read a fixed 64-byte [`Sig64`].
     pub fn sig64(&mut self) -> Result<Sig64, WireError> {
         let b = self.take(64)?;
         let mut a = [0u8; 64];
@@ -100,9 +113,13 @@ impl<'a> Reader<'a> {
 
 /// Little-endian append helpers for `Vec<u8>`.
 pub trait BufExt {
+    /// Append a little-endian `u16`.
     fn put_u16(&mut self, v: u16);
+    /// Append a little-endian `u32`.
     fn put_u32(&mut self, v: u32);
+    /// Append the low 5 bytes of `v`, little-endian (the wire `u40` form).
     fn put_u40(&mut self, v: u64);
+    /// Append a little-endian `u64`.
     fn put_u64(&mut self, v: u64);
     /// `u16 len ‖ bytes`. Caller guarantees `bytes.len() ≤ u16::MAX` via type caps.
     fn put_var(&mut self, bytes: &[u8]);

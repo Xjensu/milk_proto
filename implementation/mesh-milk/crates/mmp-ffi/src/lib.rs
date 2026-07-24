@@ -16,6 +16,8 @@
 //! returns public keys, NodeIDs, ciphertext-free app events, or wire bytes
 //! that are already encrypted by the core before they reach [`MmpNode::poll_send`].
 
+#![warn(missing_docs)]
+
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -119,8 +121,11 @@ fn key32_from(bytes: &[u8]) -> Result<Key32, FfiError> {
 /// Runtime relay tier (mirrors [`Tier`]).
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiTier {
+    /// Never relays for others; minimal battery/storage footprint.
     Leaf,
+    /// Relays and stores bundles for the mesh at the ordinary quota.
     Relay,
+    /// Highest-priority relay/storage posture (e.g. charging, on mains power).
     Anchor,
 }
 
@@ -147,9 +152,13 @@ impl From<Tier> for FfiTier {
 /// Delivery status (mirrors [`DeliveryState`]).
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiDeliveryState {
+    /// Not yet handed to any carrier.
     Queued,
+    /// At least one copy has left this device.
     InMesh,
+    /// A cryptographic receipt came back from the true recipient.
     Delivered,
+    /// All copies' TTL ran out before being delivered.
     Expired,
 }
 
@@ -167,9 +176,13 @@ impl From<DeliveryState> for FfiDeliveryState {
 /// Blob assembly state (mirrors [`BlobState`], doc 11 §6 / handbook §4.4).
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiBlobState {
+    /// Assembly registered (via [`MmpNode::fetch_file`]) but no symbols received yet.
     Wanted,
+    /// At least one symbol has been received; assembly is in progress.
     Fetching,
+    /// Every stripe decoded and the whole-file integrity check passed.
     Assembled,
+    /// Assembly stopped for good (hash mismatch, TTL, or explicit cancel).
     Abandoned,
 }
 
@@ -187,7 +200,12 @@ impl From<BlobState> for FfiBlobState {
 /// Why a blob assembly reached `Abandoned` (mirrors [`FileFailReason`]).
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiFileFailReason {
+    /// Every stripe decoded and passed its per-symbol Merkle check, but the
+    /// whole-file BLAKE3 hash still didn't match — a lying manifest, or
+    /// content that happened to survive every per-symbol check anyway.
     HashMismatch,
+    /// The assembly was abandoned: TTL lapse or an explicit
+    /// [`MmpNode::cancel_fetch`].
     Abandoned,
 }
 
@@ -204,10 +222,16 @@ impl From<FileFailReason> for FfiFileFailReason {
 /// [`mmp_node::FileOffer`]).
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct FfiFileOffer {
+    /// The offered file's name, as declared in the manifest.
     pub name: Vec<u8>,
+    /// The offered file's MIME type, as declared in the manifest.
     pub mime: Vec<u8>,
+    /// The offered file's size in bytes.
     pub size: u32,
+    /// The file's Merkle root — pass this to [`MmpNode::fetch_file`] to pull it.
     pub root: Vec<u8>,
+    /// The thumbnail's Merkle root, if the manifest declared one (doc 16 §5.1;
+    /// not yet auto-fetched by this crate).
     pub thumb_root: Option<Vec<u8>>,
 }
 
@@ -226,7 +250,11 @@ impl From<mmp_node::FileOffer> for FfiFileOffer {
 /// Result of a successful [`MmpNode::send_file`] (mirrors [`FileSend`]).
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct FfiFileSend {
+    /// BundleID of the `FileManifest` message; track delivery via this with
+    /// [`MmpNode::message_state`].
     pub message_id: Vec<u8>,
+    /// The sent file's Merkle root; this is what the recipient passes to
+    /// [`MmpNode::fetch_file`].
     pub root: Vec<u8>,
 }
 
@@ -239,10 +267,15 @@ impl From<FileSend> for FfiFileSend {
 /// Snapshot of one blob assembly's progress (mirrors [`FileProgress`]).
 #[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FfiFileProgress {
+    /// Current assembly state.
     pub state: FfiBlobState,
+    /// Number of distinct symbols received so far for this assembly.
     pub have_symbols: u32,
+    /// Total number of symbols needed to fully reconstruct the file.
     pub total_symbols: u32,
+    /// Number of RS stripes fully decoded so far.
     pub stripes_done: u16,
+    /// Total number of RS stripes in the encoding.
     pub stripes: u16,
 }
 
@@ -262,7 +295,9 @@ impl From<FileProgress> for FfiFileProgress {
 /// host side; the core already ordered them — write in poll order).
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
 pub struct OutFrame {
+    /// Which transport link to write `bytes` to.
     pub link: u64,
+    /// The wire bytes to write, already encrypted/framed by the core.
     pub bytes: Vec<u8>,
 }
 
@@ -271,51 +306,170 @@ pub struct OutFrame {
 /// (MOBILE_INTEGRATION.md §2).
 #[derive(uniffi::Enum, Debug, Clone, PartialEq, Eq)]
 pub enum FfiEvent {
-    MessageReceived { conv: Vec<u8>, from: Vec<u8>, id: Vec<u8>, body: Vec<u8>, apptype: u8 },
-    MessageGap { conv: Vec<u8>, parents: Vec<Vec<u8>> },
-    Delivered { id: Vec<u8> },
-    DeliveryProgress { id: Vec<u8>, state: FfiDeliveryState },
-    ClaimUpdated { owner: Vec<u8>, field: u8 },
-    CompromiseWarning { owner: Vec<u8> },
+    /// A direct or async message decrypted successfully for us.
+    MessageReceived {
+        /// Conversation ID this message belongs to.
+        conv: Vec<u8>,
+        /// Sender's NodeID.
+        from: Vec<u8>,
+        /// This message's BundleID.
+        id: Vec<u8>,
+        /// Decrypted message body.
+        body: Vec<u8>,
+        /// Application-defined type tag carried alongside the body.
+        apptype: u8,
+    },
+    /// A conversation DAG parent is missing; render a gap marker (doc 06 §5.3).
+    MessageGap {
+        /// Conversation ID with the gap.
+        conv: Vec<u8>,
+        /// BundleIDs of the causal parents that have not arrived yet.
+        parents: Vec<Vec<u8>>,
+    },
+    /// A message we sent has a receipt back from the true recipient.
+    Delivered {
+        /// BundleID of the delivered message.
+        id: Vec<u8>,
+    },
+    /// A delivery-state transition (see [`FfiDeliveryState`]) for a message we sent.
+    DeliveryProgress {
+        /// BundleID of the message whose state changed.
+        id: Vec<u8>,
+        /// The new delivery state.
+        state: FfiDeliveryState,
+    },
+    /// A newer claim (nickname, avatar, exchange key, …) arrived for `owner`.
+    ClaimUpdated {
+        /// Owner whose claim changed.
+        owner: Vec<u8>,
+        /// Which claim field changed.
+        field: u8,
+    },
+    /// Two conflicting equal-seq claims arrived from `owner`; surface as a
+    /// security notice, never silently pick one.
+    CompromiseWarning {
+        /// Owner whose claims conflict.
+        owner: Vec<u8>,
+    },
     /// A valid identity revocation arrived for `peer` (doc handbook §4.6).
     /// `successor` is present only when the succession counter-signature
     /// verified — offer "trust successor" to the user; never migrate a
     /// petname automatically.
-    PeerRevoked { peer: Vec<u8>, successor: Option<Vec<u8>> },
+    PeerRevoked {
+        /// The revoked peer's NodeID.
+        peer: Vec<u8>,
+        /// The successor's NodeID, if the succession counter-signature verified.
+        successor: Option<Vec<u8>>,
+    },
     /// A friendship (handbook §4.5) was established or renewed with `peer` —
     /// fires on both the patron and dependent side; see
     /// `mmp_node::Event::FriendshipEstablished`'s doc comment.
-    FriendshipEstablished { peer: Vec<u8>, since: u64 },
-    ContactSeen { peer: Vec<u8> },
-    Established { peer: Vec<u8> },
-    GroupInvite { gid: Vec<u8>, from: Vec<u8> },
-    GroupMessage { gid: Vec<u8>, from: Vec<u8>, id: Vec<u8>, body: Vec<u8> },
-    GroupEpochChanged { gid: Vec<u8>, epoch: u16 },
-    TierChanged { tier: FfiTier },
+    FriendshipEstablished {
+        /// The peer the friendship is with.
+        peer: Vec<u8>,
+        /// When the friendship was established/renewed (unix seconds).
+        since: u64,
+    },
+    /// A beacon/session activity resolved to a known contact (not necessarily
+    /// a full session).
+    ContactSeen {
+        /// The contact's NodeID.
+        peer: Vec<u8>,
+    },
+    /// A session handshake plus ID_PROOF completed with `peer`.
+    Established {
+        /// The peer a session was established with.
+        peer: Vec<u8>,
+    },
+    /// We were added to a group.
+    GroupInvite {
+        /// The group's GroupID.
+        gid: Vec<u8>,
+        /// Who invited us.
+        from: Vec<u8>,
+    },
+    /// A group message decrypted successfully.
+    GroupMessage {
+        /// The group's GroupID.
+        gid: Vec<u8>,
+        /// Sender's NodeID.
+        from: Vec<u8>,
+        /// This message's BundleID.
+        id: Vec<u8>,
+        /// Decrypted message body.
+        body: Vec<u8>,
+    },
+    /// Group membership changed (add/remove); re-render the member list.
+    GroupEpochChanged {
+        /// The group's GroupID.
+        gid: Vec<u8>,
+        /// The new epoch number.
+        epoch: u16,
+    },
+    /// The core itself changed relay tier (rare; usually host-driven via
+    /// [`MmpNode::set_tier`]).
+    TierChanged {
+        /// The new tier.
+        tier: FfiTier,
+    },
     /// Doc 18: a class-5 announcement for a scope we subscribed to. Apps
     /// should key notification prominence off `effective_priority`, not
     /// `official` alone (see `mmp_node::Event::Announcement`'s doc comment).
     Announcement {
+        /// This announcement's BundleID.
         id: Vec<u8>,
+        /// The scope this announcement was published to.
         scope: Vec<u8>,
+        /// Application-defined announcement type tag.
         ann_type: u8,
+        /// Unix-seconds expiry after which the announcement should no longer
+        /// be shown as current.
         not_after: u32,
+        /// Announcement body text.
         text: Vec<u8>,
+        /// Publisher's NodeID.
         from: Vec<u8>,
+        /// Whether a valid, unrevoked AuthCert with the announce capability
+        /// backed this announcement — a pure rendering predicate, independent
+        /// of `effective_priority` or any rate limit.
         official: bool,
+        /// The receiver-local admission-clamped priority; key notification
+        /// prominence off this, not `official` alone.
         effective_priority: u8,
+        /// Display-only scope name hint (TLV `0x82`); never meaningful for
+        /// any trust decision.
         scope_name_hint: Option<Vec<u8>>,
     },
     /// A `FileManifest` (doc 16 §2) arrived and verified — offer the files to
     /// the user; call `MmpNode::fetch_file` on a `root` to pull it (see
     /// `mmp_node::Event::FileOffered`'s doc comment).
-    FileOffered { conv: Vec<u8>, from: Vec<u8>, sharer: Vec<u8>, entries: Vec<FfiFileOffer> },
+    FileOffered {
+        /// Conversation ID the manifest arrived in.
+        conv: Vec<u8>,
+        /// Sender's NodeID (who delivered the manifest message).
+        from: Vec<u8>,
+        /// The sharer's NodeID (who originally shared the file; may differ
+        /// from `from` if relayed within a group).
+        sharer: Vec<u8>,
+        /// One entry per file offered in the manifest.
+        entries: Vec<FfiFileOffer>,
+    },
     /// A pull-fetched file finished assembling and passed its whole-file
     /// integrity check; `path` is where it was written.
-    FileReady { root: Vec<u8>, path: String },
+    FileReady {
+        /// The file's Merkle root.
+        root: Vec<u8>,
+        /// Filesystem path the assembled file was written to.
+        path: String,
+    },
     /// A blob assembly reached `Abandoned` (hash mismatch, TTL, or explicit
     /// `MmpNode::cancel_fetch`).
-    FileFailed { root: Vec<u8>, reason: FfiFileFailReason },
+    FileFailed {
+        /// The file's Merkle root.
+        root: Vec<u8>,
+        /// Why the assembly was abandoned.
+        reason: FfiFileFailReason,
+    },
 }
 
 impl From<Event> for FfiEvent {
@@ -646,6 +800,9 @@ impl MmpNode {
         self.lock().subscribe_scope(scope_name.as_bytes()).0.to_vec()
     }
 
+    /// Unsubscribe from a scope previously subscribed via
+    /// [`Self::subscribe_scope`]; announcements for it stop surfacing as
+    /// [`FfiEvent::Announcement`] (they still relay under store-and-forward).
     pub fn unsubscribe_scope(&self, scope: Vec<u8>) -> Result<(), FfiError> {
         let scope = id16_from(&scope)?;
         self.lock().unsubscribe_scope(&scope);

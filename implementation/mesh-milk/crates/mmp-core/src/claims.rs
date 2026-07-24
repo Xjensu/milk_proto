@@ -14,6 +14,7 @@ use mmp_types::domain::SigDomain;
 use mmp_types::frame::ClaimDigestEntry;
 use mmp_types::ids::{node_id_of, Key32, NodeId};
 
+/// Outcome of merging one incoming claim into a [`ClaimStore`] (doc 06 §4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClaimMerge {
     /// New or newer — adopted.
@@ -21,8 +22,11 @@ pub enum ClaimMerge {
     /// Lower or equal seq, identical body — nothing to do.
     Stale,
     /// Equal seq, different body: deterministic winner chosen; surface a
-    /// CompromiseWarning for `owner` (doc 06 §4.2). Field says if we switched.
-    Conflict { adopted: bool },
+    /// CompromiseWarning for `owner` (doc 06 §4.2).
+    Conflict {
+        /// Whether the incoming claim (rather than the one already stored) won the tie-break.
+        adopted: bool,
+    },
     /// A structurally invalid `REVOCATION` body — `revoked_key` doesn't match
     /// the claim's own `owner` (doc 06 §4.6 / handbook §4.6). Never stored;
     /// distinct from `Stale` because nothing was already on file to keep.
@@ -36,12 +40,14 @@ struct Stored {
     pinned: bool,
 }
 
+/// Per-(owner, field) single-writer LWW claim registry (doc 06 §4).
 #[derive(Default)]
 pub struct ClaimStore {
     map: BTreeMap<(NodeId, u8), Stored>,
 }
 
 impl ClaimStore {
+    /// An empty claim store.
     pub fn new() -> ClaimStore {
         ClaimStore::default()
     }
@@ -110,6 +116,7 @@ impl ClaimStore {
         }
     }
 
+    /// The currently-stored claim for `(node, field)`, if any.
     pub fn get(&self, node: &NodeId, field: u8) -> Option<&Claim> {
         self.map.get(&(*node, field)).map(|s| &s.claim)
     }
@@ -141,6 +148,8 @@ impl ClaimStore {
         Some(successor)
     }
 
+    /// Marks every stored claim for `node` as pinned (a verified contact),
+    /// exempting them from [`ClaimStore::expire`].
     pub fn pin(&mut self, node: &NodeId) {
         for ((n, _), s) in self.map.iter_mut() {
             if n == node {
@@ -171,6 +180,7 @@ impl ClaimStore {
         self.map.retain(|_, s| s.pinned || s.received_at + LIFETIME_CLAIM_MS > now_ms);
     }
 
+    /// All currently-stored claims, in `(owner, field)` order.
     pub fn iter(&self) -> impl Iterator<Item = &Claim> {
         self.map.values().map(|s| &s.claim)
     }

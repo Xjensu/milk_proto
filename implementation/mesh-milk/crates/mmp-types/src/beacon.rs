@@ -3,8 +3,12 @@
 
 use crate::err::WireError;
 
+/// Fixed encoded length of a [`Beacon`], bytes (doc 10 §5).
 pub const BEACON_LEN: usize = 24;
 
+/// Unauthenticated pre-connection advertisement (doc 10 §5): the fixed
+/// 24-byte payload nodes broadcast so peers can decide whether to dial before
+/// spending any handshake cost.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Beacon {
     /// Wire version (4 bits, must be 1).
@@ -29,6 +33,7 @@ pub struct Beacon {
 }
 
 impl Beacon {
+    /// Encode to the fixed 24-byte wire form (doc 10 §5).
     pub fn encode(&self) -> [u8; BEACON_LEN] {
         debug_assert!(self.tier <= 3 && self.battery <= 3 && self.epoch <= 0x7f);
         debug_assert!(self.frag_structure <= 3 && self.frag_offset < (1 << 14));
@@ -42,6 +47,8 @@ impl Beacon {
         b
     }
 
+    /// Strict fixed-size decode: rejects any length other than exactly
+    /// [`BEACON_LEN`] and any non-1 wire version.
     pub fn decode(bytes: &[u8]) -> Result<Beacon, WireError> {
         if bytes.len() != BEACON_LEN {
             return Err(if bytes.len() < BEACON_LEN { WireError::Truncated } else { WireError::Trailing });

@@ -25,13 +25,18 @@ use crate::ratchet::{RecvChain, SendChain};
 /// apptype 0x02 (relays never see it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SenderKeyDist {
+    /// Group id this sender key belongs to.
     pub gid: Id16,
+    /// Epoch this sender key was minted for.
     pub epoch: u16,
+    /// Seed for the recipient's [`RecvChain`], mirroring the sender's chain.
     pub chain_seed: [u8; 32],
+    /// Public half of the per-(group, epoch) group signature keypair.
     pub sig_pub: Key32,
 }
 
 impl SenderKeyDist {
+    /// Wire encoding: `gid ‖ epoch ‖ chain_seed ‖ sig_pub`.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(16 + 2 + 32 + 32);
         out.extend_from_slice(&self.gid.0);
@@ -41,6 +46,7 @@ impl SenderKeyDist {
         out
     }
 
+    /// Decode a [`SenderKeyDist::encode`]d record; rejects trailing bytes.
     pub fn decode(bytes: &[u8]) -> Result<SenderKeyDist, WireError> {
         let mut r = Reader::new(bytes);
         let gid = r.id16()?;
@@ -61,6 +67,8 @@ pub struct LocalSenderKey {
 }
 
 impl LocalSenderKey {
+    /// Mint a fresh sender key for (`gid`, `epoch`): a random chain seed and a
+    /// new, identity-distinct Ed25519 group signing keypair.
     pub fn generate(rng: &mut impl CryptoRngCore, gid: Id16, epoch: u16) -> LocalSenderKey {
         let mut chain_seed = [0u8; 32];
         rng.fill_bytes(&mut chain_seed);
@@ -76,10 +84,13 @@ impl LocalSenderKey {
         LocalSenderKey { chain: SendChain::new(chain_seed, epoch), sig, dist }
     }
 
+    /// The distributable record (`gid`, `epoch`, `chain_seed`, `sig_pub`) to
+    /// send to other members over their pairwise channels.
     pub fn dist(&self) -> &SenderKeyDist {
         &self.dist
     }
 
+    /// The epoch this sender key was generated for.
     pub fn epoch(&self) -> u16 {
         self.dist.epoch
     }
@@ -112,6 +123,8 @@ pub struct RemoteSenderKey {
 }
 
 impl RemoteSenderKey {
+    /// Build the receive side from a peer's distributed [`SenderKeyDist`],
+    /// tolerating reordering within `window` (see [`RecvChain::new`]).
     pub fn from_dist(dist: &SenderKeyDist, window: u32) -> RemoteSenderKey {
         RemoteSenderKey {
             recv: RecvChain::new(dist.chain_seed, dist.epoch, window),

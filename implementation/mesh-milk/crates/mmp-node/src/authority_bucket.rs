@@ -31,12 +31,17 @@ struct Bucket {
     rate_per_h: u16,
 }
 
+/// Per-subject token buckets metering elevated-priority announcement
+/// admissions (doc 18 §5.3) — one [`Bucket`] per AuthCert `subject`, created
+/// lazily and refilled on every [`AuthorityBuckets::admit`] call.
 #[derive(Default)]
 pub struct AuthorityBuckets {
     map: BTreeMap<Key32, Bucket>,
 }
 
 impl AuthorityBuckets {
+    /// An empty bucket map — every subject starts unseen and gets its bucket
+    /// on first [`AuthorityBuckets::admit`] call.
     pub fn new() -> AuthorityBuckets {
         AuthorityBuckets::default()
     }
@@ -76,10 +81,12 @@ impl AuthorityBuckets {
         self.map.retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
     }
 
+    /// Number of subjects with a live (not yet compacted) bucket.
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    /// True iff no subject currently has a bucket.
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }

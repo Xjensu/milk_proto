@@ -14,16 +14,23 @@ struct Bucket {
     wot: bool,
 }
 
+/// One token bucket per origin, keyed by the origin's `NodeId` (doc 05 §8).
+/// Bounded by `compact` so state stays flat regardless of how many distinct
+/// origins are ever seen.
 #[derive(Default)]
 pub struct OriginBuckets {
     map: BTreeMap<NodeId, Bucket>,
 }
 
 impl OriginBuckets {
+    /// Empty bucket set — no origin has been seen yet.
     pub fn new() -> OriginBuckets {
         OriginBuckets::default()
     }
 
+    /// Mark `origin` as web-of-trust (or not), applying the `WOT_MULTIPLIER`
+    /// to its rate/burst from the next `admit` call on. No-op if `origin`
+    /// has no bucket yet (first `admit` call establishes one).
     pub fn set_wot(&mut self, origin: &NodeId, wot: bool) {
         if let Some(b) = self.map.get_mut(origin) {
             b.wot = wot;
@@ -60,10 +67,12 @@ impl OriginBuckets {
         self.map.retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
     }
 
+    /// Number of distinct origins currently tracked.
     pub fn len(&self) -> usize {
         self.map.len()
     }
 
+    /// True if no origin has a live bucket (nothing seen, or all compacted).
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }

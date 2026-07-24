@@ -16,19 +16,36 @@ use mmp_types::ids::NodeId;
 use crate::seen::SeenIndex;
 use crate::store::{BundleMeta, BundleStore, SlotState};
 
+/// Why [`ingest`] dropped a bundle instead of storing it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropReason {
+    /// `Bundle::decode_canonical` rejected the bytes (doc 10 §6 canonical
+    /// encoding check).
     NonCanonical,
+    /// The signature over the canonical, zeroed bundle didn't verify under
+    /// the inline origin key.
     BadSignature,
+    /// The caller-supplied `admission` closure refused the bundle (quota,
+    /// blocklist, per-origin bucket, tier rules — doc 05).
     Admission,
+    /// The receive-side lifetime clamp (`lifetime_ms.min(class_max_lifetime_ms)`)
+    /// reduced the remaining lifetime to zero.
     Expired,
 }
 
+/// The outcome of running [`ingest`] on one wire bundle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
     /// Stored; `to_self` = destined to this node (deliver upstream too).
-    Stored { to_self: bool },
+    Stored {
+        /// Whether `bundle.dest` equals `self_node` — the bundle is destined
+        /// to this node, so the caller should also run the class-specific
+        /// delivery path, not just store-and-forward it.
+        to_self: bool,
+    },
+    /// Already in the [`SeenIndex`] — silently discarded, not stored again.
     Duplicate,
+    /// Rejected before storage; see [`DropReason`] for why.
     Dropped(DropReason),
 }
 

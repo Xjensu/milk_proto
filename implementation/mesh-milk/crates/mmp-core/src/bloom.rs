@@ -7,6 +7,10 @@ use alloc::vec::Vec;
 use mmp_types::consts::{BLOOM_BITS_PER_ELEMENT, BLOOM_K};
 use mmp_types::ids::Id16;
 
+/// A fixed-size Bloom filter over `Id16`, with BLAKE3-keyed index derivation
+/// (doc 06 §6.1: k = 7 hash indices, ~10 bits/element for ≈1 % FP at
+/// capacity). Supports lossy folding for the wire mini-filter and OR-union
+/// for merging a peer's same-window bucket into this one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Bloom {
     bits: Vec<u8>,
@@ -15,6 +19,9 @@ pub struct Bloom {
 }
 
 impl Bloom {
+    /// Builds an empty filter sized for `capacity` elements: `m` bits is
+    /// `capacity * BLOOM_BITS_PER_ELEMENT`, floored at 64 bits so tiny/zero
+    /// capacities still produce a usable filter.
     pub fn with_capacity(capacity: usize) -> Bloom {
         let m_bits = (capacity * BLOOM_BITS_PER_ELEMENT).max(64);
         Bloom { bits: vec![0; m_bits.div_ceil(8)], m: m_bits as u32, count: 0 }
@@ -33,6 +40,7 @@ impl Bloom {
         idx
     }
 
+    /// Sets `id`'s `k` derived index bits and bumps the element [`Bloom::count`].
     pub fn insert(&mut self, id: &Id16, salt: &[u8; 32]) {
         for i in self.indices(id, salt) {
             self.bits[(i / 8) as usize] |= 1 << (i % 8);
@@ -40,6 +48,8 @@ impl Bloom {
         self.count += 1;
     }
 
+    /// True if every one of `id`'s `k` derived index bits is set — a
+    /// possibly-false-positive membership test, never a false negative.
     pub fn contains(&self, id: &Id16, salt: &[u8; 32]) -> bool {
         self.indices(id, salt)
             .iter()
@@ -76,10 +86,12 @@ impl Bloom {
         }
     }
 
+    /// Raw underlying bit array, for wire encoding or direct byte-level folding.
     pub fn bytes(&self) -> &[u8] {
         &self.bits
     }
 
+    /// Number of elements inserted so far (not the number of set bits).
     pub fn count(&self) -> u32 {
         self.count
     }

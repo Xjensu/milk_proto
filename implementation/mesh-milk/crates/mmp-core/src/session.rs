@@ -22,12 +22,14 @@ const DOMAINS: [u8; 4] = [0, 1, 2, 3];
 /// Everything the engine needs from the node. All methods are synchronous and
 /// cheap; heavy lifting stays in the node/store.
 pub trait SessionHost {
+    /// The host's [`IdSource`] implementation for RBSR range queries.
     type Ids: IdSource;
 
     /// Domain-scoped, offer-eligible sorted IDs + membership (RBSR seam).
     fn ids(&mut self, peer: &NodeId) -> &mut Self::Ids;
     /// SUMMARY to send this peer (receipt buckets, claim digest…).
     fn summary(&mut self, peer: &NodeId) -> Summary;
+    /// A SUMMARY arrived from `peer` (receipt buckets, claim digest…).
     fn on_summary(&mut self, peer: &NodeId, summary: Summary);
     /// Load a bundle for hand-off: wire bytes with DECREMENTED lifetime and
     /// the budget to grant. `None` = no longer eligible (purged, expired…).
@@ -101,21 +103,42 @@ pub trait SessionHost {
     }
 }
 
+/// The session FSM's current phase (doc 11 §3): DIALING/HANDSHAKE are
+/// collapsed into `Handshake` here — Noise message exchange runs before any
+/// `SessionEngine` phase transition fires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
+    /// Noise handshake in progress; no channel yet.
     Handshake,
+    /// Channel established, waiting for the peer's ID_PROOF (doc 08 §3.2).
     Binding,
+    /// Peer identity proven; SUMMARY/RBSR/bundle exchange may proceed.
     Established,
+    /// Session torn down — terminal, no further frames are processed.
     Closed,
 }
 
+/// An event the engine surfaces to the host after processing wire bytes or a
+/// timer tick, via [`SessionEngine::poll_event`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionEvent {
     /// Peer identity proven via ID_PROOF (doc 08 §3.2).
-    Established { peer: NodeId, identity: Key32 },
+    Established {
+        /// The peer's derived node ID.
+        peer: NodeId,
+        /// The peer's proven identity key.
+        identity: Key32,
+    },
+    /// The session has torn down (graceful, silent, or error close alike).
     Closed,
 }
 
+/// The sans-IO per-link session FSM (doc 11 §3): drives the Noise handshake,
+/// ID_PROOF binding, RBSR reconciliation across [`DOMAINS`] in priority
+/// order, and bundle hand-off, from Handshake through Established to Closed.
+/// Wire bytes are pushed in via [`SessionEngine::on_wire`] and pulled out via
+/// [`SessionEngine::poll_out`]; the engine owns no socket, timer, or clock of
+/// its own.
 pub struct SessionEngine {
     phase: Phase,
     initiator: bool,
@@ -138,6 +161,9 @@ impl SessionEngine {
     // Deliberately erases the handshake-failure reason (`()`): the caller's
     // only valid reaction is to drop the attempt, and a richer error type
     // would be a public-API redesign out of scope here.
+    /// Starts a new session as the dialing side: begins the Noise handshake
+    /// against `hello` and queues msg1 for immediate send. `Err(())` on a
+    /// handshake-construction failure (nothing to salvage — drop the attempt).
     #[allow(clippy::result_unit_err)]
     pub fn initiator(identity: &Identity, hello: &Hello, now_ms: u64) -> Result<SessionEngine, ()> {
         let (msg1, hs) = NoiseHandshake::initiator(identity, hello).map_err(|_| ())?;
@@ -147,6 +173,9 @@ impl SessionEngine {
         Ok(s)
     }
 
+    /// Starts a new session as the accepting side: awaits the initiator's
+    /// handshake message against `hello`. `Err(())` on a handshake-
+    /// construction failure (nothing to salvage — drop the attempt).
     #[allow(clippy::result_unit_err)]
     pub fn responder(identity: &Identity, hello: &Hello, now_ms: u64) -> Result<SessionEngine, ()> {
         let hs = NoiseHandshake::responder(identity, hello).map_err(|_| ())?;
@@ -174,10 +203,13 @@ impl SessionEngine {
         }
     }
 
+    /// The engine's current FSM phase.
     pub fn phase(&self) -> Phase {
         self.phase
     }
 
+    /// The peer's derived node ID, available from `Binding` onward once
+    /// ID_PROOF has been accepted.
     pub fn peer(&self) -> Option<NodeId> {
         self.peer_node
     }
@@ -205,6 +237,8 @@ impl SessionEngine {
         self.out.pop_front()
     }
 
+    /// The next queued [`SessionEvent`] for the host to react to, if any
+    /// (drain in order).
     pub fn poll_event(&mut self) -> Option<SessionEvent> {
         self.events.pop_front()
     }

@@ -13,23 +13,30 @@ pub struct Key32(pub [u8; 32]);
 pub struct Sig64(pub [u8; 64]);
 
 impl Id16 {
+    /// The all-zero `Id16`, e.g. a range-scan lower bound.
     pub const MIN: Id16 = Id16([0x00; 16]);
+    /// The all-ones `Id16`, e.g. a range-scan upper bound.
     pub const MAX: Id16 = Id16([0xff; 16]);
 
+    /// Borrow the underlying 16 bytes.
     pub fn as_bytes(&self) -> &[u8; 16] {
         &self.0
     }
 }
 
 impl Key32 {
+    /// Borrow the underlying 32 bytes.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 }
 
 impl Sig64 {
+    /// The all-zero `Sig64`, used as a placeholder before a real signature is
+    /// computed.
     pub const ZERO: Sig64 = Sig64([0; 64]);
 
+    /// Borrow the underlying 64 bytes.
     pub fn as_bytes(&self) -> &[u8; 64] {
         &self.0
     }

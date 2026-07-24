@@ -8,21 +8,36 @@
 //! Layering (doc 12 §1): `#![no_std]` + `alloc`.
 
 #![no_std]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
+/// Authority certificates, announcement bodies, and revocation lists (doc 18).
 pub mod authcert;
+/// Beacon payload (doc 10 §5): the fixed-size, unauthenticated pre-connection
+/// advertisement.
 pub mod beacon;
+/// Bundle codec (doc 10 §3): the store-and-forward wire unit and its classes.
 pub mod bundle;
+/// Claim records (doc 10 §4.4, doc 06 §4): single-writer LWW registers.
 pub mod claim;
+/// Protocol constants — the single source module (HANDOFF §4, doc 03 §9).
 pub mod consts;
+/// Global Ed25519 signing-domain separation (doc 10 §3.1, AUDIT F4).
 pub mod domain;
+/// Wire-format errors (doc 10 §6 canonical-encoding rules).
 pub mod err;
+/// Session frame envelope and every v1 frame type (doc 10 §2).
 pub mod frame;
+/// Fixed-size wire primitives (doc 10 §1) and NodeID derivation (doc 03 §3.2).
 pub mod ids;
+/// FileManifest (doc 16 §2): a signed share of 1..16 files.
 pub mod manifest;
+/// Per-class bundle payload schemas (doc 10 §4).
 pub mod payload;
+/// Bundle extension TLVs (doc 03 §4.4, doc 10 §3).
 pub mod tlv;
+/// Canonical byte reader/writer; all integers little-endian (doc 10 §1).
 pub mod wire;
 
 pub use beacon::Beacon;

@@ -15,6 +15,8 @@
 //! engine (`&mut SessionEngine`) can call back into the host (`&mut NodeCore`)
 //! while borrowing the identity immutably — three disjoint fields, no aliasing.
 
+#![warn(missing_docs)]
+
 pub mod authority_bucket;
 mod blob;
 mod conv;
@@ -77,31 +79,78 @@ const CLAIM_SCOPE: Id16 = Id16([0xff; 16]);
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
+    /// Lowest tier: a leaf/sensor node, battery- and storage-constrained.
     Leaf = 1,
+    /// Middle tier: relays traffic for others in addition to its own.
     Relay = 2,
+    /// Top tier: quota-privileged (`QUOTA_ANCHOR`) — mains-powered or
+    /// otherwise storage-rich.
     Anchor = 3,
 }
 
 /// Delivery status, mapped 1:1 to protocol facts (HANDOFF_MOBILE §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryState {
+    /// Sent locally, not yet handed off to any peer.
     Queued,
+    /// Handed off to at least one peer during a session (`load_for_handoff`).
     InMesh,
+    /// A verified delivery receipt was seen for it (`handle_receipt`).
     Delivered,
+    /// Its `lifetime_ms` lapsed before a receipt was seen.
     Expired,
 }
 
 /// The event stream — the spine of any app built on this node.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    MessageReceived { conv: Id16, from: NodeId, id: Id16, body: Vec<u8>, apptype: u8 },
+    /// A direct or async-first-contact message decrypted and verified
+    /// successfully (`NodeCore::deliver_direct`).
+    MessageReceived {
+        /// The conversation it arrived on.
+        conv: Id16,
+        /// The sender's `NodeId`.
+        from: NodeId,
+        /// The message's BundleID.
+        id: Id16,
+        /// The decrypted, apptype-tagged body's payload (tag stripped).
+        body: Vec<u8>,
+        /// The apptype tag (`mmp_types::payload::apptype`) that prefixed `body`.
+        apptype: u8,
+    },
     /// Unknown parents → gap markers; repair flows via WANT (doc 06 §5.3).
-    MessageGap { conv: Id16, parents: Vec<Id16> },
-    Delivered { id: Id16 },
-    DeliveryProgress { id: Id16, state: DeliveryState },
-    ClaimUpdated { owner: NodeId, field: u8 },
+    MessageGap {
+        /// The conversation with the gap.
+        conv: Id16,
+        /// The missing parent BundleIDs (`wants`/repair candidates).
+        parents: Vec<Id16>,
+    },
+    /// A verified delivery receipt proved the message with this id reached
+    /// its destination (`NodeCore::handle_receipt`).
+    Delivered {
+        /// The delivered message's BundleID.
+        id: Id16,
+    },
+    /// A message's `DeliveryState` changed (queued → in-mesh → delivered, or
+    /// → expired).
+    DeliveryProgress {
+        /// The message whose state changed.
+        id: Id16,
+        /// The state it moved to.
+        state: DeliveryState,
+    },
+    /// A peer's claim (profile field) was adopted (`NodeCore::learn_claim`).
+    ClaimUpdated {
+        /// The claim's owner.
+        owner: NodeId,
+        /// The claim field id that changed (`mmp_types::claim::field`).
+        field: u8,
+    },
     /// Equal-seq conflicting claims — normative UX duty (doc 07 §6.4).
-    CompromiseWarning { owner: NodeId },
+    CompromiseWarning {
+        /// The owner whose claims are in conflict.
+        owner: NodeId,
+    },
     /// A valid identity revocation (claim field `0x09`, handbook §4.6)
     /// arrived for `peer`. `successor` is `Some` only when the succession
     /// counter-signature verified (`ClaimStore::successor`) — this is the
@@ -110,20 +159,65 @@ pub enum Event {
     /// only). Sessions with `peer` are already refused and its prekey
     /// claims already unusable by the time this fires — see `accept_peer`
     /// and `send_app`.
-    PeerRevoked { peer: NodeId, successor: Option<Key32> },
+    PeerRevoked {
+        /// The revoked identity's `NodeId`.
+        peer: NodeId,
+        /// The successor key, once its counter-signature has verified — see
+        /// the variant doc above for what `Some`/`None` mean here.
+        successor: Option<Key32>,
+    },
     /// A friendship (handbook §4.5, claim field `0x05`) was established or
     /// renewed with `peer` — fires on BOTH sides: the patron (after
     /// countersigning an offer) and the dependent (after verifying the
     /// resulting FRIEND_ACK). `since` is the relationship's start time, used
     /// for the `FRIENDSHIP_TTL_MS` expiry check.
-    FriendshipEstablished { peer: NodeId, since: u64 },
-    ContactSeen { peer: NodeId },
-    Established { peer: NodeId },
-    GroupInvite { gid: Id16, from: NodeId },
-    GroupMessage { gid: Id16, from: NodeId, id: Id16, body: Vec<u8> },
+    FriendshipEstablished {
+        /// The patron/dependent on the other side of the relationship.
+        peer: NodeId,
+        /// The relationship's start/renewal timestamp.
+        since: u64,
+    },
+    /// A session with `peer` was established (also implies contact, doc 04's
+    /// utility-tracking sense) — fired alongside `Event::Established`.
+    ContactSeen {
+        /// The peer just contacted.
+        peer: NodeId,
+    },
+    /// A session with `peer` reached the Established phase (`pump_link`).
+    Established {
+        /// The peer the session was established with.
+        peer: NodeId,
+    },
+    /// We were invited into a group and adopted it (`NodeCore::handle_sender_key`).
+    GroupInvite {
+        /// The group's id.
+        gid: Id16,
+        /// Who sent the sender-key dist that triggered the invite.
+        from: NodeId,
+    },
+    /// A group message decrypted successfully (`NodeCore::deliver_group`).
+    GroupMessage {
+        /// The group's id.
+        gid: Id16,
+        /// The sending member.
+        from: NodeId,
+        /// The message's BundleID.
+        id: Id16,
+        /// The decrypted body (apptype tag stripped).
+        body: Vec<u8>,
+    },
     /// Removal takes effect as the network reconverges (doc 06 §8.6).
-    GroupEpochChanged { gid: Id16, epoch: u16 },
-    TierChanged { tier: Tier },
+    GroupEpochChanged {
+        /// The group whose epoch changed.
+        gid: Id16,
+        /// The new epoch number.
+        epoch: u16,
+    },
+    /// `Node::set_tier` moved the node to a new runtime tier.
+    TierChanged {
+        /// The tier now in effect.
+        tier: Tier,
+    },
     /// Doc 18: a class-5 bundle for a subscribed scope. `official` is the
     /// rendering predicate (doc 18 §5.2.1 item 2, independent of priority);
     /// `effective_priority` is the receiver-local admission clamp (doc 18
@@ -132,13 +226,24 @@ pub enum Event {
     /// false` yet still get through at declared priority if never clamped,
     /// i.e. declared ≥ NORMAL already).
     Announcement {
+        /// The announcement bundle's id.
         id: Id16,
+        /// The scope it was published to.
         scope: Id16,
+        /// Application-defined announcement type.
         ann_type: u8,
+        /// Display-validity cutoff (unix seconds); no policy enforces this
+        /// yet, see the `⚠` note at its construction in `publish_announcement`.
         not_after: u32,
+        /// The announcement's plaintext body.
         text: Vec<u8>,
+        /// The publishing node.
         from: NodeId,
+        /// The rendering predicate — see the variant doc above; independent
+        /// of `effective_priority`.
         official: bool,
+        /// The receiver-local admission-clamped priority — use this for
+        /// notification prominence, never `official` alone.
         effective_priority: u8,
         /// TLV 0x82 SCOPE_INFO, display-only, never trusted (doc 18 §3).
         scope_name_hint: Option<Vec<u8>>,
@@ -148,24 +253,48 @@ pub enum Event {
     /// ordinary `MessageReceived` (existing consumers unaffected). Any parse
     /// or verification failure is a silent no-op for this event path (doc 16
     /// §3.1 fail-safe: `MessageReceived` alone still fires, nothing errors).
-    FileOffered { conv: Id16, from: NodeId, sharer: Key32, entries: Vec<FileOffer> },
+    FileOffered {
+        /// The conversation the manifest arrived on.
+        conv: Id16,
+        /// Who sent it.
+        from: NodeId,
+        /// The manifest's signing/sharer identity.
+        sharer: Key32,
+        /// One entry per file offered in the manifest.
+        entries: Vec<FileOffer>,
+    },
     /// A pull-fetched file (`Node::fetch_file`) finished assembling and
     /// passed its whole-file BLAKE3 check; `path` is where it was written.
-    FileReady { root: Id16, path: PathBuf },
+    FileReady {
+        /// The file's content-addressed Merkle root.
+        root: Id16,
+        /// Where the assembled file was written.
+        path: PathBuf,
+    },
     /// A blob assembly moved to ABANDONED (doc 11 §6): either the whole-file
     /// hash check failed after all stripes decoded, or the assembly's
     /// `BLOB_INTEREST_TTL_MS` lapsed / `Node::cancel_fetch` was called.
-    FileFailed { root: Id16, reason: FileFailReason },
+    FileFailed {
+        /// The file's content-addressed Merkle root.
+        root: Id16,
+        /// Why the assembly failed.
+        reason: FileFailReason,
+    },
 }
 
 /// One file offer inside a verified `FileManifest` (doc 16 §2 `FileEntry`,
 /// trimmed to what an app needs to render an offer / call `fetch_file`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileOffer {
+    /// The file's declared name.
     pub name: Vec<u8>,
+    /// The file's declared MIME type.
     pub mime: Vec<u8>,
+    /// The true plaintext length in bytes.
     pub size: u32,
+    /// The file's content-addressed Merkle root — pass to `Node::fetch_file`.
     pub root: Id16,
+    /// The root of an accompanying thumbnail, if the manifest entry declared one.
     pub thumb_root: Option<Id16>,
 }
 
@@ -206,10 +335,15 @@ pub struct FileSend {
 /// Snapshot of one blob assembly's progress (`Node::file_progress`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileProgress {
+    /// The assembly's current FSM state.
     pub state: BlobState,
+    /// Total Merkle-verified symbols across every stripe so far.
     pub have_symbols: u32,
+    /// Total symbol slots across every stripe (`stripes * RS_TOTAL_N`).
     pub total_symbols: u32,
+    /// Number of stripes fully RS-decoded and written to `.part`.
     pub stripes_done: u16,
+    /// Total stripe count for this file.
     pub stripes: u16,
 }
 
@@ -219,6 +353,7 @@ struct SentMessage {
     state: DeliveryState,
 }
 
+/// Why a send (`Node::send_text`/`send_body`/`send_file`/`group_send`/…) failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError {
     /// We lack the peer's exchange-key / prekey-batch claim (or group key).
@@ -362,6 +497,10 @@ struct NodeCore {
     blob_served: HashMap<NodeId, u32>,
 }
 
+/// The driveable node: session lifecycle, claims gossip, direct messaging,
+/// groups, friendship/proxy buffering, the blob plane, receipts, beacon
+/// rotation, and the tier ladder. See the crate doc for the drive model
+/// (`tick`/`poll_send`/`poll_event`) and the ownership-split rationale.
 pub struct Node {
     identity: Identity,
     core: NodeCore,
@@ -446,6 +585,8 @@ impl Node {
         node
     }
 
+    /// Turn on the opt-in, local-only journey log (`DiagLog`) — off by
+    /// default (`Node::new`).
     pub fn enable_diagnostics(&mut self) {
         self.core.diag = DiagLog::new(true);
     }
@@ -470,26 +611,32 @@ impl Node {
         self.core.convs.get(&conv_id).map(|c| (c.send.epoch, c.recv.epoch()))
     }
 
+    /// This node's identity, as a `NodeId` (derived from the Ed25519 public key).
     pub fn node_id(&self) -> NodeId {
         self.core.node_id
     }
 
+    /// This node's raw Ed25519 identity public key.
     pub fn public_key(&self) -> Key32 {
         self.core.public
     }
 
+    /// The current runtime tier.
     pub fn tier(&self) -> Tier {
         self.core.tier
     }
 
+    /// Number of bundles currently held in the store.
     pub fn store_len(&self) -> usize {
         self.core.store.len()
     }
 
+    /// The opt-in journey log, for `mmp-cli inspect`-style consumers.
     pub fn diagnostics(&self) -> &DiagLog {
         &self.core.diag
     }
 
+    /// `peer`'s nickname claim, if we hold one and it decodes as UTF-8.
     pub fn nickname_of(&self, peer: &NodeId) -> Option<String> {
         self.core
             .claims
@@ -507,6 +654,8 @@ impl Node {
         }
     }
 
+    /// Block `peer`: silently deny future sessions and admission from them
+    /// (doc 07 §6.5) — no frame is sent, no error is raised.
     pub fn block(&mut self, peer: NodeId) {
         // Silent (doc 07 §6.5): no frame, no error — just admission denial.
         self.core.blocklist.insert(peer);
@@ -557,10 +706,14 @@ impl Node {
         id
     }
 
+    /// Subscribe to a scope already known by its derived `Id16` (doc 18 §4) —
+    /// same effect as [`Node::subscribe_scope`] without re-hashing the name.
     pub fn subscribe_scope_id(&mut self, scope: Id16) {
         self.core.authority.subscribe(scope);
     }
 
+    /// Unsubscribe from a scope — its announcements stop surfacing as
+    /// `Event::Announcement` (doc 18 §4).
     pub fn unsubscribe_scope(&mut self, scope: &Id16) {
         self.core.authority.unsubscribe(scope);
     }
@@ -572,6 +725,8 @@ impl Node {
         self.core.publish_claim_now(field_id, seq, body)
     }
 
+    /// Publish our nickname as a profile claim (doc 06 §4) — `seq` must
+    /// increase on each call for the LWW claim-merge rule to adopt it.
     pub fn set_nickname(&mut self, name: &str, seq: u32) {
         self.publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec());
     }
@@ -692,6 +847,9 @@ impl Node {
         self.core.send_direct(peer, &body)
     }
 
+    /// The last-known `DeliveryState` of a message we sent, or `None` if `id`
+    /// wasn't sent from this node (or was sent before restart — sent-message
+    /// tracking is RAM-only).
     pub fn message_state(&self, id: &Id16) -> Option<DeliveryState> {
         self.core.sent.get(id).map(|m| m.state)
     }
@@ -818,6 +976,7 @@ impl Node {
         self.core.send_group(gid, text.as_bytes())
     }
 
+    /// Current membership of `gid`, or empty if we don't know that group.
     pub fn group_members(&self, gid: &Id16) -> Vec<NodeId> {
         self.core.groups.get(gid).map(|g| g.members.members()).unwrap_or_default()
     }
@@ -845,6 +1004,10 @@ impl Node {
 
     // --------------------------------------------------------- TAL driving --
 
+    /// Feed one transport-layer event into the node: beacon overheard, a link
+    /// coming up/down, or bytes arriving on a link. Drives the per-link
+    /// `SessionEngine`s and the E4-S4 opportunistic ratchet epoch bump on
+    /// link teardown.
     pub fn on_tal_event(&mut self, ev: TalEvent) {
         match ev {
             TalEvent::Beacon { payload, .. } => {
@@ -928,6 +1091,7 @@ impl Node {
         self.outbox.pop_front()
     }
 
+    /// The next queued [`Event`] for the app to consume; drain fully each turn.
     pub fn poll_event(&mut self) -> Option<Event> {
         self.core.events.pop_front()
     }

@@ -4,6 +4,7 @@
 //! ordering. No route computation exists; only per-contact decisions.
 
 #![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
 
 extern crate alloc;
 
@@ -40,7 +41,12 @@ pub enum Handoff {
     /// Peer is the destination: transfer regardless of budget (doc 05 §2.5).
     Deliver,
     /// Spray with this granted budget; we retain the remainder.
-    Spray { grant: u8, keep: u8 },
+    Spray {
+        /// Copies handed to the peer (from `spray_split`).
+        grant: u8,
+        /// Copies we keep carrying (from `spray_split`).
+        keep: u8,
+    },
     /// Budget 1 and the peer is a strictly better carrier: give our only copy
     /// and stop carrying (doc 05 §2.4).
     Focus,

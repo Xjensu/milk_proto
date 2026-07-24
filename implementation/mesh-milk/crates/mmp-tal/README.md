@@ -6,7 +6,7 @@ doc 12 §2): `TalEvent`, `LinkId`, `LinkQuality`, the frame length-prefix helper
 it never parses protocol bytes; that stays in `mmp-core`'s session engine so every
 radio backend (and the simulator) exercises identical protocol logic.
 
-**Layering:** depends on nothing else in the workspace.
+**Layering:** depends only on `mmp-types`.
 `#![cfg_attr(not(feature = "std"), no_std)]`. Every concrete transport
 (`mmp-tal-btleplug`, `mmp-tal-peripheral`, `mmp-tal-embedded`, `mmp-tal-mobile`) and
 `mmp-node` itself depend on this crate.

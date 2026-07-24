@@ -29,41 +29,69 @@ pub const fn class_max_lifetime_ms(class: u8) -> u64 {
 }
 
 /// Store quotas, bytes (doc 03 §9). ⚠
+/// Standard-tier per-node storage quota.
 pub const QUOTA_STANDARD: u64 = 128 * 1024 * 1024;
+/// Core-tier (constrained IoT) per-node storage quota.
 pub const QUOTA_CORE: u64 = 32 * 1024;
+/// Anchor-tier (mains-powered, plentiful storage) per-node storage quota.
 pub const QUOTA_ANCHOR: u64 = 2 * 1024 * 1024 * 1024;
 
 /// RBSR terminal-list threshold and branching factor (doc 06 §3.2). ⚠
+/// Below this many items, RBSR sends the terminal list directly instead of
+/// subdividing the range further.
 pub const RBSR_T_LIST: usize = 24;
+/// Branching factor RBSR uses when subdividing a range into sub-ranges.
 pub const RBSR_B_F: usize = 16;
 /// Items with less remaining lifetime than this are excluded from offers (doc 06 §2). ⚠
 pub const OFFER_MIN_LIFETIME_MS: u64 = 10 * 60 * 1000;
 
 /// Spray/utility constants (doc 05). ⚠
+/// Spray-phase utility threshold — above this, a copy is granted in the
+/// spray-and-wait fan-out phase.
 pub const THETA_SPRAY: f32 = 0.3;
+/// Focus-phase utility threshold — above this, a copy is granted in the
+/// direct-forwarding (utility-focus) phase.
 pub const THETA_FOCUS: f32 = 0.15;
+/// Utility-tie margin: candidates within this of each other are treated as
+/// tied for forwarding purposes.
 pub const SIGMA_TIE: f32 = 0.5;
+/// Initial per-contact delivery-probability estimate before any observation.
 pub const P_INIT: f32 = 0.5;
+/// Per-hour decay multiplier applied to delivery-probability estimates when a
+/// contact is not observed.
 pub const GAMMA_PER_HOUR: f32 = 0.98;
 /// Receipt spray budget and lifetime (doc 05 §7.1). ⚠
+/// Copy-budget ceiling for receipt (class-0) spraying — smaller than the
+/// general [`L_MAX`] since receipts are cheap to re-derive.
 pub const L_RECEIPT: u8 = 8;
 /// P-table and ContactGraph caps — the 10k-survivability answer (doc 05 §4). ⚠
+/// Maximum tracked entries in a node's delivery-probability table.
 pub const P_TABLE_CAP: usize = 256;
+/// Maximum tracked nodes in a node's contact graph.
 pub const CONTACT_GRAPH_CAP: usize = 4096;
 
 /// Per-origin token bucket (doc 05 §8): rate/h, burst, WoT multiplier. ⚠
+/// Sustained admission rate per origin, bytes/hour.
 pub const ORIGIN_BUCKET_RATE_PER_H: u64 = 32 * 1024;
+/// Burst capacity of the per-origin token bucket, bytes.
 pub const ORIGIN_BUCKET_BURST: u64 = 128 * 1024;
+/// Multiplier applied to the per-origin bucket rate/burst for
+/// Web-of-Trust-vouched origins.
 pub const WOT_MULTIPLIER: u64 = 4;
 /// In-flight cap per (origin → dest) as app backpressure (doc 05 §8). ⚠
 pub const IN_FLIGHT_CAP: usize = 64;
 
 /// ReceiptFilter / SeenIndex bucketing: 12 × 6 h covers the 72 h class max (doc 06 §6.1). ⚠
+/// Number of time buckets a ReceiptFilter/SeenIndex maintains.
 pub const FILTER_BUCKETS: usize = 12;
+/// Duration each ReceiptFilter/SeenIndex bucket covers, ms.
 pub const FILTER_BUCKET_MS: u64 = 6 * HOUR_MS;
 /// Standard-tier Bloom capacity per bucket and bits/element for ≈1 % FP (k = 7). ⚠
+/// Standard-tier Bloom filter capacity per bucket, elements.
 pub const BLOOM_CAPACITY: usize = 8192;
+/// Standard-tier Bloom filter size, bits per element.
 pub const BLOOM_BITS_PER_ELEMENT: usize = 10;
+/// Number of hash functions (k) used by the Bloom filter.
 pub const BLOOM_K: usize = 7;
 /// Wire cap per SUMMARY bloom bucket (mini-filter, doc 06 §9): the full
 /// Standard bucket (~10 KiB) exceeds MAX_FRAME_PAYLOAD, so buckets ship
@@ -76,29 +104,46 @@ pub const RATCHET_WINDOW: u32 = 512;
 pub const PREKEY_BATCH: usize = 16;
 
 /// Session timers, ms (doc 11 §7). ⚠
+/// Time budget for a session handshake to complete before it is abandoned.
 pub const HANDSHAKE_BUDGET_MS: u64 = 5_000;
+/// Idle time after which a session with no traffic is closed.
 pub const SESSION_IDLE_MS: u64 = 10_000;
+/// Maximum continuous airtime a single session may consume before yielding.
 pub const SESSION_AIRTIME_CAP_MS: u64 = 60_000;
+/// Minimum time before a redial to the same peer is attempted again.
 pub const REDIAL_SUPPRESS_MS: u64 = 60_000;
+/// Base delay for connection-retry exponential backoff.
 pub const BACKOFF_BASE_MS: u64 = 1_000;
+/// Ceiling on connection-retry exponential backoff.
 pub const BACKOFF_CAP_MS: u64 = 5 * 60 * 1000;
 /// Ephemeral-ID / RPA rotation slot (doc 09 §3.2). ⚠
 pub const EPHEM_SLOT_MS: u64 = 15 * 60 * 1000;
 
 /// File-transfer caps (doc 16). ⚠
+/// Maximum size of a single shared file, bytes.
 pub const FILE_MAX: u64 = 8 * 1024 * 1024;
+/// Maximum number of files in one album/[`crate::manifest::FileManifest`] share.
 pub const ALBUM_MAX_FILES: usize = 16;
+/// Maximum thumbnail size, bytes.
 pub const THUMB_MAX: usize = 32 * 1024;
+/// Maximum file name length, bytes.
 pub const NAME_MAX: usize = 255;
+/// Maximum MIME-type string length, bytes.
 pub const MIME_MAX: usize = 64;
 /// Nickname claim body cap (doc 06 §4.1). ⚠
 pub const NICKNAME_MAX: usize = 32;
 
 /// Blob plane / file transfer (doc 16, handbook §4.4, E5-S1). ⚠
+/// Size of one erasure-coded symbol, bytes — the unit carried by
+/// [`crate::payload::SymbolPayload`].
 pub const SYMBOL_SIZE: usize = 2048;
+/// Number of data symbols per Reed-Solomon stripe.
 pub const RS_DATA_K: usize = 32;
+/// Number of parity symbols per Reed-Solomon stripe.
 pub const RS_PARITY_R: usize = 8;
+/// Total symbols (data + parity) per Reed-Solomon stripe.
 pub const RS_TOTAL_N: usize = RS_DATA_K + RS_PARITY_R;
+/// Data bytes covered by one stripe (before parity expansion).
 pub const STRIPE_DATA_BYTES: usize = SYMBOL_SIZE * RS_DATA_K;
 /// `FILE_MAX / STRIPE_DATA_BYTES`, rounded up — the widest a manifest's
 /// `stripes` count can legitimately be for an 8 MiB file.

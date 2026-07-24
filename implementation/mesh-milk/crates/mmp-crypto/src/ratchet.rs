@@ -40,11 +40,14 @@ fn bumped(ck: &[u8; 32], session_material: &[u8; 32]) -> [u8; 32] {
 /// Sending side of one direction.
 pub struct SendChain {
     ck: [u8; 32],
+    /// The current epoch (bumped by [`SendChain::bump_epoch`]).
     pub epoch: u16,
+    /// The index that will be assigned to the next message key.
     pub next_index: u32,
 }
 
 impl SendChain {
+    /// Start a send chain at (`ck`, `epoch`), index 0.
     pub fn new(ck: [u8; 32], epoch: u16) -> SendChain {
         SendChain { ck, epoch, next_index: 0 }
     }
@@ -63,6 +66,8 @@ impl SendChain {
         (key, epoch, index)
     }
 
+    /// Bump the epoch at live contact (doc 08 §5.2): folds `session_material`
+    /// into the chain key, resets the index to 0, and increments `epoch`.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
         let new = bumped(&self.ck, session_material);
         self.ck.zeroize();
@@ -82,6 +87,8 @@ pub struct RecvChain {
 }
 
 impl RecvChain {
+    /// Start a receive chain at (`ck`, `epoch`), index 0, tolerating up to
+    /// `window` messages of reordering ahead of the expected index.
     pub fn new(ck: [u8; 32], epoch: u16, window: u32) -> RecvChain {
         RecvChain { ck, epoch, next_index: 0, window, skipped: BTreeMap::new() }
     }
@@ -119,6 +126,8 @@ impl RecvChain {
         Ok(key)
     }
 
+    /// Bump the epoch at live contact (doc 08 §5.2), mirroring
+    /// [`SendChain::bump_epoch`] on the receive side.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
         let new = bumped(&self.ck, session_material);
         self.ck.zeroize();
@@ -127,6 +136,7 @@ impl RecvChain {
         self.next_index = 0;
     }
 
+    /// The current epoch.
     pub fn epoch(&self) -> u16 {
         self.epoch
     }

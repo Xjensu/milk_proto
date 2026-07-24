@@ -7,16 +7,33 @@
 
 use alloc::vec::Vec;
 
+/// The registry of Ed25519 signing domains (doc 10 §3.1). Each variant names
+/// one class of signed object and maps ([`SigDomain::tag`]) to a distinct,
+/// prefix-free byte tag prepended to that object's bytes before signing —
+/// so a signature valid for one object type can never be replayed as valid
+/// for another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SigDomain {
+    /// [`crate::bundle::Bundle`] signatures, over the bundle's lifetime-zeroed
+    /// canonical bytes.
     Bundle,
+    /// [`crate::claim::Claim`] signatures, over `owner ‖ field ‖ seq ‖ body`.
     Claim,
+    /// Friendship countersig, by the patron, over
+    /// [`crate::claim::friendship_signed_object`].
     Friend,
+    /// [`crate::claim::PrekeyBatch`] signatures, over `signed_prekey ‖ count ‖ prekeys…`.
     Prekey,
+    /// Blob Merkle-root signatures (doc 16 blob plane).
     BlobRoot,
+    /// Channel-binding signatures.
     ChanBind,
+    /// [`crate::manifest::FileManifest`] signatures, over `suite ‖ sharer ‖ count ‖ entries`.
     Manifest,
+    /// [`crate::authcert::AuthCert`] signatures, over [`crate::authcert::AuthCert::signed_object`].
     AuthCert,
+    /// [`crate::authcert::AnnouncementBody`] signatures, over
+    /// [`crate::authcert::AnnouncementBody::signed_object`].
     Announce,
     /// Class-2 member signature under the member's *group* signature key
     /// (doc 10 §4.2 defines the field; the registry assigns no tag —
@@ -25,6 +42,8 @@ pub enum SigDomain {
 }
 
 impl SigDomain {
+    /// The domain's prefix-free wire tag, e.g. `b"mmp1/bundle\x01"` — always
+    /// ends in `0x01` so no tag can be a prefix of another.
     pub const fn tag(self) -> &'static [u8] {
         match self {
             SigDomain::Bundle => b"mmp1/bundle\x01",

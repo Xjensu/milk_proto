@@ -18,8 +18,13 @@ use crate::bloom::{Bloom, INTERNAL_SALT};
 /// Hint deprioritizes offers; Purge is the only deletion authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppressSignal {
+    /// No evidence the bundle was delivered — offer it normally.
     None,
+    /// A Bloom hit: possibly-false-positive evidence of delivery —
+    /// deprioritize offering it, but never delete it on this alone.
     Hint,
+    /// An exact, verified D0 receipt was seen for this bundle — the only
+    /// signal authorized to actually delete it.
     Purge,
 }
 
@@ -40,6 +45,7 @@ impl Default for ReceiptFilter {
 }
 
 impl ReceiptFilter {
+    /// Builds an empty filter: no buckets, no exact receipts.
     pub fn new() -> ReceiptFilter {
         ReceiptFilter { buckets: VecDeque::new(), exact: BTreeMap::new() }
     }

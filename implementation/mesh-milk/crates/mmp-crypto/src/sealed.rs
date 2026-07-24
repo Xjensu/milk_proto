@@ -25,6 +25,9 @@ pub fn seal_box(
     (eph_pub, aead::seal(&key, ad, plaintext))
 }
 
+/// Open a box sealed by [`seal_box`]: redo the X25519 agreement with
+/// `recipient`'s exchange secret and the sender's ephemeral public key `eph`,
+/// then AEAD-open under the derived key.
 pub fn open_box(
     recipient: &Identity,
     eph: &Key32,
