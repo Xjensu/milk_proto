@@ -15,6 +15,35 @@ omitted rather than invented.
 
 ---
 
+## [Implementation] 2026-07-24 — E2-S5 Android AAR / iOS XCFramework build automation
+
+### Added
+- `implementation/mesh-milk/scripts/build-android-aar.sh` and
+  `build-ios-xcframework.sh`, plus CI jobs `android-aar` (`ubuntu-latest`) and
+  `ios-xcframework` (`macos-latest`) producing `mmp-ffi.aar` and
+  `MmpCore.xcframework` as build artifacts, closing `docs/AGILE_BACKLOG.md` E2-S5.
+  Built directly against the commands `MOBILE_INTEGRATION.md` §3 already
+  documented, extended with the packaging step neither covered before.
+- **Design decision:** the Android artifact is a native-only AAR (manifest +
+  `jni/<abi>/*.so`, no compiled `classes.jar`) — a standard, documented AGP
+  dependency shape — because this repo has no Android app module yet to compile
+  the UniFFI Kotlin bindings into bytecode; they ship as a source zip alongside
+  instead. The iOS side needed no equivalent fork: `xcodebuild -create-xcframework`
+  is the standard, complete tool, used as documented.
+
+### Honest gap
+- Neither script nor CI job has been run end-to-end anywhere — this development
+  environment has no Android NDK/Gradle and no Xcode (categorically macOS-only).
+  Verified locally: script syntax (`bash -n`), CI YAML validity, and that the
+  artifact-path conventions match the already-working `mobile-bindings` job. The
+  first real CI run is the outstanding verification, same discipline as E3-S2's
+  real-hardware gate.
+
+`cargo test --workspace`, the clippy gate, and `layer-check` all unaffected (no
+crate source touched). Full writeup: `docs/IMPLEMENTATION_HANDBOOK.md` §4.19.
+
+---
+
 ## [Implementation] 2026-07-24 — E2-S7 missing_docs fallout across all 7 crates
 
 ### Added

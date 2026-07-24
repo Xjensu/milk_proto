@@ -1291,6 +1291,47 @@ from before this story); `cargo clippy --workspace --all-targets --all-features 
 
 ---
 
+### 4.19 Android AAR / iOS XCFramework build automation — MECHANISM SHIPPED (E2-S5, 2026-07-24); first real run outstanding
+
+**Shipped:** `implementation/mesh-milk/scripts/build-android-aar.sh` and
+`build-ios-xcframework.sh`, plus matching CI jobs `android-aar` (`ubuntu-latest`,
+via `nttld/setup-ndk` + `cargo-ndk`) and `ios-xcframework` (`macos-latest`, via
+`xcodebuild`). Both scripts are written directly against the commands
+`MOBILE_INTEGRATION.md` §3 already documented, extended with the actual packaging
+step neither script's prior manual instructions covered.
+
+**Orchestrator design decision — Android is a native-only AAR:** the produced
+`mmp-ffi.aar` contains `AndroidManifest.xml` + `jni/<abi>/*.so` only, no compiled
+`classes.jar`. This repo has no Android app module yet (that's E4-S1, Kotlin
+platform-native work, out of scope for a Rust-only session) to compile the
+UniFFI-generated Kotlin bindings into bytecode, so they ship as a source zip
+(`mmp-ffi-kotlin-bindings.zip`) alongside the AAR instead of embedded in it. This is
+not an invented workaround — a native-only AAR (manifest + `jni/` folder, nothing
+else) is a standard, documented Android Gradle Plugin dependency shape; AGP merges
+its `jni/` contents into the consuming app's own `jniLibs` automatically. The iOS
+side needed no equivalent design fork: `xcodebuild -create-xcframework` is the
+complete, standard Apple tool for exactly this, used as documented.
+
+**Honestly unverified end-to-end, same discipline as E3-S2's real-BLE-hardware
+gate:** this development box has neither an Android NDK/Gradle install (confirmed:
+`cargo check -p mmp-ffi --target aarch64-linux-android --release` fails locally —
+`error occurred in cc-rs: failed to find tool "clang.exe"`, the NDK's cross-clang,
+not present) nor Xcode (categorically macOS-only, no workaround possible). Neither
+script nor either new CI job has been executed anywhere as of this writing. What
+*was* verified locally: both scripts' `bash -n` syntax; the CI YAML re-parses
+(`yaml.safe_load`) with both new jobs present; the artifact-upload path convention
+matches the already-working `mobile-bindings` job's pattern exactly (paths prefixed
+`implementation/mesh-milk/` since `actions/upload-artifact`'s `path:` resolves from
+`GITHUB_WORKSPACE`, not the `defaults.run.working-directory`). The first real CI run
+on an actual push is the outstanding verification — not something buildable from
+this environment.
+
+**Verification:** `cargo test --workspace` unaffected (no crate source touched by
+this story — only new scripts, CI YAML, and docs); `cargo clippy --workspace
+--all-targets --all-features -- -D warnings` and `layer-check` both still clean.
+
+---
+
 ## 5. Bug ledger (fixed — do not reintroduce)
 
 | Bug | Root cause | Guard |
