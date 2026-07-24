@@ -127,6 +127,20 @@ jobs:
         with:
           manifest-path: implementation/mesh-milk/Cargo.toml
 
+  # docs/AGILE_BACKLOG.md E8-S2. Note: `deny.toml`'s `[advisories]` block
+  # (checked by the `deny` job above) already queries the same RustSec
+  # advisory database `cargo-audit` does — this job exists because the story
+  # names `cargo-audit` specifically, not because it adds new coverage.
+  # Verified locally (2026-07-25): `cargo audit` against this workspace's real
+  # Cargo.lock reports 0 vulnerabilities across 259 crate dependencies.
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
   layer-test:
     runs-on: ubuntu-latest
     steps:
@@ -263,3 +277,55 @@ jobs:
         with:
           name: mmp-fuzz-corpus
           path: implementation/mesh-milk/fuzz/corpus
+
+  # docs/AGILE_BACKLOG.md E8-S2: signed release artifacts, on a version tag
+  # push only. Scope decision: `mmp-cli` is this workspace's one standalone
+  # consumer-facing binary today (the PC anchor node + inspection tool) — the
+  # mobile artifacts (E2-S2/E2-S5) are already signed-adjacent via their own
+  # jobs and aren't re-signed here; publishing to an actual GitHub Release
+  # (vs. the workflow artifacts produced here) is a natural follow-on, not
+  # attempted in this story.
+  #
+  # Signing is keyless (Sigstore/cosign): no private key is generated, stored
+  # as a secret, or rotated anywhere. `id-token: write` lets cosign exchange
+  # the workflow's own short-lived GitHub OIDC token for an ephemeral
+  # certificate from Sigstore's public Fulcio CA, and the signature is
+  # recorded in the public Rekor transparency log — verification is against
+  # that public log, not a key distributed to verifiers. Gated on `host`
+  # passing first so a broken build is never signed.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: host
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: mmp-cli
+            artifact_name: mmp-cli-linux-x86_64
+          - os: windows-latest
+            bin: mmp-cli.exe
+            artifact_name: mmp-cli-windows-x86_64.exe
+          - os: macos-latest
+            bin: mmp-cli
+            artifact_name: mmp-cli-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p mmp-cli --release
+      - run: cp target/release/${{ matrix.bin }} ${{ matrix.artifact_name }}
+      - uses: sigstore/cosign-installer@v3
+      - run: >
+          cosign sign-blob --yes ${{ matrix.artifact_name }}
+          --output-signature ${{ matrix.artifact_name }}.sig
+          --output-certificate ${{ matrix.artifact_name }}.pem
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-signed
+          path: |
+            implementation/mesh-milk/${{ matrix.artifact_name }}
+            implementation/mesh-milk/${{ matrix.artifact_name }}.sig
+            implementation/mesh-milk/${{ matrix.artifact_name }}.pem
