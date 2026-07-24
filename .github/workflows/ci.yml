@@ -170,6 +170,54 @@ jobs:
             implementation/mesh-milk/bindings/kotlin
             implementation/mesh-milk/bindings/swift
 
+  # docs/AGILE_BACKLOG.md E2-S5: packages mmp-ffi's Android cdylib as a real
+  # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
+  # classes.jar — a standard, documented AGP dependency shape; this repo has
+  # no Android app module yet to compile the Kotlin bindings into bytecode,
+  # so they ship as a source zip alongside for a consuming app to compile —
+  # see scripts/build-android-aar.sh's header comment for the full rationale).
+  # Local one-command reproduction: scripts/build-android-aar.sh (needs
+  # cargo-ndk + an installed NDK, not run as part of this job's own checkout).
+  android-aar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - run: cargo install cargo-ndk --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: bash scripts/build-android-aar.sh mobile-artifacts/android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-ffi-aar
+          path: implementation/mesh-milk/mobile-artifacts/android
+
+  # docs/AGILE_BACKLOG.md E2-S5: wraps mmp-ffi's iOS staticlib (device +
+  # Apple-Silicon simulator) into MmpCore.xcframework via `xcodebuild`, the
+  # standard Apple packaging tool for multi-platform binary frameworks — no
+  # invented packaging step here, unlike the Android side's native-only-AAR
+  # design call. macOS-only by necessity (`xcodebuild` doesn't exist
+  # elsewhere); local one-command reproduction: scripts/build-ios-xcframework.sh
+  # on a real macOS host with Xcode installed.
+  ios-xcframework:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - run: bash scripts/build-ios-xcframework.sh mobile-artifacts/ios
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-core-xcframework
+          path: implementation/mesh-milk/mobile-artifacts/ios
+
   # Pre-auth-parser fuzzing (doc 07 §8 / doc 12 §7 mandate, E5-S6). The `fuzz/`
   # member is deliberately outside the main workspace (its own `[workspace]`
   # table) so libfuzzer-sys/arbitrary never leak into a normal build — see
