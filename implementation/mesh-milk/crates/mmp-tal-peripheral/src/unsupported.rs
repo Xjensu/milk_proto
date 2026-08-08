@@ -79,7 +79,7 @@ impl PeripheralRole {
     }
 
     /// Statically unreachable (no value of `Self` can exist).
-    pub fn events(&self) -> mpsc::UnboundedReceiver<TalEvent> {
+    pub fn events(&self) -> mpsc::Receiver<TalEvent> {
         match self.never {}
     }
 

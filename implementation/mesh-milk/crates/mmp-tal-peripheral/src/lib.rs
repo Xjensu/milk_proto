@@ -61,8 +61,10 @@
 //!
 //! ## Contract (same as the central crate)
 //!
-//! - Emits [`TalEvent`]s on an unbounded channel ([`PeripheralRole::events`],
-//!   take-once). `LinkUp` carries `initiator: false` — the central dialed us.
+//! - Emits [`TalEvent`]s on a bounded FIFO channel ([`PeripheralRole::events`],
+//!   take-once). The 2048-event queue applies async backpressure to ATT read
+//!   and link-control producers rather than dropping ordered encrypted bytes.
+//!   `LinkUp` carries `initiator: false` — the central dialed us.
 //! - Accepts outbound bytes via [`PeripheralRole::notify`], chunked.
 //! - Owns no runtime: every `async fn` runs on the caller's tokio runtime;
 //!   internal tasks are `tokio::spawn`ed onto it.
@@ -75,11 +77,29 @@
 //! fine here (this crate sits beside `mmp-tal-btleplug`, above the core).
 
 use core::fmt;
+#[cfg(any(target_os = "linux", test))]
+use tokio::sync::mpsc;
 
 pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
 use mmp_types::consts::EPHEM_SLOT_MS;
 
 pub mod framing;
+
+/// Maximum number of transport events waiting for the host event loop.
+///
+/// The value mirrors the central TAL: eight concurrently admitted sessions
+/// need 1640 twenty-byte notifications to hold one maximum-size 4096-byte
+/// envelope per session; 2048 is a deliberate ingress-memory threshold with
+/// control and beacon headroom, not a promise to absorb an entire eight-frame
+/// credit burst. Producers await capacity, so a full queue applies
+/// backpressure instead of dropping an ordered encrypted ATT write.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) const EVENT_QUEUE_CAPACITY: usize = 2048;
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
+    mpsc::channel(EVENT_QUEUE_CAPACITY)
+}
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -191,6 +211,36 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn event_channel_applies_bounded_fifo_backpressure() {
+        let (tx, mut rx) = event_channel();
+        for sequence in 0..EVENT_QUEUE_CAPACITY {
+            tx.send(TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] })
+                .await
+                .expect("capacity-sized event burst must fit");
+        }
+
+        assert!(tx.try_send(TalEvent::LinkData { link: 7, bytes: vec![0xff] }).is_err());
+
+        let producer = tokio::spawn(async move {
+            tx.send(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
+                .await
+                .expect("producer must resume after the receiver drains");
+        });
+        tokio::task::yield_now().await;
+        assert!(!producer.is_finished(), "full channel must apply backpressure");
+
+        for sequence in 0..EVENT_QUEUE_CAPACITY {
+            let event = rx.recv().await.expect("queued event must remain available");
+            assert_eq!(event, TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] });
+        }
+        producer.await.expect("producer task must complete");
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
+        );
+    }
 
     /// The three constants must also be *parseable* UUIDs (the Linux backend
     /// parses them at startup; catch a typo on every platform's test run).

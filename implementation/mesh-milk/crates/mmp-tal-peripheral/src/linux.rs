@@ -45,7 +45,8 @@ use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
 use crate::framing;
 use crate::{
-    mint_link_id, LinkId, LinkQuality, PeriphError, TalEvent, DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
+    event_channel, mint_link_id, LinkId, LinkQuality, PeriphError, TalEvent,
+    DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
 
@@ -72,10 +73,10 @@ pub struct PeripheralRole {
     _session: Session,
     _app: ApplicationHandle,
     adv: AsyncMutex<Option<AdvertisementHandle>>,
-    tx: mpsc::UnboundedSender<TalEvent>,
+    tx: mpsc::Sender<TalEvent>,
     // `std::sync::Mutex` (not tokio's) is correct: held only for the instant
     // of an `Option::take`, never across an `.await`.
-    events_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<TalEvent>>>,
+    events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Links,
 }
 
@@ -128,7 +129,7 @@ impl PeripheralRole {
         };
         let app_handle = adapter.serve_gatt_application(app).await?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = event_channel();
         let links: Links = Arc::new(AsyncMutex::new(HashMap::new()));
 
         tokio::spawn(run_control(write_ctl, notify_ctl, tx.clone(), links.clone()));
@@ -179,8 +180,9 @@ impl PeripheralRole {
     /// (`LinkUp { initiator: false }` / `LinkData` / `LinkDown`). There is
     /// exactly one receiver per `PeripheralRole`; calling this a second time
     /// panics — hold on to the first receiver instead. (Same contract as
-    /// `BleCentral::events`.)
-    pub fn events(&self) -> mpsc::UnboundedReceiver<TalEvent> {
+    /// `BleCentral::events`.) Drain it while the peripheral is active: the
+    /// bounded queue applies backpressure rather than dropping ATT writes.
+    pub fn events(&self) -> mpsc::Receiver<TalEvent> {
         self.events_rx
             .lock()
             .expect("events_rx mutex poisoned")
@@ -221,7 +223,7 @@ impl PeripheralRole {
 async fn run_control(
     write_ctl: bluer::gatt::local::CharacteristicControl,
     notify_ctl: bluer::gatt::local::CharacteristicControl,
-    tx: mpsc::UnboundedSender<TalEvent>,
+    tx: mpsc::Sender<TalEvent>,
     links: Links,
 ) {
     pin_mut!(write_ctl);
@@ -262,7 +264,7 @@ async fn run_control(
 /// the same link refreshes it (idempotent in practice — same value).
 async fn ensure_link_up(
     links: &Links,
-    tx: &mpsc::UnboundedSender<TalEvent>,
+    tx: &mpsc::Sender<TalEvent>,
     link: LinkId,
     att_mtu: usize,
     writer: Option<CharacteristicWriter>,
@@ -282,7 +284,7 @@ async fn ensure_link_up(
     if is_new {
         let quality =
             LinkQuality { mtu: (chunk_size + framing::ATT_HEADER) as u16, ..LinkQuality::default() };
-        let _ = tx.send(TalEvent::LinkUp { link, initiator: false, quality });
+        let _ = tx.send(TalEvent::LinkUp { link, initiator: false, quality }).await;
     }
 }
 
@@ -292,7 +294,7 @@ async fn ensure_link_up(
 async fn read_loop(
     reader: CharacteristicReader,
     link: LinkId,
-    tx: mpsc::UnboundedSender<TalEvent>,
+    tx: mpsc::Sender<TalEvent>,
     links: Links,
 ) {
     loop {
@@ -302,7 +304,7 @@ async fn read_loop(
             // empty slices), so treat it as end-of-stream.
             Ok(bytes) if bytes.is_empty() => break,
             Ok(bytes) => {
-                if tx.send(TalEvent::LinkData { link, bytes }).is_err() {
+                if tx.send(TalEvent::LinkData { link, bytes }).await.is_err() {
                     return; // owner dropped the receiver; nobody is listening
                 }
             }
@@ -314,10 +316,10 @@ async fn read_loop(
 
 /// Remove-then-emit: only the caller that actually removed the entry emits
 /// `LinkDown`, so the read-loop and a failed `notify` can race harmlessly.
-async fn link_down(links: &Links, tx: &mpsc::UnboundedSender<TalEvent>, link: LinkId) {
+async fn link_down(links: &Links, tx: &mpsc::Sender<TalEvent>, link: LinkId) {
     let removed = links.lock().await.remove(&link).is_some();
     if removed {
-        let _ = tx.send(TalEvent::LinkDown { link });
+        let _ = tx.send(TalEvent::LinkDown { link }).await;
     }
 }
 
