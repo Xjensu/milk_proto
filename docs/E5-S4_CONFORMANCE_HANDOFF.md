@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is on commit `66786fb` (`test(mesh-milk): add wire canonical
-negative vectors`). The frozen `specification/` directory was not modified.
+This checkpoint is on commit `45ccdf1` (`docs(mesh-milk): record group control
+security boundary`). The frozen `specification/` directory was not modified.
 The implementation changes are intentionally limited to deterministic test
 vectors, test-only readers, and their documentation.
 
@@ -15,6 +15,9 @@ Recent focused commits, oldest first:
 - `89a2185` — strict Ed25519 non-canonical `S + L` rejection vector;
 - `2bb6d81` — complete 9-domain signature matrix (9 accepts, 72 rejects);
 - `66786fb` — envelope-cap and malformed-TLV negative vectors.
+- `c34069b` — independent Beacon and all-registered-frame payload grammars;
+- `b07a0b7` — machine-readable coverage manifest;
+- `45ccdf1` — group-control security boundary and remediation order.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -33,6 +36,9 @@ have artifact/API bridge checks rather than a turnkey consuming application.
 - unknown-critical, out-of-order, and duplicate TLVs;
 - the normative 4096-byte logical frame cap versus the implementation's
   4128-byte encrypted-envelope headroom.
+- independent Beacon and frame-payload grammar checks;
+- `coverage.json`, mapping all committed artifacts to requirement IDs, source
+  sections, and verification evidence.
 
 The independent reader intentionally does not call production frame, bundle,
 TLV, or payload decoders. Production tests separately perform semantic
@@ -40,7 +46,7 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 22 `mmp-cli` tests. Workspace clippy with
+The latest focused run passed 25 `mmp-cli` tests. Workspace clippy with
 `-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
 workspace test matrix also passed during this checkpoint. Rustfmt could not be
 run because the rustfmt component is not installed in the environment.
@@ -83,20 +89,17 @@ Record evidence and obtain a protocol decision first.
 
 ## Highest-priority remaining work
 
-1. Add independent payload grammar checks for Beacon and the 17 frame payloads;
-   the current independent reader proves envelope boundaries but not every
-   payload field.
-2. Add a machine-readable coverage manifest mapping each vector to its
-   requirement and source section. Keep the existing filenames stable.
-3. Decide and implement the 4096/4128 admission policy after a specification
+1. Decide and implement the 4096/4128 admission policy after a specification
    review; add an interoperability regression test for the chosen behavior.
-4. Audit the dirty candidate `implementation/mesh-milk/crates/mmp-types/src/group_control.rs`
-   before any integration. The audit found missing authenticated outer
-   envelopes, replay protection, signer/slot binding, batch limits, and
-   unregistered signing domains. Do not stage it as-is.
-5. Run the manual BLE procedure on two Linux PCs. Mobile work currently stops
+2. Run the manual BLE procedure on two Linux PCs. Mobile work currently stops
    at building and exercising the FFI artifacts until a real Android/iOS host
    application is supplied.
+3. Keep the candidate group-control implementation quarantined until a
+   normative control schema/domain decision resolves the findings in
+   `docs/GROUP_CONTROL_SECURITY_AUDIT.md`.
+4. Add independent cryptographic/payload vectors for the remaining opaque HS,
+   class-1, and class-2 interiors only after their normative grammar and key
+   context are available.
 
 ## Worktree hygiene
 
