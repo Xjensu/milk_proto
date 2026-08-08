@@ -23,6 +23,14 @@ fn bloom_decode_rejects_zero_modulus_and_oversized_bit_arrays() {
     assert!(Bloom::decode(&oversized).is_none());
 }
 
+#[test]
+fn bloom_capacity_clamps_huge_requests_before_allocation() {
+    let bloom = Bloom::with_capacity(usize::MAX);
+    let expected_bits = BLOOM_CAPACITY * BLOOM_BITS_PER_ELEMENT;
+    assert_eq!(bloom.bytes().len(), expected_bits.div_ceil(8));
+    assert_eq!(bloom.count(), 0);
+}
+
 fn encoded_minimal_bloom_bucket(epoch: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + 8 + 8);
     out.extend_from_slice(&epoch.to_le_bytes());

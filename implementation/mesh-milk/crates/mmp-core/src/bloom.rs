@@ -26,9 +26,12 @@ pub struct Bloom {
 impl Bloom {
     /// Builds an empty filter sized for `capacity` elements: `m` bits is
     /// `capacity * BLOOM_BITS_PER_ELEMENT`, floored at 64 bits so tiny/zero
-    /// capacities still produce a usable filter.
+    /// capacities still produce a usable filter and capped at the production
+    /// filter size. The cap is local resource policy: callers cannot turn a
+    /// malformed or accidentally huge capacity into an unbounded allocation.
     pub fn with_capacity(capacity: usize) -> Bloom {
-        let m_bits = (capacity * BLOOM_BITS_PER_ELEMENT).max(64);
+        let requested_bits = capacity.saturating_mul(BLOOM_BITS_PER_ELEMENT);
+        let m_bits = requested_bits.clamp(MIN_BLOOM_BITS, MAX_BLOOM_BITS);
         Bloom { bits: vec![0; m_bits.div_ceil(8)], m: m_bits as u32, count: 0 }
     }
 
