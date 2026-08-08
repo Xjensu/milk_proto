@@ -19,12 +19,10 @@
 //! conversation root (a throwaway fixed test value) and the resulting MAC, but
 //! never the derived MAC key.
 //!
-//! Deferred, deliberately NOT faked (see `vectors/README.md`): the X3DH
-//! agreement vector (needs deterministic-RNG plumbing for the ephemeral key)
-//! and the overlarge-S / non-canonical Ed25519 negative (needs a crafted
-//! malleable signature). Both properties are already covered by `mmp-crypto`'s
-//! own unit tests (`prekey_agreement_matches_both_sides`,
-//! `sign_verify_and_cross_domain_rejects`); the golden-file forms are follow-up.
+//! The X3DH agreement vector remains deliberately deferred (it needs
+//! deterministic-RNG plumbing for the ephemeral key). The non-canonical
+//! Ed25519 negative is now emitted as a deterministic S+L fixture below;
+//! `mmp-crypto`'s strict verifier remains the executable rejection oracle.
 
 use mmp_crypto::{merkle, receipt, Identity};
 use mmp_types::authcert::{scope_id_of, AnnouncementBody};
@@ -86,6 +84,33 @@ fn vector_bundle() -> (Bundle, Identity) {
     };
     b.signature = id.sign(SigDomain::Bundle, &b.canonical_zeroed());
     (b, id)
+}
+
+/// Ed25519 subgroup order L, encoded little-endian as required for the
+/// scalar S in an RFC 8032 signature.  Adding this value to a valid canonical
+/// S preserves the group equation while making the wire scalar non-canonical
+/// (`S >= L`); strict verification MUST reject it.
+const ED25519_L_LE: [u8; 32] = [
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
+    0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+];
+
+/// Construct the deterministic overlarge-S negative without relying on a
+/// private signing-key API.  The chosen canonical signature has S < L, so
+/// S+L fits in 256 bits and cannot wrap; a carry would indicate a broken
+/// fixture assumption and must fail generation rather than emit bad bytes.
+fn add_l_to_s(signature: Sig64) -> Sig64 {
+    let mut out = signature.0;
+    let mut carry = 0u16;
+    for i in 0..32 {
+        let sum = out[32 + i] as u16 + ED25519_L_LE[i] as u16 + carry;
+        out[32 + i] = sum as u8;
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0, "chosen valid S must permit an in-range 256-bit S+L encoding");
+    Sig64(out)
 }
 
 /// One outer-bundle class fixture.  The payload bytes are always produced by
@@ -368,6 +393,7 @@ pub fn generate() -> Vec<VectorFile> {
         envelope_vector(),
         rbsr_fingerprint_vector(),
         cross_domain_negative_vector(),
+        noncanonical_s_negative_vector(),
         lifetime_reset_negative_vector(),
         budget_clamp_negative_vector(),
         frames_vector(),
@@ -705,6 +731,28 @@ under each listed domain it must fail.\",\n  \"pubkey\": \"{}\",\n  \"object\": 
     VectorFile { name: "cross_domain_negative.json", json }
 }
 
+fn noncanonical_s_negative_vector() -> VectorFile {
+    // Reuse the canonical class-1 bundle object, but replace only the
+    // signature scalar S with S+L.  The public key, R, domain, and object are
+    // unchanged; only strict canonical-S verification should distinguish the
+    // two signatures (RFC 8032 §5.1.7; doc 08 §10, doc 10 §6.4).
+    let (b, _) = vector_bundle();
+    let valid = b.signature;
+    let malformed = add_l_to_s(valid);
+    assert!(mmp_crypto::verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &valid).is_ok());
+    assert!(mmp_crypto::verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &malformed).is_err());
+    let json = format!(
+        "{{\n  \"description\": \"Ed25519 overlarge-S negative: replacing canonical S with S+L MUST be rejected by strict verification (RFC 8032 §5.1.7, AUDIT F9)\",\n  \"domain\": \"mmp1/bundle\",\n  \"pubkey\": \"{}\",\n  \"object\": \"{}\",\n  \"valid_signature\": \"{}\",\n  \"noncanonical_signature\": \"{}\",\n  \"valid_s\": \"{}\",\n  \"noncanonical_s\": \"{}\",\n  \"expected_valid\": \"accept\",\n  \"expected_noncanonical\": \"reject\"\n}}\n",
+        hex(&b.origin.0),
+        hex(&b.canonical_zeroed()),
+        hex(&valid.0),
+        hex(&malformed.0),
+        hex(&valid.0[32..]),
+        hex(&malformed.0[32..]),
+    );
+    VectorFile { name: "noncanonical_s_negative.json", json }
+}
+
 fn lifetime_reset_negative_vector() -> VectorFile {
     // Two bundles identical but for lifetime_ms hash to the SAME BundleID:
     // resetting the (relay-mutable, ID-excluded) lifetime cannot mint a "new"
@@ -818,6 +866,14 @@ mod tests {
                 "signature must not verify under {dom:?}"
             );
         }
+
+        // Canonical-S negative: adding the Ed25519 subgroup order L changes
+        // neither R nor the group equation, but the resulting S is overlarge
+        // and MUST be rejected by the public strict-verification path.
+        let noncanonical = add_l_to_s(b.signature);
+        assert_eq!(noncanonical.0[..32], b.signature.0[..32], "S+L must preserve R");
+        assert!(verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &b.signature).is_ok());
+        assert!(verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &noncanonical).is_err());
 
         // Lifetime reset: ID is stable across a lifetime change (AUDIT F1).
         let id_a = b.id();

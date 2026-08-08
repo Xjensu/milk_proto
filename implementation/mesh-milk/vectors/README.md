@@ -63,6 +63,10 @@ Positive:
 - `rbsr_fingerprint.json` — RBSR range fingerprint of a known Id16 set.
 
 Negative (each states the rejection/invariant it pins):
+- `noncanonical_s_negative.json` — the same valid Ed25519 signature with its
+  scalar changed from canonical `S` to little-endian `S+L` MUST be rejected by
+  strict verification (RFC 8032 §5.1.7; AUDIT F9). The artifact carries both
+  signatures and both scalar encodings, without private key material.
 - `cross_domain_negative.json` — the `mmp1/bundle` signature MUST reject under
   `mmp1/claim`, `mmp1/manifest`, `mmp1/authcert`, `mmp1/announce` (AUDIT F4;
   rev-B tag set, doc 10 §3.1 / §6 rule 6).
@@ -82,11 +86,10 @@ the FFI surface.
 - **X3DH agreement vector** — needs deterministic-RNG plumbing for the ephemeral
   key; the property is covered today by `mmp-crypto`'s
   `prekey_agreement_matches_both_sides`.
-- **Overlarge-S / non-canonical Ed25519 negative** — needs a crafted malleable
-  signature; the `verify_strict` property is covered by `mmp-crypto`'s
-  `sign_verify_and_cross_domain_rejects` (AUDIT F9).
 
-Both are honest follow-ups, tracked rather than stubbed with placeholder bytes.
+The overlarge-S / non-canonical Ed25519 negative is no longer deferred: it is
+pinned by `noncanonical_s_negative.json`, and the `mmp-cli` strict-verification
+test exercises the public rejection path (AUDIT F9).
 
 ## Path note
 

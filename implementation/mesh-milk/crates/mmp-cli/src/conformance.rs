@@ -20,6 +20,7 @@ const VECTOR_NAMES: &[&str] = &[
     "frames.json",
     "hello.json",
     "lifetime_reset_negative.json",
+    "noncanonical_s_negative.json",
     "rbsr_fingerprint.json",
     "receipt.json",
 ];
@@ -369,6 +370,40 @@ fn bundle_reader_rejects_tampered_layout_without_production_decoder() {
         read_bundle_independent(&bad_payload_length),
         Err("payload length does not consume the unsigned bundle")
     ));
+}
+
+#[test]
+fn noncanonical_s_vector_pins_little_endian_s_plus_l() {
+    let json = vector("noncanonical_s_negative.json");
+    let valid_signature = parse_hex(&json, "valid_signature");
+    let noncanonical_signature = parse_hex(&json, "noncanonical_signature");
+    let valid_s = parse_hex(&json, "valid_s");
+    let noncanonical_s = parse_hex(&json, "noncanonical_s");
+    assert_eq!(valid_signature.len(), 64);
+    assert_eq!(noncanonical_signature.len(), 64);
+    assert_eq!(valid_s.len(), 32);
+    assert_eq!(noncanonical_s.len(), 32);
+    assert_eq!(&valid_signature[32..], valid_s.as_slice());
+    assert_eq!(&noncanonical_signature[32..], noncanonical_s.as_slice());
+    assert_eq!(&valid_signature[..32], &noncanonical_signature[..32], "S+L must preserve R");
+    assert_eq!(json_string(&json, "expected_valid"), "accept");
+    assert_eq!(json_string(&json, "expected_noncanonical"), "reject");
+
+    // Recompute S+L independently from the artifact.  This is deliberately
+    // a tiny byte-level check rather than a call to the production verifier.
+    const L_LE: [u8; 32] = [
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
+        0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+    ];
+    let mut carry = 0u16;
+    for index in 0..32 {
+        let sum = valid_s[index] as u16 + L_LE[index] as u16 + carry;
+        assert_eq!(sum as u8, noncanonical_s[index], "S+L differs at byte {index}");
+        carry = sum >> 8;
+    }
+    assert_eq!(carry, 0, "S+L must fit in the 256-bit signature scalar");
 }
 
 #[test]
