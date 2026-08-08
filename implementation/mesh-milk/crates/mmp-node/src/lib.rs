@@ -40,8 +40,9 @@ use mmp_core::{
 };
 use mmp_crypto::group::SenderKeyDist;
 use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, MerklePath};
-use mmp_crypto::prekey::{recipient_agree, sender_agree, PrekeyStore};
+use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore};
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
+use mmp_crypto::sealed::{open_box, seal_box_with_root};
 use mmp_router::{
     eviction_order, handoff_decision, origin_budget, Handoff, OriginBuckets, UtilityState,
 };
@@ -1492,6 +1493,74 @@ impl NodeCore {
         None
     }
 
+    /// Resolve the peer's current X25519 exchange-key claim for the sealed-box
+    /// baseline. The identity key alone is not sufficient for asynchronous
+    /// encryption; malformed or missing exchange claims fail closed.
+    fn resolve_peer_exchange(&self, peer: &NodeId) -> Option<Key32> {
+        let claim = self.claims.get(peer, field::EXCHANGE_KEY)?;
+        if claim.body.len() != 32 {
+            return None;
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&claim.body);
+        Some(Key32(key))
+    }
+
+    /// Build the always-available sealed-box first-contact form (doc 08
+    /// §4.1). This path is used only when the peer's exchange claim exists but
+    /// no usable prekey batch is available. The sealed conversation root is
+    /// retained locally so the normal receipt and subsequent ratchet paths can
+    /// use the same conversation state after the message is delivered.
+    fn send_sealed(
+        &mut self,
+        peer: &NodeId,
+        peer_pub: &Key32,
+        conv_id: Id16,
+        app: u8,
+        payload: &[u8],
+    ) -> Result<Id16, SendError> {
+        let peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        let mut body = Vec::with_capacity(1 + payload.len());
+        body.push(app);
+        body.extend_from_slice(payload);
+
+        // The ephemeral key is part of the async payload, which is excluded
+        // from the outer AD. A zero placeholder therefore has the same header
+        // length and lets us compute AD before sealing.
+        let placeholder = AsyncPayload::Sealed { eph: Key32([0; 32]), ct: vec![0u8; body.len() + 16] }.encode();
+        let mut bundle = Bundle {
+            class: class::DIRECT,
+            flags: FLAG_ASYNC_KEYS | FLAG_WANTS_RECEIPT,
+            origin: self.public,
+            dest: Id16(peer.0),
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: 1,
+            exts: Vec::new(),
+            payload: placeholder,
+            signature: Sig64::ZERO,
+        };
+        let (eph, ct, ck0) = seal_box_with_root(
+            &mut self.rng,
+            &peer_exchange,
+            &self.public,
+            peer_pub,
+            &bundle.canonical_aead_ad(),
+            &body,
+        );
+        bundle.payload = AsyncPayload::Sealed { eph, ct }.encode();
+        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        if bundle.encode().len() > MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
+
+        let budget = origin_budget(self.utility.n_hat(self.now));
+        let id = self.store_own(bundle, budget);
+        let mut conv = Conv::new(conv_id, &self.public, peer_pub, *ck0);
+        conv.dag.insert(id, &[]);
+        self.convs.insert(conv_id, conv);
+        Ok(id)
+    }
+
     /// Build, sign and store a direct message; the mesh does the rest.
     fn send_direct(&mut self, peer: &NodeId, body: &[u8]) -> Result<Id16, SendError> {
         let id = self.send_app(peer, body[0], &body[1..])?;
@@ -1515,11 +1584,17 @@ impl NodeCore {
         let conv_id = conversation_id(&self.public, &peer_pub);
 
         if !self.convs.contains_key(&conv_id) {
-            // First contact: X3DH against the peer's prekey batch (doc 08 §4.2).
-            let batch_claim = self.claims.get(peer, field::PREKEY_BATCH).ok_or(SendError::UnknownPeer)?;
-            let batch = PrekeyBatch::decode(&batch_claim.body).map_err(|_| SendError::UnknownPeer)?;
-            let agreement = sender_agree(&mut self.rng, &self.identity, &peer_pub, &batch, Some(0))
-                .map_err(|_| SendError::UnknownPeer)?;
+            // Prefer X3DH against the peer's prekey batch (doc 08 §4.2), but
+            // retain the always-available sealed-box baseline when a valid
+            // batch is absent, malformed, or suppressed (§4.1).
+            let agreement = self
+                .claims
+                .get(peer, field::PREKEY_BATCH)
+                .and_then(|claim| PrekeyBatch::decode(&claim.body).ok())
+                .and_then(|batch| sender_agree(&mut self.rng, &self.identity, &peer_pub, &batch, Some(0)).ok());
+            let Some(agreement) = agreement else {
+                return self.send_sealed(peer, &peer_pub, conv_id, app, payload);
+            };
             self.convs.insert(conv_id, Conv::new(conv_id, &self.public, &peer_pub, *agreement.ck0));
             self.pending_async.insert(conv_id, (agreement.eph_pub, agreement.prekey_id));
         }
@@ -1705,39 +1780,49 @@ impl NodeCore {
     }
 
     fn open_async(&mut self, bundle: &Bundle, conv_id: &Id16, origin: &Key32) -> Option<Vec<u8>> {
-        let AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct } =
-            AsyncPayload::decode(&bundle.payload).ok()?
-        else {
-            return None; // sealed-box form: not used by this node's sender path
-        };
-        if !self.convs.contains_key(conv_id) {
-            let ck0 =
-                recipient_agree(&self.prekeys, &self.identity, origin, &sender_xpk, &eph, prekey_id)
-                    .ok()?;
-            self.convs.insert(*conv_id, Conv::new(*conv_id, &self.public, origin, *ck0));
-        } else {
-            // Concurrent-initiation conflict: adopt the peer's root only if its
-            // key is canonically smaller — both sides pick the same winner
-            // (doc 08 §4.3's first-session rederive covers the rest).
-            if origin.0 < self.public.0 {
-                let ck0 = recipient_agree(
-                    &self.prekeys,
-                    &self.identity,
-                    origin,
-                    &sender_xpk,
-                    &eph,
-                    prekey_id,
-                )
-                .ok()?;
+        let payload = AsyncPayload::decode(&bundle.payload).ok()?;
+        match payload {
+            AsyncPayload::Sealed { eph, ct } => {
+                // Sealed fallback is a first-contact form. Never replace an
+                // established conversation with a new ephemeral root: doing
+                // so would make queued direct messages undecryptable and
+                // invalidate receipt MACs. A sender that lost local state must
+                // use the live-session recovery path instead of resetting the
+                // peer's established state.
+                if self.convs.contains_key(conv_id) {
+                    return None;
+                }
+                let plaintext = open_box(&self.identity, &eph, &bundle.canonical_aead_ad(), &ct).ok()?;
+                let dh = self.identity.exchange_dh(&eph);
+                let ck0 = sealed_ck0(&dh, origin, &self.public);
+                // Commit only after the sealed ciphertext authenticates. A
+                // forged, signature-valid bundle must not create conversation
+                // state or consume receiver resources.
                 self.convs.insert(*conv_id, Conv::new(*conv_id, &self.public, origin, *ck0));
-            } else {
-                return None;
+                Some(plaintext)
+            }
+            AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct } => {
+                // Concurrent-initiation conflict: adopt the peer's root only
+                // if its identity is canonically smaller; both sides then
+                // choose the same winner. Build candidate state and verify
+                // its first ciphertext before committing it. A valid bundle
+                // signature alone must not authorize ratchet-state mutation.
+                if self.convs.contains_key(conv_id)
+                    && (self.established_convs.contains(conv_id) || origin.0 >= self.public.0)
+                {
+                    return None;
+                }
+                let ck0 =
+                    recipient_agree(&self.prekeys, &self.identity, origin, &sender_xpk, &eph, prekey_id)
+                        .ok()?;
+                let mut candidate = Conv::new(*conv_id, &self.public, origin, *ck0);
+                let key = candidate.recv.key_for(0, 0).ok()?;
+                let bound = aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
+                let plaintext = aead::open(&bound, &bundle.canonical_aead_ad(), &ct).ok()?;
+                self.convs.insert(*conv_id, candidate);
+                Some(plaintext)
             }
         }
-        let conv = self.convs.get_mut(conv_id)?;
-        let key = conv.recv.key_for(0, 0).ok()?;
-        let bound = aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
-        aead::open(&bound, &bundle.canonical_aead_ad(), &ct).ok()
     }
 
     fn open_direct(&mut self, bundle: &Bundle, conv_id: &Id16) -> Option<Vec<u8>> {

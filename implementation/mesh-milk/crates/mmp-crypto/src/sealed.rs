@@ -10,6 +10,7 @@ use rand_core::CryptoRngCore;
 use crate::aead;
 use crate::error::CryptoError;
 use crate::identity::Identity;
+use crate::prekey::sealed_ck0;
 
 /// Seal to the recipient's exchange-key claim. Returns (ephemeral pubkey, ct).
 pub fn seal_box(
@@ -23,6 +24,27 @@ pub fn seal_box(
     let dh = eph.diffie_hellman(&x25519_dalek::PublicKey::from(recipient_exchange.0));
     let key = blake3::derive_key("mmp1 sealed", dh.as_bytes());
     (eph_pub, aead::seal(&key, ad, plaintext))
+}
+
+/// Seal a first-contact message and derive the sealed conversation root used
+/// for receipt authentication and subsequent ratchet state. The root is
+/// returned separately from the wire payload because the sealed payload only
+/// carries `eph` and the ciphertext. `sender_id` and `recipient_id` are the
+/// Ed25519 identity public keys in the same order used by the recipient.
+pub fn seal_box_with_root(
+    rng: &mut impl CryptoRngCore,
+    recipient_exchange: &Key32,
+    sender_id: &Key32,
+    recipient_id: &Key32,
+    ad: &[u8],
+    plaintext: &[u8],
+) -> (Key32, Vec<u8>, zeroize::Zeroizing<[u8; 32]>) {
+    let eph = x25519_dalek::EphemeralSecret::random_from_rng(rng);
+    let eph_pub = Key32(x25519_dalek::PublicKey::from(&eph).to_bytes());
+    let dh = eph.diffie_hellman(&x25519_dalek::PublicKey::from(recipient_exchange.0));
+    let key = blake3::derive_key("mmp1 sealed", dh.as_bytes());
+    let root = sealed_ck0(dh.as_bytes(), sender_id, recipient_id);
+    (eph_pub, aead::seal(&key, ad, plaintext), root)
 }
 
 /// Open a box sealed by [`seal_box`]: redo the X25519 agreement with

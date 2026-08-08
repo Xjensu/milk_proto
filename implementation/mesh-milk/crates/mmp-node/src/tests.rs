@@ -6,11 +6,11 @@ use mmp_core::MemStore;
 use mmp_tal::TalEvent;
 use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
 use mmp_types::authcert::AuthCert;
-use mmp_types::bundle::{class, prio};
+use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::FRIENDSHIP_TTL_MS;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::apptype;
+use mmp_types::payload::{apptype, AsyncPayload};
 
 use crate::{DeliveryState, Event, Node, SendError, Tier};
 
@@ -25,6 +25,22 @@ fn introduce(a: &mut Node, b: &mut Node) {
     }
     for c in b.own_claims() {
         a.ingest_claim(c, true);
+    }
+}
+
+/// Bootstrap only the identity and exchange-key claims. This intentionally
+/// omits PREKEY_BATCH so first-contact tests exercise the normative sealed-box
+/// baseline rather than the optional X3DH upgrade.
+fn introduce_exchange_only(a: &mut Node, b: &mut Node) {
+    for c in a.own_claims() {
+        if c.field == mmp_types::claim::field::EXCHANGE_KEY {
+            b.ingest_claim(c, true);
+        }
+    }
+    for c in b.own_claims() {
+        if c.field == mmp_types::claim::field::EXCHANGE_KEY {
+            a.ingest_claim(c, true);
+        }
     }
 }
 
@@ -243,6 +259,90 @@ fn direct_message_delivery_and_receipt() {
         "alice got the delivery receipt: {alice_events:?}"
     );
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Delivered));
+}
+
+#[test]
+fn sealed_first_contact_delivers_and_returns_receipt_without_prekeys() {
+    let mut alice = node(41);
+    let mut bob = node(42);
+    introduce_exchange_only(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let msg_id = alice.send_text(&bob.node_id(), "sealed baseline").unwrap();
+    let (_, raw) = alice.core.store.get(&msg_id).expect("sealed bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).unwrap();
+    assert!(matches!(
+        AsyncPayload::decode(&bundle.payload).unwrap(),
+        AsyncPayload::Sealed { .. }
+    ));
+
+    contact(&mut alice, &mut bob, 41, 10_000);
+    let bob_events = drain(&mut bob);
+    assert!(
+        bob_events
+            .iter()
+            .any(|event| matches!(event, Event::MessageReceived { body, .. } if body == b"sealed baseline")),
+        "sealed first-contact message was not delivered: {bob_events:?}"
+    );
+
+    contact(&mut alice, &mut bob, 42, 20_000);
+    let alice_events = drain(&mut alice);
+    assert!(
+        alice_events.iter().any(|event| matches!(event, Event::Delivered { id } if *id == msg_id)),
+        "sealed first-contact receipt was not delivered: {alice_events:?}"
+    );
+}
+
+#[test]
+fn malformed_prekey_async_does_not_commit_ratchet_state() {
+    let mut alice = node(43);
+    let mut bob = node(44);
+    introduce(&mut alice, &mut bob);
+    let msg_id = alice.send_text(&bob.node_id(), "candidate state").unwrap();
+    let (_, raw) = alice.core.store.get(&msg_id).expect("prekey bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).unwrap();
+    let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
+
+    let mut forged = bundle.clone();
+    let AsyncPayload::Prekey { prekey_id, sender_xpk, eph, mut ct } =
+        AsyncPayload::decode(&forged.payload).unwrap()
+    else {
+        panic!("full-claim bootstrap should use prekey async form");
+    };
+    ct[0] ^= 0x80;
+    forged.payload = AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct }.encode();
+    forged.signature = alice.identity.sign(SigDomain::Bundle, &forged.canonical_zeroed());
+
+    assert!(bob.core.open_async(&forged, &conv_id, &alice.core.public).is_none());
+    assert!(!bob.core.convs.contains_key(&conv_id), "failed AEAD must not commit Conv");
+    assert!(bob.core.open_async(&bundle, &conv_id, &alice.core.public).is_some());
+    assert!(bob.core.convs.contains_key(&conv_id), "valid async must still establish Conv");
+}
+
+#[test]
+fn sealed_async_cannot_replace_established_conversation() {
+    let mut alice = node(45);
+    let mut bob = node(46);
+    introduce_exchange_only(&mut alice, &mut bob);
+    let first = alice.send_text(&bob.node_id(), "first root").unwrap();
+    contact(&mut alice, &mut bob, 45, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
+    let original_root = bob.core.convs.get(&conv_id).expect("conversation established").ck0;
+    assert!(bob.core.established_convs.contains(&conv_id));
+
+    let second = alice
+        .core
+        .send_sealed(&bob.node_id(), &bob.core.public, conv_id, apptype::TEXT, b"stale root")
+        .unwrap();
+    assert_ne!(first, second);
+    let (_, raw) = alice.core.store.get(&second).unwrap();
+    let sealed = Bundle::decode_canonical(&raw).unwrap();
+    assert!(bob.core.open_async(&sealed, &conv_id, &alice.core.public).is_none());
+    assert_eq!(bob.core.convs.get(&conv_id).unwrap().ck0, original_root);
 }
 
 /// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session

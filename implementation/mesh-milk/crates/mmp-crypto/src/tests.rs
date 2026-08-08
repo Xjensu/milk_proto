@@ -12,10 +12,10 @@ use crate::group::{LocalSenderKey, RemoteSenderKey, SenderKeyDist};
 use crate::identity::{verify, Identity};
 use crate::merkle;
 use crate::noise::NoiseHandshake;
-use crate::prekey::{recipient_agree, sender_agree, PrekeyStore, PREKEY_NONE};
+use crate::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use crate::ratchet::{direction_chain, RecvChain, SendChain};
 use crate::receipt::{mac_eq, receipt_key, receipt_mac};
-use crate::sealed::{open_box, seal_box};
+use crate::sealed::{open_box, seal_box, seal_box_with_root};
 use crate::{conversation_id, CryptoError};
 
 fn id(seed: u8) -> Identity {
@@ -162,6 +162,22 @@ fn sealed_box_roundtrip() {
     let (eph, ct) = seal_box(&mut r, &bob.exchange_public(), b"ad", b"secret");
     assert_eq!(open_box(&bob, &eph, b"ad", &ct).unwrap(), b"secret");
     assert!(open_box(&bob, &eph, b"other-ad", &ct).is_err());
+}
+
+#[test]
+fn sealed_box_root_matches_recipient_derivation() {
+    let alice = id(1);
+    let bob = id(2);
+    let mut r = rng();
+    let ad = b"sealed-header-ad";
+    let body = b"first-contact";
+    let (eph, ct, sender_root) =
+        seal_box_with_root(&mut r, &bob.exchange_public(), &alice.public(), &bob.public(), ad, body);
+
+    assert_eq!(open_box(&bob, &eph, ad, &ct).unwrap(), body);
+    let dh = bob.exchange_dh(&eph);
+    let recipient_root = sealed_ck0(&dh, &alice.public(), &bob.public());
+    assert_eq!(*sender_root, *recipient_root);
 }
 
 #[test]
