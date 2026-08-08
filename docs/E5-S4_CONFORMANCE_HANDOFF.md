@@ -604,6 +604,13 @@ durable keystore implementation: platform wrapping, trusted clock/high-water
 storage, crash recovery, OTK lifecycle metadata, and native Android/iOS gates
 remain open.
 
+Commit `1dc5486` adds a CI boundary check over generated Kotlin/Swift
+bindings. It rejects Rust-internal vault, secret-state, ratchet-key, skipped-
+key, and raw-DEK identifiers, with deterministic Python unit tests. This does
+not prove native provider behavior or React Native runtime behavior; it proves
+that the generated UniFFI surface cannot accidentally expose the internal
+snapshot types.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has
