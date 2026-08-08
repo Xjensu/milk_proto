@@ -1577,7 +1577,8 @@ implementation-only epoch cap or TTL:
   TTL is also insufficient: the frozen bundle lifetime is mutable and is
   deliberately normalized out of the signed identity/AEAD form, so a node
   cannot recover the bundle's original creation time from the group payload or
-  the distribution.
+  the distribution (specification/08-crypto-spec.md §6.3–§6.4 and
+  specification/03-protocol-spec.md §4.3–§4.5).
 
 The per-origin admission bucket limits the attack rate but not the retained
 state lifetime. Thus a malicious authenticated member can eventually occupy
