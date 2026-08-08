@@ -217,8 +217,11 @@ pub(crate) fn restore_from_vault(
     node_public: &Key32,
     node_id: &Id16,
 ) -> Result<(u64, RestoredState), VaultError> {
-    let generation_floor = vault.generation_floor()?;
     let record = vault.load()?.ok_or(VaultError::Unavailable)?;
+    // Read the floor after loading the record. A different process may commit
+    // a newer generation between provider calls; checking the latest floor
+    // fences the stale record instead of accepting it under an older floor.
+    let generation_floor = vault.generation_floor()?;
     let dek = vault.unwrap_dek(&record.context, &record.wrapped_dek)?;
     let now_ms = vault.trusted_now_ms()?;
     open_record(
@@ -361,6 +364,42 @@ mod tests {
             }
             let key: [u8; 32] = wrapped_dek.try_into().map_err(|_| VaultError::Invalid)?;
             Ok(Zeroizing::new(key))
+        }
+    }
+
+    /// Deterministic race fixture: a provider can observe a durable floor
+    /// advance immediately after returning a record (for example, another
+    /// process committed a newer generation).  The restore path must read the
+    /// floor after loading the record so that this stale record is rejected.
+    struct FloorAdvancingAfterLoadVault {
+        inner: ReferenceSnapshotVault,
+        advance_after_load: bool,
+    }
+
+    impl SnapshotVault for FloorAdvancingAfterLoadVault {
+        fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
+            let record = self.inner.load()?;
+            if self.advance_after_load {
+                self.inner.high_water = self.inner.high_water.checked_add(1).ok_or(VaultError::Generation)?;
+                self.advance_after_load = false;
+            }
+            Ok(record)
+        }
+
+        fn generation_floor(&mut self) -> Result<u64, VaultError> {
+            self.inner.generation_floor()
+        }
+
+        fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
+            self.inner.trusted_now_ms()
+        }
+
+        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+            self.inner.commit(expected_generation, candidate, dek)
+        }
+
+        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            self.inner.unwrap_dek(context, wrapped_dek)
         }
     }
 
@@ -597,6 +636,21 @@ mod tests {
             Err(VaultError::Unavailable)
         ));
         assert_eq!(rollback_unsafe.generation_floor().unwrap(), 2);
+    }
+
+    #[test]
+    fn restore_fences_record_when_floor_advances_after_load() {
+        let node = Node::new([109; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut inner = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(25);
+        assert_eq!(save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+
+        let mut vault = FloorAdvancingAfterLoadVault { inner, advance_after_load: true };
+        assert!(matches!(
+            restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
+            Err(VaultError::Generation)
+        ));
+        assert_eq!(vault.generation_floor().unwrap(), 2);
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
