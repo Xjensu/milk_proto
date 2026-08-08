@@ -21,6 +21,18 @@ use crate::rbsr::{IdSource, Reconciler, DOMAIN_REPLY_FLAG};
 /// availability) is WANT-driven in the MVP rather than range-reconciled.
 const DOMAINS: [u8; 4] = [0, 1, 2, 3];
 const RX_REASSEMBLY_CAP: usize = MAX_ENVELOPE_PAYLOAD + 3;
+/// Normative initial/replenishment window from specification/09 §5.2.
+const FRAME_CREDIT_WINDOW: u8 = 8;
+/// Keep enough receive credit for an atomic BUNDLE+BUDGET response pair;
+/// replenishing only at zero can deadlock a sender holding one credit.
+const FRAME_CREDIT_RESERVE: u8 = 2;
+/// A bounded deferred-frame reserve prevents a slow host from turning the
+/// sans-IO engine into an unbounded allocator while preserving frame order.
+const MAX_PENDING_FRAMES: usize = 256;
+/// A single authenticated request can name roughly 255 IDs; retaining one
+/// bounded request window lets a peer retry after a CREDIT grant without
+/// allowing repeated WANT/BLOB requests to grow memory without limit.
+const MAX_PENDING_HANDOFFS: usize = 256;
 
 const fn frame_payload_within_cap(len: usize) -> bool {
     len <= MAX_FRAME_PAYLOAD
@@ -173,7 +185,11 @@ pub struct SessionEngine {
     /// Reassembly buffer — pre-allocated, NEVER grown from the wire (AUDIT F10).
     rx: Vec<u8>,
     out: VecDeque<Vec<u8>>,
+    pending_out: VecDeque<Frame>,
+    pending_handoffs: VecDeque<Id16>,
     events: VecDeque<SessionEvent>,
+    tx_credits: u8,
+    rx_credits: u8,
     recon: Option<Reconciler>,
     domain_cursor: usize,
     started_at: u64,
@@ -191,7 +207,7 @@ impl SessionEngine {
     #[allow(clippy::result_unit_err)]
     pub fn initiator(identity: &Identity, hello: &Hello, now_ms: u64) -> Result<SessionEngine, ()> {
         let (msg1, hs) = NoiseHandshake::initiator(identity, hello).map_err(|_| ())?;
-        let mut s = SessionEngine::new(true, now_ms);
+        let mut s = SessionEngine::new(true, now_ms, hello.credits);
         s.hs = Some(hs);
         s.out.push_back(write_envelope(FT_HS, &msg1));
         Ok(s)
@@ -203,12 +219,12 @@ impl SessionEngine {
     #[allow(clippy::result_unit_err)]
     pub fn responder(identity: &Identity, hello: &Hello, now_ms: u64) -> Result<SessionEngine, ()> {
         let hs = NoiseHandshake::responder(identity, hello).map_err(|_| ())?;
-        let mut s = SessionEngine::new(false, now_ms);
+        let mut s = SessionEngine::new(false, now_ms, hello.credits);
         s.hs = Some(hs);
         Ok(s)
     }
 
-    fn new(initiator: bool, now_ms: u64) -> SessionEngine {
+    fn new(initiator: bool, now_ms: u64, local_credits: u8) -> SessionEngine {
         SessionEngine {
             phase: Phase::Handshake,
             initiator,
@@ -218,7 +234,11 @@ impl SessionEngine {
             sent_proof: false,
             rx: Vec::with_capacity(MAX_ENVELOPE_PAYLOAD + 3),
             out: VecDeque::new(),
+            pending_out: VecDeque::new(),
+            pending_handoffs: VecDeque::new(),
             events: VecDeque::new(),
+            tx_credits: 0,
+            rx_credits: local_credits.min(FRAME_CREDIT_WINDOW),
             recon: None,
             domain_cursor: 0,
             started_at: now_ms,
@@ -366,6 +386,18 @@ impl SessionEngine {
             self.protocol_error(errcode::UNSUPPORTED);
             return;
         };
+        if !matches!(&frame, Frame::Credit(_) | Frame::IdProof { .. }) {
+            if self.rx_credits == 0 {
+                self.protocol_error(errcode::PROTOCOL);
+                return;
+            }
+            self.rx_credits -= 1;
+            if self.rx_credits <= FRAME_CREDIT_RESERVE {
+                let grant = FRAME_CREDIT_WINDOW - self.rx_credits;
+                self.rx_credits = FRAME_CREDIT_WINDOW;
+                self.send_frame(&Frame::Credit(grant));
+            }
+        }
         self.on_frame(frame, now_ms, identity, host);
     }
 
@@ -387,6 +419,7 @@ impl SessionEngine {
         }
         if let Some(chan) = outcome.channel {
             self.hs = None;
+            self.tx_credits = chan.peer.hello.credits.min(FRAME_CREDIT_WINDOW);
             self.chan = Some(chan);
             self.phase = Phase::Binding;
             // Both sides send ID_PROOF immediately (doc 08 §3.2).
@@ -454,7 +487,14 @@ impl SessionEngine {
         let peer = self.peer_node.expect("established implies peer");
         match frame {
             Frame::Summary(s) => host.on_summary(&peer, s),
-            Frame::Credit(_) => {} // link-layer flow control: mem/GATT hosts differ
+            Frame::Credit(granted) => {
+                self.tx_credits = self
+                    .tx_credits
+                    .saturating_add(granted)
+                    .min(FRAME_CREDIT_WINDOW);
+                self.flush_pending_frames();
+                self.flush_pending_handoffs(host);
+            }
             Frame::ReconInit { domain, range, .. } => {
                 let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
                 let replies = recon.on_range(&range, false, host.ids(&peer));
@@ -479,13 +519,8 @@ impl SessionEngine {
                 self.maybe_advance_domain(host);
             }
             Frame::Want(ids) => {
-                for id in &ids {
-                    if let Some((bytes, granted)) = host.load_for_handoff(&peer, id) {
-                        self.send_frame(&Frame::Bundle(bytes));
-                        // BUDGET immediately follows its BUNDLE (doc 10 §2.5).
-                        self.send_frame(&Frame::Budget { id: *id, granted });
-                    }
-                }
+                self.queue_handoffs(ids);
+                self.flush_pending_handoffs(host);
             }
             Frame::Bundle(bytes) => host.on_bundle(&peer, &bytes),
             Frame::Budget { id, granted } => {
@@ -493,21 +528,12 @@ impl SessionEngine {
                 host.on_budget(&peer, &id, granted.min(L_MAX));
             }
             Frame::BlobReq { root, block, bitmap } => {
-                for id in host.on_blob_req(&peer, &root, block, &bitmap) {
-                    if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
-                        self.send_frame(&Frame::Bundle(bytes));
-                        // BUDGET immediately follows its BUNDLE (doc 10 §2.5).
-                        self.send_frame(&Frame::Budget { id, granted });
-                    }
-                }
+                self.queue_handoffs(host.on_blob_req(&peer, &root, block, &bitmap));
+                self.flush_pending_handoffs(host);
             }
             Frame::BlobHave { root, block, bitmap } => {
-                for id in host.on_blob_have(&peer, &root, block, &bitmap) {
-                    if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
-                        self.send_frame(&Frame::Bundle(bytes));
-                        self.send_frame(&Frame::Budget { id, granted });
-                    }
-                }
+                self.queue_handoffs(host.on_blob_have(&peer, &root, block, &bitmap));
+                self.flush_pending_handoffs(host);
             }
             Frame::FriendOffer(body) => {
                 if let Some(ack_body) = host.on_friend_offer(&peer, &body) {
@@ -584,7 +610,47 @@ impl SessionEngine {
         }
     }
 
+    fn queue_handoffs<I>(&mut self, ids: I)
+    where
+        I: IntoIterator<Item = Id16>,
+    {
+        for id in ids {
+            if self.pending_handoffs.len() >= MAX_PENDING_HANDOFFS {
+                break;
+            }
+            if !self.pending_handoffs.contains(&id) {
+                self.pending_handoffs.push_back(id);
+            }
+        }
+    }
+
+    fn flush_pending_handoffs<H: SessionHost>(&mut self, host: &mut H) {
+        let Some(peer) = self.peer_node else { return };
+        while self.phase != Phase::Closed && self.tx_credits >= 2 {
+            let Some(id) = self.pending_handoffs.pop_front() else { break };
+            if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
+                self.send_frame(&Frame::Bundle(bytes));
+                // BUDGET immediately follows its BUNDLE (doc 10 §2.5).
+                self.send_frame(&Frame::Budget { id, granted });
+            }
+        }
+    }
+
     fn send_frame(&mut self, f: &Frame) {
+        let control = matches!(f, Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close);
+        if !control && self.tx_credits == 0 {
+            if self.pending_out.len() >= MAX_PENDING_FRAMES {
+                self.pending_out.clear();
+                self.protocol_error(errcode::PROTOCOL);
+            } else {
+                self.pending_out.push_back(f.clone());
+            }
+            return;
+        }
+        self.emit_frame(f, control);
+    }
+
+    fn emit_frame(&mut self, f: &Frame, control: bool) {
         let payload = f.encode_payload();
         if !frame_payload_within_cap(payload.len()) {
             self.protocol_error(errcode::OVERSIZE);
@@ -596,9 +662,23 @@ impl SessionEngine {
         if let Ok(ct) = chan.encrypt(&payload) {
             if envelope_payload_within_cap(ct.len()) {
                 self.out.push_back(write_envelope(f.typ(), &ct));
+                if !control {
+                    self.tx_credits = self.tx_credits.saturating_sub(1);
+                }
             } else {
                 self.protocol_error(errcode::OVERSIZE);
             }
+        }
+    }
+
+    fn flush_pending_frames(&mut self) {
+        while self.phase != Phase::Closed && self.tx_credits > 0 {
+            let Some(frame) = self.pending_out.pop_front() else { break };
+            let control = matches!(
+                &frame,
+                Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close
+            );
+            self.emit_frame(&frame, control);
         }
     }
 
@@ -708,6 +788,8 @@ mod rx_bound_tests {
 
     struct EmptyHost {
         ids: EmptyIds,
+        loads: usize,
+        load_bytes: Option<Vec<u8>>,
     }
 
     impl SessionHost for EmptyHost {
@@ -724,7 +806,8 @@ mod rx_bound_tests {
         fn on_summary(&mut self, _peer: &NodeId, _summary: Summary) {}
 
         fn load_for_handoff(&mut self, _peer: &NodeId, _id: &Id16) -> Option<(Vec<u8>, u8)> {
-            None
+            self.loads += 1;
+            self.load_bytes.clone().map(|bytes| (bytes, 1))
         }
 
         fn on_bundle(&mut self, _peer: &NodeId, _bytes: &[u8]) {}
@@ -749,7 +832,7 @@ mod rx_bound_tests {
     }
 
     fn host() -> EmptyHost {
-        EmptyHost { ids: EmptyIds }
+        EmptyHost { ids: EmptyIds, loads: 0, load_bytes: None }
     }
 
     #[test]
@@ -810,5 +893,166 @@ mod rx_bound_tests {
         assert_eq!(b.phase, Phase::Established);
         assert!(b.rx.is_empty());
         assert!(b.rx.capacity() <= MAX_ENVELOPE_PAYLOAD + 3);
+    }
+
+    #[test]
+    fn outbound_frames_stop_after_peer_credit_is_spent() {
+        let ia = identity(3);
+        let ib = identity(4);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        a.tx_credits = FRAME_CREDIT_WINDOW;
+        for _ in 0..9 {
+            a.send_frame(&Frame::Summary(Summary::default()));
+        }
+        let mut sent = 0;
+        while a.poll_out().is_some() {
+            sent += 1;
+        }
+        assert_eq!(sent, 8);
+        assert_eq!(a.phase, Phase::Established);
+    }
+
+    #[test]
+    fn received_credit_reopens_a_spent_send_window() {
+        let ia = identity(5);
+        let ib = identity(6);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        a.tx_credits = FRAME_CREDIT_WINDOW;
+        b.rx_credits = FRAME_CREDIT_WINDOW;
+        for _ in 0..8 {
+            a.send_frame(&Frame::Summary(Summary::default()));
+        }
+        let mut wire = Vec::new();
+        while let Some(bytes) = a.poll_out() {
+            wire.extend_from_slice(&bytes);
+        }
+
+        a.send_frame(&Frame::Summary(Summary::default()));
+        assert!(a.poll_out().is_none());
+
+        b.on_wire(&wire, 2000, &ib, &mut hb);
+
+        while let Some(bytes) = b.poll_out() {
+            a.on_wire(&bytes, 2000, &ia, &mut ha);
+        }
+        a.send_frame(&Frame::Summary(Summary::default()));
+        assert!(a.poll_out().is_some());
+    }
+
+    #[test]
+    fn receive_window_replenishes_before_atomic_pair_deadlock() {
+        let ia = identity(9);
+        let ib = identity(10);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        a.tx_credits = 1;
+        b.rx_credits = 3;
+        a.send_frame(&Frame::Summary(Summary::default()));
+        let bytes = a.poll_out().expect("one frame fits the remaining credit");
+        b.on_wire(&bytes, 2000, &ib, &mut hb);
+        while let Some(bytes) = b.poll_out() {
+            a.on_wire(&bytes, 2000, &ia, &mut ha);
+        }
+        assert!(a.tx_credits >= 6, "reserve replenishment must arrive before zero");
+    }
+
+    #[test]
+    fn bundle_requests_wait_for_two_frame_credits_before_loading() {
+        let ia = identity(7);
+        let ib = identity(8);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        ha.load_bytes = Some(vec![0x42, 0x24]);
+        a.tx_credits = 1;
+        a.on_established(Frame::Want(vec![Id16([9; 16])]), &mut ha);
+        assert_eq!(ha.loads, 0);
+
+        a.tx_credits = 2;
+        a.on_established(Frame::Want(vec![Id16([9; 16])]), &mut ha);
+        assert_eq!(ha.loads, 1);
+        assert!(a.poll_out().is_some());
+        assert!(a.poll_out().is_some());
     }
 }
