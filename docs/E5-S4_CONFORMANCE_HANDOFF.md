@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `8f40af4` (`fix(mesh-milk): enforce frozen wire caps
-and sender provenance`). The frozen `specification/` directory was not
+This checkpoint is commit `c929c70` (`fix(mmp-types): bound hostile parser
+counts and file sizes`). The frozen `specification/` directory was not
 modified.
 
 Recent focused commits, oldest first:
@@ -33,6 +33,10 @@ Recent focused commits, oldest first:
 - `8f40af4` — strict cap enforcement, sender-key provenance/stale/duplicate
   guards, simulator boundary correction, generated-vector refresh, and mobile
   packaging preflight checks.
+- `c929c70` — parser memory-amplification and file-transfer admission
+  hardening: `RECON_IDS`/`WANT` counts are checked against remaining bytes before
+  allocation, and `FileManifest` rejects every entry above the normative
+  8 MiB `FILE_MAX` before any receiver-side offer or blob assembly can use it.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -51,6 +55,8 @@ have artifact/API bridge checks rather than a turnkey consuming application.
 - unknown-critical, out-of-order, and duplicate TLVs;
 - the normative 4096-byte logical frame and encrypted-envelope cap, with
   4080-byte maximum application plaintext before the Noise tag.
+- strict negative coverage for hostile `u16::MAX` reconciliation/request
+  counts, plus the exact `FILE_MAX` boundary and an oversized-manifest reject.
 - independent Beacon and frame-payload grammar checks;
 - `coverage.json`, mapping all committed artifacts to requirement IDs, source
   sections, and verification evidence.
@@ -61,13 +67,12 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 26 `mmp-cli`, 33 `mmp-core`, 42 `mmp-types`, and
-26 `mmp-node` tests; `mmp-sim` passed 9 active tests with 4 intentionally
-ignored scale/deployment cases.
-Workspace clippy with
-`-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
-workspace test matrix also passed during this checkpoint. Rustfmt could not be
-run because the rustfmt component is not installed in the environment.
+The latest serial workspace matrix passed, including 26 `mmp-cli`, 33
+`mmp-core`, 26 `mmp-node`, 40 `mmp-types` unit tests, and 3 new parser/manifest
+integration tests; `mmp-sim` passed 9 active tests with 4 intentionally ignored
+scale/deployment cases. Workspace clippy with `-D warnings`, `cargo run -p
+layer-check`, and `cargo run -p mmp-cli -- demo` also passed. Rustfmt could not
+be run because the rustfmt component is not installed in the environment.
 
 Regenerate vectors with:
 
@@ -117,6 +122,10 @@ Record evidence and obtain a protocol decision first.
 3. Add independent cryptographic/payload vectors for the remaining opaque HS,
    class-1, and class-2 interiors only after their normative grammar and key
    context are available.
+4. Reconcile stale status text in the dirty handbook/API/mobile integration
+   files (strict 4096-byte cap and restart persistence claims) with the shipped
+   implementation. Keep that cleanup selective; do not stage the unrelated
+   revocation and integration edits already present in those files.
 
 ## Worktree hygiene
 
