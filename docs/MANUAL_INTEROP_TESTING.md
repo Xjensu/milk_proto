@@ -53,14 +53,19 @@ Expected observations:
 
 ## 2. Generate two PC identities
 
-On each test machine, build the CLI and create a separate seed file. Keep seed
-files private; the node ID is safe to copy to the sending machine.
+Build the CLI on each test machine and create exactly one separate seed file per
+machine. Keep seed files private; the node ID is safe to copy to the sending
+machine. For the commands below, machine A owns `alice.seed` and machine B
+owns `bob.seed`:
 
 ```powershell
 cargo build -p mmp-cli --release
 target\release\mmp-cli.exe keygen alice.seed
-target\release\mmp-cli.exe keygen bob.seed
 ```
+
+On machine B, run the same build command followed by
+`target\release\mmp-cli.exe keygen bob.seed`. Do not copy either seed to the
+other machine.
 
 Record the printed node IDs. They are 32 hexadecimal characters (16 bytes).
 Do not reuse a seed between machines or delete a seed after a test unless the
@@ -156,9 +161,13 @@ scripts/build-android-aar.sh mobile-artifacts/android
 ```
 
 The script produces a native-only `mmp-ffi.aar` plus a Kotlin bindings source
-zip. In the consuming app, compile the Kotlin bindings, add the AAR, implement
-the BLE callback bridge, and verify that the app uses the UUIDs documented in
-`MOBILE_INTEGRATION.md` and exported by `mmp-tal`.
+zip. Before packaging, it runs the repository's source-level API/secret gate:
+`scripts/check_mobile_binding.py kotlin <generated-bindings-dir>`. A pass means
+the generated Kotlin `MmpNode` surface matches the Rust FFI and no internal
+vault/ratchet identifiers leaked into the source; it does not compile Kotlin or
+prove BLE behavior. In the consuming app, compile the Kotlin bindings, add the
+AAR, implement the BLE callback bridge, and verify that the app uses the UUIDs
+documented in `MOBILE_INTEGRATION.md` and exported by `mmp-tal`.
 
 ### iOS preparation
 
@@ -170,9 +179,14 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 scripts/build-ios-xcframework.sh mobile-artifacts/ios
 ```
 
-Add the generated `MmpCore.xcframework` and Swift bindings to a test app,
-implement the CoreBluetooth central/peripheral callbacks, and exercise the
-same handshake/message/receipt gates as the PC test. Test both foreground and
+The script produces `MmpCore.xcframework` and a Swift bindings directory. It
+runs the corresponding source-level gate,
+`scripts/check_mobile_binding.py swift <generated-bindings-dir>`, before moving
+the Swift source into the output. As with Android, this verifies generated API
+coverage and the secret denylist only; it is not a Swift compiler or hardware
+result. Add the generated framework and Swift bindings to a test app, implement
+the CoreBluetooth central/peripheral callbacks, and exercise the same
+handshake/message/receipt gates as the PC test. Test both foreground and
 background transitions; background BLE scheduling is platform-controlled and
 must not be inferred from a foreground success.
 
