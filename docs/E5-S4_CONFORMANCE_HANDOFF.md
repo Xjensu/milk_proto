@@ -119,6 +119,23 @@ shutdown to its control task, which aborts and joins spawned reader tasks before
 returning. These changes narrow lifecycle races without changing the wire
 contract; real adapter behavior remains hardware-gated.
 
+The implementation audit also found and closed a file-plane admission leak:
+`send_file` now requires both the peer identity and exchange-key claims before
+RS/Merkle symbol generation, and checks `ConversationPending` first. A rejected
+manifest therefore does not mint symbols or consume local blob quota. The
+post-change workspace verification passed with 42 `mmp-node` tests, including
+the new sealed rollback and file-side-effect regressions, 17 central TAL tests,
+28 peripheral TAL tests, 14 FFI tests, and the existing simulator/adversarial
+matrix. Workspace clippy, `layer-check`, and the CLI demo also passed.
+
+The delegated documentation audit identified stale examples in the API,
+Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
+saturation handling, and `ConversationPending` retry semantics). Those files
+contain pre-existing user edits and were intentionally not staged. The
+authoritative close contract remains [`docs/TRANSPORT_CLOSE_FEEDBACK.md`]; the
+next documentation pass should merge its lifecycle wording into those host
+guides with a user-approved clean diff.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
