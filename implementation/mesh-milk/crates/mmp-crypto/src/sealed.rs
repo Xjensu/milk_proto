@@ -9,7 +9,7 @@ use rand_core::CryptoRngCore;
 
 use crate::aead;
 use crate::error::CryptoError;
-use crate::identity::Identity;
+use crate::identity::{reject_low_order, Identity};
 use crate::prekey::sealed_ck0;
 
 /// Seal to the recipient's exchange-key claim. Returns (ephemeral pubkey, ct).
@@ -57,6 +57,7 @@ pub fn open_box(
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     let dh = recipient.exchange_dh(eph);
+    reject_low_order(&dh)?;
     let key = blake3::derive_key("mmp1 sealed", &dh);
     aead::open(&key, ad, ciphertext)
 }

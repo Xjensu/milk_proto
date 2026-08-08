@@ -204,6 +204,23 @@ fn prekey_agreement_matches_both_sides() {
 }
 
 #[test]
+fn prekey_and_sealed_open_reject_low_order_points() {
+    let alice = id(1);
+    let bob = id(2);
+    let mut r = rng();
+    let store = PrekeyStore::generate(&mut r, 2);
+    let low = Key32([0; 32]);
+
+    let mut low_batch = store.batch(&bob);
+    low_batch.signed_prekey = low;
+    low_batch.spk_sig = bob.sign(SigDomain::Prekey, &low_batch.signed_object());
+    assert!(sender_agree(&mut r, &alice, &bob.public(), &low_batch, None).is_err());
+    assert!(recipient_agree(&store, &bob, &alice.public(), &alice.exchange_public(), &low, PREKEY_NONE).is_err());
+    assert!(recipient_agree(&store, &bob, &alice.public(), &low, &low, PREKEY_NONE).is_err());
+    assert!(open_box(&bob, &low, b"ad", &[0; 16]).is_err());
+}
+
+#[test]
 fn prekey_batch_forged_signature_rejected() {
     let alice = id(1);
     let bob = id(2);

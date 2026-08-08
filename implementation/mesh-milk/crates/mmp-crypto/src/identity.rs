@@ -11,6 +11,17 @@ use zeroize::Zeroizing;
 
 use crate::error::CryptoError;
 
+/// Reject the all-zero X25519 result mandated by RFC 7748 for low-order
+/// public points. Without this check an active peer can force a predictable
+/// derived key and collapse the confidentiality of first-contact state.
+pub(crate) fn reject_low_order(shared: &[u8; 32]) -> Result<(), CryptoError> {
+    if shared.iter().all(|byte| *byte == 0) {
+        Err(CryptoError::BadKey)
+    } else {
+        Ok(())
+    }
+}
+
 /// Local identity: Ed25519 signing key + derived X25519 exchange secret.
 ///
 /// The exchange secret is derived deterministically from the identity seed

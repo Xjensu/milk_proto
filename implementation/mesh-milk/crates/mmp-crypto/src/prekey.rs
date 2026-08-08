@@ -17,7 +17,7 @@ use rand_core::CryptoRngCore;
 use zeroize::Zeroizing;
 
 use crate::error::CryptoError;
-use crate::identity::{verify, Identity};
+use crate::identity::{reject_low_order, verify, Identity};
 
 /// Version of the provider-local prekey snapshot.
 ///
@@ -339,14 +339,18 @@ pub fn sender_agree(
     let spk = x25519_dalek::PublicKey::from(batch.signed_prekey.0);
 
     let dh1 = eph.diffie_hellman(&spk);
+    reject_low_order(dh1.as_bytes())?;
     let (prekey_id, dh2): (u16, Option<x25519_dalek::SharedSecret>) = match prekey_index {
         Some(i) => {
             let otk = batch.prekeys.get(i as usize).ok_or(CryptoError::Prekey)?;
-            (i, Some(eph.diffie_hellman(&x25519_dalek::PublicKey::from(otk.0))))
+            let dh2 = eph.diffie_hellman(&x25519_dalek::PublicKey::from(otk.0));
+            reject_low_order(dh2.as_bytes())?;
+            (i, Some(dh2))
         }
         None => (PREKEY_NONE, None),
     };
     let dh3 = sender.exchange_dh(&batch.signed_prekey);
+    reject_low_order(&dh3)?;
 
     let ck0 = derive_ck0(
         dh1.as_bytes(),
@@ -369,13 +373,17 @@ pub fn recipient_agree(
 ) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
     let eph_pk = x25519_dalek::PublicKey::from(eph.0);
     let dh1 = store.spk.diffie_hellman(&eph_pk);
+    reject_low_order(dh1.as_bytes())?;
     let dh2 = if prekey_id == PREKEY_NONE {
         None
     } else {
         let otk = store.one_time.get(&prekey_id).ok_or(CryptoError::Prekey)?;
-        Some(otk.diffie_hellman(&eph_pk))
+        let dh2 = otk.diffie_hellman(&eph_pk);
+        reject_low_order(dh2.as_bytes())?;
+        Some(dh2)
     };
     let dh3 = store.spk.diffie_hellman(&x25519_dalek::PublicKey::from(sender_exchange.0));
+    reject_low_order(dh3.as_bytes())?;
 
     Ok(derive_ck0(
         dh1.as_bytes(),
