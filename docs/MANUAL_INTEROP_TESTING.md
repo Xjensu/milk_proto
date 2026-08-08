@@ -86,6 +86,11 @@ On machine B (central), first discover A with `connect`:
 cargo run --release -p mmp-cli -- connect /path/to/bob.seed --store /tmp/mmp-bob.store
 ```
 
+Leave it running until the log shows an established link and the peer's
+claims have exchanged. Then press `Ctrl-C` and wait for `store persisted to
+disk`. `connect` is a foreground bootstrap process; it is not intended to run
+concurrently with the later `send` command using the same store file.
+
 For a message test, obtain machine A's node ID from its `keygen` output and
 run on B:
 
