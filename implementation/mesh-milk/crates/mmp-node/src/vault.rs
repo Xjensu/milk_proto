@@ -364,6 +364,176 @@ mod tests {
         }
     }
 
+    /// Fault points in the platform-neutral journal model. This is a test
+    /// fixture only: it models the durable ordering a native adapter must
+    /// implement without pretending to provide a keystore backend here.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum CrashPoint {
+        Write,
+        Fsync,
+        Replace,
+        Floor,
+    }
+
+    #[derive(Default)]
+    struct JournalImage {
+        current: Option<SealedRecord>,
+        previous: Option<SealedRecord>,
+        synced_temp: Option<SealedRecord>,
+        floor: u64,
+    }
+
+    struct JournaledSnapshotVault {
+        image: JournalImage,
+        volatile_temp: Option<SealedRecord>,
+        fault: Option<CrashPoint>,
+        node_public: Key32,
+        node_id: Id16,
+        trusted_now_ms: u64,
+    }
+
+    impl JournaledSnapshotVault {
+        fn new(core: &NodeCore) -> Self {
+            Self {
+                image: JournalImage::default(),
+                volatile_temp: None,
+                fault: None,
+                node_public: core.public,
+                node_id: core.node_id,
+                trusted_now_ms: 100_000,
+            }
+        }
+
+        fn inject_fault(&mut self, point: CrashPoint) {
+            self.fault = Some(point);
+        }
+
+        fn reopen(self) -> Self {
+            let mut reopened = Self {
+                image: self.image,
+                volatile_temp: None,
+                fault: None,
+                node_public: self.node_public,
+                node_id: self.node_id,
+                trusted_now_ms: self.trusted_now_ms,
+            };
+            reopened.recover();
+            reopened
+        }
+
+        fn record_is_complete(&self, record: &SealedRecord) -> bool {
+            let Ok(dek) = <[u8; 32]>::try_from(record.wrapped_dek.as_slice()) else {
+                return false;
+            };
+            open_record(
+                &self.node_public,
+                &self.node_id,
+                record,
+                &dek,
+                self.trusted_now_ms,
+                snapshot::DEFAULT_TTL_MS,
+                0,
+            )
+            .is_ok()
+        }
+
+        fn recover(&mut self) {
+            let current = self.image.current.take();
+            let previous = self.image.previous.take();
+            let synced_temp = self.image.synced_temp.take();
+            let floor = self.image.floor;
+
+            // A complete current record wins. If replacement was interrupted
+            // or the current record is corrupt, a fully fsynced next record
+            // may be promoted; otherwise retain the previous complete record.
+            let selected = current
+                .filter(|record| record.generation >= floor && self.record_is_complete(record))
+                .or_else(|| {
+                    synced_temp
+                        .filter(|record| record.generation >= floor && self.record_is_complete(record))
+                })
+                .or_else(|| {
+                    previous
+                        .filter(|record| record.generation >= floor && self.record_is_complete(record))
+                });
+            self.image.current = selected;
+            if let Some(record) = self.image.current.as_ref() {
+                self.image.floor = self.image.floor.max(record.generation);
+            }
+            // Volatile writes and any unselected temporary record are dropped
+            // on reopen; the durable floor is never lowered.
+            self.volatile_temp = None;
+            self.image.synced_temp = None;
+        }
+    }
+
+    impl SnapshotVault for JournaledSnapshotVault {
+        fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
+            Ok(self.image.current.clone())
+        }
+
+        fn generation_floor(&mut self) -> Result<u64, VaultError> {
+            Ok(self.image.floor)
+        }
+
+        fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
+            Ok(self.trusted_now_ms)
+        }
+
+        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+            if self.image.floor != expected_generation
+                || self.image.current.as_ref().map_or(0, |record| record.generation) != expected_generation
+            {
+                return Err(VaultError::Generation);
+            }
+            validate_commit_generation(expected_generation, &candidate)?;
+            if envelope_generation(&candidate.envelope)? != candidate.generation || candidate.context.is_empty() {
+                return Err(VaultError::Invalid);
+            }
+            let record = SealedRecord {
+                generation: candidate.generation,
+                context: candidate.context,
+                envelope: candidate.envelope,
+                wrapped_dek: dek.to_vec(),
+            };
+            let fault = self.fault.take();
+
+            // Write to a volatile temporary slot first. A crash here leaves
+            // the durable image unchanged.
+            self.volatile_temp = Some(record.clone());
+            if fault == Some(CrashPoint::Write) {
+                return Err(VaultError::Unavailable);
+            }
+
+            // Fsync makes the temporary candidate durable, but it is not yet
+            // visible as the current generation.
+            self.image.synced_temp = self.volatile_temp.take();
+            if fault == Some(CrashPoint::Fsync) {
+                return Err(VaultError::Unavailable);
+            }
+
+            // Replace is modeled as one durable slot swap. Keep the previous
+            // complete generation so recovery can fail back if needed.
+            let next = self.image.synced_temp.take().ok_or(VaultError::Invalid)?;
+            self.image.previous = self.image.current.replace(next);
+            if fault == Some(CrashPoint::Replace) {
+                return Err(VaultError::Unavailable);
+            }
+
+            // The floor advances only after a complete current record exists.
+            self.image.floor = record.generation;
+            if fault == Some(CrashPoint::Floor) {
+                return Err(VaultError::Unavailable);
+            }
+            Ok(())
+        }
+
+        fn unwrap_dek(&mut self, _context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            let key: [u8; 32] = wrapped_dek.try_into().map_err(|_| VaultError::Invalid)?;
+            Ok(Zeroizing::new(key))
+        }
+    }
+
     fn envelope_generation(envelope: &[u8]) -> Result<u64, VaultError> {
         if envelope.len() < 14 || envelope[..4] != *b"MKS1" || envelope[4] != 1 || envelope[5] != KIND_NODE_SECRET_STATE {
             return Err(VaultError::Invalid);
@@ -371,6 +541,62 @@ mod tests {
         let mut bytes = [0u8; 8];
         bytes.copy_from_slice(&envelope[6..14]);
         Ok(u64::from_le_bytes(bytes))
+    }
+
+    #[test]
+    fn journal_recovery_selects_previous_or_next_complete_generation() {
+        let node = Node::new([107; 32], Box::new(MemStore::new()), Tier::Relay);
+        let points = [
+            CrashPoint::Write,
+            CrashPoint::Fsync,
+            CrashPoint::Replace,
+            CrashPoint::Floor,
+        ];
+
+        for (index, point) in points.into_iter().enumerate() {
+            let mut vault = JournaledSnapshotVault::new(&node.core);
+            let mut rng = StdRng::seed_from_u64(20 + index as u64);
+            assert_eq!(save_core(&mut vault, &node.core, 0, 10_000, &mut rng).unwrap(), 1);
+
+            vault.inject_fault(point);
+            assert_eq!(save_core(&mut vault, &node.core, 1, 20_000, &mut rng), Err(VaultError::Unavailable));
+
+            let mut recovered = vault.reopen();
+            let (generation, _) = restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
+            let expected = match point {
+                CrashPoint::Write | CrashPoint::Fsync => 1,
+                CrashPoint::Replace | CrashPoint::Floor => 2,
+            };
+            assert_eq!(generation, expected, "recovery result for {point:?}");
+            assert_eq!(recovered.generation_floor().unwrap(), expected);
+            assert_eq!(recovered.load().unwrap().unwrap().generation, expected);
+        }
+    }
+
+    #[test]
+    fn journal_recovery_rejects_corrupt_current_without_lowering_floor() {
+        let node = Node::new([108; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = JournaledSnapshotVault::new(&node.core);
+        let mut rng = StdRng::seed_from_u64(24);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(), 1);
+
+        vault.inject_fault(CrashPoint::Replace);
+        assert_eq!(save_core(&mut vault, &node.core, 1, 40_000, &mut rng), Err(VaultError::Unavailable));
+        vault.image.current.as_mut().unwrap().envelope[0] ^= 1;
+
+        let mut recovered = vault.reopen();
+        let (generation, _) = restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
+        assert_eq!(generation, 1, "corrupt next record falls back to the previous complete one");
+        assert_eq!(recovered.generation_floor().unwrap(), 1);
+
+        recovered.image.floor = 2;
+        let mut rollback_unsafe = recovered.reopen();
+        assert_eq!(rollback_unsafe.generation_floor().unwrap(), 2);
+        assert!(matches!(
+            restore_from_vault(&mut rollback_unsafe, &node.core.public, &node.core.node_id),
+            Err(VaultError::Unavailable)
+        ));
+        assert_eq!(rollback_unsafe.generation_floor().unwrap(), 2);
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
