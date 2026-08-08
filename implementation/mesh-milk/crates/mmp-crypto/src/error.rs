@@ -17,6 +17,8 @@ pub enum CryptoError {
     Ratchet,
     /// Prekey id unknown / batch invalid.
     Prekey,
+    /// Malformed or unsafe provider-local secret-state snapshot.
+    Snapshot,
     /// Merkle path does not connect leaf to root.
     Merkle,
 }
@@ -30,6 +32,7 @@ impl core::fmt::Display for CryptoError {
             CryptoError::Noise => "noise failure",
             CryptoError::Ratchet => "ratchet window",
             CryptoError::Prekey => "prekey failure",
+            CryptoError::Snapshot => "snapshot failure",
             CryptoError::Merkle => "merkle path",
         };
         f.write_str(s)

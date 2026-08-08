@@ -5,6 +5,7 @@
 //! happens over pairwise conversation channels; epoch++ on membership change
 //! re-keys everyone (future secrecy vs removed members).
 
+use alloc::vec;
 use alloc::vec::Vec;
 
 use ed25519_dalek::Signer;

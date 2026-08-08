@@ -74,6 +74,7 @@ impl Identity {
 
     /// Raw exchange secret bytes — for the Noise static only. Zeroizing wrapper
     /// keeps the copy from outliving its use.
+    #[cfg_attr(not(feature = "std"), allow(dead_code))]
     pub(crate) fn exchange_secret_bytes(&self) -> Zeroizing<[u8; 32]> {
         Zeroizing::new(self.exchange.to_bytes())
     }

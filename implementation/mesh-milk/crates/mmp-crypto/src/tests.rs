@@ -248,6 +248,174 @@ fn ratchet_epoch_bump_stays_in_sync() {
 }
 
 #[test]
+fn send_chain_snapshot_rejects_counter_wrap_boundary() {
+    let mut chain = SendChain::new([1; 32], 0);
+    chain.next_index = u32::MAX;
+    assert!(chain.snapshot().is_err());
+    chain.next_index = 0;
+    chain.epoch = u16::MAX;
+    assert!(chain.snapshot().is_err());
+}
+
+#[test]
+fn send_chain_snapshot_roundtrip_preserves_future_keys() {
+    let mut original = SendChain::new([7; 32], 3);
+    for _ in 0..5 {
+        original.next();
+    }
+
+    let snapshot = original.snapshot().unwrap();
+    let mut restored = SendChain::restore(&snapshot).expect("valid send snapshot");
+    assert_eq!(restored.snapshot().unwrap().as_slice(), snapshot.as_slice());
+
+    for _ in 0..4 {
+        assert_eq!(original.next(), restored.next());
+    }
+}
+
+#[test]
+fn recv_chain_snapshot_roundtrip_preserves_skipped_keys() {
+    let seed = [8; 32];
+    let mut sender = SendChain::new(seed, 2);
+    let keys: Vec<_> = (0..7).map(|_| sender.next()).collect();
+    let mut original = RecvChain::new(seed, 2, 16);
+    let (expected, epoch, index) = &keys[6];
+    assert_eq!(*original.key_for(*epoch, *index).unwrap(), **expected);
+
+    let snapshot = original.snapshot().unwrap();
+    let mut restored = RecvChain::restore(&snapshot).expect("valid receive snapshot");
+    assert_eq!(restored.snapshot().unwrap().as_slice(), snapshot.as_slice());
+
+    for &i in &[2usize, 0, 5] {
+        let (expected, epoch, index) = &keys[i];
+        assert_eq!(*original.key_for(*epoch, *index).unwrap(), **expected);
+        assert_eq!(*restored.key_for(*epoch, *index).unwrap(), **expected);
+    }
+}
+
+#[test]
+fn recv_chain_snapshot_rejects_trailing_duplicate_and_invalid_records() {
+    let seed = [9; 32];
+    let mut sender = SendChain::new(seed, 4);
+    let keys: Vec<_> = (0..3).map(|_| sender.next()).collect();
+    let mut receiver = RecvChain::new(seed, 4, 16);
+    let (_, epoch, index) = &keys[1];
+    receiver.key_for(*epoch, *index).unwrap();
+    let snapshot = receiver.snapshot().unwrap();
+
+    let mut trailing = snapshot.to_vec();
+    trailing.push(0);
+    assert!(RecvChain::restore(&trailing).is_err());
+
+    // Header: version(1), CK(32), epoch(2), next_index(4), window(4),
+    // skipped_count(2); each skipped record is epoch(2), index(4), key(32).
+    const COUNT: usize = 43;
+    const HEADER: usize = 45;
+    const RECORD: usize = 38;
+    let mut duplicate = snapshot.to_vec();
+    duplicate[COUNT..COUNT + 2].copy_from_slice(&2u16.to_le_bytes());
+    duplicate.extend_from_within(HEADER..HEADER + RECORD);
+    assert!(RecvChain::restore(&duplicate).is_err());
+
+    let mut ordered_receiver = RecvChain::new(seed, 4, 16);
+    let (_, epoch, index) = &keys[2];
+    ordered_receiver.key_for(*epoch, *index).unwrap();
+    let ordered = ordered_receiver.snapshot().unwrap();
+    let mut unsorted = ordered.to_vec();
+    let first = unsorted[HEADER..HEADER + RECORD].to_vec();
+    let second = unsorted[HEADER + RECORD..HEADER + RECORD * 2].to_vec();
+    unsorted[HEADER..HEADER + RECORD].copy_from_slice(&second);
+    unsorted[HEADER + RECORD..HEADER + RECORD * 2].copy_from_slice(&first);
+    assert!(RecvChain::restore(&unsorted).is_err());
+
+    let mut future_epoch = snapshot.to_vec();
+    future_epoch[HEADER..HEADER + 2].copy_from_slice(&5u16.to_le_bytes());
+    assert!(RecvChain::restore(&future_epoch).is_err());
+
+    let mut current_future_index = snapshot.to_vec();
+    current_future_index[HEADER + 2..HEADER + 6].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(RecvChain::restore(&current_future_index).is_err());
+
+    let mut over_cap = snapshot.to_vec();
+    over_cap[COUNT..COUNT + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    assert!(RecvChain::restore(&over_cap).is_err());
+
+    let huge_window = RecvChain::new(seed, 4, mmp_types::consts::RATCHET_WINDOW + 1);
+    assert!(huge_window.snapshot().is_err());
+}
+
+#[test]
+fn prekey_snapshot_roundtrip_preserves_private_batch() {
+    let alice = id(10);
+    let mut r = rng();
+    let original = PrekeyStore::generate(&mut r, 4);
+    let snapshot = original.snapshot().unwrap();
+    let restored = PrekeyStore::restore(&snapshot).expect("valid prekey snapshot");
+    assert_eq!(restored.snapshot().unwrap().as_slice(), snapshot.as_slice());
+    assert_eq!(original.batch(&alice), restored.batch(&alice));
+
+    let mut sender_rng = rng();
+    let agreement = sender_agree(
+        &mut sender_rng,
+        &alice,
+        &id(11).public(),
+        &original.batch(&id(11)),
+        Some(2),
+    )
+    .unwrap();
+    let restored_ck = recipient_agree(
+        &restored,
+        &id(11),
+        &alice.public(),
+        &alice.exchange_public(),
+        &agreement.eph_pub,
+        agreement.prekey_id,
+    )
+    .unwrap();
+    let original_ck = recipient_agree(
+        &original,
+        &id(11),
+        &alice.public(),
+        &alice.exchange_public(),
+        &agreement.eph_pub,
+        agreement.prekey_id,
+    )
+    .unwrap();
+    assert_eq!(*restored_ck, *original_ck);
+}
+
+#[test]
+fn prekey_snapshot_rejects_trailing_duplicate_and_oversize() {
+    let mut r = rng();
+    let original = PrekeyStore::generate(&mut r, 1);
+    let snapshot = original.snapshot().unwrap();
+    let mut trailing = snapshot.to_vec();
+    trailing.push(0);
+    assert!(PrekeyStore::restore(&trailing).is_err());
+
+    // Header: version(1), SPK secret(32), count(2); each record is id(2) +
+    // secret(32).
+    const COUNT: usize = 33;
+    const HEADER: usize = 35;
+    const RECORD: usize = 34;
+    let mut duplicate = snapshot.to_vec();
+    duplicate[COUNT..COUNT + 2].copy_from_slice(&2u16.to_le_bytes());
+    duplicate.extend_from_within(HEADER..HEADER + RECORD);
+    assert!(PrekeyStore::restore(&duplicate).is_err());
+
+    let mut gap = snapshot.to_vec();
+    gap[HEADER..HEADER + 2].copy_from_slice(&1u16.to_le_bytes());
+    assert!(PrekeyStore::restore(&gap).is_err());
+
+    let mut over_cap = snapshot.to_vec();
+    over_cap[COUNT..COUNT + 2].copy_from_slice(&u16::MAX.to_le_bytes());
+    assert!(PrekeyStore::restore(&over_cap).is_err());
+
+    let oversized = PrekeyStore::generate(&mut r, mmp_types::consts::PREKEY_BATCH + 1);
+    assert!(oversized.snapshot().is_err());
+}
+
+#[test]
 fn sender_keys_group_roundtrip() {
     let gid = Id16([4; 16]);
     let mut r = rng();

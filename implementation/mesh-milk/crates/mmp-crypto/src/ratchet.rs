@@ -6,11 +6,27 @@
 //! meet — stated plainly (doc 08 §5.2).
 
 use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
 
+use mmp_types::consts::RATCHET_WINDOW;
 use mmp_types::ids::Key32;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::CryptoError;
+
+/// Version of the provider-local send/receive ratchet snapshots.
+///
+/// These bytes are not MMP wire data. They are only a bounded plaintext
+/// payload for a platform-keystore envelope; callers still have to provide
+/// the keystore, encryption, freshness/TTL, and atomic persistence policy.
+const SNAPSHOT_VERSION: u8 = 1;
+const SEND_SNAPSHOT_LEN: usize = 1 + 32 + 2 + 4;
+const RECV_SNAPSHOT_HEADER_LEN: usize = 1 + 32 + 2 + 4 + 4 + 2;
+const SKIPPED_RECORD_LEN: usize = 2 + 4 + 32;
+
+fn snapshot_error() -> CryptoError {
+    CryptoError::Snapshot
+}
 
 /// Deterministic per-direction chain seed: both parties derive the same value
 /// for a given sender.
@@ -74,6 +90,43 @@ impl SendChain {
         self.ck = new;
         self.epoch += 1;
         self.next_index = 0;
+    }
+
+    /// Encode this chain as a canonical provider-local keystore payload.
+    ///
+    /// The result contains only the current chain key and counters. It is not
+    /// encrypted here, is not a wire format, and does not by itself provide
+    /// restart continuity. In particular, no conversation root is present.
+    pub fn snapshot(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        if self.epoch == u16::MAX || self.next_index == u32::MAX {
+            return Err(snapshot_error());
+        }
+        let mut out = Zeroizing::new(Vec::with_capacity(SEND_SNAPSHOT_LEN));
+        out.push(SNAPSHOT_VERSION);
+        out.extend_from_slice(&self.ck);
+        out.extend_from_slice(&self.epoch.to_le_bytes());
+        out.extend_from_slice(&self.next_index.to_le_bytes());
+        Ok(out)
+    }
+
+    /// Restore a chain from a canonical provider-local snapshot.
+    ///
+    /// Parsing is strict: the version and exact length must match, and
+    /// counters at their wrap boundaries are rejected because the live
+    /// ratchet cannot safely advance them. The input is assumed to be a
+    /// decrypted keystore payload; callers must authenticate it before use.
+    pub fn restore(bytes: &[u8]) -> Result<SendChain, CryptoError> {
+        if bytes.len() != SEND_SNAPSHOT_LEN || bytes.first().copied() != Some(SNAPSHOT_VERSION) {
+            return Err(snapshot_error());
+        }
+        let epoch = u16::from_le_bytes([bytes[33], bytes[34]]);
+        let next_index = u32::from_le_bytes([bytes[35], bytes[36], bytes[37], bytes[38]]);
+        if epoch == u16::MAX || next_index == u32::MAX {
+            return Err(snapshot_error());
+        }
+        let mut ck = Zeroizing::new([0u8; 32]);
+        ck.copy_from_slice(&bytes[1..33]);
+        Ok(SendChain { ck: *ck, epoch, next_index })
     }
 }
 
@@ -139,6 +192,107 @@ impl RecvChain {
     /// The current epoch.
     pub fn epoch(&self) -> u16 {
         self.epoch
+    }
+
+    /// Encode this chain, including its bounded skipped-key window, as a
+    /// canonical provider-local keystore payload. The bytes are not MMP wire
+    /// data and are intentionally left to the platform keystore layer for
+    /// authenticated encryption and persistence policy.
+    pub fn snapshot(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        let count = self.skipped.len();
+        if self.epoch == u16::MAX
+            || self.next_index == u32::MAX
+            || self.window == 0
+            || self.window > RATCHET_WINDOW
+            || count > self.window as usize
+            || count > u16::MAX as usize
+        {
+            return Err(snapshot_error());
+        }
+        let capacity = RECV_SNAPSHOT_HEADER_LEN + count * SKIPPED_RECORD_LEN;
+        let mut out = Zeroizing::new(Vec::with_capacity(capacity));
+        out.push(SNAPSHOT_VERSION);
+        out.extend_from_slice(&self.ck);
+        out.extend_from_slice(&self.epoch.to_le_bytes());
+        out.extend_from_slice(&self.next_index.to_le_bytes());
+        out.extend_from_slice(&self.window.to_le_bytes());
+        out.extend_from_slice(&(count as u16).to_le_bytes());
+        for ((epoch, index), key) in &self.skipped {
+            out.extend_from_slice(&epoch.to_le_bytes());
+            out.extend_from_slice(&index.to_le_bytes());
+            out.extend_from_slice(key);
+        }
+        Ok(out)
+    }
+
+    /// Restore a receive chain from a canonical provider-local snapshot.
+    ///
+    /// The parser validates every bound before allocating the skipped-key
+    /// map, requires strictly sorted records, rejects duplicate keys and
+    /// future/current out-of-range indexes, and consumes the entire input.
+    /// The input is assumed to be a decrypted keystore payload; callers must
+    /// authenticate it before use.
+    pub fn restore(bytes: &[u8]) -> Result<RecvChain, CryptoError> {
+        if bytes.len() < RECV_SNAPSHOT_HEADER_LEN
+            || bytes.first().copied() != Some(SNAPSHOT_VERSION)
+        {
+            return Err(snapshot_error());
+        }
+
+        let epoch = u16::from_le_bytes([bytes[33], bytes[34]]);
+        let next_index = u32::from_le_bytes([bytes[35], bytes[36], bytes[37], bytes[38]]);
+        let window = u32::from_le_bytes([bytes[39], bytes[40], bytes[41], bytes[42]]);
+        let count = u16::from_le_bytes([bytes[43], bytes[44]]) as usize;
+        if epoch == u16::MAX
+            || next_index == u32::MAX
+            || window == 0
+            || window > RATCHET_WINDOW
+            || count > window as usize
+            || count > RATCHET_WINDOW as usize
+        {
+            return Err(snapshot_error());
+        }
+        let records_len = count.checked_mul(SKIPPED_RECORD_LEN).ok_or_else(snapshot_error)?;
+        let expected_len = RECV_SNAPSHOT_HEADER_LEN.checked_add(records_len).ok_or_else(snapshot_error)?;
+        if bytes.len() != expected_len {
+            return Err(snapshot_error());
+        }
+
+        let mut ck = Zeroizing::new([0u8; 32]);
+        ck.copy_from_slice(&bytes[1..33]);
+        let mut skipped = BTreeMap::new();
+        let mut previous: Option<(u16, u32)> = None;
+        let mut pos = RECV_SNAPSHOT_HEADER_LEN;
+        for _ in 0..count {
+            let entry_epoch = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            let entry_index = u32::from_le_bytes([
+                bytes[pos + 2],
+                bytes[pos + 3],
+                bytes[pos + 4],
+                bytes[pos + 5],
+            ]);
+            let key_start = pos + 6;
+            let key_end = key_start + 32;
+            let key_id = (entry_epoch, entry_index);
+            if entry_epoch > epoch
+                || (entry_epoch == epoch && entry_index >= next_index)
+                || previous.is_some_and(|old| old >= key_id)
+            {
+                return Err(snapshot_error());
+            }
+            let mut key = Zeroizing::new([0u8; 32]);
+            key.copy_from_slice(&bytes[key_start..key_end]);
+            skipped.insert(key_id, *key);
+            previous = Some(key_id);
+            pos = key_end;
+        }
+        // `expected_len` above and the exact loop count prove full input
+        // consumption; keep this assertion local so future format edits do
+        // not accidentally reintroduce a trailing-byte acceptance path.
+        if pos != bytes.len() {
+            return Err(snapshot_error());
+        }
+        Ok(RecvChain { ck: *ck, epoch, next_index, window, skipped })
     }
 
     fn store_skipped(&mut self, epoch: u16, index: u32, key: [u8; 32]) {

@@ -10,6 +10,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use mmp_types::claim::PrekeyBatch;
+use mmp_types::consts::PREKEY_BATCH;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::Key32;
 use rand_core::CryptoRngCore;
@@ -17,6 +18,14 @@ use zeroize::Zeroizing;
 
 use crate::error::CryptoError;
 use crate::identity::{verify, Identity};
+
+/// Version of the provider-local prekey snapshot.
+///
+/// This is not a wire format. The returned plaintext must be authenticated
+/// and encrypted by the platform keystore before persistence.
+const SNAPSHOT_VERSION: u8 = 1;
+const SNAPSHOT_HEADER_LEN: usize = 1 + 32 + 2;
+const SNAPSHOT_RECORD_LEN: usize = 2 + 32;
 
 /// Sentinel: no one-time prekey consumed (signed-prekey-only agreement).
 pub const PREKEY_NONE: u16 = 0xffff;
@@ -52,6 +61,72 @@ impl PrekeyStore {
             PrekeyBatch { signed_prekey: self.spk_public, spk_sig: mmp_types::ids::Sig64::ZERO, prekeys };
         batch.spk_sig = identity.sign(SigDomain::Prekey, &batch.signed_object());
         batch
+    }
+
+    /// Encode the signed-prekey and one-time private keys for a provider-local
+    /// keystore payload. This is not MMP wire data and does not itself provide
+    /// restart continuity. The batch cap is enforced rather than silently
+    /// truncating private material.
+    pub fn snapshot(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        if self.one_time.len() > PREKEY_BATCH || self.one_time.len() > u16::MAX as usize {
+            return Err(CryptoError::Snapshot);
+        }
+        let mut out = Zeroizing::new(Vec::with_capacity(
+            SNAPSHOT_HEADER_LEN + self.one_time.len() * SNAPSHOT_RECORD_LEN,
+        ));
+        out.push(SNAPSHOT_VERSION);
+        let spk = Zeroizing::new(self.spk.to_bytes());
+        out.extend_from_slice(&*spk);
+        out.extend_from_slice(&(self.one_time.len() as u16).to_le_bytes());
+        for (id, secret) in &self.one_time {
+            out.extend_from_slice(&id.to_le_bytes());
+            let secret = Zeroizing::new(secret.to_bytes());
+            out.extend_from_slice(&*secret);
+        }
+        Ok(out)
+    }
+
+    /// Restore private prekey material from a provider-local keystore
+    /// payload. Version, exact length, batch cap, sorted unique ids and full
+    /// input consumption are required before any map entry is allocated.
+    /// The input is assumed to have been authenticated by the keystore layer.
+    pub fn restore(bytes: &[u8]) -> Result<PrekeyStore, CryptoError> {
+        if bytes.len() < SNAPSHOT_HEADER_LEN || bytes.first().copied() != Some(SNAPSHOT_VERSION) {
+            return Err(CryptoError::Snapshot);
+        }
+        let count = u16::from_le_bytes([bytes[33], bytes[34]]) as usize;
+        if count > PREKEY_BATCH {
+            return Err(CryptoError::Snapshot);
+        }
+        let records_len = count.checked_mul(SNAPSHOT_RECORD_LEN).ok_or(CryptoError::Snapshot)?;
+        let expected_len = SNAPSHOT_HEADER_LEN.checked_add(records_len).ok_or(CryptoError::Snapshot)?;
+        if bytes.len() != expected_len {
+            return Err(CryptoError::Snapshot);
+        }
+
+        let mut spk_bytes = Zeroizing::new([0u8; 32]);
+        spk_bytes.copy_from_slice(&bytes[1..33]);
+        let spk = x25519_dalek::StaticSecret::from(*spk_bytes);
+        let spk_public = Key32(x25519_dalek::PublicKey::from(&spk).to_bytes());
+        let mut one_time = BTreeMap::new();
+        let mut previous = None;
+        let mut pos = SNAPSHOT_HEADER_LEN;
+        for expected_id in 0..count {
+            let id = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            if id != expected_id as u16 || previous.is_some_and(|old| old >= id) {
+                return Err(CryptoError::Snapshot);
+            }
+            let mut secret_bytes = Zeroizing::new([0u8; 32]);
+            secret_bytes.copy_from_slice(&bytes[pos + 2..pos + SNAPSHOT_RECORD_LEN]);
+            let secret = x25519_dalek::StaticSecret::from(*secret_bytes);
+            one_time.insert(id, secret);
+            previous = Some(id);
+            pos += SNAPSHOT_RECORD_LEN;
+        }
+        if pos != bytes.len() {
+            return Err(CryptoError::Snapshot);
+        }
+        Ok(PrekeyStore { spk, spk_public, one_time })
     }
 }
 
