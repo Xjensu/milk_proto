@@ -81,6 +81,8 @@ const CLAIM_SCOPE: Id16 = Id16([0xff; 16]);
 const OUTBOX_DATA_CREDIT_WINDOW: usize = 8;
 const OUTBOX_CONTROL_RESERVE: usize = 4;
 const OUTBOX_FRAME_BYTES: usize = MAX_ENVELOPE_PAYLOAD + 3;
+/// Bound transport-local close actions so denied links cannot grow node RAM.
+const CLOSE_ACTION_CAPACITY: usize = 64;
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -512,6 +514,8 @@ pub struct Node {
     core: NodeCore,
     sessions: HashMap<LinkId, SessionEngine>,
     outbox: VecDeque<(LinkId, Vec<u8>)>,
+    close_actions: VecDeque<LinkId>,
+    close_actions_dropped: u64,
     hello: Hello,
     beacon_salt: [u8; 16],
 }
@@ -581,6 +585,8 @@ impl Node {
             core,
             sessions: HashMap::new(),
             outbox: VecDeque::new(),
+            close_actions: VecDeque::new(),
+            close_actions_dropped: 0,
             hello: Hello { ver: 1, suites: vec![0x01], tier: tier as u8, flags: 0, credits: 8, psm: 0 },
             beacon_salt,
         };
@@ -1060,6 +1066,23 @@ impl Node {
         self.sessions.remove(&link);
     }
 
+    fn request_close(&mut self, link: LinkId) {
+        if self.close_actions.contains(&link) {
+            return;
+        }
+        if self.close_actions.len() >= CLOSE_ACTION_CAPACITY {
+            // Keep queue saturation observable; the host must drain
+            // poll_close promptly to preserve transport cleanup.
+            self.close_actions_dropped = self.close_actions_dropped.saturating_add(1);
+            return;
+        }
+        self.close_actions.push_back(link);
+    }
+
+    fn cancel_close(&mut self, link: LinkId) {
+        self.close_actions.retain(|queued| *queued != link);
+    }
+
     /// Feed one transport-layer event into the node: beacon overheard, a link
     /// coming up/down, or bytes arriving on a link. Drives the per-link
     /// `SessionEngine`s and the E4-S4 opportunistic ratchet epoch bump on
@@ -1074,9 +1097,11 @@ impl Node {
             TalEvent::LinkUp { link, initiator, .. } => {
                 // Admission denial is intentionally silent (specification/11
                 // §3): retain existing links and emit no handshake output.
-                if self.sessions.contains_key(&link)
-                    || self.sessions.len() >= Self::max_sessions_for_tier(self.core.tier)
-                {
+                if self.sessions.contains_key(&link) {
+                    return;
+                }
+                if self.sessions.len() >= Self::max_sessions_for_tier(self.core.tier) {
+                    self.request_close(link);
                     return;
                 }
                 let engine = if initiator {
@@ -1123,7 +1148,8 @@ impl Node {
                         }
                     }
                 }
-                self.sessions.remove(&link);
+                self.cancel_close(link);
+                self.clear_link_outbox(link);
             }
         }
     }
@@ -1158,14 +1184,31 @@ impl Node {
             // the Noise nonce stream ambiguous. Drop the affected session and
             // all of its queued frames, preserving unrelated links.
             self.clear_link_outbox(link);
+            self.request_close(link);
         } else if closed {
-            self.sessions.remove(&link);
+            self.clear_link_outbox(link);
+            self.request_close(link);
         }
     }
 
     /// Wire bytes to write to a link; drain fully each turn.
     pub fn poll_send(&mut self) -> Option<(LinkId, Vec<u8>)> {
         self.outbox.pop_front()
+    }
+
+    /// Return the next transport-local close action. The host must close the
+    /// physical link and then feed [`TalEvent::LinkDown`] back to the node;
+    /// this action is not a protocol frame and does not change the wire
+    /// specification.
+    pub fn poll_close(&mut self) -> Option<LinkId> {
+        self.close_actions.pop_front()
+    }
+
+    /// Number of close actions dropped because the bounded host queue was
+    /// full. A non-zero value means the host did not drain [`Node::poll_close`]
+    /// promptly and should treat this as an operational error.
+    pub fn close_actions_dropped(&self) -> u64 {
+        self.close_actions_dropped
     }
 
     /// The next queued [`Event`] for the app to consume; drain fully each turn.

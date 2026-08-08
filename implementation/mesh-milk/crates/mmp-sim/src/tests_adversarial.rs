@@ -195,7 +195,6 @@ fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
     const DEST: Id16 = Id16([0xD1; 16]);
 
     let mut sim = Sim::new(2, 0xDB1E_0000_0000_0003);
-    println!("ids: {:?} {:?}, dest: {:?}", sim.node_id(LEFT), sim.node_id(RIGHT), DEST);
     let relay = Adversary::new([0xBA; 32]);
     // Keep the bundle origin distinct from the Byzantine relay.  Otherwise an
     // honest receiver's normal "never offer back to origin" rule would hide
@@ -228,8 +227,6 @@ fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
             }
         });
         let admitted = sim.store_len(receiver).saturating_sub(before);
-        println!("receiver={receiver} payload={PAYLOAD_LEN} cost={cost_per_admit} bound={local_bound} admitted={admitted}");
-        println!("drops={} records={:?}", sim.node(receiver).diagnostics().drops, sim.node(receiver).diagnostics().records());
         assert!(
             admitted <= local_bound,
             "receiver {receiver} admitted {admitted} bundles; local origin bucket bound is {local_bound}"

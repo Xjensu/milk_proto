@@ -315,6 +315,16 @@ Record evidence and obtain a protocol decision first.
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
    consuming radio shells exist.
 
+The transport-close continuation is now implemented in the Rust host seams:
+`Node::poll_close()` reports denied-link, session-closed, and outbox-overflow
+actions; `LinkDown` purges stale per-link outbox frames; the UniFFI object
+exposes the same poll; the central CLI calls `BleCentral::hangup`; and the
+Linux peripheral exposes `PeripheralRole::close_link`. The bounded action queue
+has a saturation counter (`close_actions_dropped`) and is documented in
+`docs/TRANSPORT_CLOSE_FEEDBACK.md`. Native Android/iOS callers still need to
+wire that method to their platform disconnect APIs and feed the resulting
+`link_down` callback.
+
 ## Transport-hardening continuation notes
 
 The public API intentionally remains `events() -> tokio::sync::mpsc::Receiver<TalEvent>`.

@@ -84,6 +84,11 @@ impl PeripheralRole {
     }
 
     /// Statically unreachable (no value of `Self` can exist).
+    pub async fn close_link(&self, _link: LinkId) -> Result<(), PeriphError> {
+        match self.never {}
+    }
+
+    /// Statically unreachable (no value of `Self` can exist).
     pub async fn notify(&self, _link: LinkId, _bytes: &[u8]) -> Result<(), PeriphError> {
         match self.never {}
     }

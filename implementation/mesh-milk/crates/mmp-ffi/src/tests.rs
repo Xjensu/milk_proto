@@ -99,6 +99,19 @@ fn bad_length_ids_are_rejected_at_the_ffi_boundary() {
 }
 
 #[test]
+fn transport_close_feedback_is_visible_at_the_ffi_boundary() {
+    let node = MmpNode::new(vec![9u8; 32], FfiTier::Leaf, None).expect("valid seed");
+    node.link_up(1, true);
+    while node.poll_send().is_some() {}
+
+    // Leaf admits one session. The second physical link is denied locally and
+    // must be closed by the mobile transport host.
+    node.link_up(2, true);
+    assert_eq!(node.poll_close(), Some(2));
+    assert_eq!(node.poll_close(), None);
+}
+
+#[test]
 fn successor_revocation_forwards_and_validates_fixed_length_keys() {
     let bob = node(2);
     let successor = node(3);

@@ -219,6 +219,35 @@ impl PeripheralRole {
             )
     }
 
+    /// Retire a link at the transport boundary after [`mmp_node::Node`]
+    /// reports a local admission or session-close action. Removing the
+    /// registry state drops the BlueZ writer and fences delayed reader
+    /// callbacks; the reserved `LinkDown` also purges the TAL ingress queue.
+    pub async fn close_link(&self, link: LinkId) -> Result<(), PeriphError> {
+        let _event_guard = self.event_gate.lock().await;
+        let write_gate = self
+            .links
+            .lock()
+            .await
+            .states
+            .get(&link)
+            .map(|state| state.write_gate.clone())
+            .ok_or(PeriphError::UnknownLink)?;
+        let _write_guard = write_gate.lock_owned().await;
+        let generation = {
+            let mut links = self.links.lock().await;
+            let generation = links.lifecycle.retire_link(link);
+            if generation.is_some() {
+                links.states.remove(&link);
+            }
+            generation
+        };
+        let Some(generation) = generation else { return Err(PeriphError::UnknownLink) };
+        self.tx.retire_link(link);
+        let _ = try_link_down(&self.tx, link, generation);
+        Ok(())
+    }
+
     /// Chunk `bytes` to the link's negotiated size and push them, in order,
     /// as GATT notifications. Errors with [`PeriphError::NotSubscribed`] if
     /// the central hasn't subscribed yet; a mid-stream send failure tears the

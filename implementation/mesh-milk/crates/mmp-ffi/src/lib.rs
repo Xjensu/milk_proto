@@ -958,6 +958,13 @@ impl MmpNode {
         self.lock().poll_send().map(|(link, bytes)| OutFrame { link, bytes })
     }
 
+    /// Drain one transport-local close action. The mobile host must terminate
+    /// the physical BLE link and then call [`MmpNode::link_down`]; this is not
+    /// a wire-protocol frame.
+    pub fn poll_close(&self) -> Option<u64> {
+        self.lock().poll_close()
+    }
+
     /// Drain one app event; call in a loop until `None`.
     pub fn poll_event(&self) -> Option<FfiEvent> {
         self.lock().poll_event().map(FfiEvent::from)

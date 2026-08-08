@@ -562,8 +562,8 @@ fn cmd_listen(args: &[String]) -> ExitCode {
 /// Every ~1 s: `tick`. On every BLE event: hand it to `on_tal_event` (this
 /// includes `TalEvent::Beacon` — `mmp-tal-btleplug` only shuttles bytes, it
 /// is `mmp-node` that decodes the beacon and notes the ephemeral id). After
-/// any event/tick: drain `poll_send` onto the matching BLE link, and drain
-/// `poll_event` to print. `mmp-cli`'s BLE transport is central-only (module
+/// any event/tick: drain transport-local `poll_close` actions, then `poll_send`
+/// onto the matching BLE link, and drain `poll_event` to print. `mmp-cli`'s BLE transport is central-only (module
 /// docs), so this loop never calls `Node::beacon`/advertises — that is the
 /// peripheral role's job, driven by `listen`/`drive_loop_peripheral` (HANDOFF
 /// M5b).
@@ -626,6 +626,9 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
             }
         }
 
+        while let Some(link) = node.poll_close() {
+            central.hangup(link).await;
+        }
         while let Some((link, bytes)) = node.poll_send() {
             if let Err(e) = central.send(link, &bytes).await {
                 eprintln!("mmp-cli: send on link {link:#x} failed: {e}");
@@ -740,6 +743,11 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
             }
         }
 
+        while let Some(link) = node.poll_close() {
+            if let Err(e) = peripheral.close_link(link).await {
+                eprintln!("mmp-cli: close on link {link:#x} failed: {e}");
+            }
+        }
         while let Some((link, bytes)) = node.poll_send() {
             if let Err(e) = peripheral.notify(link, &bytes).await {
                 eprintln!("mmp-cli: notify on link {link:#x} failed: {e}");

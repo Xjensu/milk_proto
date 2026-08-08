@@ -90,6 +90,8 @@ fn concurrent_session_admission_caps_leaf_relay_anchor() {
             queued_before_rejection,
             "quota denial must not queue handshake output"
         );
+        assert_eq!(n.poll_close(), Some(10_000), "denied physical link must be closed by host");
+        assert_eq!(n.poll_close(), None);
     }
 }
 
@@ -107,6 +109,23 @@ fn duplicate_link_up_preserves_existing_session_and_output() {
         queued_after_first,
         "duplicate LinkUp must not replace the engine or queue another handshake"
     );
+    assert_eq!(n.poll_close(), None, "duplicate LinkUp must not request a close");
+}
+
+#[test]
+fn close_action_queue_is_bounded_and_reports_saturation() {
+    let mut n = Node::new([110; 32], Box::new(MemStore::new()), Tier::Leaf);
+    link_up(&mut n, 1);
+    for link in 2..=66 {
+        link_up(&mut n, link);
+    }
+
+    let mut retained = 0;
+    while n.poll_close().is_some() {
+        retained += 1;
+    }
+    assert_eq!(retained, 64);
+    assert_eq!(n.close_actions_dropped(), 1);
 }
 
 #[test]
@@ -122,6 +141,7 @@ fn outbound_queue_overflow_clears_only_the_affected_link() {
     assert!(!n.sessions.contains_key(&1), "overflow must terminate the affected session");
     assert!(!n.outbox.iter().any(|(link, _)| *link == 1), "affected-link frames must be cleared atomically");
     assert!(n.outbox.iter().any(|(link, _)| *link == unrelated), "unrelated queued traffic must survive");
+    assert_eq!(n.poll_close(), Some(1));
 }
 
 #[test]
@@ -135,6 +155,7 @@ fn outbound_queue_per_link_cap_is_enforced() {
 
     assert!(!n.sessions.contains_key(&1));
     assert!(!n.outbox.iter().any(|(link, _)| *link == 1));
+    assert_eq!(n.poll_close(), Some(1));
 }
 
 #[test]
@@ -148,6 +169,7 @@ fn outbound_queue_byte_cap_is_enforced_before_frame_cap() {
 
     assert!(!n.sessions.contains_key(&1));
     assert!(!n.outbox.iter().any(|(link, _)| *link == 1));
+    assert_eq!(n.poll_close(), Some(1));
 }
 
 #[test]
@@ -158,8 +180,10 @@ fn session_slot_releases_after_link_down() {
     link_up(&mut n, 2);
     assert_eq!(n.sessions.len(), 1, "Leaf quota is one session");
 
+    n.outbox.push_back((1, vec![0x55]));
     n.on_tal_event(TalEvent::LinkDown { link: 1 });
     assert!(n.sessions.is_empty());
+    assert!(!n.outbox.iter().any(|(link, _)| *link == 1), "LinkDown must purge stale queued frames");
 
     link_up(&mut n, 2);
     assert_eq!(n.sessions.len(), 1, "LinkDown must release the admission slot");
@@ -182,6 +206,7 @@ fn session_slot_releases_when_engine_closes() {
         n.sessions.is_empty(),
         "a closed engine must be removed before a replacement is admitted"
     );
+    assert_eq!(n.poll_close(), Some(1), "local session closure must reach the transport host");
 
     link_up(&mut n, 2);
     assert_eq!(n.sessions.len(), 1, "Closed must release the admission slot");
