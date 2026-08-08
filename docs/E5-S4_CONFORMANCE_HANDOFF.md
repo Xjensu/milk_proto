@@ -2,9 +2,9 @@
 
 ## Checkpoint
 
-This checkpoint records the strict-cap and sender-key provenance hardening
-following commit `7f29d7d` (`fix(mmp-core): enforce outbound frame caps`). The
-frozen `specification/` directory was not modified.
+This checkpoint is commit `8f40af4` (`fix(mesh-milk): enforce frozen wire caps
+and sender provenance`). The frozen `specification/` directory was not
+modified.
 
 Recent focused commits, oldest first:
 
@@ -30,6 +30,9 @@ Recent focused commits, oldest first:
   duplicate `(member, epoch)` receiver-chain resets. Admin forwarding was
   removed because the frozen sender-key record has no provenance proof for
   another member.
+- `8f40af4` — strict cap enforcement, sender-key provenance/stale/duplicate
+  guards, simulator boundary correction, generated-vector refresh, and mobile
+  packaging preflight checks.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -58,8 +61,9 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 26 `mmp-cli`, 31 `mmp-core`, 42 `mmp-types`, and
-26 `mmp-node` tests.
+The latest focused run passed 26 `mmp-cli`, 33 `mmp-core`, 42 `mmp-types`, and
+26 `mmp-node` tests; `mmp-sim` passed 9 active tests with 4 intentionally
+ignored scale/deployment cases.
 Workspace clippy with
 `-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
 workspace test matrix also passed during this checkpoint. Rustfmt could not be
