@@ -82,7 +82,7 @@ impl ClusteredMobility {
     /// Select the next `(left, right, is_bridge)` contact.
     pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
         let community = (self.contact_index / self.bridge_every) % self.communities.len();
-        let is_bridge = self.contact_index % self.bridge_every == 0;
+        let is_bridge = self.contact_index.is_multiple_of(self.bridge_every);
         let pair = if is_bridge {
             let next = (community + 1) % self.communities.len();
             let left = self.pick(&self.communities[community], rng);

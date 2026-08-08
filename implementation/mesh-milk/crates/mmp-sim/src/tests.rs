@@ -15,8 +15,8 @@ use crate::Sim;
 fn clustered_mobility_plan_is_deterministic_and_has_bridge_contacts() {
     let mut first = crate::ClusteredMobility::new(12, 3, 4).expect("valid plan");
     let mut second = crate::ClusteredMobility::new(12, 3, 4).expect("valid plan");
-    let mut rng_a = crate::Rng::new(0xD15C_0DE);
-    let mut rng_b = crate::Rng::new(0xD15C_0DE);
+    let mut rng_a = crate::Rng::new(0x0D15_C0DE);
+    let mut rng_b = crate::Rng::new(0x0D15_C0DE);
     let mut bridge_count = 0;
     for _ in 0..12 {
         let a = first.next_pair(&mut rng_a);
