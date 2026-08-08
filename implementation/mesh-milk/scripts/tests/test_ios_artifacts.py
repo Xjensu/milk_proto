@@ -84,6 +84,18 @@ class IOSArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("escapes its slice" in item for item in violations))
 
+    def test_duplicate_slice_identifier_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            plist_path = xcframework / "Info.plist"
+            with plist_path.open("rb") as stream:
+                plist = plistlib.load(stream)
+            plist["AvailableLibraries"].append(dict(plist["AvailableLibraries"][0]))
+            with plist_path.open("wb") as stream:
+                plistlib.dump(plist, stream)
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("duplicate slice: ios-arm64" in item for item in violations))
+
     def test_empty_swift_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             xcframework, bindings = _write_fixture(Path(root))

@@ -138,11 +138,15 @@ def verify_artifacts(xcframework: Path, swift_bindings: Path) -> list[str]:
         violations.append(f"XCFramework directory does not exist: {xcframework}")
     else:
         libraries = _verify_plist(xcframework, violations)
-        by_id = {
-            item.get("LibraryIdentifier"): item
-            for item in libraries
-            if isinstance(item.get("LibraryIdentifier"), str)
-        }
+        by_id: dict[str, dict[str, Any]] = {}
+        for item in libraries:
+            identifier = item.get("LibraryIdentifier")
+            if not isinstance(identifier, str):
+                continue
+            if identifier in by_id:
+                violations.append(f"Info.plist contains duplicate slice: {identifier}")
+                continue
+            by_id[identifier] = item
         for identifier in EXPECTED_SLICES:
             item = by_id.get(identifier)
             if item is None:
