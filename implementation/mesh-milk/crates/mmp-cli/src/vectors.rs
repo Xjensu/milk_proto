@@ -32,8 +32,13 @@ use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
 use mmp_types::claim::{field, Claim};
 use mmp_types::consts::L_MAX;
 use mmp_types::domain::SigDomain;
-use mmp_types::frame::{write_envelope, FT_BUNDLE};
-use mmp_types::ids::{Id16, Sig64};
+use mmp_types::frame::{
+    write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
+    Range, Summary, SummaryBucket, WantHeads, FT_BLOB_HAVE, FT_BLOB_REQ, FT_BUDGET, FT_BUNDLE,
+    FT_CLOSE, FT_CREDIT, FT_ERROR, FT_FRIEND_ACK, FT_FRIEND_OFFER, FT_HS, FT_ID_PROOF, FT_RECON_IDS,
+    FT_RECON_INIT, FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
+};
+use mmp_types::ids::{Id16, Key32, Sig64};
 
 /// One generated vector file: a stable filename and its exact JSON contents
 /// (already newline-terminated). Filenames are the wire contract with other
@@ -86,6 +91,7 @@ pub fn generate() -> Vec<VectorFile> {
     vec![
         bundle_vector(),
         beacon_vector(),
+        hello_vector(),
         claim_vector(),
         receipt_vector(),
         envelope_vector(),
@@ -93,7 +99,136 @@ pub fn generate() -> Vec<VectorFile> {
         cross_domain_negative_vector(),
         lifetime_reset_negative_vector(),
         budget_clamp_negative_vector(),
+        frames_vector(),
     ]
+}
+
+/// One deterministic sample for every registered MMP/1 frame type.  These
+/// values deliberately contain no private material: the frame layer carries
+/// identity/signature bytes but does not authenticate them.  Authentication
+/// remains the responsibility of the Noise/session and higher-level codecs.
+struct FrameCase {
+    name: &'static str,
+    frame: Frame,
+}
+
+const REGISTERED_FRAME_TYPES: [u8; 17] = [
+    FT_HS,
+    FT_ID_PROOF,
+    FT_CREDIT,
+    FT_SUMMARY,
+    FT_RECON_INIT,
+    FT_RECON_RANGE,
+    FT_RECON_IDS,
+    FT_WANT,
+    FT_BUNDLE,
+    FT_BUDGET,
+    FT_BLOB_REQ,
+    FT_BLOB_HAVE,
+    FT_FRIEND_OFFER,
+    FT_FRIEND_ACK,
+    mmp_types::frame::FT_PROXY_SUMMARY,
+    FT_ERROR,
+    FT_CLOSE,
+];
+
+fn vector_frame_cases() -> Vec<FrameCase> {
+    let id16_a = Id16([0x11; 16]);
+    let id16_b = Id16([0x22; 16]);
+    let id16_c = Id16([0x33; 16]);
+    let range = Range { lo: id16_a, hi: id16_b, count: 3, fp: 0x0102_0304_0506_0708 };
+    let hello = Hello {
+        ver: 1,
+        suites: vec![1, 2],
+        tier: 2,
+        flags: 0x0003,
+        credits: 8,
+        psm: 0x0025,
+    };
+    vec![
+        FrameCase { name: "hs", frame: Frame::Hs(hello.encode()) },
+        FrameCase {
+            name: "id_proof",
+            frame: Frame::IdProof { identity: Key32([0x44; 32]), sig: Sig64([0x55; 64]) },
+        },
+        FrameCase { name: "credit", frame: Frame::Credit(7) },
+        FrameCase {
+            name: "summary",
+            frame: Frame::Summary(Summary {
+                receipt_buckets: vec![SummaryBucket { bucket_epoch: 9, bloom: vec![0xa0, 0xa1] }],
+                claim_digest: vec![ClaimDigestEntry { node_prefix: 0x0102_0304, field: 1, seq: 5 }],
+                group_hints: vec![id16_c],
+                want_heads: vec![WantHeads { conv: id16_a, heads: vec![id16_b, id16_c] }],
+            }),
+        },
+        FrameCase {
+            name: "recon_init",
+            frame: Frame::ReconInit { domain: 1, window: 4, range },
+        },
+        FrameCase {
+            name: "recon_range",
+            frame: Frame::ReconRange { domain: 2, ranges: vec![range, Range { lo: id16_b, hi: id16_c, count: 1, fp: 9 }] },
+        },
+        FrameCase {
+            name: "recon_ids",
+            frame: Frame::ReconIds { domain: 3, lo: id16_a, hi: id16_c, ids: vec![id16_a, id16_b] },
+        },
+        FrameCase { name: "want", frame: Frame::Want(vec![id16_a, id16_b]) },
+        FrameCase { name: "bundle", frame: Frame::Bundle(vector_bundle().0.encode()) },
+        FrameCase { name: "budget", frame: Frame::Budget { id: id16_b, granted: 6 } },
+        FrameCase {
+            name: "blob_req",
+            frame: Frame::BlobReq { root: id16_a, block: 5, bitmap: vec![0xf0, 0x0f] },
+        },
+        FrameCase {
+            name: "blob_have",
+            frame: Frame::BlobHave { root: id16_b, block: 6, bitmap: vec![0x0f, 0xf0] },
+        },
+        FrameCase {
+            name: "friend_offer",
+            frame: Frame::FriendOffer(FriendOfferBody { since: 0x0102_0304_0506_0708 }.encode()),
+        },
+        FrameCase {
+            name: "friend_ack",
+            frame: Frame::FriendAck(FriendAckBody { countersig: Sig64([0x66; 64]) }.encode()),
+        },
+        FrameCase {
+            name: "proxy_summary",
+            frame: Frame::ProxySummary(ProxySummaryBody { dependent: id16_c, bloom: vec![0xbe, 0xef] }.encode()),
+        },
+        FrameCase {
+            name: "error",
+            frame: Frame::Error { code: mmp_types::frame::errcode::PROTOCOL, detail: b"frame vector".to_vec() },
+        },
+        FrameCase { name: "close", frame: Frame::Close },
+    ]
+}
+
+/// Serialize the complete registered-frame inventory as one JSON artifact.
+/// The artifact records the exact payload and envelope bytes while leaving
+/// semantic payload validation to the production round-trip test and the
+/// independent envelope checks in `conformance.rs`.
+fn frames_vector() -> VectorFile {
+    let cases = vector_frame_cases();
+    debug_assert_eq!(cases.len(), 17);
+    debug_assert!(cases.iter().zip(REGISTERED_FRAME_TYPES).all(|(case, typ)| case.frame.typ() == typ));
+    let mut json = String::from(
+        "{\n  \"description\": \"deterministic payload and envelope bytes for every registered MMP/1 frame type\",\n  \"frame_count\": 17,\n  \"frames\": [\n",
+    );
+    for (index, case) in cases.iter().enumerate() {
+        let payload = case.frame.encode_payload();
+        let wire = case.frame.encode();
+        json.push_str(&format!(
+            "    {{\"name\": \"{}\", \"type\": {}, \"payload\": \"{}\", \"wire\": \"{}\"}}{}\n",
+            case.name,
+            case.frame.typ(),
+            hex(&payload),
+            hex(&wire),
+            if index + 1 == cases.len() { "" } else { "," },
+        ));
+    }
+    json.push_str("  ]\n}\n");
+    VectorFile { name: "frames.json", json }
 }
 
 fn bundle_vector() -> VectorFile {
@@ -146,6 +281,21 @@ fn beacon_vector() -> VectorFile {
         hex(&beacon.encode()),
     );
     VectorFile { name: "beacon.json", json }
+}
+
+fn hello_vector() -> VectorFile {
+    let hello = Hello { ver: 1, suites: vec![1, 2], tier: 2, flags: 0x0003, credits: 8, psm: 0x0025 };
+    let json = format!(
+        "{{\n  \"description\": \"HELLO payload codec (doc 10 §2.1)\",\n  \"ver\": {},\n  \"suites\": \"{}\",\n  \"tier\": {},\n  \"flags\": {},\n  \"credits\": {},\n  \"psm\": {},\n  \"wire\": \"{}\"\n}}\n",
+        hello.ver,
+        hex(&hello.suites),
+        hello.tier,
+        hello.flags,
+        hello.credits,
+        hello.psm,
+        hex(&hello.encode()),
+    );
+    VectorFile { name: "hello.json", json }
 }
 
 fn claim_vector() -> VectorFile {
@@ -273,7 +423,7 @@ fn budget_clamp_negative_vector() -> VectorFile {
 #[cfg(test)]
 mod tests {
     use mmp_crypto::verify;
-    use mmp_types::frame::read_envelope;
+    use mmp_types::frame::{read_envelope, Frame};
 
     use super::*;
 
@@ -359,6 +509,27 @@ mod tests {
 
         // Budget clamp (AUDIT F3).
         assert_eq!(200u8.min(L_MAX), L_MAX);
+    }
+
+    /// Every registered frame type must have a deterministic sample and must
+    /// round-trip through the production payload codec and envelope framing.
+    /// The committed `frames.json` artifact is checked independently in
+    /// `conformance.rs`; this test is the production-codec half of the gate.
+    #[test]
+    fn every_registered_frame_roundtrips() {
+        let cases = vector_frame_cases();
+        assert_eq!(cases.len(), REGISTERED_FRAME_TYPES.len());
+        for (case, expected_type) in cases.iter().zip(REGISTERED_FRAME_TYPES) {
+            assert_eq!(case.frame.typ(), expected_type, "frame case {} has wrong type", case.name);
+            let wire = case.frame.encode();
+            let (typ, payload, consumed) = read_envelope(&wire)
+                .expect("frame envelope must parse")
+                .expect("complete frame envelope");
+            assert_eq!(consumed, wire.len(), "frame {} has trailing bytes", case.name);
+            assert_eq!(typ, expected_type, "frame {} has wrong envelope tag", case.name);
+            assert_eq!(payload, case.frame.encode_payload(), "frame {} payload drift", case.name);
+            assert_eq!(Frame::decode_payload(typ, payload).expect("frame payload must decode"), case.frame);
+        }
     }
 }
 

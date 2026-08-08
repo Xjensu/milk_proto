@@ -16,6 +16,8 @@ const VECTOR_NAMES: &[&str] = &[
     "claim.json",
     "cross_domain_negative.json",
     "envelope.json",
+    "frames.json",
+    "hello.json",
     "lifetime_reset_negative.json",
     "rbsr_fingerprint.json",
     "receipt.json",
@@ -72,6 +74,56 @@ fn json_u64(json: &str, key: &str) -> u64 {
         .unwrap_or_else(|e| panic!("invalid numeric JSON field {key:?}: {e}"))
 }
 
+/// Collect repeated primitive fields from the generator-owned artifact.  The
+/// frame inventory intentionally contains only unescaped names, decimal type
+/// tags, and hex strings, so this small parser stays auditable and independent
+/// from the production JSON/wire implementation.
+fn json_all_strings(json: &str, key: &str) -> Vec<String> {
+    let needle = format!("\"{key}\"");
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = json[cursor..].find(&needle) {
+        let key_at = cursor + relative;
+        let after_key = &json[key_at + needle.len()..];
+        let colon = after_key
+            .find(':')
+            .unwrap_or_else(|| panic!("missing colon after JSON field {key:?}"));
+        let value = after_key[colon + 1..].trim_start();
+        assert!(value.starts_with('"'), "JSON field {key:?} is not a string");
+        let body = &value[1..];
+        let end = body
+            .find('"')
+            .unwrap_or_else(|| panic!("unterminated JSON string field {key:?}"));
+        values.push(body[..end].to_owned());
+        cursor = key_at + needle.len();
+    }
+    values
+}
+
+fn json_all_u64(json: &str, key: &str) -> Vec<u64> {
+    let needle = format!("\"{key}\"");
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = json[cursor..].find(&needle) {
+        let key_at = cursor + relative;
+        let after_key = &json[key_at + needle.len()..];
+        let colon = after_key
+            .find(':')
+            .unwrap_or_else(|| panic!("missing colon after JSON field {key:?}"));
+        let value = after_key[colon + 1..].trim_start();
+        let end = value
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(value.len());
+        values.push(
+            value[..end]
+                .parse()
+                .unwrap_or_else(|e| panic!("invalid numeric JSON field {key:?}: {e}")),
+        );
+        cursor = key_at + needle.len();
+    }
+    values
+}
+
 fn decode_hex(field: &str, value: &str) -> Vec<u8> {
     assert!(value.len().is_multiple_of(2), "{field} hex value has odd length");
     let mut out = Vec::with_capacity(value.len() / 2);
@@ -80,9 +132,9 @@ fn decode_hex(field: &str, value: &str) -> Vec<u8> {
         let lo = hex_nibble(pair[1]).unwrap_or_else(|| panic!("invalid {field} hex at byte {index}"));
         out.push((hi << 4) | lo);
     }
-    // Keep this assertion close to the conversion call sites: it catches a
-    // malformed field before any wire-level interpretation is attempted.
-    assert!(!value.is_empty() || field == "empty", "empty hex field {field}");
+    // Empty payloads are valid for the CLOSE frame; all other empty fields in
+    // the current artifacts remain a likely generator error.
+    assert!(!value.is_empty() || field == "empty" || field == "payload", "empty hex field {field}");
     out
 }
 
@@ -228,6 +280,33 @@ fn envelope_reader_rejects_truncation_and_trailing_bytes() {
 }
 
 #[test]
+fn hello_vector_is_accepted_by_independent_reader() {
+    let json = vector("hello.json");
+    let wire = parse_hex(&json, "wire");
+    let suites = parse_hex(&json, "suites");
+    let expected_ver = json_u64(&json, "ver") as u8;
+    let expected_tier = json_u64(&json, "tier") as u8;
+    let expected_flags = json_u64(&json, "flags") as u16;
+    let expected_credits = json_u64(&json, "credits") as u8;
+    let expected_psm = json_u64(&json, "psm") as u16;
+
+    assert!(wire.len() >= 1 + 2 + 1 + 2 + 1 + 2);
+    assert_eq!(wire[0], expected_ver);
+    let suite_len = u16::from_le_bytes([wire[1], wire[2]]) as usize;
+    assert_eq!(suite_len, suites.len());
+    assert_eq!(&wire[3..3 + suite_len], suites.as_slice());
+    let tier_offset = 3 + suite_len;
+    assert_eq!(wire[tier_offset], expected_tier);
+    assert_eq!(u16::from_le_bytes([wire[tier_offset + 1], wire[tier_offset + 2]]), expected_flags);
+    assert_eq!(wire[tier_offset + 3], expected_credits);
+    assert_eq!(
+        u16::from_le_bytes([wire[tier_offset + 4], wire[tier_offset + 5]]),
+        expected_psm
+    );
+    assert_eq!(wire.len(), tier_offset + 6, "HELLO has trailing bytes");
+}
+
+#[test]
 fn bundle_vector_is_independently_canonical_and_content_addressed() {
     let json = vector("bundle.json");
     let wire = parse_hex(&json, "wire");
@@ -277,4 +356,54 @@ fn bundle_reader_rejects_tampered_layout_without_production_decoder() {
         read_bundle_independent(&bad_payload_length),
         Err("payload length does not consume the unsigned bundle")
     ));
+}
+
+#[test]
+fn frame_inventory_has_all_registered_types_and_valid_envelopes() {
+    let json = vector("frames.json");
+    let count = json_u64(&json, "frame_count");
+    assert_eq!(count, 17);
+
+    let names = json_all_strings(&json, "name");
+    let types = json_all_u64(&json, "type");
+    let payloads = json_all_strings(&json, "payload");
+    let wires = json_all_strings(&json, "wire");
+    assert_eq!(names.len(), count as usize);
+    assert_eq!(types.len(), count as usize);
+    assert_eq!(payloads.len(), count as usize);
+    assert_eq!(wires.len(), count as usize);
+
+    let expected_types = [
+        mmp_types::frame::FT_HS,
+        mmp_types::frame::FT_ID_PROOF,
+        mmp_types::frame::FT_CREDIT,
+        mmp_types::frame::FT_SUMMARY,
+        mmp_types::frame::FT_RECON_INIT,
+        mmp_types::frame::FT_RECON_RANGE,
+        mmp_types::frame::FT_RECON_IDS,
+        mmp_types::frame::FT_WANT,
+        mmp_types::frame::FT_BUNDLE,
+        mmp_types::frame::FT_BUDGET,
+        mmp_types::frame::FT_BLOB_REQ,
+        mmp_types::frame::FT_BLOB_HAVE,
+        mmp_types::frame::FT_FRIEND_OFFER,
+        mmp_types::frame::FT_FRIEND_ACK,
+        mmp_types::frame::FT_PROXY_SUMMARY,
+        mmp_types::frame::FT_ERROR,
+        mmp_types::frame::FT_CLOSE,
+    ];
+    let mut seen = [false; 256];
+    for (index, expected_type) in expected_types.iter().enumerate() {
+        assert_eq!(types[index], u64::from(*expected_type), "frame {} tag drifted", names[index]);
+        assert!(!seen[*expected_type as usize], "duplicate frame type {}", expected_type);
+        seen[*expected_type as usize] = true;
+
+        let payload = decode_hex("payload", &payloads[index]);
+        let wire = decode_hex("wire", &wires[index]);
+        assert_eq!(wire.len(), payload.len() + 3, "frame {} envelope length mismatch", names[index]);
+        assert_eq!(u16::from_le_bytes([wire[0], wire[1]]) as usize, payload.len());
+        assert_eq!(wire[2], *expected_type, "frame {} envelope tag mismatch", names[index]);
+        assert_eq!(&wire[3..], payload.as_slice(), "frame {} payload mismatch", names[index]);
+        assert_eq!(read_envelope_independent(&wire).unwrap(), (*expected_type, payload.as_slice()));
+    }
 }

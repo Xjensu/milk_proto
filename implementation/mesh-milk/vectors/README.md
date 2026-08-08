@@ -29,9 +29,10 @@ The consuming test (`mmp-cli`, `vectors::tests`) is the guard. It:
    bundle vectors (`vectors::conformance`) so those framing, length, and
    lifetime-canonicalization checks do not call the production decoders.
 
-The independent reader currently covers the envelope and outer-bundle subset
-only. It is not evidence that every frame, payload, or bundle class already
-has an independent implementation; those remain E5-S4 follow-up work.
+The independent reader currently covers HELLO, envelope/frame framing, and
+the outer-bundle subset only. It is not evidence that every frame payload or
+bundle class already has an independent implementation; those remain E5-S4
+follow-up work.
 
 If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 **review the diff before committing**. That review is the checkpoint doc 10
@@ -48,6 +49,10 @@ Positive:
 - `receipt.json` — receipt MAC over a fixed conversation root (the derived MAC
   key is a secret and is intentionally omitted).
 - `envelope.json` — link envelope framing `[len u16 LE][type u8][payload]`.
+- `frames.json` — deterministic payload and envelope bytes for all 17
+  registered session frame types; the HS sample carries the same deterministic
+  HELLO payload as `hello.json`.
+- `hello.json` — standalone HELLO payload fields and canonical bytes.
 - `rbsr_fingerprint.json` — RBSR range fingerprint of a known Id16 set.
 
 Negative (each states the rejection/invariant it pins):

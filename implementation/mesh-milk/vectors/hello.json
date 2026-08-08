@@ -1,0 +1,10 @@
+{
+  "description": "HELLO payload codec (doc 10 §2.1)",
+  "ver": 1,
+  "suites": "0102",
+  "tier": 2,
+  "flags": 3,
+  "credits": 8,
+  "psm": 37,
+  "wire": "0102000102020300082500"
+}
