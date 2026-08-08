@@ -124,6 +124,19 @@ fn generation_is_current(current: Option<u64>, expected: u64) -> bool {
     current == Some(expected)
 }
 
+/// Permit one outbound ATT chunk only while the captured link generation is
+/// still live.  Senders hold their per-link write gate, but retirement removes
+/// the link table entry before waiting on that gate; checking this boundary
+/// for every chunk limits a raced replacement/hangup to at most one already
+/// admitted packet instead of allowing an entire queued message through.
+fn permit_chunk(current: Option<u64>, expected: u64) -> Result<(), BleError> {
+    if generation_is_current(current, expected) {
+        Ok(())
+    } else {
+        Err(BleError::UnknownLink)
+    }
+}
+
 fn allocate_generation(counter: &AtomicU64) -> Option<u64> {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
@@ -617,14 +630,19 @@ impl BleCentral {
             .await
             .get(&link)
             .map(|state| state.generation);
-        if !generation_is_current(current_generation, generation) {
-            return Err(BleError::UnknownLink);
-        }
+        permit_chunk(current_generation, generation)?;
         if !peripheral.is_connected().await? {
             return Err(BleError::NotConnected);
         }
 
         for chunk in framing::chunks(bytes, chunk_size) {
+            let current_generation = self
+                .links
+                .lock()
+                .await
+                .get(&link)
+                .map(|state| state.generation);
+            permit_chunk(current_generation, generation)?;
             peripheral
                 .write(&tx_characteristic, chunk, WriteType::WithoutResponse)
                 .await?;
@@ -821,7 +839,7 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 mod tests {
     use super::{
         acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
-        mint_link_id, wait_for_disconnected_write_gate,
+        mint_link_id, permit_chunk, wait_for_disconnected_write_gate,
     };
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
@@ -846,6 +864,19 @@ mod tests {
         // the replacement remains the only current generation.
         assert!(!generation_is_current(Some(second), first));
         assert!(generation_is_current(Some(second), second));
+    }
+
+    #[test]
+    fn chunk_send_guard_stops_after_replacement_generation() {
+        let observed_generations = [Some(7), Some(8), Some(8)];
+        let mut sent = 0;
+        for current in observed_generations {
+            if permit_chunk(current, 7).is_err() {
+                break;
+            }
+            sent += 1;
+        }
+        assert_eq!(sent, 1, "a replacement must fence every later chunk");
     }
 
     #[test]
