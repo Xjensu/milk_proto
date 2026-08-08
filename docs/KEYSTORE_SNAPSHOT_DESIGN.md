@@ -1,6 +1,7 @@
 # Keystore-backed secret-state design (implementation plan)
 
-Status: design-only, no wire change, not yet wired into `mmp-node` or UniFFI.
+Status: partially implemented primitive, no wire change, not yet wired into
+`mmp-node` or UniFFI.
 The frozen `specification/` directory is intentionally unchanged.
 
 ## Current boundary
@@ -14,6 +15,13 @@ The existing `MMPSNAP2` store is an integrity/checksum container for
 receiver-local non-secret state. A checksum does not provide confidentiality or
 rollback protection. Secret ratchet/prekey continuity therefore needs a
 separate vault transaction.
+
+Commit `c6685c0` adds `mmp-crypto::snapshot`: a bounded ChaCha20-Poly1305
+envelope with a fresh injected nonce, context-hash AAD, version/kind checks,
+exact framing, and caller-supplied trusted-clock freshness validation. It does
+not enforce durable generation rollback, provider key wrapping, or atomic
+multi-record recovery; those remain mandatory responsibilities of the next
+layer.
 
 ## Required secret-state inventory
 

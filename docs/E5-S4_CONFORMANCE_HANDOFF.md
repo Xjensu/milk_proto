@@ -521,6 +521,13 @@ under a fresh-nonce AEAD, the native provider may wrap only a DEK/opaque handle,
 and missing or rollback-unsafe keystore state must fail closed without a
 cleartext fallback.
 
+Commit `c6685c0` adds the next isolated primitive, `mmp-crypto::snapshot`: a
+fresh-injected-nonce ChaCha20-Poly1305 envelope with context-hash AAD, exact
+framing, a 256 KiB plaintext cap, and trusted-clock TTL/future-timestamp
+checks. It returns zeroizing plaintext and is still only a provider payload
+primitive. Durable monotonic generation, DEK wrapping, complete Node aggregate
+serialization, and crash-atomic recovery are intentionally not claimed.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has
