@@ -20,7 +20,7 @@
 //! validated, receiver-local records. One file, one framing, seven record
 //! kinds are supported under the same framing.
 
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState};
@@ -31,10 +31,44 @@ use mmp_types::claim::Claim;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::Id16;
 
+/// Host-selected bounds for one on-disk snapshot image.
+///
+/// `max_file_bytes` covers the complete `MMPSNAP2` image, including framing,
+/// checksums, bundle records, and every auxiliary record kind. It therefore
+/// must not be set to a bundle quota without accounting for claims, groups,
+/// filters, authority state, and the blocklist. The default [`SnapshotStore::open`]
+/// path remains unbounded for backwards compatibility; platform hosts that
+/// know their storage policy should use [`SnapshotStore::open_with_limits`].
+///
+/// This is a local resource policy only. It does not alter the snapshot wire
+/// format or the semantics of any record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotLimits {
+    max_file_bytes: u64,
+}
+
+impl SnapshotLimits {
+    /// Construct a limit for the complete snapshot file.
+    pub const fn new(max_file_bytes: u64) -> SnapshotLimits {
+        SnapshotLimits { max_file_bytes }
+    }
+
+    /// Maximum accepted/written snapshot image size in bytes.
+    pub const fn max_file_bytes(self) -> u64 {
+        self.max_file_bytes
+    }
+}
+
 /// File-backed store: an in-memory working set with explicit `persist`.
 pub struct SnapshotStore {
     mem: MemStore,
     path: PathBuf,
+    limits: Option<SnapshotLimits>,
+    /// Set when an explicitly bounded open rejected the primary image (or
+    /// its crash-recovery candidate) for exceeding the host's file limit.
+    /// Refusing a later `persist` avoids replacing an unreadable image with an
+    /// empty in-memory store and silently losing state.
+    load_rejected: bool,
     /// Claims to write on the next [`SnapshotStore::persist`] (staged by the
     /// caller via [`SnapshotStore::set_claims`]) — after [`SnapshotStore::open`]
     /// this instead holds whatever survived load, i.e. every signature-verified
@@ -83,10 +117,26 @@ const MAX_BLOCKLIST_ENTRIES: usize = 1024;
 impl SnapshotStore {
     /// Open (or create) a snapshot at `path`. Corrupt records are skipped.
     pub fn open(path: impl Into<PathBuf>) -> SnapshotStore {
-        let path = path.into();
+        Self::open_internal(path.into(), None)
+    }
+
+    /// Open (or create) a snapshot with an explicit complete-file bound.
+    ///
+    /// An image larger than `limits.max_file_bytes()` is rejected before its
+    /// bytes are read into memory. The primary image still wins over a `.tmp`
+    /// candidate, including when it is rejected for size. A later `persist`
+    /// returns an error while that rejection is recorded, preventing silent
+    /// replacement of state the host chose not to load.
+    pub fn open_with_limits(path: impl Into<PathBuf>, limits: SnapshotLimits) -> SnapshotStore {
+        Self::open_internal(path.into(), Some(limits))
+    }
+
+    fn open_internal(path: PathBuf, limits: Option<SnapshotLimits>) -> SnapshotStore {
         let mut store = SnapshotStore {
             mem: MemStore::new(),
             path,
+            limits,
+            load_rejected: false,
             claims: Vec::new(),
             group_blobs: Vec::new(),
             seen_index: None,
@@ -99,8 +149,12 @@ impl SnapshotStore {
     }
 
     fn load(&mut self) {
-        let bytes = match std::fs::read(&self.path) {
-            Ok(bytes) => bytes,
+        let bytes = match read_snapshot(&self.path, self.limits) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                self.load_rejected = true;
+                return;
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 // `persist` fsyncs a complete temporary image before the
                 // Windows replace step. If the process dies after the old
@@ -110,7 +164,14 @@ impl SnapshotStore {
                 // considered; a primary (even one containing corrupt records)
                 // always wins and never falls back to `.tmp`.
                 let temp = self.path.with_extension("tmp");
-                let Ok(temp_bytes) = std::fs::read(temp) else { return };
+                let temp_bytes = match read_snapshot(&temp, self.limits) {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) => {
+                        self.load_rejected = true;
+                        return;
+                    }
+                    Err(_) => return,
+                };
                 if !validate_complete_snapshot(&temp_bytes) {
                     return;
                 }
@@ -201,6 +262,12 @@ impl SnapshotStore {
     /// claims/group blobs most recently staged via [`SnapshotStore::set_claims`]
     /// / [`SnapshotStore::set_group_blobs`].
     pub fn persist(&self) -> std::io::Result<()> {
+        if self.load_rejected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "snapshot exceeded configured file limit and was not loaded",
+            ));
+        }
         let tmp = self.path.with_extension("tmp");
         {
             let mut f = std::fs::File::create(&tmp)?;
@@ -246,6 +313,16 @@ impl SnapshotStore {
                 write_record(&mut f, &record)?;
             }
             f.sync_all()?;
+            if let Some(limits) = self.limits {
+                if f.metadata()?.len() > limits.max_file_bytes() {
+                    drop(f);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "snapshot exceeds configured file limit",
+                    ));
+                }
+            }
         }
         // Windows rename-over requires the destination to be replaceable.
         let _ = std::fs::remove_file(&self.path);
@@ -254,6 +331,13 @@ impl SnapshotStore {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Whether an explicitly bounded open rejected the existing image before
+    /// parsing. A rejected store cannot be persisted until the host chooses a
+    /// different path or removes the oversized image.
+    pub fn load_rejected(&self) -> bool {
+        self.load_rejected
     }
 
     /// Claims present in the store: after [`SnapshotStore::open`], every
@@ -356,6 +440,31 @@ fn valid_blocklist(bytes: &[u8]) -> bool {
             }
         })
         .is_some()
+}
+
+/// Read one snapshot image, optionally enforcing a host-selected complete-file
+/// bound before and during the read. `Ok(None)` means the file exists but was
+/// rejected for exceeding the configured limit; `NotFound` remains an ordinary
+/// `io::Error` so the caller can apply the primary-then-`.tmp` recovery rule.
+fn read_snapshot(path: &Path, limits: Option<SnapshotLimits>) -> std::io::Result<Option<Vec<u8>>> {
+    let Some(limits) = limits else {
+        return std::fs::read(path).map(Some);
+    };
+
+    let file = std::fs::File::open(path)?;
+    if file.metadata()?.len() > limits.max_file_bytes() {
+        return Ok(None);
+    }
+
+    // Read at most one byte beyond the limit so a file that grows after the
+    // metadata check is rejected without ever retaining an oversized image.
+    let read_limit = limits.max_file_bytes().saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(read_limit).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limits.max_file_bytes() {
+        return Ok(None);
+    }
+    Ok(Some(bytes))
 }
 
 /// Validate a temporary snapshot as one complete image before using it as a
