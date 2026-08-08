@@ -1,5 +1,5 @@
 //! Adversarial simulation suite (E5-S7, handbook §4.8; doc 14 §1 failure
-//! register). Five independent scenarios, each driving an [`adversary::Adversary`]
+//! register). Six independent scenarios, each driving an [`adversary::Adversary`]
 //! (raw frames/bundles, never `mmp_node::Node`) against one or more honest,
 //! unmodified `Node`s obtained from `Sim::node_mut`/`Sim::node`.
 //!
@@ -181,8 +181,97 @@ fn flood_origin_is_throttled_but_others_deliver() {
     );
 }
 
+/// Scenario 3: a Byzantine relay reuses one inflated BUDGET grant in two
+/// independent sessions.  Origin admission is receiver-local: each honest
+/// receiver must stop admitting this origin at its own bucket burst, while
+/// the aggregate across receivers is intentionally *not* treated as a
+/// globally conserved capability.
+#[test]
+fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
+    const LEFT: usize = 0;
+    const RIGHT: usize = 1;
+    const PAYLOAD_LEN: usize = MAX_FRAME_PAYLOAD - 16 - 124;
+    const GRANT: u8 = u8::MAX;
+    const DEST: Id16 = Id16([0xD1; 16]);
+
+    let mut sim = Sim::new(2, 0xDB1E_0000_0000_0003);
+    println!("ids: {:?} {:?}, dest: {:?}", sim.node_id(LEFT), sim.node_id(RIGHT), DEST);
+    let relay = Adversary::new([0xBA; 32]);
+    // Keep the bundle origin distinct from the Byzantine relay.  Otherwise an
+    // honest receiver's normal "never offer back to origin" rule would hide
+    // the grant adoption we are exercising here.
+    let origin = Identity::from_seed(&[0xC1; 32]);
+
+    let cost_per_admit = (PAYLOAD_LEN + 124) as u64;
+    let local_bound = (ORIGIN_BUCKET_BURST / cost_per_admit) as usize;
+    let mut wire = Vec::with_capacity(local_bound + 1);
+    for i in 0..=local_bound {
+        let mut payload = vec![0u8; PAYLOAD_LEN];
+        payload[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        let bundle = signed_bundle(&origin, class::DIRECT, DEST, 1, LIFETIME_MESSAGE_MS, 0, payload);
+        wire.push((bundle.id(), bundle.encode()));
+    }
+    let baseline = [sim.store_len(LEFT), sim.store_len(RIGHT)];
+
+    // The relay presents the same oversized grant value to each receiver for
+    // the same set of origin-signed bundles.  BUDGET is channel-authenticated
+    // but relay-mutable, so the receiver-local clamp is the relevant defense.
+    for (receiver, link) in [(LEFT, 700), (RIGHT, 701)] {
+        sim.node_mut(receiver).enable_diagnostics();
+        let before = sim.store_len(receiver);
+        let now = sim.now_ms();
+        let mut session = relay.dial(now);
+        adversary_contact(sim.node_mut(receiver), &mut session, link, now, |sess| {
+            for (id, bytes) in &wire {
+                sess.send(Frame::Bundle(bytes.clone()));
+                sess.send(Frame::Budget { id: *id, granted: GRANT });
+            }
+        });
+        let admitted = sim.store_len(receiver).saturating_sub(before);
+        println!("receiver={receiver} payload={PAYLOAD_LEN} cost={cost_per_admit} bound={local_bound} admitted={admitted}");
+        println!("drops={} records={:?}", sim.node(receiver).diagnostics().drops, sim.node(receiver).diagnostics().records());
+        assert!(
+            admitted <= local_bound,
+            "receiver {receiver} admitted {admitted} bundles; local origin bucket bound is {local_bound}"
+        );
+        assert_eq!(
+            admitted, local_bound,
+            "receiver {receiver} should consume its own burst before the relay's extra copy"
+        );
+    }
+
+    // Verify that the oversized grant was clamped independently at both
+    // receivers.  A subsequent WANT exposes the receiver's adopted budget as
+    // a normal outgoing grant; it must be no larger than L_MAX.
+    for (receiver, link) in [(LEFT, 702), (RIGHT, 703)] {
+        let now = sim.now_ms();
+        let mut session = relay.dial(now);
+        adversary_contact(sim.node_mut(receiver), &mut session, link, now, |sess| {
+            sess.send(Frame::Want(vec![wire[0].0]));
+        });
+        let grant = session
+            .drain_inbox()
+            .into_iter()
+            .find_map(|frame| match frame {
+                Frame::Budget { id, granted } if id == wire[0].0 => Some(granted),
+                _ => None,
+            })
+            .expect("receiver must answer WANT for the admitted bundle");
+        assert!(grant > 0 && grant <= L_MAX, "receiver {receiver} leaked an invalid grant: {grant}");
+    }
+
+    let aggregate = sim
+        .store_len(LEFT)
+        .saturating_sub(baseline[0])
+        + sim.store_len(RIGHT).saturating_sub(baseline[1]);
+    assert!(
+        aggregate > local_bound,
+        "independent receiver quotas may sum above one local bound; this test must not claim global conservation"
+    );
+}
+
 /// ---------------------------------------------------------------------
-/// Scenario 3: Quota abuse — doc 14 §1 **F4** ("Quota exhaustion under spam"):
+/// Scenario 4: Quota abuse — doc 14 §1 **F4** ("Quota exhaustion under spam"):
 /// "eviction order + per-origin buckets"; residual "churn of low-priority
 /// spray traffic; own/WoT traffic protected." `eviction_order`
 /// (`mmp-router/src/lib.rs`) sorts receipt-confirmed bundles first, then by
@@ -297,7 +386,7 @@ fn quota_abuse_degrades_gracefully() {
 }
 
 /// ---------------------------------------------------------------------
-/// Scenario 4: Eclipse — doc 14 §1 **closest row F22** ("Prekey suppression → FS
+/// Scenario 5: Eclipse — doc 14 §1 **closest row F22** ("Prekey suppression → FS
 /// downgrade"), the one row this doc's own prose labels "eclipse-class,
 /// detected by the receipt-starvation alarm (07 §6.3)". F22's exact scenario
 /// (prekey withholding forcing an FS downgrade) is narrower than the three
@@ -432,7 +521,7 @@ fn eclipse_gains_nothing() {
 }
 
 /// ---------------------------------------------------------------------
-/// Scenario 5: Bloom poison — doc 14 §1 **closest row F5** ("Partition → merge"),
+/// Scenario 6: Bloom poison — doc 14 §1 **closest row F5** ("Partition → merge"),
 /// whose specified handling explicitly names the exact mechanism this test
 /// exercises: "exact D0 receipts purge duplicates ... AUDIT F11" (the
 /// hint-vs-purge asymmetry lives in `mmp-core/src/receiptfilter.rs`). No row

@@ -772,7 +772,7 @@ mod wire_budget_tests {
 mod rx_bound_tests {
     use super::*;
     use alloc::vec;
-    use mmp_types::frame::FT_CREDIT;
+    use mmp_types::frame::{FT_CREDIT, FT_HS, FT_ID_PROOF, FT_SUMMARY};
 
     struct EmptyIds;
 
@@ -833,6 +833,89 @@ mod rx_bound_tests {
 
     fn host() -> EmptyHost {
         EmptyHost { ids: EmptyIds, loads: 0, load_bytes: None }
+    }
+
+    /// Drive only the Noise XX messages, leaving both engines in Binding with
+    /// their encrypted ID_PROOF records still queued.  The proof itself is
+    /// deliberately not delivered so boundary tests can inject a plaintext
+    /// or pre-proof application record.
+    fn drive_to_binding(
+        a: &mut SessionEngine,
+        b: &mut SessionEngine,
+        ia: &Identity,
+        ib: &Identity,
+        ha: &mut EmptyHost,
+        hb: &mut EmptyHost,
+    ) {
+        let msg1 = a.poll_out().expect("initiator must queue Noise msg1");
+        assert_eq!(msg1.get(2), Some(&FT_HS));
+        b.on_wire(&msg1, 1000, ib, hb);
+
+        let msg2 = b.poll_out().expect("responder must queue Noise msg2");
+        assert_eq!(msg2.get(2), Some(&FT_HS));
+        a.on_wire(&msg2, 1000, ia, ha);
+
+        let msg3 = a.poll_out().expect("initiator must queue Noise msg3");
+        assert_eq!(msg3.get(2), Some(&FT_HS));
+        b.on_wire(&msg3, 1000, ib, hb);
+
+        assert_eq!(a.phase, Phase::Binding);
+        assert_eq!(b.phase, Phase::Binding);
+    }
+
+    #[test]
+    fn id_proof_is_noise_transport_not_plaintext() {
+        let ia = identity(1);
+        let ib = identity(2);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+        // A plaintext ID_PROOF envelope is not a valid post-handshake record;
+        // the receiver must attempt Noise AEAD first and close on failure.
+        let sig = a.chan.as_ref().expect("Noise channel exists").make_id_proof(&ia, true);
+        let plaintext = Frame::IdProof { identity: ia.public(), sig }.encode();
+        assert_eq!(plaintext.get(2), Some(&FT_ID_PROOF));
+        b.on_wire(&plaintext, 1000, &ib, &mut hb);
+        assert_eq!(b.phase, Phase::Closed);
+        assert!(!b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+
+        // The actual queued proof is encrypted by the Noise transport and is
+        // accepted on a fresh Binding pair.
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+        let proof_a = a.poll_out().expect("initiator must queue encrypted ID_PROOF");
+        assert_eq!(proof_a.get(2), Some(&FT_ID_PROOF));
+        b.on_wire(&proof_a, 1000, &ib, &mut hb);
+        assert_eq!(b.phase, Phase::Established);
+        assert!(b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+    }
+
+    #[test]
+    fn application_frames_are_gated_until_id_proof() {
+        let ia = identity(3);
+        let ib = identity(4);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+        // Remove the queued proof but do not deliver it.  A Summary encrypted
+        // under the Noise transport must still be rejected while Binding.
+        let _proof_a = a.poll_out().expect("proof must be queued first");
+        a.send_frame(&Frame::Summary(Summary::default()));
+        let summary = a.poll_out().expect("encrypted pre-proof application frame");
+        assert_eq!(summary.get(2), Some(&FT_SUMMARY));
+        b.on_wire(&summary, 1000, &ib, &mut hb);
+
+        assert_eq!(b.phase, Phase::Closed);
+        assert!(!b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
     }
 
     #[test]

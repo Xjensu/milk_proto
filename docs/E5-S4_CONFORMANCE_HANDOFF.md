@@ -243,6 +243,15 @@ workspace clippy, `layer-check`, and `mmp-cli -- demo` are clean. The Linux
 target check reproduces the same `libdbus-sys` pkg-config/sysroot failure before
 backend compilation. Rustfmt remains unavailable on this host.
 
+The next conformance/security continuation adds two `mmp-core` RX-bound tests:
+plaintext `ID_PROOF` is rejected after Noise handshake completion, and an
+application frame cannot establish a session before the encrypted identity
+proof. It also adds the active `mmp-sim` Byzantine double-grant scenario,
+which demonstrates that copy-budget admission is bounded independently at
+each honest receiver but is not a globally conserved Byzantine capability.
+The focused `mmp-core` suite passes 42 unit tests; `mmp-sim` passes 10 active
+tests and 4 intentionally ignored deployment/scale cases.
+
 Regenerate vectors with:
 
 ```text

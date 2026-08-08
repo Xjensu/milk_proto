@@ -81,6 +81,15 @@ The current production plan is amended in this order:
 6. **File-plane P2:** compare Reed–Solomon and fountain/DoF coding under real BLE contact traces and embedded resource limits. Preserve the existing signed Merkle root until a complete replacement contract and vectors exist.
 7. **Release governance P1:** add a specification manifest/status table and a published-ref link check for `ROADMAP.md`, `CHANGELOG.md`, and `COUNCIL-REVIEW.md`.
 
+### Implemented from the amended plan
+
+The first conformance/security slice is now executable without changing the
+wire contract: `mmp-core` rejects plaintext/pre-proof application records and
+accepts the encrypted `ID_PROOF` transport record, while `mmp-sim` exercises a
+Byzantine relay reusing one inflated grant across two honest receivers. The
+test deliberately proves only receiver-local admission bounds; it does not
+claim global copy conservation.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
