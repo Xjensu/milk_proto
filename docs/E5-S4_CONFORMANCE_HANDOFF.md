@@ -1156,6 +1156,10 @@ cargo clippy -p mmp-core --lib --tests -- -D warnings    # pass
 cargo test -p mmp-cli --all-targets -- --test-threads=1  # 27 passed
 ```
 
+Linux/WSL follow-up on the same working tree also passed 53 core tests,
+core/crypto clippy, and 27 CLI tests plus CLI clippy. No physical Bluetooth
+adapter was available in this validation environment.
+
 The Linux clippy pass initially exposed a toolchain-version lint in the
 existing ratchet destructor (`for (_, value) in map.iter_mut()`). It was
 rewritten as `map.values_mut()`, preserving zeroization behavior and changing
