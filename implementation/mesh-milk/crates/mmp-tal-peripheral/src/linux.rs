@@ -21,15 +21,17 @@
 //! in practice subscribe comes first because `BleCentral::dial` subscribes
 //! before it emits its own `LinkUp`, and the MMP session has the dialer speak
 //! first (HELLO, doc 11) — and `LinkUp { initiator: false }` is emitted once.
-//! `LinkDown` is emitted when the write socket closes (BlueZ closes both
-//! sockets on disconnect) or when a `notify` send fails; the link-table
-//! remove-then-emit pattern (same as the central crate) makes the two paths
-//! race-safe: whoever removes the entry emits, the loser stays silent.
+//! `LinkDown` is emitted when the current write/read socket closes (BlueZ
+//! closes both sockets on disconnect) or when a `notify` send fails. Each
+//! callback carries a direction-specific endpoint token; only the current
+//! token may remove the link, so delayed callbacks from a stable-ID
+//! reconnect are rejected before they can emit data or teardown.
 //! Known, accepted gap: a central that subscribes but never writes is only
 //! detected as gone on the next failed `notify` — the session layer's idle
 //! timers (doc 11 §7) sit above us and bound that window anyway.
 
 use std::collections::HashMap;
+use std::os::fd::AsRawFd;
 use std::sync::Arc;
 
 use bluer::adv::{Advertisement, AdvertisementHandle};
@@ -49,8 +51,11 @@ use crate::{
     DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
+use crate::lifecycle::{AttachResult, LinkLifecycle, StreamSide, StreamToken};
 
-/// Per-link state between `LinkUp` and `LinkDown`.
+/// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
+/// tokens are kept alongside the writer so stale callbacks can be rejected;
+/// the write gate serializes notifications with same-direction replacement.
 struct LinkState {
     /// Outbound notify socket; `None` until the central subscribes. Wrapped
     /// in its own mutex (not just the table's) so a long `notify` on one link
@@ -58,9 +63,17 @@ struct LinkState {
     writer: Option<Arc<AsyncMutex<CharacteristicWriter>>>,
     /// `max(negotiated ATT MTU − 3, 20)` — see `framing::chunk_size_for_mtu`.
     chunk_size: usize,
+    reader_token: Option<StreamToken>,
+    writer_token: Option<StreamToken>,
+    write_gate: Arc<AsyncMutex<()>>,
 }
 
-type Links = Arc<AsyncMutex<HashMap<LinkId, LinkState>>>;
+struct LinkRegistry {
+    lifecycle: LinkLifecycle,
+    states: HashMap<LinkId, LinkState>,
+}
+
+type Links = Arc<AsyncMutex<LinkRegistry>>;
 
 /// A live BLE peripheral: one BlueZ adapter, a registered GATT application,
 /// at most one advertisement, and a table of links centrals dialed into us.
@@ -78,6 +91,7 @@ pub struct PeripheralRole {
     // of an `Option::take`, never across an `.await`.
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Links,
+    event_gate: Arc<AsyncMutex<()>>,
 }
 
 impl PeripheralRole {
@@ -130,9 +144,19 @@ impl PeripheralRole {
         let app_handle = adapter.serve_gatt_application(app).await?;
 
         let (tx, rx) = event_channel();
-        let links: Links = Arc::new(AsyncMutex::new(HashMap::new()));
+        let links: Links = Arc::new(AsyncMutex::new(LinkRegistry {
+            lifecycle: LinkLifecycle::default(),
+            states: HashMap::new(),
+        }));
+        let event_gate = Arc::new(AsyncMutex::new(()));
 
-        tokio::spawn(run_control(write_ctl, notify_ctl, tx.clone(), links.clone()));
+        tokio::spawn(run_control(
+            write_ctl,
+            notify_ctl,
+            tx.clone(),
+            links.clone(),
+            event_gate.clone(),
+        ));
 
         Ok(PeripheralRole {
             adapter,
@@ -142,6 +166,7 @@ impl PeripheralRole {
             tx,
             events_rx: std::sync::Mutex::new(Some(rx)),
             links,
+            event_gate,
         })
     }
 
@@ -197,17 +222,30 @@ impl PeripheralRole {
     /// the central hasn't subscribed yet; a mid-stream send failure tears the
     /// link down (emits `LinkDown`) and surfaces the BlueZ error.
     pub async fn notify(&self, link: LinkId, bytes: &[u8]) -> Result<(), PeriphError> {
-        let (writer, chunk_size) = {
+        let (writer, chunk_size, token, write_gate) = {
             let links = self.links.lock().await;
-            let state = links.get(&link).ok_or(PeriphError::UnknownLink)?;
-            (state.writer.clone().ok_or(PeriphError::NotSubscribed)?, state.chunk_size)
+            let state = links.states.get(&link).ok_or(PeriphError::UnknownLink)?;
+            (
+                state.writer.clone().ok_or(PeriphError::NotSubscribed)?,
+                state.chunk_size,
+                state.writer_token.ok_or(PeriphError::NotSubscribed)?,
+                state.write_gate.clone(),
+            )
         };
 
+        let _write_guard = write_gate.lock_owned().await;
+        if !self.links.lock().await.lifecycle.is_current(token) {
+            return Err(PeriphError::UnknownLink);
+        }
         let writer = writer.lock().await;
         for chunk in framing::chunks(bytes, chunk_size) {
+            if !self.links.lock().await.lifecycle.is_current(token) {
+                return Err(PeriphError::UnknownLink);
+            }
             if let Err(e) = writer.send(chunk).await {
                 drop(writer);
-                link_down(&self.links, &self.tx, link).await;
+                drop(_write_guard);
+                link_down_if_current(&self.links, &self.event_gate, &self.tx, token).await;
                 // send() speaks io::Error (it is a socket write); bluer's
                 // Error has a lossless From impl for it.
                 return Err(PeriphError::Bluer(e.into()));
@@ -225,6 +263,7 @@ async fn run_control(
     notify_ctl: bluer::gatt::local::CharacteristicControl,
     tx: mpsc::Sender<TalEvent>,
     links: Links,
+    event_gate: Arc<AsyncMutex<()>>,
 ) {
     pin_mut!(write_ctl);
     pin_mut!(notify_ctl);
@@ -237,8 +276,27 @@ async fn run_control(
                 Some(CharacteristicControlEvent::Write(req)) => {
                     let Ok(reader) = req.accept() else { continue };
                     let link = mint_link_id(&reader.device_address());
-                    ensure_link_up(&links, &tx, link, reader.mtu(), None).await;
-                    tokio::spawn(read_loop(reader, link, tx.clone(), links.clone()));
+                    let endpoint = reader.as_raw_fd() as i64;
+                    let Some(attach) = ensure_link_up(
+                        &links,
+                        &event_gate,
+                        &tx,
+                        link,
+                        reader.mtu(),
+                        StreamSide::Reader,
+                        endpoint,
+                        None,
+                    )
+                    .await else {
+                        continue;
+                    };
+                    tokio::spawn(read_loop(
+                        reader,
+                        attach.token,
+                        tx.clone(),
+                        links.clone(),
+                        event_gate.clone(),
+                    ));
                 }
                 Some(_) => {}
                 None => return,
@@ -249,7 +307,18 @@ async fn run_control(
                 Some(CharacteristicControlEvent::Notify(writer)) => {
                     let link = mint_link_id(&writer.device_address());
                     let mtu = writer.mtu();
-                    ensure_link_up(&links, &tx, link, mtu, Some(writer)).await;
+                    let endpoint = writer.as_raw_fd() as i64;
+                    let _ = ensure_link_up(
+                        &links,
+                        &event_gate,
+                        &tx,
+                        link,
+                        mtu,
+                        StreamSide::Writer,
+                        endpoint,
+                        Some(writer),
+                    )
+                    .await;
                 }
                 Some(_) => {}
                 None => return,
@@ -258,34 +327,83 @@ async fn run_control(
     }
 }
 
-/// Insert-or-update the link entry; emit `LinkUp { initiator: false }`
-/// exactly once (on insertion). Both directions negotiate one ATT MTU, so
-/// whichever endpoint reports first sets the chunk size; a later report for
-/// the same link refreshes it (idempotent in practice — same value).
+/// Insert-or-update one endpoint. The first endpoint emits `LinkUp`; a
+/// same-direction endpoint replacement emits `LinkDown` then `LinkUp` under
+/// the event gate. Both directions negotiate one ATT MTU, so whichever
+/// endpoint reports first sets the chunk size; a later report for the same
+/// link refreshes it (idempotent in practice — same value).
 async fn ensure_link_up(
     links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
     tx: &mpsc::Sender<TalEvent>,
     link: LinkId,
     att_mtu: usize,
+    side: StreamSide,
+    endpoint: i64,
     writer: Option<CharacteristicWriter>,
-) {
+) -> Option<AttachResult> {
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
-    let mut table = links.lock().await;
-    let is_new = !table.contains_key(&link);
-    let state = table
-        .entry(link)
-        .or_insert(LinkState { writer: None, chunk_size });
-    state.chunk_size = chunk_size;
-    if let Some(w) = writer {
-        state.writer = Some(Arc::new(AsyncMutex::new(w)));
-    }
-    drop(table);
+    let _event_guard = event_gate.lock().await;
+    let old_write_gate = links
+        .lock()
+        .await
+        .states
+        .get(&link)
+        .map(|state| state.write_gate.clone());
+    let _old_write_guard = match old_write_gate {
+        Some(gate) => Some(gate.lock_owned().await),
+        None => None,
+    };
 
-    if is_new {
+    let mut links = links.lock().await;
+    let attach = links.lifecycle.attach(link, side, endpoint)?;
+    let state = if attach.restarted {
+        links.states.insert(
+            link,
+            LinkState {
+                writer: None,
+                chunk_size,
+                reader_token: None,
+                writer_token: None,
+                write_gate: Arc::new(AsyncMutex::new(())),
+            },
+        );
+        links.states.get_mut(&link).expect("inserted link state")
+    } else {
+        links.states.entry(link).or_insert_with(|| LinkState {
+            writer: None,
+            chunk_size,
+            reader_token: None,
+            writer_token: None,
+            write_gate: Arc::new(AsyncMutex::new(())),
+        })
+    };
+    state.chunk_size = chunk_size;
+    match side {
+        StreamSide::Reader => state.reader_token = Some(attach.token),
+        StreamSide::Writer => {
+            let replace_writer = state.writer_token != Some(attach.token);
+            state.writer_token = Some(attach.token);
+            if replace_writer {
+                if let Some(w) = writer {
+                    state.writer = Some(Arc::new(AsyncMutex::new(w)));
+                }
+            }
+        }
+    }
+
+    drop(links);
+    if attach.restarted {
+        if tx.send(TalEvent::LinkDown { link }).await.is_err() {
+            return Some(attach);
+        }
+    }
+    if attach.link_was_new || attach.restarted {
         let quality =
             LinkQuality { mtu: (chunk_size + framing::ATT_HEADER) as u16, ..LinkQuality::default() };
         let _ = tx.send(TalEvent::LinkUp { link, initiator: false, quality }).await;
     }
+    Some(attach)
 }
 
 /// Forward every inbound ATT write as `LinkData`; when the socket closes
@@ -293,9 +411,10 @@ async fn ensure_link_up(
 /// the link down.
 async fn read_loop(
     reader: CharacteristicReader,
-    link: LinkId,
+    token: StreamToken,
     tx: mpsc::Sender<TalEvent>,
     links: Links,
+    event_gate: Arc<AsyncMutex<()>>,
 ) {
     loop {
         match reader.recv().await {
@@ -304,23 +423,55 @@ async fn read_loop(
             // empty slices), so treat it as end-of-stream.
             Ok(bytes) if bytes.is_empty() => break,
             Ok(bytes) => {
-                if tx.send(TalEvent::LinkData { link, bytes }).await.is_err() {
-                    return; // owner dropped the receiver; nobody is listening
+                if !emit_data_if_current(&links, &event_gate, &tx, token, bytes).await {
+                    break;
                 }
             }
             Err(_) => break,
         }
     }
-    link_down(&links, &tx, link).await;
+    link_down_if_current(&links, &event_gate, &tx, token).await;
 }
 
-/// Remove-then-emit: only the caller that actually removed the entry emits
-/// `LinkDown`, so the read-loop and a failed `notify` can race harmlessly.
-async fn link_down(links: &Links, tx: &mpsc::Sender<TalEvent>, link: LinkId) {
-    let removed = links.lock().await.remove(&link).is_some();
-    if removed {
-        let _ = tx.send(TalEvent::LinkDown { link }).await;
+async fn emit_data_if_current(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &mpsc::Sender<TalEvent>,
+    token: StreamToken,
+    bytes: Vec<u8>,
+) -> bool {
+    let _event_guard = event_gate.lock().await;
+    let is_current = links.lock().await.lifecycle.is_current(token);
+    if !is_current {
+        return false;
     }
+    tx.send(TalEvent::LinkData { link: token.link, bytes }).await.is_ok()
+}
+
+/// Remove-then-emit under the lifecycle gate: only the callback that owns the
+/// current endpoint token can retire the logical link or emit `LinkDown`.
+async fn link_down_if_current(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &mpsc::Sender<TalEvent>,
+    token: StreamToken,
+) {
+    let _event_guard = event_gate.lock().await;
+    let write_gate = links
+        .lock()
+        .await
+        .states
+        .get(&token.link)
+        .map(|state| state.write_gate.clone());
+    let Some(write_gate) = write_gate else { return };
+    let _write_guard = write_gate.lock_owned().await;
+    let mut links = links.lock().await;
+    if !links.lifecycle.close_if_current(token) {
+        return;
+    }
+    links.states.remove(&token.link);
+    drop(links);
+    let _ = tx.send(TalEvent::LinkDown { link: token.link }).await;
 }
 
 fn service_uuid() -> Uuid {

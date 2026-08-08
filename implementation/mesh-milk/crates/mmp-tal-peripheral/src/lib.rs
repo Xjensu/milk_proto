@@ -84,6 +84,8 @@ pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
 use mmp_types::consts::EPHEM_SLOT_MS;
 
 pub mod framing;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod lifecycle;
 
 /// Maximum number of transport events waiting for the host event loop.
 ///
