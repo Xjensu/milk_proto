@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `a4ecfb8` (`fix(mmp-tal-peripheral): fence BlueZ stream generations`). The
+This checkpoint is commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -88,6 +88,15 @@ Recent focused commits, oldest first:
   replacement, and retire delayed opposite-direction callbacks. The
   hardware-independent lifecycle tests run on Windows; Linux compilation and
   real BlueZ execution remain environment-gated.
+
+- `0343cf5` — replaced both transport-facing FIFO producers with bounded
+  synchronous ingress plus a dispatcher. Each backend reserves 64 lifecycle
+  control records and 1,984 data records. Central data is fenced by link
+  generation; peripheral data is fenced by reader/writer stream generation.
+  Data overflow retires only the affected link and purges its stale bytes;
+  control overflow fails closed after removing live state. The public
+  `events()` receiver type is unchanged, and central dial failure now tears
+  down a link if its initial control record cannot be admitted.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -205,6 +214,13 @@ After `a4ecfb8`, the full workspace test matrix completed with no failures
 `layer-check` remained clean, and the Linux-target check stopped in
 `libdbus-sys` before Rust compilation because this Windows host has no
 configured Linux pkg-config/sysroot.
+After `0343cf5`, central passed 14 focused tests and peripheral passed 24
+Windows-target tests; both package clippy runs passed with `-D warnings`.
+The serial workspace matrix passed with 9 active simulator tests and 4
+intentionally ignored deployment/scale cases; workspace clippy and
+`layer-check` remained clean. The Linux-target check reproduced the same
+`libdbus-sys` pkg-config/sysroot failure before backend compilation. Rustfmt
+could not run because the installed toolchain has no rustfmt component.
 
 Regenerate vectors with:
 
@@ -259,18 +275,63 @@ Record evidence and obtain a protocol decision first.
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
 5. Complete the Linux/BlueZ compile and hardware gate for the new peripheral
-   stream-token implementation. The Windows host cannot build this backend
-   because the cross-target `libdbus-sys` pkg-config/sysroot is absent.
-   Separately design reserved control capacity/overflow retirement so a stalled
-   consumer cannot delay `LinkDown` indefinitely behind data; both backends
-   currently hold lifecycle gates across bounded sends, so this is an explicit
-   follow-up rather than an unbounded-queue workaround. Retired endpoint
-   identity storage is intentionally not silently capped; measure and bound it
-   with a documented policy after Linux reconnect tests.
+   stream-token and ingress implementation. The Windows host cannot build
+   this backend because the cross-target `libdbus-sys` pkg-config/sysroot is
+   absent. Exercise data-lane overflow and control-ledger saturation on Linux,
+   then measure and bound retired endpoint identity storage with a documented
+   policy after reconnect tests; it is intentionally not silently capped.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
    consuming radio shells exist.
+
+## Transport-hardening continuation notes
+
+The public API intentionally remains `events() -> tokio::sync::mpsc::Receiver<TalEvent>`.
+Do not replace it with the internal sender type: the dispatcher is the
+compatibility boundary. Lifecycle code must use only the synchronous
+`EventSender` methods, and must not await while holding `event_gate`, the
+per-link write gate, or the link table lock.
+
+The central ingress stores `(LinkId, generation)` on every link-data record.
+The peripheral ingress stores `(LinkId, generation, side)` where side 0 is the
+BlueZ reader and side 1 is the writer. On replacement, stream state is updated,
+stale data is purged, and `LinkDown` precedes the new `LinkUp`. On data-lane
+overflow the affected link is retired and its reserved `LinkDown` is attempted;
+on control-ledger saturation the implementation fails closed and never leaves
+the link live without an admitted lifecycle transition. Beacon events are
+best-effort low-priority data.
+
+Known limitations that must not be hidden by a future “optimization”:
+
+- The public dispatcher can wait behind a stalled consumer, but it owns no
+  lifecycle lock; the bounded ingress remains live and memory-bounded.
+- The control ledger has 64 records. Saturation is an overload/fail-closed
+  condition, not a silently lossy normal path; measure it during Linux stress
+  testing and decide whether an operational fatal signal is needed.
+- BlueZ retired endpoint vectors are retained until logical link close to avoid
+  re-admitting delayed callbacks. Repeated same-direction replacement can grow
+  them; measure endpoint reuse behavior before introducing a cap.
+- The Windows host cannot compile the Linux backend: `libdbus-sys` requires a
+  Linux pkg-config/sysroot. A successful Windows build is not Linux evidence.
+- `cargo fmt` is unavailable because rustfmt is absent from the pinned toolchain;
+  use a Rustfmt-equipped Linux/macOS environment before release.
+
+Recommended verification sequence for the next model:
+
+```text
+cargo test -p mmp-tal-btleplug --all-targets -- --test-threads=1
+cargo test -p mmp-tal-peripheral --all-targets -- --test-threads=1
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets -- --test-threads=1
+cargo run -p layer-check
+cargo check -p mmp-tal-peripheral --target x86_64-unknown-linux-gnu
+```
+
+Treat the final command's current `libdbus-sys`/pkg-config failure as an
+environment gate unless it reaches Rust backend compilation. Then run the
+two-Linux-PC procedure and attach its logs, adapter models, negotiated MTU,
+RSSI, reconnect behavior, and receipt evidence to the phase review.
 
 ## Worktree hygiene
 
