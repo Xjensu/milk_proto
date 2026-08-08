@@ -2,8 +2,48 @@
 
 ## Checkpoint
 
-This checkpoint is commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`). The
-frozen `specification/` directory was not modified.
+The original transport checkpoint was commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`).
+The current continuation checkpoint is commit `4f5ef4b` (`docs(mesh-milk): clarify encrypted ID proof fuzz boundary`).
+All commits in this handoff leave the frozen `specification/` directory unchanged.
+
+### 2026-08-08 continuation update
+
+The supplied MMP/Φ dialogue has now been audited against the local documents,
+Rust implementation, adversarial tests, and authoritative protocol/platform
+references. `docs/PROPOSAL_AUDIT_MMP_PHI.md` is the evidence record and the
+amended work order. Its central conclusion is deliberately conservative:
+MMP/Φ's EDR, mobility-voucher, contact-survival, and DoF ideas are research
+hypotheses, not evidence for a v1 wire change or a production 2× claim.
+
+Three high-risk conformance points are now pinned without editing the frozen
+specification: ID_PROOF is implemented as the first encrypted Noise transport
+record and gates application frames; bundle AEAD uses one lifetime-zeroed
+canonical header AD helper for direct, async, and group paths; and copy-budget
+security is documented as a receiver-local admission bound rather than a
+Byzantine global conservation law. The ID_PROOF erratum also distinguishes
+protocol-error `ERROR + CLOSE` handling from intentional silent close after a
+valid encrypted proof fails identity or admission checks.
+
+The stale fuzz documentation was corrected accordingly: ID_PROOF payload
+grammar remains fuzzed, but it is not described as a pre-channel wire parser.
+The existing `frames.json` ID_PROOF entry remains a decoded-payload grammar
+fixture, not a deterministic encrypted Noise transcript. Do not invent a new
+transcript-vector schema until test-only deterministic Noise ephemeral inputs
+and an interoperable artifact format are agreed.
+
+Verification at this checkpoint:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1   # pass; 4 ignored by design
+cargo clippy --workspace --all-targets -- -D warnings      # pass
+cargo run -p layer-check                                  # pass
+cargo run -p mmp-cli -- demo                              # pass; receipt observed
+```
+
+The remaining exit-gate evidence is physical: two Linux/BlueZ PCs for real
+BLE, followed by a native Android/iOS consuming shell. Windows-only builds
+are not evidence for the Linux peripheral backend or mobile background
+behavior.
 
 The current continuation after this checkpoint keeps the public 2048-event
 FIFO bounded while splitting lifecycle admission into a 64-record normal
@@ -243,10 +283,10 @@ workspace clippy, `layer-check`, and `mmp-cli -- demo` are clean. The Linux
 target check reproduces the same `libdbus-sys` pkg-config/sysroot failure before
 backend compilation. Rustfmt remains unavailable on this host.
 
-The next conformance/security continuation adds two `mmp-core` RX-bound tests:
+The conformance/security continuation added two `mmp-core` RX-bound tests:
 plaintext `ID_PROOF` is rejected after Noise handshake completion, and an
 application frame cannot establish a session before the encrypted identity
-proof. It also adds the active `mmp-sim` Byzantine double-grant scenario,
+proof. It also added the active `mmp-sim` Byzantine double-grant scenario,
 which demonstrates that copy-budget admission is bounded independently at
 each honest receiver but is not a globally conserved Byzantine capability.
 The focused `mmp-core` suite passes 42 unit tests; `mmp-sim` passes 10 active
@@ -325,12 +365,14 @@ has a saturation counter (`close_actions_dropped`) and is documented in
 wire that method to their platform disconnect APIs and feed the resulting
 `link_down` callback.
 
-The canonical AEAD associated-data continuation is also implemented without a
+The canonical AEAD associated-data continuation is implemented without a
 wire-spec edit: `Bundle::canonical_aead_ad()` binds the header prefix through
 `payload_len` with lifetime zeroed, and class-1/2 callers use it for seal/open.
 The exact boundary and residual vector work are recorded in
-`docs/AEAD_AD_CONFORMANCE.md`; the remaining P0 wording decision is the
-encrypted `ID_PROOF` contradiction and the copy-budget security claim.
+`docs/AEAD_AD_CONFORMANCE.md`. The encrypted `ID_PROOF` contradiction and
+copy-budget wording are now recorded in `docs/ID_PROOF_ERRATUM.md` and
+`docs/COPY_BUDGET_SECURITY_INVARIANT.md`; they are no longer open reasons to
+reinterpret the Rust state machine.
 
 ## Transport-hardening continuation notes
 
