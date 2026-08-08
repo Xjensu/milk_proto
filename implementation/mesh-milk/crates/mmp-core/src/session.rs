@@ -42,6 +42,11 @@ const fn envelope_payload_within_cap(len: usize) -> bool {
     len <= MAX_ENVELOPE_PAYLOAD
 }
 
+fn valid_recon_domain(domain: u8, allow_reply_flag: bool) -> bool {
+    let base = domain & !DOMAIN_REPLY_FLAG;
+    DOMAINS.contains(&base) && (allow_reply_flag || domain & DOMAIN_REPLY_FLAG == 0)
+}
+
 /// Read an envelope length from the bytes already buffered plus the next
 /// transport chunk, without copying either side.  A length is returned only
 /// once the two-byte prefix is available; this lets [`SessionEngine::on_wire`]
@@ -495,12 +500,12 @@ impl SessionEngine {
                 self.flush_pending_frames();
                 self.flush_pending_handoffs(host);
             }
-            Frame::ReconInit { domain, range, .. } => {
+            Frame::ReconInit { domain, range, .. } if valid_recon_domain(domain, false) => {
                 let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
                 let replies = recon.on_range(&range, false, host.ids(&peer));
                 self.send_frames(replies);
             }
-            Frame::ReconRange { domain, ranges } => {
+            Frame::ReconRange { domain, ranges } if valid_recon_domain(domain, true) => {
                 let is_reply = domain & DOMAIN_REPLY_FLAG != 0;
                 let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
                 let mut replies = Vec::new();
@@ -511,12 +516,15 @@ impl SessionEngine {
                 self.drain_wants();
                 self.maybe_advance_domain(host);
             }
-            Frame::ReconIds { domain, lo, hi, ids } => {
+            Frame::ReconIds { domain, lo, hi, ids } if valid_recon_domain(domain, false) => {
                 let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
                 let replies = recon.on_ids(&lo, &hi, &ids, host.ids(&peer));
                 self.send_frames(replies);
                 self.drain_wants();
                 self.maybe_advance_domain(host);
+            }
+            Frame::ReconInit { .. } | Frame::ReconRange { .. } | Frame::ReconIds { .. } => {
+                self.protocol_error(errcode::UNSUPPORTED)
             }
             Frame::Want(ids) => {
                 self.queue_handoffs(ids);
@@ -734,7 +742,7 @@ impl SessionEngine {
 
 #[cfg(test)]
 mod wire_budget_tests {
-    use super::{envelope_payload_within_cap, frame_payload_within_cap};
+    use super::{envelope_payload_within_cap, frame_payload_within_cap, valid_recon_domain};
     use mmp_types::consts::MAX_FRAME_PAYLOAD;
     use mmp_types::frame::{read_envelope, Frame, MAX_ENVELOPE_PAYLOAD, FT_BUNDLE, FT_FRIEND_OFFER};
     use mmp_types::WireError;
@@ -765,6 +773,18 @@ mod wire_budget_tests {
     fn receive_caps_reject_aggregate_plaintext_before_frame_decode() {
         let payload = vec![0u8; MAX_FRAME_PAYLOAD + 1];
         assert_eq!(Frame::decode_payload(FT_FRIEND_OFFER, &payload), Err(WireError::Oversize));
+    }
+
+    #[test]
+    fn recon_domain_validation_rejects_unknown_and_misflagged_domains() {
+        for domain in 0..4 {
+            assert!(valid_recon_domain(domain, false));
+            assert!(valid_recon_domain(domain | super::DOMAIN_REPLY_FLAG, true));
+            assert!(!valid_recon_domain(domain | super::DOMAIN_REPLY_FLAG, false));
+        }
+        assert!(!valid_recon_domain(4, false));
+        assert!(!valid_recon_domain(4 | super::DOMAIN_REPLY_FLAG, true));
+        assert!(!valid_recon_domain(0x7f, true));
     }
 }
 
