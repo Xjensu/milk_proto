@@ -370,11 +370,13 @@ async fn run_control(
                         &links,
                         &event_gate,
                         &tx,
-                        link,
-                        reader.mtu(),
-                        StreamSide::Reader,
-                        endpoint,
-                        None,
+                        LinkUpRequest {
+                            link,
+                            att_mtu: reader.mtu(),
+                            side: StreamSide::Reader,
+                            endpoint,
+                            writer: None,
+                        },
                         &shutting_down,
                     )
                     .await else {
@@ -407,11 +409,13 @@ async fn run_control(
                         &links,
                         &event_gate,
                         &tx,
-                        link,
-                        mtu,
-                        StreamSide::Writer,
-                        endpoint,
-                        Some(writer),
+                        LinkUpRequest {
+                            link,
+                            att_mtu: mtu,
+                            side: StreamSide::Writer,
+                            endpoint,
+                            writer: Some(writer),
+                        },
                         &shutting_down,
                     )
                     .await;
@@ -451,17 +455,22 @@ async fn shutdown_links(links: &Links, event_gate: &Arc<AsyncMutex<()>>, tx: &Ev
 /// the event gate. Both directions negotiate one ATT MTU, so whichever
 /// endpoint reports first sets the chunk size; a later report for the same
 /// link refreshes it (idempotent in practice — same value).
-async fn ensure_link_up(
-    links: &Links,
-    event_gate: &Arc<AsyncMutex<()>>,
-    tx: &EventSender,
+struct LinkUpRequest {
     link: LinkId,
     att_mtu: usize,
     side: StreamSide,
     endpoint: i64,
     writer: Option<CharacteristicWriter>,
+}
+
+async fn ensure_link_up(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &EventSender,
+    request: LinkUpRequest,
     shutting_down: &AtomicBool,
 ) -> Option<AttachResult> {
+    let LinkUpRequest { link, att_mtu, side, endpoint, writer } = request;
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
     let link_table = links.clone();
     let old_write_gate = links.lock().await.states.get(&link).map(|state| state.write_gate.clone());
