@@ -829,6 +829,27 @@ fn api_uses_nodeids(n: &Node) -> NodeId {
     n.node_id()
 }
 
+#[test]
+fn blocklist_snapshot_is_bounded_and_roundtrips_without_mutating_on_error() {
+    let mut n = node(60);
+    let blocked = Id16([61; 16]);
+    n.block(blocked);
+    let snapshot = n.blocklist_snapshot();
+
+    let mut restored = node(62);
+    assert!(restored.restore_blocklist(&snapshot));
+    assert!(restored.core.blocklist.contains(&blocked));
+
+    let before = restored.blocklist_snapshot();
+    let mut malformed = snapshot.clone();
+    malformed.push(0);
+    assert!(!restored.restore_blocklist(&malformed));
+    assert_eq!(restored.blocklist_snapshot(), before);
+
+    let hostile_count = [1u8, 0xff, 0xff];
+    assert!(!restored.restore_blocklist(&hostile_count));
+}
+
 // ------------------------------------------------------- E5-S5: doc 18 -----
 
 fn signed_cert(

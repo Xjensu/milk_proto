@@ -654,7 +654,7 @@ impl MmpNode {
     /// the snapshot lock is touched, so the fixed node-then-snapshot order
     /// (`store.rs` module docs) holds even though this now touches both.
     fn persist_now(&self, snap: &Arc<Mutex<SnapshotStore>>, now_ms: u64) -> std::io::Result<()> {
-        let (claims, group_blobs, seen_index, receipt_filter, authority) = {
+        let (claims, group_blobs, seen_index, receipt_filter, authority, blocklist) = {
             let node = self.lock();
             (
                 node.all_claims(),
@@ -662,6 +662,7 @@ impl MmpNode {
                 node.seen_index(),
                 node.receipt_filter(),
                 node.authority_snapshot(),
+                node.blocklist_snapshot(),
             )
         };
         let result = {
@@ -671,6 +672,7 @@ impl MmpNode {
             s.set_seen_index(seen_index);
             s.set_receipt_filter(receipt_filter);
             s.set_authority(authority);
+            s.set_blocklist(blocklist);
             s.persist()
         };
         let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -734,6 +736,9 @@ impl MmpNode {
                 // this boundary remains safe if another store implementation
                 // is introduced later.
                 node.restore_authority(authority);
+            }
+            if let Some(blocklist) = guard.blocklist() {
+                node.restore_blocklist(blocklist);
             }
         }
         Ok(Arc::new(MmpNode {

@@ -51,6 +51,8 @@ pub struct SnapshotStore {
     /// encoded by `mmp_core::AuthorityStore`. This contains no private key or
     /// ratchet material.
     authority: Option<Vec<u8>>,
+    /// Deterministic, non-secret local blocklist record.
+    blocklist: Option<Vec<u8>>,
 }
 
 /// Bumped from `MMPSNAP1`: pre-existing snapshot files only ever held bundle
@@ -72,6 +74,10 @@ const RECORD_SEEN_INDEX: u8 = 3;
 const RECORD_RECEIPT_FILTER: u8 = 4;
 /// Record-kind tag: a validated `AuthorityStore::encode()` payload.
 const RECORD_AUTHORITY: u8 = 5;
+/// Record-kind tag: a bounded local blocklist snapshot.
+const RECORD_BLOCKLIST: u8 = 6;
+const BLOCKLIST_VERSION: u8 = 1;
+const MAX_BLOCKLIST_ENTRIES: usize = 1024;
 
 impl SnapshotStore {
     /// Open (or create) a snapshot at `path`. Corrupt records are skipped.
@@ -85,6 +91,7 @@ impl SnapshotStore {
             seen_index: None,
             receipt_filter: None,
             authority: None,
+            blocklist: None,
         };
         store.load();
         store
@@ -156,6 +163,9 @@ impl SnapshotStore {
                 RECORD_AUTHORITY if mmp_core::AuthorityStore::decode(payload).is_some() => {
                     self.authority = Some(payload.to_vec());
                 }
+                RECORD_BLOCKLIST if valid_blocklist(payload) => {
+                    self.blocklist = Some(payload.to_vec());
+                }
                 _ => {} // unknown kind: forward-compat, skip rather than fail closed
             }
         }
@@ -202,6 +212,11 @@ impl SnapshotStore {
             if let Some(authority) = &self.authority {
                 let mut record = vec![RECORD_AUTHORITY];
                 record.extend_from_slice(authority);
+                write_record(&mut f, &record)?;
+            }
+            if let Some(blocklist) = &self.blocklist {
+                let mut record = vec![RECORD_BLOCKLIST];
+                record.extend_from_slice(blocklist);
                 write_record(&mut f, &record)?;
             }
             f.sync_all()?;
@@ -278,6 +293,39 @@ impl SnapshotStore {
     pub fn set_authority(&mut self, authority: Vec<u8>) {
         self.authority = mmp_core::AuthorityStore::decode(&authority).map(|_| authority);
     }
+
+    /// The validated local blocklist snapshot, if one was loaded or staged.
+    pub fn blocklist(&self) -> Option<&[u8]> {
+        self.blocklist.as_deref()
+    }
+
+    /// Stage a bounded, deterministic local blocklist snapshot. Invalid or
+    /// unsorted entries are rejected before persistence.
+    pub fn set_blocklist(&mut self, blocklist: Vec<u8>) {
+        self.blocklist = valid_blocklist(&blocklist).then_some(blocklist);
+    }
+}
+
+fn valid_blocklist(bytes: &[u8]) -> bool {
+    if bytes.len() < 3 || bytes[0] != BLOCKLIST_VERSION {
+        return false;
+    }
+    let count = u16::from_le_bytes([bytes[1], bytes[2]]) as usize;
+    if count > MAX_BLOCKLIST_ENTRIES
+        || bytes.len() != 3usize.saturating_add(count.saturating_mul(16))
+    {
+        return false;
+    }
+    bytes[3..]
+        .chunks_exact(16)
+        .try_fold(None, |previous: Option<&[u8]>, current| {
+            if previous.is_some_and(|old| old >= current) {
+                None
+            } else {
+                Some(Some(current))
+            }
+        })
+        .is_some()
 }
 
 fn write_record(f: &mut std::fs::File, record: &[u8]) -> std::io::Result<()> {
@@ -664,5 +712,30 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.authority().is_none(), "the corrupted authority record must not survive load");
+    }
+
+    #[test]
+    fn blocklist_snapshot_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blocklist.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut blocklist = vec![BLOCKLIST_VERSION, 2, 0];
+        blocklist.extend_from_slice(&[1; 16]);
+        blocklist.extend_from_slice(&[2; 16]);
+        let mut s = SnapshotStore::open(&path);
+        s.set_blocklist(blocklist.clone());
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        assert_eq!(s2.blocklist(), Some(blocklist.as_slice()));
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.blocklist().is_none(), "the corrupted blocklist record must not survive load");
     }
 }

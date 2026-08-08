@@ -370,6 +370,31 @@ fn authority_admission_survives_restart() {
 }
 
 #[test]
+fn blocklist_survives_restart_and_denies_reintroduced_peer() {
+    let dir = TempDir::new("blocklist-survives-restart");
+    let path = dir.file("alice.mmp");
+    let bob = node(51);
+    let seed = vec![50; 32];
+
+    {
+        let alice = MmpNode::new(seed.clone(), FfiTier::Relay, Some(path.clone())).expect("valid seed");
+        introduce(&alice, &bob);
+        drain(&alice);
+        drain(&bob);
+        alice.block(bob.node_id()).unwrap();
+        alice.flush().expect("blocklist snapshot flush");
+    }
+
+    let alice2 = MmpNode::new(seed, FfiTier::Relay, Some(path)).expect("reopen snapshot");
+    contact(&alice2, &bob, 7, 70_000);
+    let alice_events = drain(&alice2);
+    assert!(
+        !alice_events.iter().any(|event| matches!(event, FfiEvent::Established { .. })),
+        "a persisted blocklist must deny a reintroduced peer: {alice_events:?}"
+    );
+}
+
+#[test]
 fn seen_index_survives_restart_and_dedups_a_replayed_bundle() {
     let dir = TempDir::new("seen-index-survives-restart");
     let path = dir.file("alice.mmp");

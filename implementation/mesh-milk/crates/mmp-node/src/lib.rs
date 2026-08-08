@@ -93,6 +93,10 @@ const OUTBOX_CONTROL_RESERVE: usize = 4;
 const OUTBOX_FRAME_BYTES: usize = MAX_ENVELOPE_PAYLOAD + 3;
 /// Bound transport-local close actions so denied links cannot grow node RAM.
 const CLOSE_ACTION_CAPACITY: usize = 64;
+/// Local persistence cap for explicit user blocklist entries. This is a host
+/// policy bound, not a wire limit.
+const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
+const MAX_BLOCKLIST_ENTRIES: usize = 1024;
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -689,6 +693,9 @@ impl Node {
     /// (doc 07 §6.5) — no frame is sent, no error is raised.
     pub fn block(&mut self, peer: NodeId) {
         // Silent (doc 07 §6.5): no frame, no error — just admission denial.
+        if self.core.blocklist.contains(&peer) || self.core.blocklist.len() >= MAX_BLOCKLIST_ENTRIES {
+            return;
+        }
         self.core.blocklist.insert(peer);
     }
 
@@ -697,6 +704,51 @@ impl Node {
     /// Enforces `MAX_PATRONS` (doc 04 §4.4): a call once already at the cap
     /// across live patrons + outstanding offers is a silent no-op, the same
     /// fire-and-forget shape as [`Node::block`].
+    /// Encode the explicit local blocklist for a host snapshot. Entries are
+    /// sorted so the record is deterministic and bounded.
+    pub fn blocklist_snapshot(&self) -> Vec<u8> {
+        let mut peers: Vec<NodeId> = self.core.blocklist.iter().copied().collect();
+        peers.sort_unstable();
+        let mut out = Vec::with_capacity(3 + 16 * peers.len());
+        out.push(BLOCKLIST_SNAPSHOT_VERSION);
+        out.extend_from_slice(&(peers.len() as u16).to_le_bytes());
+        for peer in peers {
+            out.extend_from_slice(&peer.0);
+        }
+        out
+    }
+
+    /// Restore a blocklist snapshot before traffic is accepted. Malformed,
+    /// duplicate, unsorted, or over-capacity records leave the current list
+    /// untouched and return `false`.
+    pub fn restore_blocklist(&mut self, bytes: &[u8]) -> bool {
+        if bytes.len() < 3 || bytes[0] != BLOCKLIST_SNAPSHOT_VERSION {
+            return false;
+        }
+        let count = u16::from_le_bytes([bytes[1], bytes[2]]) as usize;
+        let Some(expected) = 3usize.checked_add(count.saturating_mul(16)) else {
+            return false;
+        };
+        if count > MAX_BLOCKLIST_ENTRIES || bytes.len() != expected {
+            return false;
+        }
+        let mut parsed = HashSet::with_capacity(count);
+        let mut previous: Option<NodeId> = None;
+        for chunk in bytes[3..].chunks_exact(16) {
+            let mut id = [0u8; 16];
+            id.copy_from_slice(chunk);
+            let peer = Id16(id);
+            if previous.is_some_and(|old| old >= peer) || !parsed.insert(peer) {
+                return false;
+            }
+            previous = Some(peer);
+        }
+        self.core.blocklist = parsed;
+        true
+    }
+
+    /// Request a peer to act as a patron for this node. The offer is sent on
+    /// the next authenticated session and is silently capped by policy.
     pub fn request_friendship(&mut self, peer_identity: Key32) {
         let peer = node_id_of(&peer_identity);
         if self.core.patrons.contains_key(&peer) || self.core.pending_offers.contains(&peer) {
