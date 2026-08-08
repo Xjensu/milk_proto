@@ -107,6 +107,18 @@ is configured (`PKG_CONFIG_SYSROOT_DIR`/`PKG_CONFIG_PATH` are absent). This is
 an environment gate, not evidence against the Linux implementation; perform
 the check on a Linux/BlueZ host before the real two-PC exchange.
 
+The continued hardening commits are `47e3cfc`, `8a83621`, `b6dcea7`, and
+`d96ca5c`. `send_file` now performs peer/conversation admission before
+minting content-addressed symbol bundles, so `ConversationPending` and
+`UnknownPeer` failures have no storage side effects. The sealed async rollback
+regression is covered by `556dfd0`. Central shutdown now marks a terminal
+closing state before draining, rejects late dial insertion, cleans up every
+post-connect setup failure, removes logical links before bounded write-gate
+waits, and disconnects stream-abort paths. The Linux peripheral role signals
+shutdown to its control task, which aborts and joins spawned reader tasks before
+returning. These changes narrow lifecycle races without changing the wire
+contract; real adapter behavior remains hardware-gated.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
