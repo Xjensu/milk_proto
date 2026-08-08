@@ -1498,3 +1498,29 @@ not Xcode compilation or CoreBluetooth evidence.
 These changes preserve the frozen wire contract. The remaining external gates
 are still Linux/BlueZ two-PC exchange, native Android/iOS runtime and energy
 measurements, and platform keystore crash/restart testing.
+
+## 2026-08-09 continuation: CI and X25519 hardening
+
+`e357078` makes mobile artifact publication fail closed. The Kotlin/Swift
+binding, Android AAR, and iOS XCFramework upload steps now use
+`if-no-files-found: error`; a YAML regression verifies exact artifact names,
+repository-relative provenance paths, and the error policy. `03a5b7b` also
+serializes the root host workspace test command with
+`-- --test-threads=1`, matching the documented Windows-safe procedure and
+avoiding collisions in the shared temporary snapshot-store fixtures. The
+Python CI/artifact suite reached 33 passing tests.
+
+`9e227f3` adds RFC 7748 all-zero shared-secret rejection to the X25519 prekey
+sender/recipient paths and sealed-box open path. Without this check, a
+low-order public point can produce a predictable derived key and collapse the
+confidentiality of first-contact ratchet state. Regression coverage exercises
+low-order signed-prekey, ephemeral/static, and sealed-open inputs. The
+`mmp-crypto` library suite has 36 passing tests and its Clippy gate is clean;
+the change preserves valid wire behavior and does not modify the frozen
+specification.
+
+The storage-file-size issue remains deliberately unresolved: `SnapshotStore`
+is tier-agnostic and bundles, claims, groups, indexes, authority state, and
+blocklists have different quotas. A future tier-aware `SnapshotLimits` or
+streaming parser is required before imposing a safe file cap. Group control
+remains quarantined pending its normative schema decision.
