@@ -428,6 +428,39 @@ fn second_first_contact_send_is_explicitly_rejected_until_receipt() {
     assert!(mmp_types::payload::DirectPayload::decode(&bundle.payload).is_ok());
 }
 
+#[test]
+fn send_file_pending_rejects_before_minting_new_symbols() {
+    let mut alice = node(53);
+    let mut bob = node(54);
+    introduce_exchange_only(&mut alice, &mut bob);
+
+    let first_data = vec![0x11; 3000];
+    alice
+        .send_file(&bob.node_id(), "first.bin", "application/octet-stream", &first_data)
+        .expect("first file manifest establishes the pending root");
+    let symbols_before = alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
+        .count();
+
+    let second_data = vec![0x22; 3000];
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "second.bin", "application/octet-stream", &second_data),
+        Err(SendError::ConversationPending)
+    );
+    let symbols_after = alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
+        .count();
+    assert_eq!(symbols_after, symbols_before, "rejected manifest must not mint symbols");
+}
+
 /// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session
 /// with a brand-new conversation must NOT bump (nothing to heal yet — the
 /// bug this drill caught: bumping too early, before that first session's own
