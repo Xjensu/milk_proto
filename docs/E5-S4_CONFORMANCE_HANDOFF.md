@@ -1097,3 +1097,69 @@ restart/timebase design would make persisted TTL behavior nondeterministic.
 This is a time-model design gate, not a safe one-line patch; do not claim the
 CLI as a strict monotonic-clock implementation until that design has a
 restart regression test and explicit persisted-clock policy.
+
+## 2026-08-08 reconciliation-domain admission hardening
+
+`8c0c989` makes the session FSM reject unknown or misflagged RBSR domain
+values. Before this guard, an authenticated peer could inject an arbitrary
+domain byte, replace the active reconciler, and consume reconciliation work
+without a negotiated HELLO capability. The implementation now accepts only
+D0--D3, allows the reply bit only on `RECON_RANGE`, and closes with the normal
+unsupported-protocol path for unknown domains or reply-flagged `RECON_INIT` /
+`RECON_IDS` frames. This is a local parser/state-machine policy; no wire
+format or specification document changed.
+
+Evidence:
+
+```text
+cargo test -p mmp-core --lib -- --test-threads=1       # 51 passed
+cargo clippy -p mmp-core --lib --tests -- -D warnings  # pass
+```
+
+## 2026-08-08 reconciliation sequencing and CLI clock follow-up
+
+The follow-up audit found that domain-value validation alone did not fence a
+valid but out-of-order `RECON_INIT`. The session engine now enforces the
+negotiated role and D0--D3 order: only the initiator may open a domain, a
+responder cannot replace an unresolved domain with a later one, and a
+reply-flagged or cross-domain frame is rejected. `RECON_RANGE` and
+`RECON_IDS` additionally require an active matching domain; malformed ranges
+(`lo > hi`) and ID lists containing values outside their declared bounds are
+rejected before reconciliation state advances.
+
+The final-domain DAG-repair WANT poll is latched once per session. This closes
+an authenticated replay that repeatedly supplied tiny/empty reconciliation
+frames to re-trigger the expensive final poll. The latch is local session
+state and does not change the wire format.
+
+The implementation deliberately retains one documented residual: a malicious
+peer can still send a valid nested range in the active domain, and the current
+RBSR `resolve_containing` logic may retire a pending parent before the full
+partition is proven. This is an availability/withholding limitation, not a
+claim of Byzantine delivery correctness. Expected-split tracking or a
+frame-level partition proof is required before making that stronger claim.
+
+The CLI now primes a freshly restored node with its current command-clock
+reading before creating a bundle or entering the first drive tick. This fixes
+the concrete pre-first-tick expiry regression, but `mmp-cli::now_ms()` remains
+Unix wall time. Production FFI/mobile hosts must still supply a monotonic
+clock with an explicit boot/restart policy; the bare persisted `u64`
+deadlines cannot safely be reinterpreted across reboot by swapping in
+`Instant`.
+
+Evidence:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1  # pass (Windows)
+cargo test -p mmp-core --lib -- --test-threads=1         # 53 passed
+cargo clippy -p mmp-core --lib --tests -- -D warnings    # pass
+cargo test -p mmp-cli --all-targets -- --test-threads=1  # 27 passed
+```
+
+The Linux clippy pass initially exposed a toolchain-version lint in the
+existing ratchet destructor (`for (_, value) in map.iter_mut()`). It was
+rewritten as `map.values_mut()`, preserving zeroization behavior and changing
+no protocol or persistence bytes. Windows crypto tests/clippy and the WSL
+crypto/core clippy checks now pass. Rustfmt remains unavailable in the pinned
+Windows toolchain (`rustfmt` component not installed); `git diff --check` is
+clean.
