@@ -1136,8 +1136,9 @@ The implementation deliberately retains one documented residual: a malicious
 peer can still send a valid nested range in the active domain, and the current
 RBSR `resolve_containing` logic may retire a pending parent before the full
 partition is proven. This is an availability/withholding limitation, not a
-claim of Byzantine delivery correctness. Expected-split tracking or a
-frame-level partition proof is required before making that stronger claim.
+claim of Byzantine delivery correctness. Expected-split plus terminal-response
+tracking (possibly with a frame-level partition proof) is required before
+making that stronger claim.
 
 The CLI now primes a freshly restored node with its current command-clock
 reading before creating a bundle or entering the first drive tick. This fixes
@@ -1159,6 +1160,38 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1  # 27 passed
 Linux/WSL follow-up on the same working tree also passed 53 core tests,
 core/crypto clippy, and 27 CLI tests plus CLI clippy. No physical Bluetooth
 adapter was available in this validation environment.
+
+## 2026-08-08 asymmetric RBSR and FFI clock contract
+
+The RBSR audit found a concrete release-build failure path: a peer could
+advertise a small/empty range while the local node held hundreds of IDs. The
+old terminal-list condition used the peer's claimed count and could emit a
+`RECON_IDS` payload larger than `MAX_FRAME_PAYLOAD`. `ff9d6aa` now selects a
+terminal list only when the local ID set itself is within `RBSR_T_LIST`; larger
+local sets are split into bounded ranges. Direct reconciliation now covers a
+500-versus-empty case and verifies the emitted payload remains wire-safe.
+
+The FFI surface now states and tests the required host call order: construct,
+call `tick()` with a same-boot monotonic value, then invoke bundle-producing
+APIs. The regression checks persisted `stored_at`, the full message TTL, and
+retention on the first subsequent tick. This intentionally does not invent a
+cross-reboot clock policy or read wall time in the FFI constructor.
+
+The remaining RBSR availability residual is unchanged: nested same-domain
+ranges can still retire a parent before a complete partition and the
+session-level 500-versus-empty path is not yet a proof of Byzantine-safe
+sequencing. A full interval-coverage/terminal-child tracker is a separate
+state-machine redesign task; do not claim Byzantine convergence until it is
+implemented and tested.
+
+Evidence:
+
+```text
+cargo test -p mmp-core --lib -- --test-threads=1  # 54 passed
+cargo clippy -p mmp-core --all-targets -- -D warnings  # pass
+cargo test -p mmp-ffi --lib -- --test-threads=1   # 17 passed
+cargo clippy -p mmp-ffi --all-targets -- -D warnings  # pass
+```
 
 The Linux clippy pass initially exposed a toolchain-version lint in the
 existing ratchet destructor (`for (_, value) in map.iter_mut()`). It was
