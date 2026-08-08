@@ -38,6 +38,11 @@ If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 **review the diff before committing**. That review is the checkpoint doc 10
 §6.4 calls for.
 
+The grouped artifact also records the complete registered signing-domain
+matrix. The conformance reader checks its 81-cell schema and declared verdicts;
+the production test independently exercises the nine diagonal accepts and 72
+off-diagonal rejects. No private key material is emitted.
+
 ## What's here
 
 Positive:
@@ -61,6 +66,11 @@ Positive:
   HELLO payload as `hello.json`.
 - `hello.json` — standalone HELLO payload fields and canonical bytes.
 - `rbsr_fingerprint.json` — RBSR range fingerprint of a known Id16 set.
+
+- `cross_domain_matrix.json` contains deterministic objects and signatures for
+  all nine registered `SigDomain` tags and the full 9x9 accept/reject matrix;
+  `GroupMsg` and candidate group-control tags are intentionally excluded as
+  provisional/unregistered.
 
 Negative (each states the rejection/invariant it pins):
 - `noncanonical_s_negative.json` — the same valid Ed25519 signature with its

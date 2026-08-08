@@ -25,10 +25,10 @@
 //! `mmp-crypto`'s strict verifier remains the executable rejection oracle.
 
 use mmp_crypto::{merkle, receipt, Identity};
-use mmp_types::authcert::{scope_id_of, AnnouncementBody};
+use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, CAP_ANNOUNCE};
 use mmp_types::beacon::Beacon;
 use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
-use mmp_types::claim::{field, Claim};
+use mmp_types::claim::{field, friendship_signed_object, Claim, PrekeyBatch};
 use mmp_types::consts::{LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE, L_MAX};
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
@@ -38,6 +38,7 @@ use mmp_types::frame::{
     FT_RECON_INIT, FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
 };
 use mmp_types::ids::{Id16, Key32, Sig64};
+use mmp_types::manifest::{FileEntry, FileManifest};
 use mmp_types::payload::{DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::{encode_exts, Ext, TLV_SCOPE_INFO};
 
@@ -84,6 +85,122 @@ fn vector_bundle() -> (Bundle, Identity) {
     };
     b.signature = id.sign(SigDomain::Bundle, &b.canonical_zeroed());
     (b, id)
+}
+
+/// The nine frozen signing domains from the protocol registry.  GroupMsg and
+/// the candidate group-control tags are intentionally excluded: they are not
+/// registered protocol domains and remain provisional implementation details.
+const REGISTERED_SIGNATURE_DOMAINS: [(&str, SigDomain); 9] = [
+    ("mmp1/bundle", SigDomain::Bundle),
+    ("mmp1/claim", SigDomain::Claim),
+    ("mmp1/friend", SigDomain::Friend),
+    ("mmp1/prekey", SigDomain::Prekey),
+    ("mmp1/blobroot", SigDomain::BlobRoot),
+    ("mmp1/chanbind", SigDomain::ChanBind),
+    ("mmp1/manifest", SigDomain::Manifest),
+    ("mmp1/authcert", SigDomain::AuthCert),
+    ("mmp1/announce", SigDomain::Announce),
+];
+
+/// One stable object/signature pair used by the cross-domain matrix.  The
+/// object bytes come from the production signed-object helpers; only the
+/// public key, object, and signature are emitted in the artifact.
+struct SignatureDomainCase {
+    name: &'static str,
+    domain: SigDomain,
+    public_key: Key32,
+    object: Vec<u8>,
+    signature: Sig64,
+}
+
+/// Build one semantically valid, deterministic object for each registered
+/// signing domain.  No private key material is returned or serialized.
+fn vector_signature_domain_cases() -> Vec<SignatureDomainCase> {
+    let signer = vector_identity();
+    let peer = Identity::from_seed(&[0x22; 32]);
+    let signer_key = signer.public();
+    let peer_key = peer.public();
+    let scope = scope_id_of(b"vector/domain-matrix");
+
+    let mut bundle = vector_bundle().0;
+    bundle.signature = Sig64::ZERO;
+
+    let claim = Claim {
+        owner: signer_key,
+        field: field::NICKNAME,
+        seq: 0x0102_0304,
+        body: b"domain-matrix".to_vec(),
+        sig: Sig64::ZERO,
+    };
+
+    let prekey = PrekeyBatch {
+        signed_prekey: Key32([0x42; 32]),
+        spk_sig: Sig64::ZERO,
+        prekeys: vec![Key32([0x43; 32]), Key32([0x44; 32])],
+    };
+
+    let friend_object = friendship_signed_object(&peer_key, &signer_key, 0x0102_0304_0506_0708);
+    let blob_object = mmp_crypto::merkle::blobroot_object(&[0x45; 32], 0x0102_0304_0506_0708, 8, 12);
+    let chanbind_object = mmp_crypto::noise::chanbind_object(&[0x46; 32], &signer_key, &peer_key);
+
+    let manifest = FileManifest {
+        suite: 1,
+        sharer: signer_key,
+        entries: vec![FileEntry {
+            name: b"vector.txt".to_vec(),
+            mime: b"text/plain".to_vec(),
+            size: 13,
+            file_root: Id16([0x47; 16]),
+            rs_k: 8,
+            rs_n: 12,
+            full_hash: [0x48; 32],
+            thumb_root: Some(Id16([0x49; 16])),
+        }],
+        sig: Sig64::ZERO,
+    };
+
+    let authcert = AuthCert {
+        suite: 1,
+        subject: peer_key,
+        scope,
+        caps: CAP_ANNOUNCE,
+        priority_budget: 17,
+        not_after: 0x0102_0304,
+        issuer: signer_key,
+        sig: Sig64::ZERO,
+    };
+
+    let announcement = AnnouncementBody {
+        suite: 1,
+        ann_type: 1,
+        scope,
+        not_after: 0x0506_0708,
+        text: b"deterministic domain matrix".to_vec(),
+        sig: Sig64::ZERO,
+    };
+
+    let objects = [
+        ("mmp1/bundle", SigDomain::Bundle, bundle.canonical_zeroed()),
+        ("mmp1/claim", SigDomain::Claim, claim.signed_object()),
+        ("mmp1/friend", SigDomain::Friend, friend_object),
+        ("mmp1/prekey", SigDomain::Prekey, prekey.signed_object()),
+        ("mmp1/blobroot", SigDomain::BlobRoot, blob_object),
+        ("mmp1/chanbind", SigDomain::ChanBind, chanbind_object),
+        ("mmp1/manifest", SigDomain::Manifest, manifest.signed_object()),
+        ("mmp1/authcert", SigDomain::AuthCert, authcert.signed_object()),
+        ("mmp1/announce", SigDomain::Announce, announcement.signed_object()),
+    ];
+
+    objects
+        .into_iter()
+        .map(|(name, domain, object)| SignatureDomainCase {
+            name,
+            domain,
+            public_key: signer_key,
+            signature: signer.sign(domain, &object),
+            object,
+        })
+        .collect()
 }
 
 /// Ed25519 subgroup order L, encoded little-endian as required for the
@@ -393,6 +510,7 @@ pub fn generate() -> Vec<VectorFile> {
         envelope_vector(),
         rbsr_fingerprint_vector(),
         cross_domain_negative_vector(),
+        cross_domain_matrix_vector(),
         noncanonical_s_negative_vector(),
         lifetime_reset_negative_vector(),
         budget_clamp_negative_vector(),
@@ -731,6 +849,43 @@ under each listed domain it must fail.\",\n  \"pubkey\": \"{}\",\n  \"object\": 
     VectorFile { name: "cross_domain_negative.json", json }
 }
 
+/// Emit the complete 9×9 domain-separation matrix.  Each row signs one
+/// production object under its declared domain; all nine domain verifiers are
+/// then recorded explicitly.  The expected result is one diagonal accept and
+/// eight off-diagonal rejects per row (9 accepts + 72 rejects total).
+fn cross_domain_matrix_vector() -> VectorFile {
+    let cases = vector_signature_domain_cases();
+    let mut json = String::from(
+        "{\n  \"description\": \"complete registered SigDomain cross-verification matrix: diagonal accepts, all off-diagonal pairs reject\",\n  \"domain_count\": 9,\n  \"matrix_cells\": 81,\n  \"expected_accepts\": 9,\n  \"expected_rejects\": 72,\n  \"domains\": [\n",
+    );
+    for (row_index, case) in cases.iter().enumerate() {
+        json.push_str(&format!(
+            "    {{\"object_domain\": \"{}\", \"domain_tag\": \"{}\", \"pubkey\": \"{}\", \"object\": \"{}\", \"signature\": \"{}\", \"checks\": [",
+            case.name,
+            hex(case.domain.tag()),
+            hex(&case.public_key.0),
+            hex(&case.object),
+            hex(&case.signature.0),
+        ));
+        for (check_index, (name, domain)) in REGISTERED_SIGNATURE_DOMAINS.iter().enumerate() {
+            let accepted = mmp_crypto::verify(*domain, &case.public_key, &case.object, &case.signature).is_ok();
+            debug_assert_eq!(accepted, row_index == check_index);
+            json.push_str(&format!(
+                "{{\"verify_domain\": \"{}\", \"result\": \"{}\"}}{}",
+                name,
+                if accepted { "accept" } else { "reject" },
+                if check_index + 1 == REGISTERED_SIGNATURE_DOMAINS.len() { "" } else { "," },
+            ));
+        }
+        json.push_str(&format!(
+            "]}}{}\n",
+            if row_index + 1 == cases.len() { "" } else { "," },
+        ));
+    }
+    json.push_str("  ]\n}\n");
+    VectorFile { name: "cross_domain_matrix.json", json }
+}
+
 fn noncanonical_s_negative_vector() -> VectorFile {
     // Reuse the canonical class-1 bundle object, but replace only the
     // signature scalar S with S+L.  The public key, R, domain, and object are
@@ -883,6 +1038,34 @@ mod tests {
 
         // Budget clamp (AUDIT F3).
         assert_eq!(200u8.min(L_MAX), L_MAX);
+    }
+
+    /// Every registered signing-domain pair is exercised: each row's own
+    /// domain accepts, and all 72 off-diagonal combinations reject.  This is
+    /// deliberately a full matrix rather than a single negative sample so a
+    /// newly added domain cannot silently go untested.
+    #[test]
+    fn full_registered_signature_domain_matrix_is_separated() {
+        let cases = vector_signature_domain_cases();
+        assert_eq!(cases.len(), REGISTERED_SIGNATURE_DOMAINS.len());
+        let mut accepts = 0;
+        let mut rejects = 0;
+        for (row, case) in cases.iter().enumerate() {
+            assert_eq!(case.name, REGISTERED_SIGNATURE_DOMAINS[row].0);
+            assert_eq!(case.domain, REGISTERED_SIGNATURE_DOMAINS[row].1);
+            for (column, (_, domain)) in REGISTERED_SIGNATURE_DOMAINS.iter().enumerate() {
+                let accepted = verify(*domain, &case.public_key, &case.object, &case.signature).is_ok();
+                if row == column {
+                    assert!(accepted, "{} signature must verify under its own domain", case.name);
+                    accepts += 1;
+                } else {
+                    assert!(!accepted, "{} signature must reject under {}", case.name, domain.tag().escape_ascii());
+                    rejects += 1;
+                }
+            }
+        }
+        assert_eq!(accepts, 9);
+        assert_eq!(rejects, 72);
     }
 
     /// Every registered frame type must have a deterministic sample and must

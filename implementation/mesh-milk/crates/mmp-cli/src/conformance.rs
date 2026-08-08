@@ -16,6 +16,7 @@ const VECTOR_NAMES: &[&str] = &[
     "bundles.json",
     "claim.json",
     "cross_domain_negative.json",
+    "cross_domain_matrix.json",
     "envelope.json",
     "frames.json",
     "hello.json",
@@ -461,6 +462,66 @@ fn grouped_bundle_vector_covers_classes_zero_through_five() {
         let digest = blake3::hash(&view.canonical);
         assert_eq!(&digest.as_bytes()[..16], expected_id, "{} content address", names[index]);
     }
+}
+
+#[test]
+fn cross_domain_matrix_has_all_registered_pairs_and_expected_results() {
+    let json = vector("cross_domain_matrix.json");
+    let names = json_all_strings(&json, "object_domain");
+    let tags = json_all_strings(&json, "domain_tag");
+    let pubkeys = json_all_strings(&json, "pubkey");
+    let objects = json_all_strings(&json, "object");
+    let signatures = json_all_strings(&json, "signature");
+    let verify_domains = json_all_strings(&json, "verify_domain");
+    let results = json_all_strings(&json, "result");
+    let expected_names = [
+        "mmp1/bundle",
+        "mmp1/claim",
+        "mmp1/friend",
+        "mmp1/prekey",
+        "mmp1/blobroot",
+        "mmp1/chanbind",
+        "mmp1/manifest",
+        "mmp1/authcert",
+        "mmp1/announce",
+    ];
+    let expected_tags: [&[u8]; 9] = [
+        b"mmp1/bundle\x01",
+        b"mmp1/claim\x01",
+        b"mmp1/friend\x01",
+        b"mmp1/prekey\x01",
+        b"mmp1/blobroot\x01",
+        b"mmp1/chanbind\x01",
+        b"mmp1/manifest\x01",
+        b"mmp1/authcert\x01",
+        b"mmp1/announce\x01",
+    ];
+    assert_eq!(json_u64(&json, "domain_count"), 9);
+    assert_eq!(json_u64(&json, "matrix_cells"), 81);
+    assert_eq!(json_u64(&json, "expected_accepts"), 9);
+    assert_eq!(json_u64(&json, "expected_rejects"), 72);
+    assert_eq!(names, expected_names);
+    assert_eq!(tags.len(), 9);
+    assert_eq!(pubkeys.len(), 9);
+    assert_eq!(objects.len(), 9);
+    assert_eq!(signatures.len(), 9);
+    assert_eq!(verify_domains.len(), 81);
+    assert_eq!(results.len(), 81);
+
+    for row in 0..9 {
+        assert_eq!(decode_hex("domain_tag", &tags[row]), expected_tags[row]);
+        assert_eq!(decode_hex("pubkey", &pubkeys[row]).len(), 32);
+        assert!(!decode_hex("object", &objects[row]).is_empty());
+        assert_eq!(decode_hex("signature", &signatures[row]).len(), 64);
+        for (column, expected_name) in expected_names.iter().enumerate() {
+            let index = row * 9 + column;
+            assert_eq!(verify_domains[index], *expected_name);
+            let expected = if row == column { "accept" } else { "reject" };
+            assert_eq!(results[index], expected, "matrix cell ({row},{column})");
+        }
+    }
+    assert_eq!(results.iter().filter(|value| value.as_str() == "accept").count(), 9);
+    assert_eq!(results.iter().filter(|value| value.as_str() == "reject").count(), 72);
 }
 
 #[test]
