@@ -54,7 +54,7 @@ pub(crate) fn encode(core: &NodeCore) -> Result<Zeroizing<Vec<u8>>, SecretStateE
     {
         return Err(SecretStateError::Invalid);
     }
-    let prekeys = core.prekeys.snapshot().map_err(|_| SecretStateError::Invalid)?;
+    let prekeys = core.prekeys.snapshot_state().map_err(|_| SecretStateError::Invalid)?;
     let mut out = Vec::with_capacity(HEADER_LEN);
     out.extend_from_slice(&MAGIC);
     out.push(VERSION);
@@ -249,7 +249,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
     if prekey_end != bytes.len() {
         return Err(SecretStateError::Invalid);
     }
-    let prekeys = PrekeyStore::restore(&bytes[pos..prekey_end]).map_err(|_| SecretStateError::Invalid)?;
+    let prekeys = PrekeyStore::restore_state(&bytes[pos..prekey_end]).map_err(|_| SecretStateError::Invalid)?;
     for (conv, first) in &pending_first_contact {
         if let Some(message) = sent.get(first) {
             if message.conv != *conv || matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired) {

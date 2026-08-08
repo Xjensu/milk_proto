@@ -43,7 +43,7 @@ use mmp_core::{
 };
 use mmp_crypto::group::SenderKeyDist;
 use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, MerklePath};
-use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore};
+use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_crypto::sealed::{open_box, seal_box_with_root};
 use mmp_router::{
@@ -1986,6 +1986,9 @@ impl NodeCore {
                 let key = candidate.recv.key_for(0, 0).ok()?;
                 let bound = aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
                 let plaintext = aead::open(&bound, &bundle.canonical_aead_ad(), &ct).ok()?;
+                if prekey_id != PREKEY_NONE {
+                    self.prekeys.mark_otk_consumed(prekey_id).ok()?;
+                }
                 self.convs.insert(*conv_id, candidate);
                 Some(plaintext)
             }

@@ -6,7 +6,7 @@
 //! prekey (replay is scoped by BundleID dedup); suppression/replay-consume
 //! degradations are documented in doc 08 §4.2 and bounded by the sealed-box floor.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use mmp_types::claim::PrekeyBatch;
@@ -26,6 +26,8 @@ use crate::identity::{verify, Identity};
 const SNAPSHOT_VERSION: u8 = 1;
 const SNAPSHOT_HEADER_LEN: usize = 1 + 32 + 2;
 const SNAPSHOT_RECORD_LEN: usize = 2 + 32;
+const STATE_SNAPSHOT_VERSION: u8 = 2;
+const STATE_SNAPSHOT_HEADER_LEN: usize = 1 + 32 + 8 + 8 + 8 + 2 + 2;
 
 /// Sentinel: no one-time prekey consumed (signed-prekey-only agreement).
 pub const PREKEY_NONE: u16 = 0xffff;
@@ -35,6 +37,12 @@ pub struct PrekeyStore {
     spk: x25519_dalek::StaticSecret,
     spk_public: Key32,
     one_time: BTreeMap<u16, x25519_dalek::StaticSecret>,
+    /// Local lifecycle metadata. The wire batch remains unchanged; consumed
+    /// IDs are retained as tombstones so restart logic cannot forget use.
+    consumed: BTreeSet<u16>,
+    generation: u64,
+    spk_not_after_ms: u64,
+    otk_not_after_ms: u64,
 }
 
 impl PrekeyStore {
@@ -47,7 +55,15 @@ impl PrekeyStore {
         for id in 0..count as u16 {
             one_time.insert(id, x25519_dalek::StaticSecret::random_from_rng(&mut *rng));
         }
-        PrekeyStore { spk, spk_public, one_time }
+        PrekeyStore {
+            spk,
+            spk_public,
+            one_time,
+            consumed: BTreeSet::new(),
+            generation: 1,
+            spk_not_after_ms: 0,
+            otk_not_after_ms: 0,
+        }
     }
 
     /// The publishable, identity-signed batch claim body (doc 10 §4.4).
@@ -126,7 +142,144 @@ impl PrekeyStore {
         if pos != bytes.len() {
             return Err(CryptoError::Snapshot);
         }
-        Ok(PrekeyStore { spk, spk_public, one_time })
+        Ok(PrekeyStore {
+            spk,
+            spk_public,
+            one_time,
+            consumed: BTreeSet::new(),
+            generation: 1,
+            spk_not_after_ms: 0,
+            otk_not_after_ms: 0,
+        })
+    }
+
+    /// Record successful use of a local one-time prekey without changing the
+    /// published wire batch. The tombstone is provider-local state and is
+    /// intentionally idempotent for duplicate bundles.
+    pub fn mark_otk_consumed(&mut self, id: u16) -> Result<(), CryptoError> {
+        if !self.one_time.contains_key(&id) || !self.consumed.insert(id) {
+            return Ok(());
+        }
+        self.generation = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        Ok(())
+    }
+
+    /// True when this generation has recorded successful use of `id`.
+    pub fn otk_consumed(&self, id: u16) -> bool {
+        self.consumed.contains(&id)
+    }
+
+    /// Set local, trusted expiry metadata for the signed and one-time prekey
+    /// material. Zero means not provisioned; this does not alter the wire
+    /// claim because expiry is not represented by the frozen batch grammar.
+    pub fn set_expiry(&mut self, spk_not_after_ms: u64, otk_not_after_ms: u64) -> Result<(), CryptoError> {
+        if spk_not_after_ms == u64::MAX || otk_not_after_ms == u64::MAX {
+            return Err(CryptoError::Snapshot);
+        }
+        self.spk_not_after_ms = spk_not_after_ms;
+        self.otk_not_after_ms = otk_not_after_ms;
+        self.generation = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        Ok(())
+    }
+
+    /// Encode private keys plus local generation/expiry/consumption metadata.
+    /// This is provider-local and must be sealed before persistence.
+    pub fn snapshot_state(&self) -> Result<Zeroizing<Vec<u8>>, CryptoError> {
+        if self.one_time.len() > PREKEY_BATCH
+            || self.one_time.len() > u16::MAX as usize
+            || self.consumed.len() > PREKEY_BATCH
+            || self.generation == 0
+        {
+            return Err(CryptoError::Snapshot);
+        }
+        let mut out = Zeroizing::new(Vec::with_capacity(
+            STATE_SNAPSHOT_HEADER_LEN + self.one_time.len() * SNAPSHOT_RECORD_LEN + self.consumed.len() * 2,
+        ));
+        out.push(STATE_SNAPSHOT_VERSION);
+        let spk = Zeroizing::new(self.spk.to_bytes());
+        out.extend_from_slice(&*spk);
+        out.extend_from_slice(&self.generation.to_le_bytes());
+        out.extend_from_slice(&self.spk_not_after_ms.to_le_bytes());
+        out.extend_from_slice(&self.otk_not_after_ms.to_le_bytes());
+        out.extend_from_slice(&(self.one_time.len() as u16).to_le_bytes());
+        out.extend_from_slice(&(self.consumed.len() as u16).to_le_bytes());
+        for (id, secret) in &self.one_time {
+            out.extend_from_slice(&id.to_le_bytes());
+            let secret = Zeroizing::new(secret.to_bytes());
+            out.extend_from_slice(&*secret);
+        }
+        for id in &self.consumed {
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        Ok(out)
+    }
+
+    /// Restore private keys and lifecycle metadata from an authenticated
+    /// provider-local state snapshot.
+    pub fn restore_state(bytes: &[u8]) -> Result<PrekeyStore, CryptoError> {
+        if bytes.len() < STATE_SNAPSHOT_HEADER_LEN || bytes.first().copied() != Some(STATE_SNAPSHOT_VERSION) {
+            return Err(CryptoError::Snapshot);
+        }
+        let generation = u64::from_le_bytes(bytes[33..41].try_into().map_err(|_| CryptoError::Snapshot)?);
+        let spk_not_after_ms = u64::from_le_bytes(bytes[41..49].try_into().map_err(|_| CryptoError::Snapshot)?);
+        let otk_not_after_ms = u64::from_le_bytes(bytes[49..57].try_into().map_err(|_| CryptoError::Snapshot)?);
+        let count = u16::from_le_bytes(bytes[57..59].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
+        let consumed_count = u16::from_le_bytes(bytes[59..61].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
+        if generation == 0
+            || spk_not_after_ms == u64::MAX
+            || otk_not_after_ms == u64::MAX
+            || count > PREKEY_BATCH
+            || consumed_count > PREKEY_BATCH
+        {
+            return Err(CryptoError::Snapshot);
+        }
+        let expected_len = STATE_SNAPSHOT_HEADER_LEN
+            .checked_add(count.checked_mul(SNAPSHOT_RECORD_LEN).ok_or(CryptoError::Snapshot)?)
+            .and_then(|n| n.checked_add(consumed_count.checked_mul(2)?))
+            .ok_or(CryptoError::Snapshot)?;
+        if bytes.len() != expected_len {
+            return Err(CryptoError::Snapshot);
+        }
+        let mut spk_bytes = Zeroizing::new([0u8; 32]);
+        spk_bytes.copy_from_slice(&bytes[1..33]);
+        let spk = x25519_dalek::StaticSecret::from(*spk_bytes);
+        let spk_public = Key32(x25519_dalek::PublicKey::from(&spk).to_bytes());
+        let mut one_time = BTreeMap::new();
+        let mut previous = None;
+        let mut pos = STATE_SNAPSHOT_HEADER_LEN;
+        for expected_id in 0..count {
+            let id = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            if id != expected_id as u16 || previous.is_some_and(|old| old >= id) {
+                return Err(CryptoError::Snapshot);
+            }
+            let mut secret_bytes = Zeroizing::new([0u8; 32]);
+            secret_bytes.copy_from_slice(&bytes[pos + 2..pos + SNAPSHOT_RECORD_LEN]);
+            one_time.insert(id, x25519_dalek::StaticSecret::from(*secret_bytes));
+            previous = Some(id);
+            pos += SNAPSHOT_RECORD_LEN;
+        }
+        let mut consumed = BTreeSet::new();
+        let mut previous_consumed = None;
+        for _ in 0..consumed_count {
+            let id = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
+            if id as usize >= count || previous_consumed.is_some_and(|old| old >= id) || !consumed.insert(id) {
+                return Err(CryptoError::Snapshot);
+            }
+            previous_consumed = Some(id);
+            pos += 2;
+        }
+        if pos != bytes.len() {
+            return Err(CryptoError::Snapshot);
+        }
+        Ok(PrekeyStore {
+            spk,
+            spk_public,
+            one_time,
+            consumed,
+            generation,
+            spk_not_after_ms,
+            otk_not_after_ms,
+        })
     }
 }
 
@@ -229,4 +382,34 @@ fn derive_ck0(
 /// pairwise state). No FS until then — the documented baseline.
 pub fn sealed_ck0(dh: &[u8; 32], sender_id: &Key32, recipient_id: &Key32) -> Zeroizing<[u8; 32]> {
     derive_ck0(dh, None, dh, sender_id, recipient_id)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn state_snapshot_preserves_consumed_tombstones_and_expiry() {
+        let mut rng = StdRng::seed_from_u64(41);
+        let mut original = PrekeyStore::generate(&mut rng, 4);
+        original.mark_otk_consumed(2).unwrap();
+        original.set_expiry(10_000, 20_000).unwrap();
+        let snapshot = original.snapshot_state().unwrap();
+        let restored = PrekeyStore::restore_state(&snapshot).unwrap();
+        assert_eq!(restored.snapshot_state().unwrap().as_slice(), snapshot.as_slice());
+        assert!(restored.otk_consumed(2));
+        assert!(!restored.otk_consumed(1));
+    }
+
+    #[test]
+    fn state_snapshot_rejects_unsorted_or_unknown_tombstones() {
+        let mut rng = StdRng::seed_from_u64(42);
+        let original = PrekeyStore::generate(&mut rng, 2);
+        let mut snapshot = original.snapshot_state().unwrap().to_vec();
+        // Header: version + SPK + generation + two expiries + counts.
+        snapshot[59..61].copy_from_slice(&1u16.to_le_bytes());
+        snapshot.extend_from_slice(&2u16.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&snapshot).is_err());
+    }
 }
