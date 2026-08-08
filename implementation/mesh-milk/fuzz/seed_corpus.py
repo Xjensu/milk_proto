@@ -120,6 +120,14 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
             _seed("fuzz_envelope", "valid-envelope", envelope, "envelope.json.wire"),
             _seed("fuzz_envelope", "truncated-envelope", envelope[:-1], "envelope.json.wire[:-1]"),
             _seed("fuzz_envelope", "oversize-prefix", bytes.fromhex("ffff20"), "deterministic-ffff-prefix"),
+            # RECON_RANGE declares 255 ranges but supplies no 44-byte range;
+            # this exercises the count-before-reserve guard in Frame::decode_payload.
+            _seed(
+                "fuzz_envelope",
+                "recon-range-count-no-records",
+                bytes.fromhex("02001200ff"),
+                "deterministic-recon-range-count-no-records",
+            ),
         )
     )
     for item in frames:

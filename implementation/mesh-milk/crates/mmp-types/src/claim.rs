@@ -122,6 +122,9 @@ impl PrekeyBatch {
         if count > PREKEY_BATCH {
             return Err(WireError::Oversize);
         }
+        if count > r.remaining() / 32 {
+            return Err(WireError::Truncated);
+        }
         let mut prekeys = Vec::with_capacity(count);
         for _ in 0..count {
             prekeys.push(r.key32()?);
@@ -307,6 +310,15 @@ pub fn succession_signed_object(revoked_key: &Key32, successor: &Key32) -> Vec<u
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prekey_batch_rejects_count_before_allocating_entries() {
+        // The fixed prekey header is complete, but the declared batch has no
+        // 32-byte key records following it.
+        let mut bytes = [0u8; 32 + 64 + 1];
+        bytes[96] = PREKEY_BATCH as u8;
+        assert_eq!(PrekeyBatch::decode(&bytes), Err(WireError::Truncated));
+    }
 
     fn revocation_no_successor() -> Revocation {
         Revocation { revoked_key: Key32([1; 32]), reason: 3, successor: None, successor_countersig: None }

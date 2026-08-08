@@ -212,6 +212,10 @@ impl RevocationList {
         if count > REVLIST_MAX {
             return Err(WireError::Oversize);
         }
+        const REV_ENTRY_ENCODED_LEN: usize = 32 + 16 + 4;
+        if count > r.remaining() / REV_ENTRY_ENCODED_LEN {
+            return Err(WireError::Truncated);
+        }
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
             entries.push(RevEntry { subject: r.key32()?, scope: r.id16()?, not_after: r.u32()? });
@@ -311,6 +315,13 @@ mod tests {
         let mut oversized = vec![1u8, (REVLIST_MAX + 1) as u8];
         oversized.resize(2 + 52 * (REVLIST_MAX + 1), 0);
         assert_eq!(RevocationList::decode(&oversized), Err(WireError::Oversize));
+    }
+
+    #[test]
+    fn revocation_list_rejects_count_before_allocating_entries() {
+        // The count is valid by itself, but no fixed-width RevEntry follows.
+        // Decode must reject before reserving REVLIST_MAX entries.
+        assert_eq!(RevocationList::decode(&[1, REVLIST_MAX as u8]), Err(WireError::Truncated));
     }
 
     #[test]

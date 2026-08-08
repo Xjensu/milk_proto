@@ -69,6 +69,8 @@ pub struct Range {
     pub fp: u64,
 }
 
+const RANGE_ENCODED_LEN: usize = 16 + 16 + 4 + 8;
+
 impl Range {
     fn encode(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.lo.0);
@@ -518,6 +520,9 @@ impl Frame {
             FT_RECON_RANGE => {
                 let domain = r.u8()?;
                 let n = r.u8()?;
+                if usize::from(n) > r.remaining() / RANGE_ENCODED_LEN {
+                    return Err(WireError::Truncated);
+                }
                 let mut ranges = Vec::with_capacity(n as usize);
                 for _ in 0..n {
                     ranges.push(Range::decode(&mut r)?);
@@ -632,4 +637,16 @@ pub fn write_envelope(typ: u8, payload: &[u8]) -> Vec<u8> {
     out.push(typ);
     out.extend_from_slice(payload);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recon_range_rejects_count_before_allocating_ranges() {
+        // `Range` is 44 bytes on the wire. A maximum count with no records
+        // must fail before reserving 255 `Range` values.
+        assert_eq!(Frame::decode_payload(FT_RECON_RANGE, &[0, 255]), Err(WireError::Truncated));
+    }
 }

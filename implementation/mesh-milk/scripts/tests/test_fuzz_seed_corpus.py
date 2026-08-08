@@ -24,6 +24,7 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         self.assertGreaterEqual(len(first["fuzz_bundle"]), 12)
         self.assertGreaterEqual(len(first["fuzz_hs"]), 4)
         self.assertTrue(any(len(seed.data) > 4096 for seed in first["fuzz_envelope"]))
+        self.assertTrue(any("recon-range-count-no-records" in seed.name for seed in first["fuzz_envelope"]))
         self.assertTrue(any("unknown_critical_tlv" in seed.name for seed in first["fuzz_bundle"]))
 
     def test_write_and_verify_round_trip(self) -> None:
