@@ -66,6 +66,17 @@ cargo run -p layer-check                                  # pass
 cargo run -p mmp-cli -- demo                              # pass; receipt observed
 ```
 
+## 2026-08-08 MMP/Φ research implementation
+
+The simulator now contains an explicitly non-normative
+`mmp_sim::energy::RendezvousEnergyModel` (`ecf25a2`). It implements the
+square-root optimum for the controlled hypothesis `h ∝ λρ` and tests the
+fixed-hazard invariant and illustrative baseline gain. The accompanying
+`docs/MMP_PHI_SIMULATION.md` records units, assumptions, and the required
+measurement plan. This does not alter MMP/1 wire behavior and does not claim a
+2× battery result; collisions, controller scheduling, OS wakeups, and
+whole-device energy still require platform measurements.
+
 ## 2026-08-08 lifecycle and mobile-surface follow-up
 
 Two delegated audits closed additional implementation gaps without touching
