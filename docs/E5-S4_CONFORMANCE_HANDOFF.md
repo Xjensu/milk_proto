@@ -148,6 +148,14 @@ public certificates, subscriptions, and sticky revocations now survive
 restart test. Secret ratchet/prekey state remains intentionally excluded until
 a platform-keystore envelope exists.
 
+Commit `ebb2045` also removes retained `CK0` from `mmp-node::Conv`: the
+conversation derives and zeroizes a dedicated receipt-MAC key while creating
+the directional chains, and receipt emission/verification uses that stored
+zeroizing key. The sealed-root replacement regression and the full 42-test
+node suite remain green. This reduces in-memory root exposure but does not
+claim restart continuity; keystore-wrapped chain/prekey persistence is still
+an explicit Phase B/native-platform gate.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files
