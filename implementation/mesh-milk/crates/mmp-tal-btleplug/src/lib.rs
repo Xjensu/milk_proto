@@ -101,6 +101,21 @@ pub mod framing;
 /// crate cannot currently raise it per-link.
 const DEFAULT_CHUNK: usize = 20;
 
+/// Maximum number of transport events waiting for the host event loop.
+///
+/// One maximum-size 4096-byte envelope takes `ceil((4096 + 3) / 20) = 205`
+/// current-floor ATT notifications. Eight concurrently admitted sessions
+/// therefore need at most 1640 queued data events for one envelope each;
+/// rounding to 2048 leaves room for link/control and beacon events. The
+/// channel is count-bounded (not byte-bounded): a future larger negotiated
+/// ATT MTU still has a finite controller bound, while producers await
+/// capacity instead of dropping an encrypted chunk.
+const EVENT_QUEUE_CAPACITY: usize = 2048;
+
+fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
+    mpsc::channel(EVENT_QUEUE_CAPACITY)
+}
+
 /// A scanned or dial-able peer: `btleplug`'s peripheral identity plus the
 /// most recent RSSI this crate observed for it (`None` if never seen with a
 /// resolvable RSSI, e.g. the platform didn't report one).
@@ -168,10 +183,10 @@ struct LinkState {
 /// hosts have exactly one).
 pub struct BleCentral {
     adapter: Adapter,
-    tx: mpsc::UnboundedSender<TalEvent>,
+    tx: mpsc::Sender<TalEvent>,
     // `std::sync::Mutex` (not tokio's) is correct here: it is only ever held
     // for the instant it takes to `Option::take`, never across an `.await`.
-    events_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<TalEvent>>>,
+    events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>>,
 }
 
@@ -187,7 +202,7 @@ impl BleCentral {
             .next()
             .ok_or(BleError::NoAdapter)?;
 
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = event_channel();
         let links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>> =
             Arc::new(AsyncMutex::new(HashMap::new()));
 
@@ -203,8 +218,10 @@ impl BleCentral {
 
     /// Take ownership of this central's event stream. There is exactly one
     /// receiver per `BleCentral`; calling this a second time panics — hold
-    /// on to the first receiver instead of calling this again.
-    pub fn events(&self) -> mpsc::UnboundedReceiver<TalEvent> {
+    /// on to the first receiver instead of calling this again. The receiver
+    /// must be drained while the central is active: radio producers apply
+    /// bounded backpressure rather than dropping ordered link bytes.
+    pub fn events(&self) -> mpsc::Receiver<TalEvent> {
         self.events_rx
             .lock()
             .expect("events_rx mutex poisoned")
@@ -271,13 +288,27 @@ impl BleCentral {
         peripheral.subscribe(&rx_characteristic).await?;
         let mut notifications = peripheral.notifications().await?;
 
+        self.links.lock().await.insert(
+            link,
+            LinkState { peripheral, tx_characteristic, chunk_size: DEFAULT_CHUNK },
+        );
+
+        let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
         let data_tx = self.tx.clone();
         let rx_uuid = rx_characteristic.uuid;
         tokio::spawn(async move {
+            if data_tx
+                .send(TalEvent::LinkUp { link, initiator: true, quality })
+                .await
+                .is_err()
+            {
+                return;
+            }
             while let Some(notification) = notifications.next().await {
                 if notification.uuid == rx_uuid
                     && data_tx
                         .send(TalEvent::LinkData { link, bytes: notification.value })
+                        .await
                         .is_err()
                 {
                     // Owner dropped the event receiver; nobody is listening.
@@ -285,14 +316,6 @@ impl BleCentral {
                 }
             }
         });
-
-        self.links.lock().await.insert(
-            link,
-            LinkState { peripheral, tx_characteristic, chunk_size: DEFAULT_CHUNK },
-        );
-
-        let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
-        let _ = self.tx.send(TalEvent::LinkUp { link, initiator: true, quality });
 
         Ok(link)
     }
@@ -327,7 +350,7 @@ impl BleCentral {
         if let Some(state) = state {
             let _ = state.peripheral.disconnect().await;
         }
-        let _ = self.tx.send(TalEvent::LinkDown { link });
+        let _ = self.tx.send(TalEvent::LinkDown { link }).await;
     }
 }
 
@@ -337,7 +360,7 @@ impl BleCentral {
 /// the adapter's event stream ends or nobody is listening on `tx` anymore.
 async fn watch_adapter(
     adapter: Adapter,
-    tx: mpsc::UnboundedSender<TalEvent>,
+    tx: mpsc::Sender<TalEvent>,
     links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>>,
 ) {
     let uuid = service_uuid();
@@ -361,14 +384,14 @@ async fn watch_adapter(
                         .unwrap_or(0),
                     Err(_) => 0,
                 };
-                if tx.send(TalEvent::Beacon { payload: payload.clone(), rssi }).is_err() {
+                if tx.send(TalEvent::Beacon { payload: payload.clone(), rssi }).await.is_err() {
                     return;
                 }
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
                 let removed = links.lock().await.remove(&link).is_some();
-                if removed && tx.send(TalEvent::LinkDown { link }).is_err() {
+                if removed && tx.send(TalEvent::LinkDown { link }).await.is_err() {
                     return;
                 }
             }
@@ -410,7 +433,38 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 
 #[cfg(test)]
 mod tests {
-    use super::mint_link_id;
+    use super::{event_channel, mint_link_id, EVENT_QUEUE_CAPACITY};
+    use mmp_tal::TalEvent;
+
+    #[tokio::test]
+    async fn event_channel_applies_bounded_fifo_backpressure() {
+        let (tx, mut rx) = event_channel();
+        for sequence in 0..EVENT_QUEUE_CAPACITY {
+            tx.send(TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] })
+                .await
+                .expect("capacity-sized event burst must fit");
+        }
+
+        assert!(tx.try_send(TalEvent::LinkData { link: 7, bytes: vec![0xff] }).is_err());
+
+        let producer = tokio::spawn(async move {
+            tx.send(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
+                .await
+                .expect("producer must resume after the receiver drains");
+        });
+        tokio::task::yield_now().await;
+        assert!(!producer.is_finished(), "full channel must apply backpressure");
+
+        for sequence in 0..EVENT_QUEUE_CAPACITY {
+            let event = rx.recv().await.expect("queued event must remain available");
+            assert_eq!(event, TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] });
+        }
+        producer.await.expect("producer task must complete");
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
+        );
+    }
 
     #[test]
     fn mint_link_id_is_deterministic_for_the_same_peer() {
