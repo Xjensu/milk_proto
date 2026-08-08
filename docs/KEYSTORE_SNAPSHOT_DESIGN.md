@@ -46,7 +46,11 @@ sender-key ratchets, one-time-prekey consumption/tombstone metadata, durable
 generation/rollback state, provider transactions, and crash recovery remain
 unimplemented gates. Group membership/epoch records may continue through the
 existing non-secret snapshot path, but group cryptographic material must not be
-silently regenerated as if it were restored secret state.
+silently regenerated as if it were restored secret state. The implementation
+now marks a decoded group as requiring one local sender-key re-gossip; the first
+post-restore group send schedules distributions before publishing ciphertext.
+If that distribution cannot be committed, the marker remains set and the send
+fails closed rather than advertising false continuity.
 
 Commit `9357a49` adds the Rust-internal vault seam around that aggregate. A
 canonical context binds the pairwise/prekey coverage version, local Ed25519

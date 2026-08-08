@@ -541,6 +541,13 @@ provider-local generation/expiry metadata and idempotent OTK-consumption
 tombstones; enforcing expiry/rotation still requires the trusted-clock and
 native-provider work below.
 
+The group non-secret restore path now carries an explicit re-gossip marker:
+`GroupState::decode` creates a fresh local sender key and the first subsequent
+group send schedules that key to every restored member before emitting group
+ciphertext. A failed distribution leaves the marker set and fails the send;
+this is an availability/re-gossip policy, not persistence of sender-key
+secrets.
+
 Commit `9357a49` adds the Rust-internal `SnapshotVault` seam. Its candidate
 record binds pairwise/prekey coverage, identity, node ID, and sorted
 conversation/peer context; `save_core` couples fresh-DEK sealing to a provider
