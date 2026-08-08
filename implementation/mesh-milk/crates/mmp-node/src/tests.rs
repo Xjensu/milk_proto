@@ -358,7 +358,12 @@ fn sealed_async_cannot_replace_established_conversation() {
     drain(&mut bob);
 
     let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
-    let original_root = bob.core.convs.get(&conv_id).expect("conversation established").ck0;
+    let original_receipt_key = *bob
+        .core
+        .convs
+        .get(&conv_id)
+        .expect("conversation established")
+        .receipt_key;
     assert!(bob.core.established_convs.contains(&conv_id));
 
     let second = alice
@@ -369,7 +374,11 @@ fn sealed_async_cannot_replace_established_conversation() {
     let (_, raw) = alice.core.store.get(&second).unwrap();
     let sealed = Bundle::decode_canonical(&raw).unwrap();
     assert!(bob.core.open_async(&sealed, &conv_id, &alice.core.public).is_none());
-    assert_eq!(bob.core.convs.get(&conv_id).unwrap().ck0, original_root);
+    assert_eq!(
+        *bob.core.convs.get(&conv_id).unwrap().receipt_key,
+        original_receipt_key,
+        "rejected sealed root must not replace receipt state"
+    );
 }
 
 #[test]

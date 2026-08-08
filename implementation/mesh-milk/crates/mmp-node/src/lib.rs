@@ -1977,8 +1977,7 @@ impl NodeCore {
 
     fn emit_receipt(&mut self, conv_id: &Id16, delivered: &Id16, origin: &Key32) {
         let Some(conv) = self.convs.get(conv_id) else { return };
-        let rkey = receipt::receipt_key(&conv.ck0);
-        let mac = receipt::receipt_mac(&rkey, delivered);
+        let mac = receipt::receipt_mac(&conv.receipt_key, delivered);
         let payload = ReceiptPayload { delivered: *delivered, mac }.encode();
         let mut bundle = Bundle {
             class: class::CONTROL,
@@ -2023,8 +2022,7 @@ impl NodeCore {
             .find_map(|(conv, first)| (*first == rp.delivered).then_some(*conv));
         let Some(conv_id) = sent.map(|message| message.conv).or(pending_conv) else { return };
         let Some(conv) = self.convs.get(&conv_id) else { return };
-        let rkey = receipt::receipt_key(&conv.ck0);
-        if !receipt::mac_eq(&rp.mac, &receipt::receipt_mac(&rkey, &rp.delivered)) {
+        if !receipt::mac_eq(&rp.mac, &receipt::receipt_mac(&conv.receipt_key, &rp.delivered)) {
             return;
         }
         if self.pending_first_contact.get(&conv_id) == Some(&rp.delivered) {

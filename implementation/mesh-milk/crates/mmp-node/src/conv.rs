@@ -2,8 +2,10 @@
 //! ratchet per direction + the causal DAG. One `Conv` per peer identity.
 
 use mmp_crypto::ratchet::{direction_chain, RecvChain, SendChain};
+use mmp_crypto::receipt::receipt_key;
 use mmp_types::consts::RATCHET_WINDOW;
 use mmp_types::ids::{Id16, Key32};
+use zeroize::Zeroizing;
 
 use mmp_core::ConversationDag;
 
@@ -14,7 +16,9 @@ pub struct Conv {
     pub id: Id16,
     #[allow(dead_code)]
     pub peer: Key32,
-    pub ck0: [u8; 32],
+    /// Receipt MAC key derived once from CK₀. CK₀ itself is not retained after
+    /// the directional chains are initialized.
+    pub(crate) receipt_key: Zeroizing<[u8; 32]>,
     pub send: SendChain,
     pub recv: RecvChain,
     pub dag: ConversationDag,
@@ -25,12 +29,14 @@ impl Conv {
     /// identity key, `peer` theirs — `direction_chain` makes each side's send
     /// chain equal the other's recv chain.
     pub fn new(id: Id16, me: &Key32, peer: &Key32, ck0: [u8; 32]) -> Conv {
+        let ck0 = Zeroizing::new(ck0);
         let send_seed = direction_chain(&ck0, me);
         let recv_seed = direction_chain(&ck0, peer);
+        let receipt_key = receipt_key(&ck0);
         Conv {
             id,
             peer: *peer,
-            ck0,
+            receipt_key,
             send: SendChain::new(*send_seed, 0),
             recv: RecvChain::new(*recv_seed, 0, RATCHET_WINDOW),
             dag: ConversationDag::new(),

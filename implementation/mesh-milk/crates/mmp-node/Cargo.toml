@@ -22,6 +22,7 @@ mmp-rs-code = { path = "../mmp-rs-code" }
 blake3 = { workspace = true }
 rand = { workspace = true }
 rand_core = { workspace = true }
+zeroize = { workspace = true }
 
 [lints]
 workspace = true
