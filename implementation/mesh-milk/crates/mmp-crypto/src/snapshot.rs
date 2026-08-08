@@ -85,6 +85,7 @@ pub fn seal(
         || generation == 0
         || generation == u64::MAX
         || written_at_ms == 0
+        || written_at_ms == u64::MAX
     {
         return Err(snapshot_error());
     }
@@ -134,7 +135,11 @@ pub fn open(
     let mut written_at_bytes = [0u8; 8];
     written_at_bytes.copy_from_slice(&header[14..22]);
     let written_at_ms = u64::from_le_bytes(written_at_bytes);
-    if written_at_ms > now_ms || now_ms.saturating_sub(written_at_ms) > ttl_ms {
+    if written_at_ms == 0
+        || written_at_ms == u64::MAX
+        || written_at_ms > now_ms
+        || now_ms.saturating_sub(written_at_ms) > ttl_ms
+    {
         return Err(snapshot_error());
     }
     let mut ciphertext_len_bytes = [0u8; 4];
@@ -241,6 +246,7 @@ mod tests {
         assert!(validate_next_generation(1, 1).is_err());
         assert!(validate_next_generation(1, 0).is_err());
         assert!(seal(KIND_NODE_SECRET_STATE, 1, 0, CONTEXT, &[7u8; 32], &mut rng, b"x").is_err());
+        assert!(seal(KIND_NODE_SECRET_STATE, 1, u64::MAX, CONTEXT, &[7u8; 32], &mut rng, b"x").is_err());
         let stale = seal(KIND_NODE_SECRET_STATE, 1, 1_000, CONTEXT, &[7u8; 32], &mut rng, b"x").unwrap();
         assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &stale, 1_001 + DEFAULT_TTL_MS, DEFAULT_TTL_MS).is_err());
         assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &stale, 999, DEFAULT_TTL_MS).is_err());
