@@ -492,9 +492,10 @@ async fn ensure_link_up(
         Err(AttachReject::DuplicateEndpoint | AttachReject::RetiredEndpoint | AttachReject::GenerationExhausted) => return None,
         Err(AttachReject::RetiredCapacity) => {
             // A live link that exhausted the stale-endpoint quarantine cannot
-            // safely admit another callback. Retire it atomically rather than
-            // silently preserving a potentially wedged stream.
-            let generation = links.lifecycle.retire_link(link);
+            // safely admit another callback. Quarantine it atomically rather
+            // than deleting the retirement history: forgetting that history
+            // would let a delayed BlueZ endpoint re-enter as a new link.
+            let generation = links.lifecycle.quarantine_link(link);
             links.states.remove(&link);
             drop(links);
             tx.retire_link(link);

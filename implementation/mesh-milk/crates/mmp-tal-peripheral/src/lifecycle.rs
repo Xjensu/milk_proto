@@ -84,6 +84,11 @@ pub(crate) struct AttachResult {
 struct LinkRecord {
     reader: Option<StreamToken>,
     writer: Option<StreamToken>,
+    /// The stale-endpoint quarantine reached its bound. Keep this tombstone
+    /// and reject every future callback for the stable LinkId until the
+    /// process is restarted, rather than forgetting identities and admitting
+    /// a delayed BlueZ endpoint as a fresh link.
+    quarantined: bool,
     // Retain endpoint identities until the logical link closes. The attach
     // path applies a hard cap and rejects further replacements; it never
     // silently evicts an identity and re-admits a delayed callback.
@@ -128,6 +133,9 @@ impl LinkLifecycle {
         }
 
         let record = self.records.get(&link).expect("record exists");
+        if record.quarantined {
+            return Err(AttachReject::RetiredCapacity);
+        }
         let retired = match side {
             StreamSide::Reader => &record.retired_reader_endpoints,
             StreamSide::Writer => &record.retired_writer_endpoints,
@@ -225,6 +233,23 @@ impl LinkLifecycle {
             .flatten()
             .map(|token| token.generation)
             .max()
+    }
+
+    /// Fence a link after its retired-endpoint budget is exhausted while
+    /// retaining the quarantine record. The caller removes the corresponding
+    /// host state and emits the reserved `LinkDown`; later callbacks cannot
+    /// recreate the link by causing the record to be forgotten.
+    pub(crate) fn quarantine_link(&mut self, link: LinkId) -> Option<u64> {
+        let record = self.records.get_mut(&link)?;
+        let generation = [record.reader, record.writer]
+            .into_iter()
+            .flatten()
+            .map(|token| token.generation)
+            .max();
+        record.reader = None;
+        record.writer = None;
+        record.quarantined = true;
+        generation
     }
 
     pub(crate) fn drain(&mut self) -> Vec<(LinkId, u64)> {
@@ -373,6 +398,28 @@ mod tests {
         assert!(matches!(rejected, Err(super::AttachReject::RetiredCapacity)), "replacement must fail closed at the cap");
         assert!(lifecycle.is_current(current));
         assert!(matches!(lifecycle.attach(7, StreamSide::Reader, 1000), Err(super::AttachReject::RetiredEndpoint)), "evicted endpoint must not be re-admitted");
+    }
+
+    #[test]
+    fn capacity_quarantine_keeps_delayed_endpoints_fenced() {
+        let mut lifecycle = LinkLifecycle::default();
+        let mut current = lifecycle.attach(7, StreamSide::Reader, 1000).expect("initial reader").token;
+        for endpoint in 0..MAX_RETIRED_ENDPOINTS_PER_SIDE {
+            current = lifecycle
+                .attach(7, StreamSide::Reader, endpoint as i64)
+                .expect("replacement must fit the retired identity budget")
+                .token;
+        }
+        assert!(matches!(lifecycle.attach(7, StreamSide::Reader, 999_999), Err(super::AttachReject::RetiredCapacity)));
+        assert_eq!(lifecycle.quarantine_link(7), Some(current.generation));
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 999_999),
+            Err(super::AttachReject::RetiredCapacity)
+        ));
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 1000),
+            Err(super::AttachReject::RetiredCapacity)
+        ));
     }
 
     #[test]
