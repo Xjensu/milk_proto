@@ -8,7 +8,7 @@ Every claim below was checked against the workspace at `implementation/mesh-milk
 
 **Addendum, 2026-08-08:** E5-S4 is now committed (`b07a0b7`, `c34069b`, `66786fb` and follow-up documentation): deterministic envelope, bundle, beacon, HELLO, frame-payload, negative, and cross-domain artifacts are under `implementation/mesh-milk/vectors/`, with independent readers and `coverage.json`. The CLI snapshot workflow was corrected in `a73f747`: `connect` now restores persisted claims/groups/replay/receipt state, and exit-time persistence stages the same state before writing; a restart regression test covers this path. The serial workspace matrix passes, `mmp-cli` has 26 tests, clippy is clean, and `layer-check` passes. A real two-machine BLE exchange remains unverified because this Windows host has no usable Linux/BlueZ peripheral path; see `docs/MANUAL_INTEROP_TESTING.md` and `docs/E5-S4_CONFORMANCE_HANDOFF.md` for the reproducible procedure and evidence boundary.
 
-**Current checkpoint, 2026-08-08 (`d57657c`):** The historical counts and
+**Current checkpoint, 2026-08-08 (`6813a77`):** The historical counts and
 commit list above are not the current verification record. Since that addendum,
 the implementation has added strict outbound/inbound frame caps, sender-key
 provenance guards, bounded hostile-count and file-manifest parsing, bounded
@@ -24,7 +24,8 @@ also bounded to 2048 FIFO events and applies async backpressure to notification
 and link-control producers, so a stalled host cannot grow that queue without
 bound. The Linux peripheral API now applies the same bounded FIFO policy;
 generation fencing, reserved control capacity, and overflow retirement remain
-open for the next transport-hardening slice. The latest
+open for the next transport-hardening slice; central per-link TX chunk
+serialization is now enforced. The latest
 serial workspace matrix passes with zero failures; the current handoff records the exact per-crate counts and
 ignored simulation cases in `docs/E5-S4_CONFORMANCE_HANDOFF.md`. The
 specification remains unchanged. The real Linux/BlueZ two-host exchange and a

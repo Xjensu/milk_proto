@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `d57657c` (`fix(mmp-tal-peripheral): bound event channel`). The
+This checkpoint is commit `6813a77` (`fix(mmp-tal-btleplug): serialize link teardown`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -69,6 +69,13 @@ Recent focused commits, oldest first:
   the Linux peripheral API and aligned the unsupported-platform receiver type.
   ATT read/control producers await capacity rather than silently dropping
   ordered bytes; Linux runtime compilation remains BlueZ/pkg-config gated here.
+- `e106b9a` — added a per-link async write gate to the central `send` path and
+  held it across the complete ATT chunk loop, so concurrent callers cannot
+  interleave encrypted frame chunks. The regression test exercises the gate
+  under two concurrent Tokio tasks.
+- `6813a77` — acquired that same write gate before central `hangup` and adapter
+  disconnect removal, so teardown waits for an in-flight write sequence instead
+  of disconnecting halfway through an encrypted frame.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -164,6 +171,11 @@ including its bounded FIFO regression, and package clippy passed with
 `libdbus-sys` before compiling the backend because this Windows host lacks a
 configured Linux pkg-config/sysroot; the real BlueZ build/hardware gate is
 unchanged.
+After `e106b9a`, `mmp-tal-btleplug` passed 9 tests, including the concurrent
+write-gate regression, and package clippy passed with `-D warnings`.
+After `6813a77`, the full workspace matrix passed with 228 active test items
+and 4 intentionally ignored simulator cases; workspace clippy and
+`layer-check` remained clean.
 
 Regenerate vectors with:
 
@@ -218,10 +230,10 @@ Record evidence and obtain a protocol decision first.
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
 5. Add generation fencing for stable `LinkId` reconnects in both real BLE
-   backends, and serialize the central TX chunk loop per link. A stale reader
-   or disconnect callback must not remove a replacement session or inject old
-   encrypted bytes. Also design reserved control capacity/overflow retirement
-   so a stalled consumer cannot delay `LinkDown` indefinitely behind data.
+   backends. A stale reader or disconnect callback must not remove a replacement
+   session or inject old encrypted bytes. Also design reserved control
+   capacity/overflow retirement so a stalled consumer cannot delay `LinkDown`
+   indefinitely behind data.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
