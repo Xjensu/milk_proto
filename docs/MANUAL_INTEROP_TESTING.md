@@ -157,6 +157,16 @@ GATT subscriptions, permissions, background execution, and clock values, then
 passes received link bytes to `MmpNode` and writes bytes returned by the FFI
 back to the platform BLE characteristic.
 
+The repository also contains an Android-SDK-free Kotlin drive-loop reference at
+`implementation/mesh-milk/platform/kotlin-mesh-drive/`. Its injected clock,
+scanner, advertiser, GATT, and node adapters make callback ordering and
+MTU-minus-three fragmentation testable in a JVM-capable consuming project. The
+source-level checks in `scripts/tests/test_kotlin_mesh_drive.py` are not a
+substitute for Kotlin compilation or a device test. Hosts that need a complete
+on-disk snapshot quota can use the additive FFI constructor
+`MmpNode.newWithStoreLimit(...)`; the quota includes framing and auxiliary
+records, while the legacy `MmpNode.new(...)` behavior is unchanged.
+
 ### Android preparation
 
 On a Linux/macOS host with Android SDK/NDK, `cargo-ndk`, and the required
