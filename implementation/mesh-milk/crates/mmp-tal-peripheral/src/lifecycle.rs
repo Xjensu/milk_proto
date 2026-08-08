@@ -7,14 +7,27 @@
 //! BlueZ presents the two GATT directions as independent control events.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use mmp_tal::LinkId;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
+use tokio::time::{timeout, Duration};
 
 /// Maximum retired endpoint identities retained per stream direction for one
 /// logical link. This is a transport-memory limit, not a wire/protocol limit.
 /// Once reached, a new replacement is rejected rather than evicting an old
 /// identity and risking re-admission of a delayed BlueZ callback.
 pub(crate) const MAX_RETIRED_ENDPOINTS_PER_SIDE: usize = 256;
+
+/// Wait briefly for an in-flight notification to quiesce. Lifecycle teardown
+/// must not hold the event gate forever behind a stalled BlueZ write; callers
+/// remove and fence the logical link first, then use this bounded wait before
+/// dropping the transport endpoint.
+pub(crate) async fn acquire_write_gate_bounded(
+    gate: &Arc<AsyncMutex<()>>,
+) -> Option<OwnedMutexGuard<()>> {
+    timeout(Duration::from_millis(250), gate.clone().lock_owned()).await.ok()
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum StreamSide {
@@ -211,7 +224,29 @@ impl LinkLifecycle {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::Mutex as AsyncMutex;
+    use tokio::time::{timeout, Duration};
+
     use super::{LinkLifecycle, StreamSide, MAX_RETIRED_ENDPOINTS_PER_SIDE};
+
+    #[tokio::test]
+    async fn close_path_does_not_wait_indefinitely_for_a_stuck_write_gate() {
+        let gate = Arc::new(AsyncMutex::new(()));
+        let held = gate.clone().lock_owned().await;
+
+        let completed = timeout(
+            Duration::from_secs(1),
+            super::acquire_write_gate_bounded(&gate),
+        )
+        .await
+        .expect("close path must not wait indefinitely")
+        .is_none();
+
+        assert!(completed, "a stuck write gate must time out and fail closed");
+        drop(held);
+    }
 
     #[test]
     fn reader_and_writer_attach_to_one_generation() {

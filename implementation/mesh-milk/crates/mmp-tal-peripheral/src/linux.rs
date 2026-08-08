@@ -54,7 +54,9 @@ use crate::{
     DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
-use crate::lifecycle::{AttachReject, AttachResult, LinkLifecycle, StreamSide, StreamToken};
+use crate::lifecycle::{
+    acquire_write_gate_bounded, AttachReject, AttachResult, LinkLifecycle, StreamSide, StreamToken,
+};
 
 /// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
 /// tokens are kept alongside the writer so stale callbacks can be rejected;
@@ -230,27 +232,31 @@ impl PeripheralRole {
     /// registry state drops the BlueZ writer and fences delayed reader
     /// callbacks; the reserved `LinkDown` also purges the TAL ingress queue.
     pub async fn close_link(&self, link: LinkId) -> Result<(), PeriphError> {
-        let _event_guard = self.event_gate.lock().await;
-        let write_gate = self
-            .links
-            .lock()
-            .await
-            .states
-            .get(&link)
-            .map(|state| state.write_gate.clone())
-            .ok_or(PeriphError::UnknownLink)?;
-        let _write_guard = write_gate.lock_owned().await;
-        let generation = {
+        let write_gate = {
+            // Remove and fence the logical link while holding the lifecycle
+            // gate, but never await the per-link writer under that gate. The
+            // replacement path acquires the same locks in the opposite order
+            // (writer first, then lifecycle), so waiting here would deadlock
+            // teardown behind a stalled notification.
+            let _event_guard = self.event_gate.lock().await;
             let mut links = self.links.lock().await;
+            let write_gate = links
+                .states
+                .get(&link)
+                .map(|state| state.write_gate.clone())
+                .ok_or(PeriphError::UnknownLink)?;
             let generation = links.lifecycle.retire_link(link);
             if generation.is_some() {
                 links.states.remove(&link);
             }
-            generation
+            let Some(generation) = generation else { return Err(PeriphError::UnknownLink) };
+            self.tx.retire_link(link);
+            let _ = try_link_down(&self.tx, link, generation);
+            write_gate
         };
-        let Some(generation) = generation else { return Err(PeriphError::UnknownLink) };
-        self.tx.retire_link(link);
-        let _ = try_link_down(&self.tx, link, generation);
+        // A healthy writer quiesces quickly; a stalled BlueZ write is fenced
+        // by the endpoint removal and must not block close_link indefinitely.
+        let _ = acquire_write_gate_bounded(&write_gate).await;
         Ok(())
     }
 
