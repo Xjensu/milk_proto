@@ -60,6 +60,10 @@ pub enum FfiError {
     /// required group key) yet. A prekey batch is optional: direct messaging
     /// falls back to the sealed-box baseline when only the exchange key exists.
     UnknownPeer,
+    /// The first-contact async bundle is awaiting an authenticated receipt;
+    /// retry after delivery is confirmed rather than creating an unsafe direct
+    /// bundle that could outrun root establishment.
+    ConversationPending,
     /// An invariant inside the core was violated; should not happen in
     /// practice and indicates a bug rather than a normal protocol outcome.
     Internal,
@@ -70,6 +74,7 @@ impl std::fmt::Display for FfiError {
         match self {
             FfiError::BadArg => write!(f, "bad argument: wrong length or malformed encoding"),
             FfiError::UnknownPeer => write!(f, "unknown peer: no exchange key on file"),
+            FfiError::ConversationPending => write!(f, "conversation pending: await first-contact receipt"),
             FfiError::Internal => write!(f, "internal error"),
         }
     }
@@ -80,6 +85,7 @@ impl std::error::Error for FfiError {}
 fn map_send_error(e: SendError) -> FfiError {
     match e {
         SendError::UnknownPeer => FfiError::UnknownPeer,
+        SendError::ConversationPending => FfiError::ConversationPending,
         // "Too large" is caller-controlled input, not a protocol-unknown
         // condition — surface it as a bad argument.
         SendError::TooLarge => FfiError::BadArg,

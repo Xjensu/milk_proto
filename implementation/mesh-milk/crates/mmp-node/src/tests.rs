@@ -7,7 +7,7 @@ use mmp_tal::TalEvent;
 use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
 use mmp_types::authcert::AuthCert;
 use mmp_types::bundle::{class, prio, Bundle};
-use mmp_types::consts::FRIENDSHIP_TTL_MS;
+use mmp_types::consts::{FRIENDSHIP_TTL_MS, MAX_BUNDLE};
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload};
@@ -343,6 +343,62 @@ fn sealed_async_cannot_replace_established_conversation() {
     let sealed = Bundle::decode_canonical(&raw).unwrap();
     assert!(bob.core.open_async(&sealed, &conv_id, &alice.core.public).is_none());
     assert_eq!(bob.core.convs.get(&conv_id).unwrap().ck0, original_root);
+}
+
+#[test]
+fn oversized_prekey_first_send_does_not_poison_async_state() {
+    let mut alice = node(47);
+    let mut bob = node(48);
+    introduce(&mut alice, &mut bob);
+
+    let oversized = "x".repeat(MAX_BUNDLE);
+    assert_eq!(alice.send_text(&bob.node_id(), &oversized), Err(SendError::TooLarge));
+
+    let msg_id = alice.send_text(&bob.node_id(), "retry after rejection").unwrap();
+    let (_, raw) = alice.core.store.get(&msg_id).unwrap();
+    let bundle = Bundle::decode_canonical(&raw).unwrap();
+    assert!(matches!(
+        AsyncPayload::decode(&bundle.payload).unwrap(),
+        AsyncPayload::Prekey { .. }
+    ));
+
+    contact(&mut alice, &mut bob, 47, 10_000);
+    let bob_events = drain(&mut bob);
+    assert!(
+        bob_events
+            .iter()
+            .any(|event| matches!(event, Event::MessageReceived { body, .. } if body == b"retry after rejection")),
+        "retry must decrypt after rejected oversized first send: {bob_events:?}"
+    );
+}
+
+#[test]
+fn second_first_contact_send_is_explicitly_rejected_until_receipt() {
+    let mut alice = node(49);
+    let mut bob = node(50);
+    introduce_exchange_only(&mut alice, &mut bob);
+
+    let first = alice.send_text(&bob.node_id(), "first sealed root").unwrap();
+    assert_eq!(
+        alice.send_text(&bob.node_id(), "must wait"),
+        Err(SendError::ConversationPending)
+    );
+
+    contact(&mut alice, &mut bob, 49, 10_000);
+    assert!(drain(&mut bob).iter().any(|event| {
+        matches!(event, Event::MessageReceived { id, body, .. } if *id == first && body == b"first sealed root")
+    }));
+    assert_eq!(
+        alice.send_text(&bob.node_id(), "still waiting for receipt"),
+        Err(SendError::ConversationPending)
+    );
+
+    contact(&mut alice, &mut bob, 50, 20_000);
+    assert!(drain(&mut alice).iter().any(|event| matches!(event, Event::Delivered { id } if *id == first)));
+    let second = alice.send_text(&bob.node_id(), "now direct").unwrap();
+    let (_, raw) = alice.core.store.get(&second).unwrap();
+    let bundle = Bundle::decode_canonical(&raw).unwrap();
+    assert!(mmp_types::payload::DirectPayload::decode(&bundle.payload).is_ok());
 }
 
 /// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session
@@ -1188,6 +1244,14 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
 
     // Dedup by content address (decision D6): identical bytes ⇒ zero new
     // class-4 bundles minted, only a fresh manifest message.
+    // The first-contact manifest is an async root-establishing bundle. Its
+    // receipt is generated only after the first reconciliation pass, so a
+    // subsequent application send must wait for one more contact rather than
+    // racing a direct bundle ahead of the root.
+    contact(&mut a, &mut b, 2, 20_000);
+    drain(&mut a);
+    drain(&mut b);
+
     let symbol_count = |n: &Node| {
         n.core.store.all_meta().iter().filter(|m| m.class == mmp_types::bundle::class::SYMBOL).count()
     };

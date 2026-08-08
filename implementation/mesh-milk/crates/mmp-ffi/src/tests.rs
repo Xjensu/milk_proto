@@ -7,7 +7,7 @@
 //! bindings-generation step here) — it exercises the exact Rust surface
 //! those bindings call into.
 
-use super::{FfiEvent, FfiTier, MmpNode};
+use super::{FfiError, FfiEvent, FfiTier, MmpNode};
 
 fn node(seed: u8) -> std::sync::Arc<MmpNode> {
     MmpNode::new(vec![seed; 32], FfiTier::Relay, None).expect("valid 32-byte seed")
@@ -80,6 +80,22 @@ fn direct_message_delivery_via_ffi_surface() {
     assert!(
         alice_events.iter().any(|e| matches!(e, FfiEvent::Delivered { id } if *id == msg_id)),
         "alice got the delivery receipt: {alice_events:?}"
+    );
+}
+
+#[test]
+fn first_contact_reordering_guard_is_visible_at_ffi_boundary() {
+    let alice = node(11);
+    let bob = node(12);
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    let bob_id = bob.node_id();
+    alice.send_text(bob_id.clone(), "first".to_string()).unwrap();
+    assert_eq!(
+        alice.send_text(bob_id, "second before root".to_string()),
+        Err(FfiError::ConversationPending)
     );
 }
 

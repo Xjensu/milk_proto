@@ -49,6 +49,7 @@ use mmp_router::{
 use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, RevocationList};
 use mmp_types::bundle::{
     class, prio, Bundle, FLAG_ASYNC_KEYS, FLAG_HAS_PARENTS, FLAG_WANTS_RECEIPT, LIFETIME_OFFSET,
+    SIG_LEN,
 };
 use mmp_types::claim::{field, friendship_signed_object, Claim, Friendship, PrekeyBatch, Revocation};
 use mmp_types::consts::{
@@ -77,6 +78,14 @@ use mmp_tal::{LinkId, TalEvent};
 
 /// Well-known scope for claim gossip bundles (dest is routing-opaque).
 const CLAIM_SCOPE: Id16 = Id16([0xff; 16]);
+
+/// Compute the complete encoded bundle length without calling `Bundle::encode`.
+/// The latter has a debug assertion at the frozen MAX_BUNDLE boundary, so
+/// admission checks must be able to reject an oversized candidate first.
+fn bundle_wire_len(bundle: &Bundle) -> usize {
+    bundle.canonical_zeroed().len() + SIG_LEN
+}
+
 /// The core grants eight data-frame credits; reserve four control frames for
 /// handshake/credit/close traffic when sizing the host-side queue.
 const OUTBOX_DATA_CREDIT_WINDOW: usize = 8;
@@ -367,6 +376,10 @@ struct SentMessage {
 pub enum SendError {
     /// We lack the peer's exchange-key / prekey-batch claim (or group key).
     UnknownPeer,
+    /// The first-contact async bundle is still awaiting an authenticated
+    /// receipt; emitting a direct bundle now could arrive before the peer has
+    /// established its conversation root under DTN reordering.
+    ConversationPending,
     /// Body exceeds MAX_BUNDLE after framing.
     TooLarge,
     /// `peer` has published a valid identity revocation (handbook §4.6) —
@@ -449,6 +462,10 @@ struct NodeCore {
     prekeys: PrekeyStore,
     /// (conv → X3DH material) consumed by the first outgoing message.
     pending_async: HashMap<Id16, (Key32, u16)>,
+    /// First-contact bundle IDs awaiting an authenticated receipt. While
+    /// present, subsequent application sends are rejected locally rather than
+    /// emitting direct bundles that could outrun root establishment.
+    pending_first_contact: HashMap<Id16, Id16>,
     /// Sender-key dists already sent, keyed (gid, member, epoch).
     sent_dists: HashSet<(Id16, NodeId, u16)>,
     events: VecDeque<Event>,
@@ -550,6 +567,7 @@ impl Node {
             groups: HashMap::new(),
             prekeys,
             pending_async: HashMap::new(),
+            pending_first_contact: HashMap::new(),
             sent_dists: HashSet::new(),
             events: VecDeque::new(),
             sent: HashMap::new(),
@@ -1224,6 +1242,7 @@ impl Node {
         let expired = self.core.store.expire(now_ms);
         for id in &expired {
             self.core.diag.log(*id, JourneyEvent::Expired, now_ms);
+            self.core.pending_first_contact.retain(|_, pending| pending != id);
             if let Some(m) = self.core.sent.get_mut(id) {
                 if m.state != DeliveryState::Delivered {
                     m.state = DeliveryState::Expired;
@@ -1400,7 +1419,7 @@ impl NodeCore {
             signature: Sig64::ZERO,
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        if bundle.encode().len() > MAX_BUNDLE {
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
         let budget = origin_budget(self.utility.n_hat(self.now));
@@ -1549,7 +1568,7 @@ impl NodeCore {
         );
         bundle.payload = AsyncPayload::Sealed { eph, ct }.encode();
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        if bundle.encode().len() > MAX_BUNDLE {
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
 
@@ -1558,6 +1577,7 @@ impl NodeCore {
         let mut conv = Conv::new(conv_id, &self.public, peer_pub, *ck0);
         conv.dag.insert(id, &[]);
         self.convs.insert(conv_id, conv);
+        self.pending_first_contact.insert(conv_id, id);
         Ok(id)
     }
 
@@ -1582,6 +1602,40 @@ impl NodeCore {
         }
         let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
         let conv_id = conversation_id(&self.public, &peer_pub);
+        if self.pending_first_contact.contains_key(&conv_id) {
+            return Err(SendError::ConversationPending);
+        }
+        let mut body = Vec::with_capacity(1 + payload.len());
+        body.push(app);
+        body.extend_from_slice(payload);
+
+        if !self.convs.contains_key(&conv_id) {
+            // Preflight the largest first-contact encoding (the prekey form)
+            // before generating ephemeral material or creating a Conv. The
+            // sealed fallback is smaller, so this is a safe upper bound for
+            // both normative async modes.
+            let first_placeholder = AsyncPayload::Prekey {
+                prekey_id: 0,
+                sender_xpk: self.exchange,
+                eph: Key32([0; 32]),
+                ct: vec![0u8; body.len() + 16],
+            }
+            .encode();
+            let first_bundle = Bundle {
+                class: class::DIRECT,
+                flags: FLAG_ASYNC_KEYS | FLAG_WANTS_RECEIPT,
+                origin: self.public,
+                dest: Id16(peer.0),
+                lifetime_ms: LIFETIME_MESSAGE_MS,
+                priority: 1,
+                exts: Vec::new(),
+                payload: first_placeholder,
+                signature: Sig64::ZERO,
+            };
+            if bundle_wire_len(&first_bundle) > MAX_BUNDLE {
+                return Err(SendError::TooLarge);
+            }
+        }
 
         if !self.convs.contains_key(&conv_id) {
             // Prefer X3DH against the peer's prekey batch (doc 08 §4.2), but
@@ -1599,18 +1653,9 @@ impl NodeCore {
             self.pending_async.insert(conv_id, (agreement.eph_pub, agreement.prekey_id));
         }
 
-        let (msg_key, epoch, index, parents) = {
-            let conv = self.convs.get_mut(&conv_id).expect("just ensured");
-            let (msg_key, epoch, index) = conv.send.next();
-            (msg_key, epoch, index, conv.dag.heads())
-        };
-
-        let mut body = Vec::with_capacity(1 + payload.len());
-        body.push(app);
-        body.extend_from_slice(payload);
-
         let dest = Id16(peer.0);
         let pending = self.pending_async.get(&conv_id).copied();
+        let parents = self.convs.get(&conv_id).map(|conv| conv.dag.heads()).unwrap_or_default();
         let mut flags = FLAG_WANTS_RECEIPT;
         if pending.is_some() {
             flags |= FLAG_ASYNC_KEYS;
@@ -1636,7 +1681,9 @@ impl NodeCore {
             }
             .encode()
         } else {
-            DirectPayload { conv: conv_id, epoch, index, ct: placeholder_ct }.encode()
+            // Epoch and index are fixed-width fields; zero is a sizing
+            // placeholder and does not consume the sender ratchet.
+            DirectPayload { conv: conv_id, epoch: 0, index: 0, ct: placeholder_ct }.encode()
         };
         let mut bundle = Bundle {
             class: class::DIRECT,
@@ -1649,6 +1696,17 @@ impl NodeCore {
             payload: placeholder_payload,
             signature: Sig64::ZERO,
         };
+        // Validate the exact wire size before advancing the sender chain.
+        // This keeps a rejected oversized send from poisoning the next
+        // first-contact async index or a later direct message.
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
+
+        let (msg_key, epoch, index) = {
+            let conv = self.convs.get_mut(&conv_id).expect("just ensured");
+            conv.send.next()
+        };
         let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
         let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
         bundle.payload = if let Some((eph, prekey_id)) = pending {
@@ -1657,7 +1715,7 @@ impl NodeCore {
             DirectPayload { conv: conv_id, epoch, index, ct }.encode()
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        if bundle.encode().len() > MAX_BUNDLE {
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
         if pending.is_some() {
@@ -1668,6 +1726,9 @@ impl NodeCore {
         let id = self.store_own(bundle, budget);
         if let Some(c) = self.convs.get_mut(&conv_id) {
             c.dag.insert(id, &parents_copy);
+        }
+        if pending.is_some() {
+            self.pending_first_contact.insert(conv_id, id);
         }
         Ok(id)
     }
@@ -1724,7 +1785,7 @@ impl NodeCore {
             signature: Sig64::ZERO,
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        if bundle.encode().len() > MAX_BUNDLE {
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
         let budget = origin_budget(self.utility.n_hat(self.now));
@@ -1939,14 +2000,25 @@ impl NodeCore {
             return;
         }
         // We are the origin: check the conversation MAC (proof of delivery).
-        let Some(sent) = self.sent.get(&rp.delivered).copied() else { return };
-        let Some(conv) = self.convs.get(&sent.conv) else { return };
+        let sent = self.sent.get(&rp.delivered).copied();
+        let pending_conv = self
+            .pending_first_contact
+            .iter()
+            .find_map(|(conv, first)| (*first == rp.delivered).then_some(*conv));
+        let Some(conv_id) = sent.map(|message| message.conv).or(pending_conv) else { return };
+        let Some(conv) = self.convs.get(&conv_id) else { return };
         let rkey = receipt::receipt_key(&conv.ck0);
         if !receipt::mac_eq(&rp.mac, &receipt::receipt_mac(&rkey, &rp.delivered)) {
             return;
         }
+        if self.pending_first_contact.get(&conv_id) == Some(&rp.delivered) {
+            self.pending_first_contact.remove(&conv_id);
+        }
         if let Some(m) = self.sent.get_mut(&rp.delivered) {
             m.state = DeliveryState::Delivered;
+        }
+        if sent.is_none() {
+            return;
         }
         self.events.push_back(Event::Delivered { id: rp.delivered });
         self.events
