@@ -151,7 +151,9 @@ impl Bundle {
             .len()
             .checked_sub(self.payload.len() + 2)
             .expect("bundle encoding always contains payload length");
-        bytes.truncate(payload_start);
+        // Keep the two-byte length field in the AD; only the payload bytes
+        // themselves and the trailing signature are excluded.
+        bytes.truncate(payload_start + 2);
         zero_lifetime(&mut bytes);
         bytes
     }

@@ -42,3 +42,15 @@ fn canonical_aead_ad_binds_routing_header_fields() {
     changed_priority.priority = 2;
     assert_ne!(base.canonical_aead_ad(), changed_priority.canonical_aead_ad());
 }
+
+#[test]
+fn canonical_aead_ad_binds_payload_length_without_binding_payload_bytes() {
+    let short = bundle(72_000, 0x22, 1, vec![0xaa]);
+    let long = bundle(72_000, 0x22, 1, vec![0xaa, 0xbb]);
+
+    assert_ne!(short.canonical_aead_ad(), long.canonical_aead_ad());
+
+    let mut same_length = short.clone();
+    same_length.payload = vec![0xcc];
+    assert_eq!(short.canonical_aead_ad(), same_length.canonical_aead_ad());
+}
