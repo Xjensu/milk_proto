@@ -20,6 +20,7 @@ use crate::rbsr::{IdSource, Reconciler, DOMAIN_REPLY_FLAG};
 /// Reconciliation domains driven in priority order (doc 06 §2). D4 (blob
 /// availability) is WANT-driven in the MVP rather than range-reconciled.
 const DOMAINS: [u8; 4] = [0, 1, 2, 3];
+const RX_REASSEMBLY_CAP: usize = MAX_ENVELOPE_PAYLOAD + 3;
 
 const fn frame_payload_within_cap(len: usize) -> bool {
     len <= MAX_FRAME_PAYLOAD
@@ -27,6 +28,19 @@ const fn frame_payload_within_cap(len: usize) -> bool {
 
 const fn envelope_payload_within_cap(len: usize) -> bool {
     len <= MAX_ENVELOPE_PAYLOAD
+}
+
+/// Read an envelope length from the bytes already buffered plus the next
+/// transport chunk, without copying either side.  A length is returned only
+/// once the two-byte prefix is available; this lets [`SessionEngine::on_wire`]
+/// reject an oversized prefix before appending attacker-controlled bytes.
+fn declared_len(buffered: &[u8], incoming: &[u8]) -> Option<usize> {
+    match buffered.len() {
+        n if n >= 2 => Some(u16::from_le_bytes([buffered[0], buffered[1]]) as usize),
+        1 if !incoming.is_empty() => Some(u16::from_le_bytes([buffered[0], incoming[0]]) as usize),
+        0 if incoming.len() >= 2 => Some(u16::from_le_bytes([incoming[0], incoming[1]]) as usize),
+        _ => None,
+    }
 }
 
 /// Everything the engine needs from the node. All methods are synchronous and
@@ -264,28 +278,60 @@ impl SessionEngine {
         if self.phase == Phase::Closed {
             return;
         }
-        self.last_activity = now_ms;
-        self.rx.extend_from_slice(bytes);
+        let mut offset = 0usize;
         loop {
-            let (typ, payload, consumed) = match read_envelope(&self.rx) {
-                Ok(Some(x)) => (x.0, x.1.to_vec(), x.2),
-                Ok(None) => break,
-                Err(_) => {
+            // Validate a complete two-byte length prefix before appending any
+            // transport bytes.  This matters for both a fresh oversized frame
+            // and a prefix split across two transport callbacks: malformed
+            // input must not count as activity or inflate `rx` first.
+            if let Some(len) = declared_len(&self.rx, &bytes[offset..]) {
+                if len > MAX_ENVELOPE_PAYLOAD {
                     self.protocol_error(errcode::OVERSIZE);
                     return;
                 }
-            };
-            self.rx.drain(..consumed);
-            self.on_envelope(typ, &payload, now_ms, identity, host);
-            if self.phase == Phase::Closed {
-                return;
+            }
+
+            if offset < bytes.len() {
+                let room = RX_REASSEMBLY_CAP.saturating_sub(self.rx.len());
+                if room == 0 {
+                    self.protocol_error(errcode::OVERSIZE);
+                    return;
+                }
+                let take = core::cmp::min(room, bytes.len() - offset);
+                self.rx.extend_from_slice(&bytes[offset..offset + take]);
+                offset += take;
+                // Only accepted bytes are activity.  A rejected length prefix
+                // above leaves the timer untouched, so a peer cannot keep a
+                // malformed session alive by repeatedly sending junk.
+                self.last_activity = now_ms;
+            }
+
+            loop {
+                let (typ, payload, consumed) = match read_envelope(&self.rx) {
+                    Ok(Some(x)) => (x.0, x.1.to_vec(), x.2),
+                    Ok(None) => break,
+                    Err(_) => {
+                        self.protocol_error(errcode::OVERSIZE);
+                        return;
+                    }
+                };
+                self.rx.drain(..consumed);
+                self.on_envelope(typ, &payload, now_ms, identity, host);
+                if self.phase == Phase::Closed {
+                    return;
+                }
+            }
+
+            if offset >= bytes.len() {
+                break;
             }
         }
+
         // Reassembly bound (AUDIT F10): after draining complete frames, a
-        // retained partial frame can never legitimately exceed one envelope —
-        // the length prefix over the cap was already rejected by read_envelope,
-        // so this bounds attacker-pinned memory per session.
-        if self.rx.len() > MAX_ENVELOPE_PAYLOAD + 3 {
+        // retained partial frame can never exceed one envelope.  Keep the
+        // check as a final defence if a future parser change violates that
+        // invariant.
+        if self.rx.len() > RX_REASSEMBLY_CAP {
             self.protocol_error(errcode::OVERSIZE);
         }
     }
@@ -639,5 +685,130 @@ mod wire_budget_tests {
     fn receive_caps_reject_aggregate_plaintext_before_frame_decode() {
         let payload = vec![0u8; MAX_FRAME_PAYLOAD + 1];
         assert_eq!(Frame::decode_payload(FT_FRIEND_OFFER, &payload), Err(WireError::Oversize));
+    }
+}
+
+#[cfg(test)]
+mod rx_bound_tests {
+    use super::*;
+    use alloc::vec;
+    use mmp_types::frame::FT_CREDIT;
+
+    struct EmptyIds;
+
+    impl IdSource for EmptyIds {
+        fn ids_in(&mut self, _domain: u8, _lo: &Id16, _hi: &Id16) -> Vec<Id16> {
+            Vec::new()
+        }
+
+        fn has(&mut self, _id: &Id16) -> bool {
+            false
+        }
+    }
+
+    struct EmptyHost {
+        ids: EmptyIds,
+    }
+
+    impl SessionHost for EmptyHost {
+        type Ids = EmptyIds;
+
+        fn ids(&mut self, _peer: &NodeId) -> &mut Self::Ids {
+            &mut self.ids
+        }
+
+        fn summary(&mut self, _peer: &NodeId) -> Summary {
+            Summary::default()
+        }
+
+        fn on_summary(&mut self, _peer: &NodeId, _summary: Summary) {}
+
+        fn load_for_handoff(&mut self, _peer: &NodeId, _id: &Id16) -> Option<(Vec<u8>, u8)> {
+            None
+        }
+
+        fn on_bundle(&mut self, _peer: &NodeId, _bytes: &[u8]) {}
+
+        fn on_budget(&mut self, _peer: &NodeId, _id: &Id16, _granted: u8) {}
+
+        fn wants(&mut self, _peer: &NodeId) -> Vec<Id16> {
+            Vec::new()
+        }
+
+        fn accept_peer(&mut self, _identity: &Key32, _node: &NodeId) -> bool {
+            true
+        }
+    }
+
+    fn hello() -> Hello {
+        Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
+    }
+
+    fn identity(seed: u8) -> Identity {
+        Identity::from_seed(&[seed; 32])
+    }
+
+    fn host() -> EmptyHost {
+        EmptyHost { ids: EmptyIds }
+    }
+
+    #[test]
+    fn oversized_transport_input_is_rejected_before_rx_growth() {
+        let identity = identity(1);
+        let mut engine = SessionEngine::initiator(&identity, &hello(), 1000).unwrap();
+        let mut bytes = vec![0u8; MAX_ENVELOPE_PAYLOAD + 64];
+        bytes[..2].copy_from_slice(&((MAX_ENVELOPE_PAYLOAD + 1) as u16).to_le_bytes());
+        bytes[2] = FT_CREDIT;
+        let mut peer = host();
+
+        engine.on_wire(&bytes, 2000, &identity, &mut peer);
+
+        assert_eq!(engine.phase, Phase::Closed);
+        assert_eq!(engine.last_activity, 1000);
+        assert!(engine.rx.is_empty());
+        assert!(engine.rx.capacity() <= MAX_ENVELOPE_PAYLOAD + 3);
+        assert!(matches!(engine.poll_event(), Some(SessionEvent::Closed)));
+    }
+
+    #[test]
+    fn aggregate_frames_are_processed_without_growing_rx() {
+        let ia = identity(1);
+        let ib = identity(2);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        for _ in 0..300 {
+            a.send_frame(&Frame::Credit(1));
+        }
+        let mut aggregate = Vec::new();
+        while let Some(bytes) = a.poll_out() {
+            aggregate.extend_from_slice(&bytes);
+        }
+        assert!(aggregate.len() > MAX_ENVELOPE_PAYLOAD + 3);
+
+        b.on_wire(&aggregate, 2000, &ib, &mut hb);
+
+        assert_eq!(b.phase, Phase::Established);
+        assert!(b.rx.is_empty());
+        assert!(b.rx.capacity() <= MAX_ENVELOPE_PAYLOAD + 3);
     }
 }
