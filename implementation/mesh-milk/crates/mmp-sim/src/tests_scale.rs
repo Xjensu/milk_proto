@@ -42,6 +42,36 @@
 
 use crate::Sim;
 
+/// Manual clustered-mobility measurement. This prints delivery and latency
+/// samples for a balanced-community contact process; it is intentionally
+/// ignored until trace-derived parameters are available.
+#[test]
+#[ignore]
+fn clustered_mobility_measurement_is_reproducible() {
+    const N: usize = 100;
+    const COMMUNITIES: usize = 10;
+    const MEETINGS: usize = 5_000;
+    const BRIDGE_EVERY: usize = 6;
+
+    let mut sim = Sim::new(N, 0x00C1_A57E_D00D);
+    let pairs: Vec<(usize, usize)> = (0..10).map(|k| (k, N - 1 - k)).collect();
+    for &(from, to) in &pairs {
+        sim.introduce(from, to);
+        sim.send_text(from, to, "clustered mobility measurement");
+    }
+
+    assert!(sim.run_clustered_meetings(MEETINGS, 1_000, 5_000, COMMUNITIES, BRIDGE_EVERY));
+    assert!(sim.quota_ok(), "clustered schedule must stay within store quotas");
+    eprintln!(
+        "clustered_mobility_measurement: delivery_ratio={:.3} p50_ms={:?} p90_ms={:?} meetings={} simulated_hours={:.2}",
+        sim.delivery_ratio(),
+        sim.latency_percentile_ms(0.50),
+        sim.latency_percentile_ms(0.90),
+        sim.counters().meetings_run,
+        sim.now_ms() as f64 / 3_600_000.0,
+    );
+}
+
 #[test]
 #[ignore]
 fn thousand_node_mesh_scale_validation() {
