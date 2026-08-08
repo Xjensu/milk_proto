@@ -412,11 +412,50 @@ fn build_node(seed: [u8; 32], store_path: Option<&str>) -> (Node, Option<Arc<Mut
     match store_path {
         Some(path) => {
             let shared = Arc::new(Mutex::new(SnapshotStore::open(path)));
-            let node = Node::new(seed, Box::new(SharedSnapshot(shared.clone())), Tier::Anchor);
+            let mut node = Node::new(seed, Box::new(SharedSnapshot(shared.clone())), Tier::Anchor);
+            restore_snapshot_state(&mut node, &shared);
             (node, Some(shared))
         }
         None => (Node::new(seed, Box::new(MemStore::new()), Tier::Anchor), None),
     }
+}
+
+/// Restore the non-secret node state carried by [`SnapshotStore`] before the
+/// host starts processing traffic.  The FFI constructor follows the same
+/// ordering: claims/groups/filters are loaded after `Node::new` (so the node
+/// identity and fresh local claims already exist) but before any BLE event is
+/// accepted.  A persisted claim is not an out-of-band trust decision, so it
+/// is ingested with `verified: false`; the store has already re-verified its
+/// signature while loading it.
+fn restore_snapshot_state(node: &mut Node, shared: &Arc<Mutex<SnapshotStore>>) {
+    let store = shared.lock().expect("snapshot store mutex poisoned");
+    for claim in store.claims() {
+        node.ingest_claim(claim.clone(), false);
+    }
+    for blob in store.group_blobs() {
+        node.restore_group(blob);
+    }
+    if let Some(seen) = store.seen_index() {
+        node.restore_seen_index(seen.clone());
+    }
+    if let Some(receipts) = store.receipt_filter() {
+        node.restore_receipt_filter(receipts.clone());
+    }
+}
+
+/// Stage the complete non-secret node state and atomically persist the shared
+/// snapshot.  Calling `SnapshotStore::persist` alone only writes the bundle
+/// store; claims, groups, and replay/receipt filters are explicitly staged by
+/// the host just before the write.
+fn persist_node_state(shared: &Arc<Mutex<SnapshotStore>>, node: &Node) -> std::io::Result<()> {
+    let (claims, group_blobs, seen_index, receipt_filter) =
+        (node.all_claims(), node.all_group_blobs(), node.seen_index(), node.receipt_filter());
+    let mut store = shared.lock().expect("snapshot store mutex poisoned");
+    store.set_claims(claims);
+    store.set_group_blobs(group_blobs);
+    store.set_seen_index(seen_index);
+    store.set_receipt_filter(receipt_filter);
+    store.persist()
 }
 
 fn now_ms() -> u64 {
@@ -723,7 +762,7 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
 /// `--store` path is in play, then print the run summary.
 fn finish(shared: Option<&Arc<Mutex<SnapshotStore>>>, node: &Node, frames_sent: u64, messages_received: u64) {
     if let Some(shared) = shared {
-        match shared.lock().expect("snapshot store mutex poisoned").persist() {
+        match persist_node_state(shared, node) {
             Ok(()) => println!("store persisted to disk"),
             Err(e) => eprintln!("mmp-cli: failed to persist store: {e}"),
         }
@@ -732,4 +771,66 @@ fn finish(shared: Option<&Arc<Mutex<SnapshotStore>>>, node: &Node, frames_sent: 
     println!("frames sent to links:  {frames_sent}");
     println!("messages received:     {messages_received}");
     println!("store_len:             {}", node.store_len());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mmp_types::bundle::class;
+
+    fn temp_snapshot_path() -> std::path::PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        env::temp_dir().join(format!("mmp-cli-snapshot-{}-{nonce}.bin", std::process::id()))
+    }
+
+    fn remove_snapshot(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(path.with_extension("tmp"));
+    }
+
+    /// The CLI must perform the same bootstrap sequence as the FFI host:
+    /// restored claims are usable for a send immediately, group membership is
+    /// available before the first contact, and replay/receipt filters survive
+    /// the restart.  This also exercises the exit-time staging helper rather
+    /// than calling `SnapshotStore::persist` directly.
+    #[test]
+    fn snapshot_bootstrap_restores_claims_groups_and_filters() {
+        let path = temp_snapshot_path();
+        let path_string = path.to_string_lossy().into_owned();
+        let seed = [0x11; 32];
+        let peer_seed = [0x22; 32];
+        let peer = Node::new(peer_seed, Box::new(MemStore::new()), Tier::Anchor);
+
+        let (mut node, shared) = build_node(seed, Some(&path_string));
+        for claim in peer.own_claims() {
+            node.ingest_claim(claim, false);
+        }
+        assert!(node.send_text(&peer.node_id(), "before restart").is_ok());
+        node.set_nickname("restored-cli", 2);
+        let gid = node.create_group();
+
+        let seen_id = Id16([0x44; 16]);
+        let mut seen = node.seen_index();
+        seen.insert(&seen_id, class::DIRECT, 1);
+        node.restore_seen_index(seen);
+
+        let receipt_id = Id16([0x55; 16]);
+        let mut receipts = node.receipt_filter();
+        receipts.note_verified_receipt(&receipt_id, 1);
+        node.restore_receipt_filter(receipts);
+
+        persist_node_state(shared.as_ref().expect("file-backed snapshot"), &node).expect("persist node state");
+        drop(shared);
+        drop(node);
+
+        let (mut restored, reopened) = build_node(seed, Some(&path_string));
+        assert!(restored.send_text(&peer.node_id(), "after restart").is_ok());
+        assert_eq!(restored.nickname_of(&restored.node_id()).as_deref(), Some("restored-cli"));
+        assert_eq!(restored.group_members(&gid), vec![restored.node_id()]);
+        assert!(restored.seen_index().contains(&seen_id));
+        assert_eq!(restored.receipt_filter().signal(&receipt_id), mmp_core::SuppressSignal::Purge);
+        assert!(reopened.is_some());
+
+        remove_snapshot(&path);
+    }
 }

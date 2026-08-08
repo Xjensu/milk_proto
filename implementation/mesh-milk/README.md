@@ -1,7 +1,7 @@
 # mesh-milk — MMP/1 reference implementation
 
 Rust workspace for the **mesh_milk (MMP/1)** peer-to-peer BLE mesh protocol.
-The specification suite lives in `../../specification/` (docs 01–18); this
+The specification suite lives in `../../specification/` (docs 01–15); this
 workspace implements it per `../../specification/12-rust-blueprint.md`.
 
 **Where the project actually is:** the roadmap and backlog are the
@@ -27,8 +27,8 @@ item that needs physical hardware to verify. See
 ## Layout (normative: doc 12 §1)
 
 15 crates under `crates/` (plus `mmp-tal-peripheral`, added for Phase A's
-peripheral-role BLE) + `vectors/` (golden test vectors — not yet populated;
-see `docs/AGILE_BACKLOG.md` E5-S4) + `tools/layer-check` (the CI
+peripheral-role BLE) + `vectors/` (committed golden wire/conformance vectors
+and `coverage.json`, see `vectors/README.md`) + `tools/layer-check` (the CI
 layer-dependency test).
 
 Layering rule: `mmp-types ← mmp-crypto ← mmp-core ← mmp-router` are `#![no_std]`
