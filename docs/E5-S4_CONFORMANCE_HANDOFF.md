@@ -1394,3 +1394,28 @@ partitioning, independent opaque-payload vectors, and any MMP/Φ research
 mechanisms remain deliberately deferred until their normative grammar,
 security model, and measurements exist. Do not stage the unrelated dirty
 handbook/API/mobile integration files or temporary audit/cache directories.
+
+## 2026-08-08 unknown-suite application gates
+
+The security follow-up identified a cross-suite confusion boundary: generic
+`RevocationList::decode` must remain permissive so an unknown claim body can be
+stored and forwarded opaquely, but the v1 authority store must not interpret a
+future suite as a v1 revocation. Commit `592745a` adds a `suite == 0x01` gate
+at `AuthorityStore::merge_revocation_list`; an unknown suite is ignored before
+any sticky revocation state is mutated. The same fail-closed rule is applied to
+class-5 announcement rendering: an unknown suite remains relay/storage-only
+and cannot produce an application event. This is wire-compatible and does not
+change the frozen specification.
+
+Regression evidence:
+
+```text
+cargo test -p mmp-core --lib -- --test-threads=1  # 60 passed
+cargo test -p mmp-node --lib -- --test-threads=1  # 66 passed
+cargo clippy -p mmp-core -p mmp-node --all-targets --all-features -- -D warnings  # pass
+```
+
+This is a future-suite interoperability/availability hardening, not a claim
+that v1 issuer signatures can be forged: the outer claim signature and pinned
+issuer/scope checks remain required. Future suites still need an explicit
+decoder and application policy before they can be acted upon.
