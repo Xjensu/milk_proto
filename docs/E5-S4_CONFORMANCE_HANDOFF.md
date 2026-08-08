@@ -156,6 +156,12 @@ node suite remain green. This reduces in-memory root exposure but does not
 claim restart continuity; keystore-wrapped chain/prekey persistence is still
 an explicit Phase B/native-platform gate.
 
+Commit `299a496` extends the same local-state boundary to the explicit
+blocklist: entries are sorted, capped at 1,024, strictly decoded, and restored
+before sessions can be admitted. A restart regression drives a real FFI contact
+and confirms that a previously blocked peer cannot establish again. This is a
+local policy record, not a protocol or identity-revocation replacement.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files
