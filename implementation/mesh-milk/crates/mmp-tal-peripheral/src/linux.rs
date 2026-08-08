@@ -43,7 +43,8 @@ use bluer::gatt::local::{
 use bluer::gatt::{CharacteristicReader, CharacteristicWriter};
 use bluer::{Adapter, Session, Uuid};
 use futures::{pin_mut, StreamExt};
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
+use tokio::task::JoinSet;
 
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
@@ -93,6 +94,7 @@ pub struct PeripheralRole {
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
+    shutdown_tx: watch::Sender<bool>,
 }
 
 impl PeripheralRole {
@@ -145,6 +147,7 @@ impl PeripheralRole {
         let app_handle = adapter.serve_gatt_application(app).await?;
 
         let (tx, rx) = event_channel();
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let links: Links = Arc::new(AsyncMutex::new(LinkRegistry {
             lifecycle: LinkLifecycle::default(),
             states: HashMap::new(),
@@ -157,6 +160,7 @@ impl PeripheralRole {
             tx.clone(),
             links.clone(),
             event_gate.clone(),
+            shutdown_rx,
         ));
 
         Ok(PeripheralRole {
@@ -168,6 +172,7 @@ impl PeripheralRole {
             events_rx: std::sync::Mutex::new(Some(rx)),
             links,
             event_gate,
+            shutdown_tx,
         })
     }
 
@@ -252,6 +257,7 @@ impl PeripheralRole {
     /// and after observing [`Self::control_events_dropped`] so a saturated
     /// lifecycle queue cannot leave a BlueZ stream alive.
     pub async fn shutdown_all(&self) {
+        let _ = self.shutdown_tx.send(true);
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
     }
 
@@ -310,11 +316,24 @@ async fn run_control(
     tx: EventSender,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) {
     pin_mut!(write_ctl);
     pin_mut!(notify_ctl);
+    let mut readers = JoinSet::new();
     loop {
         tokio::select! {
+            changed = shutdown_rx.changed() => {
+                if changed.is_ok() && *shutdown_rx.borrow() {
+                    readers.abort_all();
+                    while readers.join_next().await.is_some() {}
+                    shutdown_links(&links, &event_gate, &tx).await;
+                    return;
+                }
+            }
+            reader = readers.join_next(), if !readers.is_empty() => {
+                let _ = reader;
+            }
             evt = write_ctl.next() => match evt {
                 // Central started writing into the write-without-response
                 // characteristic: accept the packet socket and shuttle every
@@ -336,7 +355,7 @@ async fn run_control(
                     .await else {
                         continue;
                     };
-                    tokio::spawn(read_loop(
+                    readers.spawn(read_loop(
                         reader,
                         attach.token,
                         tx.clone(),
@@ -346,6 +365,8 @@ async fn run_control(
                 }
                 Some(_) => {}
                 None => {
+                    readers.abort_all();
+                    while readers.join_next().await.is_some() {}
                     shutdown_links(&links, &event_gate, &tx).await;
                     return;
                 }
@@ -371,6 +392,8 @@ async fn run_control(
                 }
                 Some(_) => {}
                 None => {
+                    readers.abort_all();
+                    while readers.join_next().await.is_some() {}
                     shutdown_links(&links, &event_gate, &tx).await;
                     return;
                 }
