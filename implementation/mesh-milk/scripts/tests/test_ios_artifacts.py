@@ -10,6 +10,7 @@ SPEC = importlib.util.spec_from_file_location("verify_ios_artifacts", SCRIPT)
 assert SPEC and SPEC.loader
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
+from check_mobile_api_surface import EXPECTED_MMP_NODE_METHODS
 
 
 def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path, Path]:
@@ -49,7 +50,14 @@ def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path,
 
     bindings = root / "swift-bindings"
     bindings.mkdir()
-    (bindings / "mmp_ffi.swift").write_text("public protocol MmpNodeProtocol {}\n", encoding="utf-8")
+    methods = "\n".join(
+        f"    func {method}() {{}}"
+        for method in EXPECTED_MMP_NODE_METHODS
+    )
+    (bindings / "mmp_ffi.swift").write_text(
+        f"public protocol MmpNodeProtocol {{\n{methods}\n}}\n",
+        encoding="utf-8",
+    )
     return xcframework, bindings
 
 
@@ -102,6 +110,27 @@ class IOSArtifactTests(unittest.TestCase):
             (bindings / "mmp_ffi.swift").write_text("", encoding="utf-8")
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("Swift source is empty" in item for item in violations))
+
+    def test_swift_binding_missing_api_method_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            source = bindings / "mmp_ffi.swift"
+            text = source.read_text(encoding="utf-8")
+            text = text.replace("    func flush() {}\n", "")
+            source.write_text(text, encoding="utf-8")
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("MmpNode.flush" in item for item in violations))
+
+    def test_swift_binding_secret_surface_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            source = bindings / "mmp_ffi.swift"
+            source.write_text(
+                source.read_text(encoding="utf-8") + "struct SnapshotVault {}\n",
+                encoding="utf-8",
+            )
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("SnapshotVault" in item for item in violations))
 
 
 if __name__ == "__main__":

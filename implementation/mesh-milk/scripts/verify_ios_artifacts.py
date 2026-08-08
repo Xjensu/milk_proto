@@ -24,6 +24,11 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from check_mobile_binding import scan_binding  # type: ignore[import-not-found]
+
 
 EXPECTED_SLICES = {
     "ios-arm64": {"variant": None},
@@ -128,6 +133,18 @@ def _verify_swift_bindings(bindings: Path, violations: list[str]) -> None:
             continue
         if not text.strip():
             violations.append(f"{path}: Swift source is empty")
+    # The build script performs this check before assembly, but the verifier
+    # is also the gate used when an XCFramework and its source artifact are
+    # copied between hosts.  Re-run the API/secret scan here so a copied or
+    # modified binding cannot pass a structural-only check.  Avoid invoking
+    # the scanner after local UTF-8/empty checks: its API pass reads source
+    # text directly and should not mask the deterministic diagnostics above.
+    if not any(
+        item.startswith(f"{path}:") or item == f"{path}: Swift source is empty"
+        for path in swift_files
+        for item in violations
+    ):
+        violations.extend(scan_binding("swift", bindings))
 
 
 def verify_artifacts(xcframework: Path, swift_bindings: Path) -> list[str]:
