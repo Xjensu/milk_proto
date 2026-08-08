@@ -49,7 +49,16 @@ Expected observations:
 
 * two deterministic node IDs are printed;
 * a message is queued, transferred over the in-memory link, and acknowledged;
+* the final line reports `demo assertions: receiver_message=true,
+  sender_delivered=true`;
 * the process exits successfully without a Bluetooth adapter.
+
+The command now exits with status 1 if either the receiver-side
+`MessageReceived` event or the sender-side `Delivered` state is missing. This
+makes it a useful deterministic host-stack smoke gate rather than a log-only
+demonstration. It still proves only the Rust protocol loopback: it does not
+exercise a Bluetooth controller, GATT framing, mobile callbacks, background
+execution, or physical radio delivery.
 
 ## 2. Generate two PC identities
 

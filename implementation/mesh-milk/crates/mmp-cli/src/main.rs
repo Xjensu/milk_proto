@@ -2,7 +2,8 @@
 //!
 //! Hand-rolled `std::env` arg parsing, no clap. `demo` runs two nodes over an
 //! in-memory link so you can watch the protocol work end to end in about two
-//! seconds; `connect`/`send` drive a real node over BLE central role
+//! seconds and exits non-zero if receiver/delivery assertions fail;
+//! `connect`/`send` drive a real node over BLE central role
 //! (`mmp-tal-btleplug`, HANDOFF M5 / handbook §4.2); `listen` drives a real
 //! node over BLE peripheral role (`mmp-tal-peripheral`, HANDOFF M5b). `keygen`
 //! mints an identity seed; `inspect` reads a `mmp-store` snapshot file and
@@ -22,7 +23,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mmp_core::store::{BundleMeta, BundleStore};
 use mmp_core::MemStore;
-use mmp_node::{Event, Node, Tier};
+use mmp_node::{DeliveryState, Event, Node, Tier};
 use mmp_store::SnapshotStore;
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_tal_btleplug::{BleCentral, PeerHandle, PeripheralId};
@@ -227,8 +228,8 @@ fn cmd_demo() -> ExitCode {
     for c in bob.own_claims() {
         alice.ingest_claim(c, true);
     }
-    drain_and_print("alice", &mut alice);
-    drain_and_print("bob", &mut bob);
+    let _ = drain_and_print("alice", &mut alice);
+    let _ = drain_and_print("bob", &mut bob);
 
     let msg_id = alice.send_text(&bob.node_id(), "hello from mmp-cli demo").expect("bob's claims are known");
     println!("\nalice sends text (id {}) ...", hex(msg_id.as_bytes()));
@@ -236,23 +237,30 @@ fn cmd_demo() -> ExitCode {
     // First contact: the message crosses the mesh.
     println!("\n--- contact 1 (alice <-> bob) ---");
     contact(&mut alice, &mut bob, 1, 0);
-    drain_and_print("alice", &mut alice);
-    drain_and_print("bob", &mut bob);
+    let bob_received = drain_and_print("bob", &mut bob);
+    let _ = drain_and_print("alice", &mut alice);
 
     // Second contact: the delivery receipt returns to alice.
     println!("\n--- contact 2 (alice <-> bob) ---");
     contact(&mut alice, &mut bob, 2, 1_000);
-    drain_and_print("alice", &mut alice);
-    drain_and_print("bob", &mut bob);
+    let _ = drain_and_print("alice", &mut alice);
+    let _ = drain_and_print("bob", &mut bob);
 
+    let delivered = alice.message_state(&msg_id) == Some(DeliveryState::Delivered);
     println!("\nmessage state at alice: {:?}", alice.message_state(&msg_id));
+    println!("demo assertions: receiver_message={bob_received}, sender_delivered={delivered}");
 
     println!("\n--- alice diagnostics ---");
     print!("{}", alice.diagnostics().dump());
     println!("--- bob diagnostics ---");
     print!("{}", bob.diagnostics().dump());
 
-    ExitCode::SUCCESS
+    if bob_received && delivered {
+        ExitCode::SUCCESS
+    } else {
+        eprintln!("mmp-cli demo: protocol loopback did not deliver the message");
+        ExitCode::from(1)
+    }
 }
 
 /// Run one full contact between two nodes over an in-memory link (mirrors
@@ -280,10 +288,15 @@ fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
     b.on_tal_event(TalEvent::LinkDown { link });
 }
 
-fn drain_and_print(who: &str, n: &mut Node) {
+fn drain_and_print(who: &str, n: &mut Node) -> bool {
+    let mut received = false;
     while let Some(ev) = n.poll_event() {
+        if matches!(ev, Event::MessageReceived { .. }) {
+            received = true;
+        }
         print_event(who, &ev);
     }
+    received
 }
 
 fn print_event(who: &str, ev: &Event) {
@@ -916,6 +929,11 @@ mod tests {
         assert!(node.store_len() > 0);
         node.tick(clock.now_ms());
         assert!(node.store_len() > 0, "the first drive tick must not expire a freshly queued bundle");
+    }
+
+    #[test]
+    fn demo_smoke_requires_receiver_and_delivery_evidence() {
+        assert_eq!(cmd_demo(), ExitCode::SUCCESS);
     }
 
     #[test]
