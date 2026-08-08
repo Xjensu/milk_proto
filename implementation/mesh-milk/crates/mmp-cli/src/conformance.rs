@@ -18,6 +18,8 @@ const VECTOR_NAMES: &[&str] = &[
     "cross_domain_negative.json",
     "cross_domain_matrix.json",
     "envelope.json",
+    "envelope_oversize_negative.json",
+    "bundle_tlv_negative.json",
     "frames.json",
     "hello.json",
     "lifetime_reset_negative.json",
@@ -171,6 +173,19 @@ fn read_envelope_independent(wire: &[u8]) -> Result<(u8, &[u8]), &'static str> {
     Ok((wire[2], &wire[3..]))
 }
 
+/// Apply the frozen doc-10 logical frame cap to the independent envelope
+/// reader.  The production reader intentionally has a separate +32-byte
+/// receive allowance for encrypted envelopes; keeping this check here makes
+/// that implementation policy visible instead of silently redefining the
+/// normative 4096-byte payload bound.
+fn read_envelope_normative(wire: &[u8]) -> Result<(u8, &[u8]), &'static str> {
+    let (typ, payload) = read_envelope_independent(wire)?;
+    if payload.len() > 4096 {
+        return Err("payload exceeds doc 10 logical cap");
+    }
+    Ok((typ, payload))
+}
+
 /// Read the fixed part of a bundle and verify its canonical layout without
 /// constructing an `mmp_types::Bundle`.
 fn read_bundle_independent(wire: &[u8]) -> Result<BundleView<'_>, &'static str> {
@@ -221,6 +236,34 @@ fn read_bundle_independent(wire: &[u8]) -> Result<BundleView<'_>, &'static str> 
         payload: &wire[payload_start..payload_end],
         signature: &wire[wire.len() - SIG_LEN..],
     })
+}
+
+/// Validate only the canonical ordering and critical-type rules for a raw
+/// extension run.  This deliberately does not call `mmp-types::tlv` (or any
+/// production decoder): the negative vectors must remain useful if both the
+/// generator and that decoder drift together.
+fn validate_tlvs_independent(bytes: &[u8]) -> Result<(), &'static str> {
+    let mut cursor = 0usize;
+    let mut previous: Option<u8> = None;
+    while cursor < bytes.len() {
+        let typ = *bytes.get(cursor).ok_or("truncated TLV type")?;
+        cursor += 1;
+        if previous.is_some_and(|old| typ <= old) {
+            return Err("TLV order/duplicate");
+        }
+        previous = Some(typ);
+        let len_bytes = bytes.get(cursor..cursor + 2).ok_or("truncated TLV length")?;
+        let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]) as usize;
+        cursor += 2;
+        let _value = bytes.get(cursor..cursor + len).ok_or("truncated TLV value")?;
+        cursor += len;
+        // The frozen registry currently occupies critical types 0x01–0x03;
+        // any other type below 0x80 is unknown-critical and rejects the run.
+        if typ < 0x80 && !(1..=3).contains(&typ) {
+            return Err("unknown critical TLV");
+        }
+    }
+    Ok(())
 }
 
 struct BundleView<'a> {
@@ -292,6 +335,33 @@ fn envelope_reader_rejects_truncation_and_trailing_bytes() {
         read_envelope_independent(&trailing),
         Err("envelope has a truncated or trailing byte")
     );
+}
+
+#[test]
+fn oversized_envelope_vector_records_normative_cap_and_runtime_headroom() {
+    let json = vector("envelope_oversize_negative.json");
+    let payload_lengths = json_all_u64(&json, "payload_len");
+    let wires = json_all_strings(&json, "wire");
+    let normative = json_all_strings(&json, "normative_verdict");
+    let runtime = json_all_strings(&json, "runtime_verdict");
+    assert_eq!(json_u64(&json, "normative_frame_payload_cap"), 4096);
+    assert_eq!(json_u64(&json, "runtime_envelope_payload_cap"), 4128);
+    assert_eq!(payload_lengths, vec![4097, 4129]);
+    assert_eq!(normative, vec!["reject", "reject"]);
+    assert_eq!(runtime, vec!["accept_headroom", "reject_oversize"]);
+
+    for (index, wire_hex) in wires.iter().enumerate() {
+        let wire = decode_hex("wire", wire_hex);
+        assert_eq!(wire.len(), 3 + payload_lengths[index] as usize);
+        assert_eq!(u16::from_le_bytes([wire[0], wire[1]]) as usize, payload_lengths[index] as usize);
+        assert_eq!(wire[2], mmp_types::frame::FT_BUNDLE);
+        assert_eq!(read_envelope_normative(&wire), Err("payload exceeds doc 10 logical cap"));
+        // The independent structural reader accepts both byte streams; the
+        // production reader's separate implementation headroom is exercised
+        // below in the production-codec test.
+        assert!(read_envelope_independent(&wire).is_ok());
+        assert!(payload_lengths[index] > 4096);
+    }
 }
 
 #[test]
@@ -371,6 +441,28 @@ fn bundle_reader_rejects_tampered_layout_without_production_decoder() {
         read_bundle_independent(&bad_payload_length),
         Err("payload length does not consume the unsigned bundle")
     ));
+}
+
+#[test]
+fn malformed_tlv_vectors_are_rejected_by_independent_rules() {
+    let json = vector("bundle_tlv_negative.json");
+    let names = json_all_strings(&json, "name");
+    let wires = json_all_strings(&json, "wire");
+    let expected = json_all_strings(&json, "expected_error");
+    assert_eq!(names, vec!["unknown_critical_tlv", "out_of_order_tlvs", "duplicate_tlv_type"]);
+    assert_eq!(expected, vec!["unknown critical TLV", "TLV order/duplicate", "TLV order/duplicate"]);
+    assert_eq!(wires.len(), 3);
+
+    for (index, wire_hex) in wires.iter().enumerate() {
+        let wire = decode_hex("wire", wire_hex);
+        let view = read_bundle_independent(&wire).expect("malformed TLV bytes retain a valid outer layout");
+        let expected_error = match index {
+            0 => "unknown critical TLV",
+            1 | 2 => "TLV order/duplicate",
+            _ => unreachable!("vector has exactly three malformed TLV cases"),
+        };
+        assert_eq!(validate_tlvs_independent(view.extensions), Err(expected_error));
+    }
 }
 
 #[test]

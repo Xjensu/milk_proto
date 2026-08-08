@@ -29,7 +29,10 @@ use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, CAP_ANNOUNCE}
 use mmp_types::beacon::Beacon;
 use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
 use mmp_types::claim::{field, friendship_signed_object, Claim, PrekeyBatch};
-use mmp_types::consts::{LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE, L_MAX};
+use mmp_types::consts::{
+    LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_FRAME_PAYLOAD, RS_DATA_K,
+    RS_TOTAL_N, SYMBOL_SIZE, L_MAX,
+};
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
     write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
@@ -515,6 +518,8 @@ pub fn generate() -> Vec<VectorFile> {
         lifetime_reset_negative_vector(),
         budget_clamp_negative_vector(),
         frames_vector(),
+        envelope_oversize_negative_vector(),
+        bundle_tlv_negative_vector(),
     ]
 }
 
@@ -817,6 +822,94 @@ fn envelope_vector() -> VectorFile {
     VectorFile { name: "envelope.json", json }
 }
 
+/// Encode an envelope without the production writer's debug-only size guard.
+/// The negative vectors deliberately exercise bytes that a hostile peer can
+/// put on the wire; constructing them must not trip the writer canary first.
+fn raw_envelope(typ: u8, payload_len: usize, fill: u8) -> Vec<u8> {
+    assert!(payload_len <= u16::MAX as usize, "negative envelope must fit u16 length");
+    let mut wire = Vec::with_capacity(3 + payload_len);
+    wire.extend_from_slice(&(payload_len as u16).to_le_bytes());
+    wire.push(typ);
+    wire.resize(3 + payload_len, fill);
+    wire[2] = typ;
+    wire
+}
+
+/// Encode one raw extension TLV for malformed-layout vectors.  This helper is
+/// intentionally byte-level: `Ext` only represents canonical values and its
+/// production encoder asserts strict ordering, while these fixtures must
+/// preserve the malformed bytes exactly as a peer could transmit them.
+fn raw_tlv(typ: u8, value: &[u8]) -> Vec<u8> {
+    assert!(value.len() <= u16::MAX as usize);
+    let mut out = Vec::with_capacity(3 + value.len());
+    out.push(typ);
+    out.extend_from_slice(&(value.len() as u16).to_le_bytes());
+    out.extend_from_slice(value);
+    out
+}
+
+/// Replace the extension run in the deterministic class-1 bundle while
+/// retaining its payload and signature tail.  The resulting bytes are
+/// intentionally not signed: production canonical decoding must reject the
+/// malformed TLVs before authentication is attempted.
+fn bundle_wire_with_raw_exts(exts: &[u8]) -> Vec<u8> {
+    let (bundle, _) = vector_bundle();
+    let base = bundle.encode();
+    assert_eq!(u16::from_le_bytes([base[56], base[57]]), 0, "base vector must have no TLVs");
+    let mut wire = Vec::with_capacity(base.len() + exts.len());
+    wire.extend_from_slice(&base[..56]);
+    wire.extend_from_slice(&(exts.len() as u16).to_le_bytes());
+    wire.extend_from_slice(exts);
+    wire.extend_from_slice(&base[58..]);
+    wire
+}
+
+/// Negative envelope vectors distinguish the frozen logical frame cap from
+/// this implementation's receive-side AEAD headroom.  Doc 10 §2 says a
+/// frame payload is ≤4096 bytes; `read_envelope` accepts up to 4128 bytes so a
+/// post-handshake ciphertext can carry its 32-byte authentication overhead.
+fn envelope_oversize_negative_vector() -> VectorFile {
+    const RUNTIME_HEADROOM: usize = mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
+    debug_assert_eq!(MAX_FRAME_PAYLOAD, 4096);
+    debug_assert_eq!(RUNTIME_HEADROOM, 4128);
+    let normative_over = raw_envelope(FT_BUNDLE, MAX_FRAME_PAYLOAD + 1, 0xa1);
+    let runtime_over = raw_envelope(FT_BUNDLE, RUNTIME_HEADROOM + 1, 0xa2);
+    let json = format!(
+        "{{\n  \"description\": \"negative envelope lengths: doc 10 §2 caps the logical frame payload at 4096 bytes, while the current receive parser permits 4128 bytes for AEAD headroom\",\n  \"normative_frame_payload_cap\": {},\n  \"runtime_envelope_payload_cap\": {},\n  \"cases\": [\n    {{\"name\": \"logical_payload_4097\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"accept_headroom\"}},\n    {{\"name\": \"envelope_payload_4129\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"reject_oversize\"}}\n  ]\n}}\n",
+        MAX_FRAME_PAYLOAD,
+        RUNTIME_HEADROOM,
+        normative_over.len() - 3,
+        hex(&normative_over),
+        runtime_over.len() - 3,
+        hex(&runtime_over),
+    );
+    VectorFile { name: "envelope_oversize_negative.json", json }
+}
+
+/// Negative bundle vectors for the three canonical extension rules in doc 10
+/// §6.1: unknown critical TLVs, strictly ascending type order, and duplicate
+/// types (the latter is covered by the same order check).
+fn bundle_tlv_negative_vector() -> VectorFile {
+    let unknown_critical = bundle_wire_with_raw_exts(&raw_tlv(0x04, &[0xc1]));
+    let out_of_order = {
+        let mut ext = raw_tlv(0x02, &[0x34, 0x12]);
+        ext.extend_from_slice(&raw_tlv(0x01, &[0x55; 16]));
+        bundle_wire_with_raw_exts(&ext)
+    };
+    let duplicate = {
+        let mut ext = raw_tlv(0x02, &[0x34, 0x12]);
+        ext.extend_from_slice(&raw_tlv(0x02, &[0x78, 0x56]));
+        bundle_wire_with_raw_exts(&ext)
+    };
+    let json = format!(
+        "{{\n  \"description\": \"malformed bundle extension runs; production and independent readers MUST reject unknown critical, out-of-order, and duplicate TLVs (doc 10 §6.1)\",\n  \"cases\": [\n    {{\"name\": \"unknown_critical_tlv\", \"wire\": \"{}\", \"expected_error\": \"unknown critical TLV\"}},\n    {{\"name\": \"out_of_order_tlvs\", \"wire\": \"{}\", \"expected_error\": \"TLV order/duplicate\"}},\n    {{\"name\": \"duplicate_tlv_type\", \"wire\": \"{}\", \"expected_error\": \"TLV order/duplicate\"}}\n  ]\n}}\n",
+        hex(&unknown_critical),
+        hex(&out_of_order),
+        hex(&duplicate),
+    );
+    VectorFile { name: "bundle_tlv_negative.json", json }
+}
+
 fn rbsr_fingerprint_vector() -> VectorFile {
     let ids = [Id16([0x01; 16]), Id16([0x02; 16]), Id16([0x03; 16])];
     let fp = mmp_core::fingerprint(&ids);
@@ -944,6 +1037,7 @@ fn budget_clamp_negative_vector() -> VectorFile {
 #[cfg(test)]
 mod tests {
     use mmp_crypto::verify;
+    use mmp_types::err::WireError;
     use mmp_types::frame::{read_envelope, Frame};
 
     use super::*;
@@ -1038,6 +1132,43 @@ mod tests {
 
         // Budget clamp (AUDIT F3).
         assert_eq!(200u8.min(L_MAX), L_MAX);
+    }
+
+    /// The frozen logical payload cap and the receive-side AEAD headroom are
+    /// intentionally tested separately.  A 4097-byte logical payload is
+    /// over doc 10's 4096-byte limit but still fits this implementation's
+    /// 4128-byte encrypted-envelope allowance; 4129 bytes must be rejected by
+    /// the production incremental reader before a buffer can grow.
+    #[test]
+    fn oversized_envelope_vectors_pin_normative_and_runtime_caps() {
+        let logical_over = raw_envelope(FT_BUNDLE, MAX_FRAME_PAYLOAD + 1, 0xa1);
+        assert_eq!(logical_over.len() - 3, MAX_FRAME_PAYLOAD + 1);
+        assert!(read_envelope(&logical_over).unwrap().is_some(), "runtime headroom should accept 4097 bytes");
+
+        let runtime_over = raw_envelope(FT_BUNDLE, mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 1, 0xa2);
+        assert_eq!(
+            read_envelope(&runtime_over),
+            Err(WireError::Oversize),
+            "lengths over MAX_ENVELOPE_PAYLOAD must fail closed"
+        );
+    }
+
+    /// Malformed extension runs must be rejected by the production canonical
+    /// bundle decoder before signature verification or relay admission.
+    #[test]
+    fn malformed_bundle_tlv_vectors_are_rejected() {
+        let unknown_critical = bundle_wire_with_raw_exts(&raw_tlv(0x04, &[0xc1]));
+        assert_eq!(Bundle::decode_canonical(&unknown_critical), Err(WireError::TlvUnknownCritical));
+
+        let mut out_of_order_ext = raw_tlv(0x02, &[0x34, 0x12]);
+        out_of_order_ext.extend_from_slice(&raw_tlv(0x01, &[0x55; 16]));
+        let out_of_order = bundle_wire_with_raw_exts(&out_of_order_ext);
+        assert_eq!(Bundle::decode_canonical(&out_of_order), Err(WireError::TlvOrder));
+
+        let mut duplicate_ext = raw_tlv(0x02, &[0x34, 0x12]);
+        duplicate_ext.extend_from_slice(&raw_tlv(0x02, &[0x78, 0x56]));
+        let duplicate = bundle_wire_with_raw_exts(&duplicate_ext);
+        assert_eq!(Bundle::decode_canonical(&duplicate), Err(WireError::TlvOrder));
     }
 
     /// Every registered signing-domain pair is exercised: each row's own
