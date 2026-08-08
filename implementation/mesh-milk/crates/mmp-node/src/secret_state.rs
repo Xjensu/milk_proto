@@ -251,10 +251,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
     }
     let prekeys = PrekeyStore::restore_state(&bytes[pos..prekey_end]).map_err(|_| SecretStateError::Invalid)?;
     for (conv, first) in &pending_first_contact {
-        if let Some(message) = sent.get(first) {
-            if message.conv != *conv || matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired) {
-                return Err(SecretStateError::Invalid);
-            }
+        let message = sent.get(first).ok_or(SecretStateError::Invalid)?;
+        if message.conv != *conv || matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired) {
+            return Err(SecretStateError::Invalid);
         }
     }
     if pending_async.keys().any(|conv| pending_first_contact.contains_key(conv)) {
@@ -393,5 +392,37 @@ mod tests {
             quality: Default::default(),
         });
         assert_eq!(restored.restore_secret_state(&snapshot), Err(SecretStateError::Busy));
+    }
+
+    #[test]
+    fn decode_rejects_pending_first_contact_without_sent_bundle() {
+        let mut original = Node::new([85; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut peer = Node::new([86; 32], Box::new(MemStore::new()), Tier::Relay);
+        introduce(&mut original, &mut peer);
+        original.send_text(&peer.node_id(), "pending").expect("first contact");
+        let snapshot = original.secret_state_snapshot().expect("aggregate snapshot");
+
+        let mut malformed = snapshot.to_vec();
+        let mut pos = HEADER_LEN;
+        let mut header_pos = MAGIC.len() + 1;
+        let conv_count = read_u16(&malformed, &mut header_pos).expect("conv count") as usize;
+        let established_count = read_u16(&malformed, &mut header_pos).expect("established count") as usize;
+        let pending_async_count = read_u16(&malformed, &mut header_pos).expect("pending async count") as usize;
+        let pending_first_count = read_u16(&malformed, &mut header_pos).expect("pending first count") as usize;
+        assert_eq!(conv_count, 1);
+        assert_eq!(pending_first_count, 1);
+        let _sent_count = read_u32(&malformed, &mut header_pos).expect("sent count");
+        let _prekeys_len = read_u32(&malformed, &mut header_pos).expect("prekeys length");
+        pos += 16 + 32 + 32;
+        for _ in 0..conv_count {
+            for _ in 0..3 {
+                let len = read_u32(&malformed, &mut pos).expect("component length") as usize;
+                pos += len;
+            }
+        }
+        pos += established_count * 16 + pending_async_count * (16 + 32 + 2);
+        let first_bundle_offset = pos + 16;
+        malformed[first_bundle_offset..first_bundle_offset + 16].copy_from_slice(&[0xa5; 16]);
+        assert!(decode(&malformed).is_err());
     }
 }
