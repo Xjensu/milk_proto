@@ -77,6 +77,15 @@ measurement plan. This does not alter MMP/1 wire behavior and does not claim a
 2× battery result; collisions, controller scheduling, OS wakeups, and
 whole-device energy still require platform measurements.
 
+Current verification after `ecf25a2`:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1   # pass; 2 EDR tests included
+cargo clippy --workspace --all-targets -- -D warnings      # pass
+cargo test -p mmp-sim edr_ -- --nocapture                 # pass
+git diff --name-only -- specification                    # empty
+```
+
 ## 2026-08-08 lifecycle and mobile-surface follow-up
 
 Two delegated audits closed additional implementation gaps without touching
