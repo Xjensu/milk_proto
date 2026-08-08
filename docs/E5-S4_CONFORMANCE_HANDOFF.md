@@ -3,7 +3,7 @@
 ## Checkpoint
 
 The original transport checkpoint was commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`).
-The current continuation checkpoint is commit `4f5ef4b` (`docs(mesh-milk): clarify encrypted ID proof fuzz boundary`).
+The current continuation checkpoint is commit `a931122` (`fix(mesh-milk): implement sealed async fallback safely`).
 All commits in this handoff leave the frozen `specification/` directory unchanged.
 
 ### 2026-08-08 continuation update
@@ -30,6 +30,17 @@ The existing `frames.json` ID_PROOF entry remains a decoded-payload grammar
 fixture, not a deterministic encrypted Noise transcript. Do not invent a new
 transcript-vector schema until test-only deterministic Noise ephemeral inputs
 and an interoperable artifact format are agreed.
+
+The sealed-box baseline is now wired through the Rust node path. A direct
+first-contact send uses a peer's exchange-key claim even when its optional
+prekey batch is absent, malformed, or suppressed; the sender and recipient
+derive the same sealed conversation root for receipts and subsequent ratchet
+traffic. Async decryption uses candidate conversation state and commits it
+only after AEAD verification, so a valid-signature forged ciphertext cannot
+consume ratchet state. Established conversations reject replacement sealed
+roots deliberately; this preserves receipt and ratchet integrity, while
+restart/rekey recovery remains an availability gate for a future live-session
+implementation.
 
 Verification at this checkpoint:
 
@@ -141,6 +152,11 @@ Recent focused commits, oldest first:
   replacement, and retire delayed opposite-direction callbacks. The
   hardware-independent lifecycle tests run on Windows; Linux compilation and
   real BlueZ execution remain environment-gated.
+
+- `a931122` — implemented sealed-box async fallback, candidate-before-commit
+  async decryption, sealed-root derivation, FFI error wording, and node/crypto
+  regressions for delivery, receipts, malformed ciphertext, and established
+  conversation protection.
 
 - `0343cf5` — replaced both transport-facing FIFO producers with bounded
   synchronous ingress plus a dispatcher. Each backend reserves 64 lifecycle
@@ -292,6 +308,13 @@ each honest receiver but is not a globally conserved Byzantine capability.
 The focused `mmp-core` suite passes 42 unit tests; `mmp-sim` passes 10 active
 tests and 4 intentionally ignored deployment/scale cases.
 
+After `a931122`, the sealed baseline and candidate-state regressions pass in
+the focused suites: 20 `mmp-crypto` tests, 38 `mmp-node` tests, and 12 FFI
+tests. The serial workspace matrix passes with four intentionally ignored
+simulator/deployment cases; workspace clippy, `layer-check`, and the CLI demo
+remain clean. Rustfmt is still unavailable because the pinned toolchain lacks
+the component.
+
 Regenerate vectors with:
 
 ```text
@@ -408,6 +431,11 @@ Known limitations that must not be hidden by a future “optimization”:
   tuning, without weakening the no-eviction invariant.
 - The Windows host cannot compile the Linux backend: `libdbus-sys` requires a
   Linux pkg-config/sysroot. A successful Windows build is not Linux evidence.
+- The sealed-box fallback intentionally refuses to replace an existing
+  conversation root. This prevents forged or stale async bundles from
+  invalidating ratchet/receipt state, but a sender that lost local ratchet
+  state needs the future live-session recovery path; availability under
+  restart is not yet a production claim.
 - `cargo fmt` is unavailable because rustfmt is absent from the pinned toolchain;
   use a Rustfmt-equipped Linux/macOS environment before release.
 
