@@ -39,6 +39,8 @@ echo "==> Generating Swift bindings (UniFFI) for the header + module map"
 cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- \
     generate --library target/aarch64-apple-ios/release/libmmp_ffi.a \
     --language swift --out-dir "$STAGE/swift-bindings"
+echo "==> Checking generated Swift binding API and secret boundary"
+python scripts/check_mobile_binding.py swift "$STAGE/swift-bindings"
 
 # UniFFI's swift bindgen emits the module's .swift source plus a C header
 # (and on recent uniffi-bindgen versions, a .modulemap) into the same

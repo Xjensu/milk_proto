@@ -68,6 +68,8 @@ echo "==> Generating Kotlin bindings (UniFFI, same pipeline as CI's mobile-bindi
 cargo build -p mmp-ffi --release
 cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- \
     generate --library target/release/libmmp_ffi.so --language kotlin --out-dir "$STAGE/kotlin-bindings"
+echo "==> Checking generated Kotlin binding API and secret boundary"
+python scripts/check_mobile_binding.py kotlin "$STAGE/kotlin-bindings"
 
 mkdir -p "$OUT_DIR"
 ( cd "$STAGE" && zip -rq "../mmp-ffi.aar" AndroidManifest.xml jni )
