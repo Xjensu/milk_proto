@@ -112,6 +112,20 @@ fn transport_close_feedback_is_visible_at_the_ffi_boundary() {
 }
 
 #[test]
+fn transport_close_saturation_is_visible_at_the_ffi_boundary() {
+    let node = MmpNode::new(vec![10u8; 32], FfiTier::Leaf, None).expect("valid seed");
+    node.link_up(1, true);
+    while node.poll_send().is_some() {}
+
+    // Keep the bounded close queue undrained: one admitted link plus 65 denied
+    // links fills the 64-entry queue and drops exactly one close action.
+    for link in 2..=66 {
+        node.link_up(link, true);
+    }
+    assert_eq!(node.close_actions_dropped(), 1);
+}
+
+#[test]
 fn successor_revocation_forwards_and_validates_fixed_length_keys() {
     let bob = node(2);
     let successor = node(3);

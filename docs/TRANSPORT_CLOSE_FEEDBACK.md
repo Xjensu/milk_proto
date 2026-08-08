@@ -41,7 +41,10 @@ result.
   the local endpoint and emits the reserved transport `LinkDown` event.
 - UniFFI/mobile: call `MmpNode::poll_close()`, close the platform BLE/GATT link,
   then call `MmpNode::link_down(link)` when the platform reports the physical
-  teardown. `poll_send()` must run only after close actions have been drained.
+  teardown. `MmpNode::close_actions_dropped()` is a sticky saturation counter;
+  a non-zero value is a fail-closed operational signal to stop admitting new
+  links and reconcile or restart the transport layer. `poll_send()` must run
+  only after close actions have been drained.
 
 This queue is deliberately outside `TalEvent` and outside all encoded frames.
 It does not alter the frozen protocol specification or create a new peer-visible

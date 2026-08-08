@@ -967,6 +967,15 @@ impl MmpNode {
         self.lock().poll_close()
     }
 
+    /// Return the sticky count of close actions dropped because the bounded
+    /// transport-local queue was saturated. A non-zero value is an
+    /// operational fail-closed signal: the host should stop admitting new
+    /// links and reconcile or restart its transport layer after draining the
+    /// queue.
+    pub fn close_actions_dropped(&self) -> u64 {
+        self.lock().close_actions_dropped()
+    }
+
     /// Drain one app event; call in a loop until `None`.
     pub fn poll_event(&self) -> Option<FfiEvent> {
         self.lock().poll_event().map(FfiEvent::from)
