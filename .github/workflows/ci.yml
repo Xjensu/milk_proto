@@ -40,7 +40,10 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - run: cargo build --workspace --all-features
-      - run: cargo test --workspace --all-features
+      # mmp-store's Windows tests share a deliberately fixed recovery fixture
+      # under %TEMP%; keep the workspace test matrix serial as documented in
+      # docs/MANUAL_INTEROP_TESTING.md to avoid rename races.
+      - run: cargo test --workspace --all-features -- --test-threads=1
       # docs/AGILE_BACKLOG.md E2-S1: clippy was previously enforced only by
       # local practice, not CI. Proven locally to catch a real violation
       # (needless_bool/bool_comparison) before being wired in here.

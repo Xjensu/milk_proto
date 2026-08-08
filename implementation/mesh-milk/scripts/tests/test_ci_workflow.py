@@ -8,6 +8,15 @@ WORKFLOW = Path(__file__).parents[4] / ".github" / "workflows" / "ci.yml"
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_host_workspace_tests_use_serial_threads(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        test_steps = [
+            step
+            for step in workflow["jobs"]["host"]["steps"]
+            if step.get("run") == "cargo test --workspace --all-features -- --test-threads=1"
+        ]
+        self.assertEqual(len(test_steps), 1)
+
     def test_mobile_artifact_uploads_fail_on_missing_paths(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         jobs = workflow["jobs"]
