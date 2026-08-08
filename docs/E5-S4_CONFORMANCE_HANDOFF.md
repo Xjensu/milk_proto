@@ -1419,3 +1419,46 @@ This is a future-suite interoperability/availability hardening, not a claim
 that v1 issuer signatures can be forged: the outer claim signature and pinned
 issuer/scope checks remain required. Future suites still need an explicit
 decoder and application policy before they can be acted upon.
+
+## 2026-08-09 continuation: parser, platform, and admission-state hardening
+
+`a9ea2a1` closes an artifact-boundary gap in the iOS verifier. Structural
+XCFramework checks previously passed copied Swift bindings without re-running
+the API/secret-surface scanner that the build path used. The verifier now
+re-runs that scanner after the UTF-8/non-empty checks; missing generated methods
+and forbidden secret-state identifiers are rejected. The full Python suite has
+29 passing tests, including eight iOS cases. This is still an artifact gate,
+not macOS/Xcode compilation or device-radio evidence.
+
+`b39a114` hardens the public encoded-BundleID helper. `id_of_encoded` now
+returns `Result<Id16, WireError>` and rejects truncated or oversized input
+before slicing or allocating; the bundle fuzz target exercises this path in
+addition to canonical decoding. The repository has no callers that require a
+migration, but external API consumers must handle the new `Result`. Focused
+`mmp-types` all-target tests, Clippy, and fuzz-target compilation passed. The
+wire format and BundleID derivation are unchanged for valid inputs.
+
+`886ecd4` closes a Sybil-driven memory-growth path. `OriginBuckets` and
+`AuthorityBuckets` now fail closed for new entries after 4096 live keys, while
+existing entries continue to operate. `Node::tick` compacts idle maps after
+`LIFETIME_MESSAGE_MS` (72 hours); this is conservative because both token
+budgets refill fully much sooner. Cap, compaction, and node-tick regressions
+pass. The change is receiver-local resource protection and does not alter the
+wire contract or the copy-budget security invariant.
+
+Focused evidence for this continuation:
+
+```text
+cargo test -p mmp-types --all-targets -- --test-threads=1              # pass
+cargo test -p mmp-router -p mmp-node --lib -- --test-threads=1        # pass: 10 + 69
+cargo clippy -p mmp-types -p mmp-router -p mmp-node --all-targets --all-features -- -D warnings  # pass
+python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 29 passed
+git diff --name-only -- specification                                      # empty
+```
+
+The remaining gates are unchanged: Linux/BlueZ two-PC interoperability,
+native Android/iOS runtime and background-radio measurements, and platform
+secure-keystore crash/restart tests. Keep `group_control` quarantined and do
+not introduce MMP/Φ research mechanisms into v1 until trace-driven, physical,
+and adversarial measurements justify them. The Windows host lacks the Linux
+BlueZ/pkg-config environment needed to close the physical gate.
