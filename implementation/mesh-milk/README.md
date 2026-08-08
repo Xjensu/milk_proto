@@ -13,14 +13,14 @@ execution plan). `../../ROADMAP.md` is a thin pointer mapping the legacy
 `../../docs/IMPLEMENTATION_HANDBOOK.md` has the golden rules (§0) binding on
 every change and the buildable specs for remaining work (§4).
 
-As of 2026-07-16 the workspace is well past the original "Stage 0 scaffold"
-point this README used to describe: all 15 crates plus `mmp-tal-peripheral`
-have working implementations, `cargo test --workspace` is green (~90 tests
-across the workspace, 1 intentionally `#[ignore]`d 100-node stress scenario),
-`cargo clippy --workspace --all-targets -- -D warnings` is clean, and
-`layer-check` passes. Phase A ("first radio contact") is code-complete and
-unit-tested; its exit gate — a real two-machine BLE exchange — is the one
-item that needs physical hardware to verify. See
+As of 2026-08-08 the workspace is well past the original "Stage 0 scaffold"
+point: all 15 crates plus `mmp-tal-peripheral` have working implementations.
+The latest serial `cargo test --workspace --all-targets` run reported zero
+failures across 217 listed test items, with four intentionally ignored
+simulation deployment/scale cases; clippy and `layer-check` are clean. Phase A
+is implementation-complete but its exit gate — a real two-machine BLE exchange
+— still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact
+integration seam until native Android/iOS consuming radio shells exist. See
 `../../docs/ROADMAP_TO_PRODUCTION.md` §1 for the full per-crate breakdown and
 §2 for what's still open.
 
@@ -45,7 +45,7 @@ cargo build --workspace --all-features
 cargo test  --workspace --all-features
 cargo clippy --workspace --all-targets -- -D warnings
 cargo run   -p layer-check
-cargo build --release --target thumbv7em-none-eabihf \
+cargo build --release --target thumbv7em-none-eabihf --no-default-features \
   -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
 ```
 

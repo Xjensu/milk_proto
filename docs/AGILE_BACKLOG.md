@@ -1,6 +1,11 @@
 # MMP/1 — Agile Backlog for AI-Agent Execution
 
-**Status:** synthesized 2026-07-15 from two verified audits (specification gap analysis of docs 01–18; implementation audit of `implementation/mesh-milk` with `cargo test`/`clippy`/`layer-check` re-run that day: 71 passed / 0 failed / 1 ignored, clippy `-D warnings` clean, layering intact).
+**Status:** synthesized 2026-07-15 from two verified audits. The 71-pass
+figure below is a historical baseline. At the 2026-08-08 checkpoint, the
+implementation has substantially advanced; the current serial workspace test
+matrix, exact per-crate counts, ignored cases, and remaining physical/CI gates
+are recorded in `docs/E5-S4_CONFORMANCE_HANDOFF.md`. Do not use the historical
+story counts as current evidence without a fresh workspace run.
 **Audience:** AI agents (Sonnet-class and up) executing stories under an orchestrator, per the standing directive: the orchestrator makes design decisions; agents implement against written specs.
 **Companion documents (read in this order before taking any story):**
 1. `docs/IMPLEMENTATION_HANDBOOK.md` — golden rules (§0), system map (§1), buildable specs (§4), definition of done (§6). **Binding on every story below.**
@@ -72,16 +77,26 @@ Sizes and phase labels align with `docs/ROADMAP_TO_PRODUCTION.md` §3.
 
 > Evidence: implementation audit §5 + note on uncommitted state; spec audit finding B1.
 
-**E0-S1 · Commit the working tree · S · Deps: none**
-The entire implementation that produces the 71/0/1 green state exists only as uncommitted modifications on `master` (last commit is the initial scaffold). **Do:** review `git status`, commit in logically separated commits (spec rev-B docs; implementation waves; docs/). This story is the only one requiring explicit user confirmation before executing (pushing/committing is the user's call).
-**Acceptance:** `git status` clean; `cargo test --workspace` green from a fresh checkout.
+**E0-S1 · Commit the working tree · S · Deps: none · HISTORICAL BASELINE**
+The original audit found the implementation only in uncommitted modifications.
+That state has since been superseded by logically separated implementation and
+documentation commits. The fresh-checkout/push gate remains a repository
+governance task because the current branch still contains deliberate unrelated
+dirty/user and quarantined candidate files; no blanket staging is permitted.
+**Acceptance:** a separately prepared clean checkout passes the current
+workspace matrix and the scoped commits are pushed for remote CI evidence.
 
 **E0-S2 · Resolve the phantom governance files (spec BLOCKER B1) · M · Deps: none**
 `CHANGELOG.md`, `COUNCIL-REVIEW.md`, `ROADMAP.md` are cited as normative in nearly every spec doc (audit-history banners in docs 01–18; council disposition IDs CR-A1…A7, N1–N6, CR2-* quoted in docs 16–18; "ROADMAP Stage 1/4/9" gates in docs 12/17/18 and `implementation/mesh-milk/vectors/README.md`) but do not exist in the repo. **Do (orchestrator decision):** create the three files as first-class documents: `CHANGELOG.md` reconstructing rev-A (2026-06-11 audit fixes, from `other/AUDIT.md`) and rev-B (docs 16–18 additions) entries; `ROADMAP.md` as a thin pointer mapping the legacy "Stage 0–9" vocabulary onto `docs/ROADMAP_TO_PRODUCTION.md` phases A–E; `COUNCIL-REVIEW.md` reconstructing the disposition lists **only from IDs actually quoted in docs 16–18** (no invented content — where a disposition's full text is unrecoverable, record the ID with "text not preserved; see citing doc §").
 **Acceptance:** every `CHANGELOG.md` / `COUNCIL-REVIEW.md` / `ROADMAP.md` reference in `specification/` and `implementation/` resolves to a real file section; grep proof attached to the PR/commit message.
 
-**E0-S3 · Fix the stale workspace README · S · Deps: E0-S2 · DONE (2026-07-16)**
-`implementation/mesh-milk/README.md` said "Stage 0 — all crates intentionally empty" and linked to the (previously nonexistent) `ROADMAP.md`. **Done:** rewritten to state the real crate inventory (15 crates + `mmp-tal-peripheral`, ~90 tests green, clippy clean, layer-check clean, Phase A code-complete pending hardware verification) and link `ROADMAP.md` (now real) + `docs/ROADMAP_TO_PRODUCTION.md` + `docs/AGILE_BACKLOG.md` + `docs/IMPLEMENTATION_HANDBOOK.md`; also noted the CI workflow's new repo-root location (E2-S0).
+**E0-S3 · Fix the stale workspace README · S · Deps: E0-S2 · DONE (2026-07-16; refreshed 2026-08-08)**
+`implementation/mesh-milk/README.md` now states the current crate inventory,
+the latest zero-failure workspace verification with ignored simulation cases,
+the pending physical BLE gate, and the corrected `--no-default-features`
+embedded build command. It links `ROADMAP.md` (now real),
+`docs/ROADMAP_TO_PRODUCTION.md`, `docs/AGILE_BACKLOG.md`,
+`docs/IMPLEMENTATION_HANDBOOK.md`, and the root CI workflow.
 **Acceptance:** README claims match `cargo test` reality; every linked file (`ROADMAP.md`, `docs/ROADMAP_TO_PRODUCTION.md`, `docs/AGILE_BACKLOG.md`, `docs/IMPLEMENTATION_HANDBOOK.md`, `.github/workflows/ci.yml`) confirmed to exist — no dead links.
 
 ---
