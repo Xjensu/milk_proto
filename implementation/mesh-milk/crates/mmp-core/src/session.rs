@@ -511,18 +511,32 @@ impl SessionEngine {
                 if self.recon.as_ref().is_none_or(|recon| recon.domain != domain) {
                     self.recon = Some(Reconciler::new(domain));
                 }
-                let recon = self.recon.as_mut().expect("accepted init creates reconciler");
-                let replies = recon.on_range(&range, false, host.ids(&peer));
+                let (replies, exhausted) = {
+                    let recon = self.recon.as_mut().expect("accepted init creates reconciler");
+                    let replies = recon.on_range(&range, false, host.ids(&peer));
+                    (replies, recon.resource_exhausted())
+                };
+                if exhausted {
+                    self.protocol_error(errcode::PROTOCOL);
+                    return;
+                }
                 self.send_frames(replies);
             }
             Frame::ReconRange { domain, ranges }
                 if self.active_recon_matches(domain) && !ranges.is_empty() && ranges.iter().all(valid_range) =>
             {
                 let is_reply = domain & DOMAIN_REPLY_FLAG != 0;
-                let recon = self.recon.as_mut().expect("active domain guard");
                 let mut replies = Vec::new();
-                for r in &ranges {
-                    replies.extend(recon.on_range(r, is_reply, host.ids(&peer)));
+                let exhausted = {
+                    let recon = self.recon.as_mut().expect("active domain guard");
+                    for r in &ranges {
+                        replies.extend(recon.on_range(r, is_reply, host.ids(&peer)));
+                    }
+                    recon.resource_exhausted()
+                };
+                if exhausted {
+                    self.protocol_error(errcode::PROTOCOL);
+                    return;
                 }
                 self.send_frames(replies);
                 self.drain_wants();
@@ -534,8 +548,15 @@ impl SessionEngine {
                     && lo <= hi
                     && ids.iter().all(|id| *id >= lo && *id <= hi) =>
             {
-                let recon = self.recon.as_mut().expect("active domain guard");
-                let replies = recon.on_ids(&lo, &hi, &ids, host.ids(&peer));
+                let (replies, exhausted) = {
+                    let recon = self.recon.as_mut().expect("active domain guard");
+                    let replies = recon.on_ids(&lo, &hi, &ids, host.ids(&peer));
+                    (replies, recon.resource_exhausted())
+                };
+                if exhausted {
+                    self.protocol_error(errcode::PROTOCOL);
+                    return;
+                }
                 self.send_frames(replies);
                 self.drain_wants();
                 self.maybe_advance_domain(host);
@@ -987,6 +1008,49 @@ mod rx_bound_tests {
         assert_eq!(b.phase, Phase::Established);
         assert_eq!(a.domain_cursor, DOMAINS.len() - 1, "all domains should be reached");
         assert!(a.final_wants_sent);
+    }
+
+    #[test]
+    fn rbsr_resource_exhaustion_closes_the_session() {
+        let local = identity(11);
+        let peer = identity(12);
+        let ids: Vec<Id16> = (0..25).map(|value| {
+            let mut bytes = [0x80; 16];
+            bytes[14..].copy_from_slice(&(value as u16).to_be_bytes());
+            Id16(bytes)
+        }).collect();
+
+        // Valid-size descriptors with unique bounds force repeated child
+        // splits. The reconciler must reject the bounded-resource violation
+        // instead of retaining an unbounded authenticated-peer worklist.
+        let mut reconciler = Reconciler::new(DOMAINS[0]);
+        let mut source = host_with_ids(ids.clone());
+        for value in 0..2_000u16 {
+            let mut hi = [0xff; 16];
+            hi[14..].copy_from_slice(&value.to_be_bytes());
+            let range = Range { lo: Id16::MIN, hi: Id16(hi), count: 0, fp: 0 };
+            reconciler.on_range(&range, false, &mut source.ids);
+            if reconciler.resource_exhausted() {
+                break;
+            }
+        }
+        assert!(reconciler.resource_exhausted());
+
+        let mut session = SessionEngine::initiator(&local, &hello(), 1000).unwrap();
+        session.phase = Phase::Established;
+        session.peer_node = Some(peer.node_id());
+        session.recon = Some(reconciler);
+        let mut host = host_with_ids(ids);
+        session.on_established(
+            Frame::ReconRange {
+                domain: DOMAINS[0],
+                ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }],
+            },
+            &mut host,
+        );
+
+        assert_eq!(session.phase, Phase::Closed);
+        assert!(matches!(session.poll_event(), Some(SessionEvent::Closed)));
     }
 
     #[test]

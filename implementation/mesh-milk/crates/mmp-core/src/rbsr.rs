@@ -27,6 +27,21 @@ pub const DOMAIN_REPLY_FLAG: u8 = 0x80;
 /// at most `RBSR_B_F` children; excess untrusted fragments are ignored until
 /// the session times out rather than growing memory without limit.
 const MAX_COVERAGE_INTERVALS_PER_PARENT: usize = RBSR_B_F * 4;
+/// Bound the per-session range ledger.  A peer controls the `(count, fp)`
+/// fields of every descriptor, so using the wire descriptor as a map key
+/// without a cap would let an authenticated peer grow `pending` for the whole
+/// session.  The cap is deliberately above the leaf count needed for the
+/// supported 10k-node/BundleID-scale inventory (`10_000 / RBSR_T_LIST < 512`)
+/// while keeping one reconciler's metadata bounded.
+const MAX_PENDING_RANGES: usize = 1024;
+/// Bound the set of ranges already answered with a terminal ID list.  The
+/// descriptor bounds are attacker-controlled and the set otherwise survives
+/// for the complete contact.
+const MAX_LISTED_RANGES: usize = 4096;
+/// Bound IDs collected from untrusted RECON_IDS frames until the session drains
+/// them into WANT frames.  This is a defensive backstop for a host that is
+/// temporarily unable to emit those frames.
+const MAX_MISSING_IDS: usize = 4096;
 
 /// `FP(range) = BLAKE3(xor_fold(ids) ‖ count)[0..8]` (doc 06 §3): a
 /// commutative (order-independent) fingerprint of a set of IDs, used to
@@ -149,6 +164,11 @@ pub struct Reconciler {
     pub open: usize,
     /// IDs the peer has that we lack (drained by the session into WANT).
     pub missing: BTreeSet<Id16>,
+    /// Set when an untrusted range/list would exceed one of the bounded
+    /// ledgers.  The session treats this as a protocol resource violation and
+    /// closes; silently dropping a child would leave both peers with a false
+    /// reconciliation result.
+    exhausted: bool,
 }
 
 /// The reconciler asks the host for its sorted IDs per range through this seam.
@@ -170,7 +190,15 @@ impl Reconciler {
             pending: BTreeMap::new(),
             open: 0,
             missing: BTreeSet::new(),
+            exhausted: false,
         }
+    }
+
+    /// Whether a peer has driven one of the bounded RBSR ledgers past its
+    /// safe capacity.  A session must fail closed rather than continue with a
+    /// partial reconciliation state.
+    pub fn resource_exhausted(&self) -> bool {
+        self.exhausted
     }
 
     /// Initiator: open the domain with the full-range fingerprint.
@@ -275,6 +303,10 @@ impl Reconciler {
         self.resolve_bounds(lo, hi);
         for id in ids {
             if !src.has(id) {
+                if !self.missing.contains(id) && self.missing.len() >= MAX_MISSING_IDS {
+                    self.exhausted = true;
+                    break;
+                }
                 self.missing.insert(*id);
             }
         }
@@ -302,6 +334,13 @@ impl Reconciler {
     }
 
     fn track(&mut self, range: &Range) {
+        if self.pending.contains_key(&Self::key(range)) {
+            return;
+        }
+        if self.pending.len() >= MAX_PENDING_RANGES {
+            self.exhausted = true;
+            return;
+        }
         self.pending.entry(Self::key(range)).or_insert(PendingState {
             coverage: BTreeSet::new(),
             await_terminal: false,
@@ -311,15 +350,19 @@ impl Reconciler {
 
     fn track_all(&mut self, ranges: &[Range]) {
         for range in ranges {
-            self.pending.entry(Self::key(range)).or_insert(PendingState {
-                coverage: BTreeSet::new(),
-                await_terminal: false,
-            });
+            self.track(range);
+            if self.exhausted {
+                break;
+            }
         }
         self.refresh_open();
     }
 
     fn track_terminal(&mut self, range: &Range) {
+        if !self.pending.contains_key(&Self::key(range)) && self.pending.len() >= MAX_PENDING_RANGES {
+            self.exhausted = true;
+            return;
+        }
         let state = self.pending.entry(Self::key(range)).or_insert(PendingState {
             coverage: BTreeSet::new(),
             await_terminal: false,
@@ -386,8 +429,88 @@ impl Reconciler {
     }
 
     fn list_frames(&mut self, lo: &Id16, hi: &Id16, ids: Vec<Id16>) -> Vec<Frame> {
+        if !self.listed.contains(&(*lo, *hi)) && self.listed.len() >= MAX_LISTED_RANGES {
+            self.exhausted = true;
+            return Vec::new();
+        }
         self.listed.insert((*lo, *hi));
         // A list both offers our IDs and (on the peer) resolves this range.
         alloc::vec![Frame::ReconIds { domain: self.domain, lo: *lo, hi: *hi, ids }]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FixedIds {
+        ids: Vec<Id16>,
+    }
+
+    impl IdSource for FixedIds {
+        fn ids_in(&mut self, _domain: u8, lo: &Id16, hi: &Id16) -> Vec<Id16> {
+            self.ids.iter().copied().filter(|id| *id >= *lo && *id <= *hi).collect()
+        }
+
+        fn has(&mut self, _id: &Id16) -> bool {
+            false
+        }
+    }
+
+    fn id_with_tail(value: u16) -> Id16 {
+        let mut bytes = [0x80; 16];
+        bytes[14..].copy_from_slice(&value.to_be_bytes());
+        Id16(bytes)
+    }
+
+    fn high_bound(value: u16) -> Id16 {
+        let mut bytes = [0xff; 16];
+        bytes[14..].copy_from_slice(&value.to_be_bytes());
+        Id16(bytes)
+    }
+
+    #[test]
+    fn hostile_range_descriptors_trip_pending_cap_without_growth() {
+        let mut source = FixedIds { ids: (0..25).map(id_with_tail).collect() };
+        let mut recon = Reconciler::new(0);
+
+        // Every descriptor covers the same 25 local IDs but carries a unique
+        // upper bound.  A peer can send these as valid, in-cap frames; before
+        // the bound each one opened another 16-child split in `pending`.
+        for value in 0..=u16::MAX {
+            let range = Range { lo: Id16::MIN, hi: high_bound(value), count: 0, fp: 0 };
+            recon.on_range(&range, false, &mut source);
+            if recon.resource_exhausted() {
+                break;
+            }
+        }
+
+        assert!(recon.resource_exhausted());
+        assert!(recon.pending.len() <= MAX_PENDING_RANGES);
+    }
+
+    #[test]
+    fn hostile_terminal_ranges_and_missing_ids_are_bounded() {
+        let mut source = FixedIds { ids: Vec::new() };
+        let mut recon = Reconciler::new(0);
+
+        // Small local ranges take the terminal-list path.  Distinct bounds
+        // would otherwise make `listed` grow for the life of the session.
+        for value in 0..=u16::MAX {
+            let range = Range { lo: Id16::MIN, hi: high_bound(value), count: 1, fp: 1 };
+            recon.on_range(&range, false, &mut source);
+            if recon.resource_exhausted() {
+                break;
+            }
+        }
+        assert!(recon.resource_exhausted());
+        assert!(recon.listed.len() <= MAX_LISTED_RANGES);
+
+        let mut recon = Reconciler::new(0);
+        let ids: Vec<Id16> = (0..=MAX_MISSING_IDS as u16).map(id_with_tail).collect();
+        let range = Range { lo: Id16::MIN, hi: Id16::MAX, count: ids.len() as u32, fp: 0 };
+        recon.on_ids(&range.lo, &range.hi, &ids, &mut source);
+        assert!(recon.resource_exhausted());
+        assert!(recon.missing.len() <= MAX_MISSING_IDS);
     }
 }
