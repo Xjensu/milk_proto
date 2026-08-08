@@ -84,6 +84,16 @@ implementation hardening only; the frozen specification remains unchanged.
 The supplied MMP/Φ proposal audit and its amended research plan are recorded
 in `docs/PROPOSAL_AUDIT_MMP_PHI.md`.
 
+Commit `2357e6f` closes the remaining host-side lifecycle feedback gap. Both
+BLE event queues now retain a sticky count when their normal and emergency
+control lanes are simultaneously full; central and Linux peripheral roles
+expose that count plus an explicit `shutdown_all()` sweep. The CLI drains
+ordinary `poll_close()` actions, fails closed on either node or transport
+lifecycle saturation, and invokes the sweep on all loop exit paths. The
+transport queue tests exercise the full-lane rejection and sticky diagnostic.
+Physical adapter teardown and the Linux/BlueZ interoperability gate remain
+unverified on this Windows host.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
