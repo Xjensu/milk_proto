@@ -147,6 +147,9 @@ impl Reconciler {
     /// Handle a peer range (from RECON_INIT or RECON_RANGE). `is_reply` = the
     /// peer's echo resolving one of OUR ranges.
     pub fn on_range(&mut self, range: &Range, is_reply: bool, src: &mut impl IdSource) -> Vec<Frame> {
+        if range.lo > range.hi {
+            return Vec::new();
+        }
         let ids = src.ids_in(self.domain, &range.lo, &range.hi);
         let our_fp = fingerprint(&ids);
         if is_reply {
@@ -199,6 +202,9 @@ impl Reconciler {
     /// `RBSR_T_LIST`, recursing (via the same `split_ranges`/`B_F` machinery)
     /// until every leaf is wire-safe.
     pub fn on_ids(&mut self, lo: &Id16, hi: &Id16, ids: &[Id16], src: &mut impl IdSource) -> Vec<Frame> {
+        if lo > hi || ids.iter().any(|id| *id < *lo || *id > *hi) {
+            return Vec::new();
+        }
         self.resolve_bounds(lo, hi);
         for id in ids {
             if !src.has(id) {

@@ -11,7 +11,7 @@ use mmp_types::consts::{
     HANDSHAKE_BUDGET_MS, L_MAX, MAX_FRAME_PAYLOAD, SESSION_AIRTIME_CAP_MS, SESSION_IDLE_MS,
 };
 use mmp_types::frame::{
-    errcode, read_envelope, write_envelope, Frame, Hello, Summary, FT_HS, MAX_ENVELOPE_PAYLOAD,
+    errcode, read_envelope, write_envelope, Frame, Hello, Range, Summary, FT_HS, MAX_ENVELOPE_PAYLOAD,
 };
 use mmp_types::ids::{Id16, Key32, NodeId};
 
@@ -45,6 +45,10 @@ const fn envelope_payload_within_cap(len: usize) -> bool {
 fn valid_recon_domain(domain: u8, allow_reply_flag: bool) -> bool {
     let base = domain & !DOMAIN_REPLY_FLAG;
     DOMAINS.contains(&base) && (allow_reply_flag || domain & DOMAIN_REPLY_FLAG == 0)
+}
+
+fn valid_range(range: &Range) -> bool {
+    range.lo <= range.hi
 }
 
 /// Read an envelope length from the bytes already buffered plus the next
@@ -200,6 +204,7 @@ pub struct SessionEngine {
     started_at: u64,
     last_activity: u64,
     sync_started: bool,
+    final_wants_sent: bool,
 }
 
 impl SessionEngine {
@@ -249,6 +254,7 @@ impl SessionEngine {
             started_at: now_ms,
             last_activity: now_ms,
             sync_started: false,
+            final_wants_sent: false,
         }
     }
 
@@ -500,14 +506,20 @@ impl SessionEngine {
                 self.flush_pending_frames();
                 self.flush_pending_handoffs(host);
             }
-            Frame::ReconInit { domain, range, .. } if valid_recon_domain(domain, false) => {
-                let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
+            Frame::ReconInit { domain, range, .. } if self.accepts_recon_init(domain) && valid_range(&range) => {
+                let domain = domain & !DOMAIN_REPLY_FLAG;
+                if self.recon.as_ref().is_none_or(|recon| recon.domain != domain) {
+                    self.recon = Some(Reconciler::new(domain));
+                }
+                let recon = self.recon.as_mut().expect("accepted init creates reconciler");
                 let replies = recon.on_range(&range, false, host.ids(&peer));
                 self.send_frames(replies);
             }
-            Frame::ReconRange { domain, ranges } if valid_recon_domain(domain, true) => {
+            Frame::ReconRange { domain, ranges }
+                if self.active_recon_matches(domain) && !ranges.is_empty() && ranges.iter().all(valid_range) =>
+            {
                 let is_reply = domain & DOMAIN_REPLY_FLAG != 0;
-                let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
+                let recon = self.recon.as_mut().expect("active domain guard");
                 let mut replies = Vec::new();
                 for r in &ranges {
                     replies.extend(recon.on_range(r, is_reply, host.ids(&peer)));
@@ -516,8 +528,13 @@ impl SessionEngine {
                 self.drain_wants();
                 self.maybe_advance_domain(host);
             }
-            Frame::ReconIds { domain, lo, hi, ids } if valid_recon_domain(domain, false) => {
-                let recon = self.recon_for(domain & !DOMAIN_REPLY_FLAG);
+            Frame::ReconIds { domain, lo, hi, ids }
+                if self.active_recon_matches(domain)
+                    && domain & DOMAIN_REPLY_FLAG == 0
+                    && lo <= hi
+                    && ids.iter().all(|id| *id >= lo && *id <= hi) =>
+            {
+                let recon = self.recon.as_mut().expect("active domain guard");
                 let replies = recon.on_ids(&lo, &hi, &ids, host.ids(&peer));
                 self.send_frames(replies);
                 self.drain_wants();
@@ -556,21 +573,35 @@ impl SessionEngine {
         }
     }
 
-    fn recon_for(&mut self, domain: u8) -> &mut Reconciler {
-        let fresh = match &self.recon {
-            Some(r) => r.domain != domain,
-            None => true,
-        };
-        if fresh {
-            self.recon = Some(Reconciler::new(domain));
+    fn accepts_recon_init(&self, domain: u8) -> bool {
+        if self.initiator || !valid_recon_domain(domain, false) {
+            return false;
         }
-        self.recon.as_mut().expect("just ensured")
+        let Some(current) = self.recon.as_ref() else {
+            return domain == DOMAINS[0];
+        };
+        if current.domain == domain {
+            return !current.is_done();
+        }
+        let Some(current_index) = DOMAINS.iter().position(|candidate| *candidate == current.domain) else {
+            return false;
+        };
+        DOMAINS.get(current_index + 1).copied() == Some(domain) && current.is_done()
+    }
+
+    fn active_recon_matches(&self, domain: u8) -> bool {
+        valid_recon_domain(domain, true)
+            && self
+                .recon
+                .as_ref()
+                .is_some_and(|recon| recon.domain == (domain & !DOMAIN_REPLY_FLAG))
     }
 
     fn start_domain<H: SessionHost>(&mut self, host: &mut H) {
         let peer = self.peer_node.expect("established");
         let domain = DOMAINS[self.domain_cursor];
         self.recon = Some(Reconciler::new(domain));
+        self.final_wants_sent = false;
         self.sync_started = true;
         let frame = self
             .recon
@@ -591,11 +622,14 @@ impl SessionEngine {
         if self.domain_cursor + 1 < DOMAINS.len() {
             self.domain_cursor += 1;
             self.start_domain(host);
-        } else if let Some(peer) = self.peer_node {
-            // All domains reconciled: flush DAG-repair WANTs (doc 06 §5.3).
-            let wants = host.wants(&peer);
-            if !wants.is_empty() {
-                self.send_frame(&Frame::Want(wants));
+        } else if !self.final_wants_sent {
+            self.final_wants_sent = true;
+            if let Some(peer) = self.peer_node {
+                // All domains reconciled: flush DAG-repair WANTs (doc 06 §5.3).
+                let wants = host.wants(&peer);
+                if !wants.is_empty() {
+                    self.send_frame(&Frame::Want(wants));
+                }
             }
         }
     }
@@ -810,6 +844,7 @@ mod rx_bound_tests {
         ids: EmptyIds,
         loads: usize,
         load_bytes: Option<Vec<u8>>,
+        wants_calls: usize,
     }
 
     impl SessionHost for EmptyHost {
@@ -835,6 +870,7 @@ mod rx_bound_tests {
         fn on_budget(&mut self, _peer: &NodeId, _id: &Id16, _granted: u8) {}
 
         fn wants(&mut self, _peer: &NodeId) -> Vec<Id16> {
+            self.wants_calls += 1;
             Vec::new()
         }
 
@@ -852,7 +888,41 @@ mod rx_bound_tests {
     }
 
     fn host() -> EmptyHost {
-        EmptyHost { ids: EmptyIds, loads: 0, load_bytes: None }
+        EmptyHost { ids: EmptyIds, loads: 0, load_bytes: None, wants_calls: 0 }
+    }
+
+    #[test]
+    fn recon_init_is_role_and_order_fenced() {
+        let initiator = identity(1);
+        let responder = identity(2);
+        let hello = hello();
+        let a = SessionEngine::initiator(&initiator, &hello, 1000).unwrap();
+        let mut b = SessionEngine::responder(&responder, &hello, 1000).unwrap();
+
+        assert!(!a.accepts_recon_init(0), "only the negotiated initiator may open a domain");
+        assert!(b.accepts_recon_init(0));
+        b.recon = Some(Reconciler::new(0));
+        b.recon.as_mut().expect("reconciler installed").open = 1;
+        assert!(!b.accepts_recon_init(1), "a later domain cannot replace an unresolved domain");
+        b.recon.as_mut().expect("reconciler installed").open = 0;
+        assert!(b.accepts_recon_init(1), "the next domain is accepted after completion");
+    }
+
+    #[test]
+    fn final_wants_are_polled_once_per_session() {
+        let local = identity(1);
+        let peer = identity(2);
+        let hello = hello();
+        let mut session = SessionEngine::initiator(&local, &hello, 1000).unwrap();
+        session.peer_node = Some(peer.node_id());
+        session.domain_cursor = DOMAINS.len() - 1;
+        session.recon = Some(Reconciler::new(DOMAINS[session.domain_cursor]));
+        let mut host = host();
+
+        session.maybe_advance_domain(&mut host);
+        session.maybe_advance_domain(&mut host);
+        assert_eq!(host.wants_calls, 1);
+        assert!(session.final_wants_sent);
     }
 
     /// Drive only the Noise XX messages, leaving both engines in Binding with

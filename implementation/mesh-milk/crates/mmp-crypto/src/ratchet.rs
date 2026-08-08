@@ -318,7 +318,7 @@ impl Drop for SendChain {
 impl Drop for RecvChain {
     fn drop(&mut self) {
         self.ck.zeroize();
-        for (_, v) in self.skipped.iter_mut() {
+        for v in self.skipped.values_mut() {
             v.zeroize();
         }
     }

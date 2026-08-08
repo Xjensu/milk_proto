@@ -477,6 +477,19 @@ fn now_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
+/// Bring a freshly restored node onto the CLI's persisted deadline timebase
+/// before any command creates new bundles. `Node::new` starts at zero, while
+/// the current snapshot format stores absolute millisecond deadlines; without
+/// this first tick, a `send` bundle created before the drive loop's first tick
+/// would expire immediately when the loop supplies the Unix timestamp.
+fn prime_node_clock(node: &mut Node) {
+    prime_node_clock_at(node, now_ms());
+}
+
+fn prime_node_clock_at(node: &mut Node, now_ms: u64) {
+    node.tick(now_ms);
+}
+
 fn cmd_connect(args: &[String]) -> ExitCode {
     let (positional, store_path) = match parse_positional_and_store(args, 1) {
         Ok(v) => v,
@@ -491,6 +504,7 @@ fn cmd_connect(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    prime_node_clock(&mut node);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -521,6 +535,7 @@ fn cmd_send(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    prime_node_clock(&mut node);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let msg_id = match node.send_text(&dest, &positional[2]) {
@@ -560,6 +575,7 @@ fn cmd_listen(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    prime_node_clock(&mut node);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -839,6 +855,22 @@ mod tests {
     fn remove_snapshot(path: &std::path::Path) {
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(path.with_extension("tmp"));
+    }
+
+    #[test]
+    fn primed_cli_clock_keeps_a_new_bundle_alive_on_first_drive_tick() {
+        let seed = [0x31; 32];
+        let peer = Node::new([0x32; 32], Box::new(MemStore::new()), Tier::Anchor);
+        let mut node = Node::new(seed, Box::new(MemStore::new()), Tier::Anchor);
+        for claim in peer.own_claims() {
+            node.ingest_claim(claim, false);
+        }
+
+        prime_node_clock_at(&mut node, 1_000_000);
+        node.send_text(&peer.node_id(), "clock-safe").expect("peer claims are present");
+        assert!(node.store_len() > 0);
+        node.tick(1_000_001);
+        assert!(node.store_len() > 0, "the first drive tick must not expire a freshly queued bundle");
     }
 
     /// The CLI must perform the same bootstrap sequence as the FFI host:
