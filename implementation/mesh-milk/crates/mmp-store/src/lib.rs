@@ -291,7 +291,9 @@ impl SnapshotStore {
     /// before they can be written, and the decoder also validates every
     /// certificate against its restored pinned root.
     pub fn set_authority(&mut self, authority: Vec<u8>) {
-        self.authority = mmp_core::AuthorityStore::decode(&authority).map(|_| authority);
+        if mmp_core::AuthorityStore::decode(&authority).is_some() {
+            self.authority = Some(authority);
+        }
     }
 
     /// The validated local blocklist snapshot, if one was loaded or staged.
@@ -302,7 +304,9 @@ impl SnapshotStore {
     /// Stage a bounded, deterministic local blocklist snapshot. Invalid or
     /// unsorted entries are rejected before persistence.
     pub fn set_blocklist(&mut self, blocklist: Vec<u8>) {
-        self.blocklist = valid_blocklist(&blocklist).then_some(blocklist);
+        if valid_blocklist(&blocklist) {
+            self.blocklist = Some(blocklist);
+        }
     }
 }
 
@@ -726,6 +730,8 @@ mod tests {
         blocklist.extend_from_slice(&[2; 16]);
         let mut s = SnapshotStore::open(&path);
         s.set_blocklist(blocklist.clone());
+        s.set_blocklist(vec![BLOCKLIST_VERSION, 0, 0, 0]);
+        assert_eq!(s.blocklist(), Some(blocklist.as_slice()), "invalid staging must not clear valid state");
         s.persist().unwrap();
 
         let s2 = SnapshotStore::open(&path);
