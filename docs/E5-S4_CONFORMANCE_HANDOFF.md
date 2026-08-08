@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is on commit `45ccdf1` (`docs(mesh-milk): record group control
-security boundary`). The frozen `specification/` directory was not modified.
+This checkpoint is on commit `a73f747` (`fix(mmp-cli): persist and restore node
+state`). The frozen `specification/` directory was not modified.
 The implementation changes are intentionally limited to deterministic test
 vectors, test-only readers, and their documentation.
 
@@ -18,6 +18,9 @@ Recent focused commits, oldest first:
 - `c34069b` — independent Beacon and all-registered-frame payload grammars;
 - `b07a0b7` — machine-readable coverage manifest;
 - `45ccdf1` — group-control security boundary and remediation order.
+- `a73f747` — CLI snapshot restoration/staging and a restart regression test;
+  the manual `connect` → `Ctrl-C` → `send --store` workflow now preserves
+  claims, group blobs, replay state, and receipt suppression state.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -46,7 +49,7 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 25 `mmp-cli` tests. Workspace clippy with
+The latest focused run passed 26 `mmp-cli` tests. Workspace clippy with
 `-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
 workspace test matrix also passed during this checkpoint. Rustfmt could not be
 run because the rustfmt component is not installed in the environment.
@@ -91,7 +94,9 @@ Record evidence and obtain a protocol decision first.
 
 1. Decide and implement the 4096/4128 admission policy after a specification
    review; add an interoperability regression test for the chosen behavior.
-2. Run the manual BLE procedure on two Linux PCs. Mobile work currently stops
+2. Run the manual BLE procedure on two Linux PCs. The current Windows host has
+   a working Bluetooth adapter but no usable BlueZ peripheral path, so this
+   hardware gate cannot be executed here. Mobile work currently stops
    at building and exercising the FFI artifacts until a real Android/iOS host
    application is supplied.
 3. Keep the candidate group-control implementation quarantined until a
