@@ -453,7 +453,7 @@ struct NodeCore {
     /// default 0: every cert reads as expired until the host calls
     /// `Node::set_wall_clock`, so an un-clocked node clamps everything to
     /// NORMAL and renders nothing official, rather than trusting anything.
-    wall_unix_s: u32,
+    wall_unix_s: Option<u32>,
     convs: HashMap<Id16, Conv>,
     /// Conv IDs for which a live session has completed at least once before
     /// (E4-S4 bump_epoch wiring). RAM-only bookkeeping, not the conversation
@@ -568,7 +568,7 @@ impl Node {
             buckets: OriginBuckets::new(),
             authority: AuthorityStore::new(),
             auth_buckets: AuthorityBuckets::new(),
-            wall_unix_s: 0,
+            wall_unix_s: None,
             convs: HashMap::new(),
             established_convs: HashSet::new(),
             groups: HashMap::new(),
@@ -837,10 +837,13 @@ impl Node {
 
     /// Feed the host's wall clock (unix seconds) for doc 18 `not_after`
     /// checks — the only place in this crate that isn't driven by `tick`'s
-    /// monotonic `now_ms`. Never called ⇒ every AuthCert reads as expired
-    /// (fail-closed default 0).
+    /// monotonic `now_ms`. The first reading, including `0`, marks the clock
+    /// ready. Later readings that move backwards are ignored so an NTP/user
+    /// rollback cannot make an expired authority certificate valid again.
     pub fn set_wall_clock(&mut self, unix_s: u32) {
-        self.core.wall_unix_s = unix_s;
+        if self.core.wall_unix_s.is_none_or(|previous| unix_s >= previous) {
+            self.core.wall_unix_s = Some(unix_s);
+        }
     }
 
     /// Pin a trusted operator root key for `scope` (doc 18 §2.2 QR-ceremony
@@ -1480,7 +1483,9 @@ impl NodeCore {
                             // The claim asserts "I hold this grant" (doc 18
                             // §2.1) — owner must equal the cert's own subject.
                             if cert.subject == claim_owner {
-                                let _ = self.authority.consider_cert(&cert, self.wall_unix_s);
+                                if let Some(now_unix_s) = self.wall_unix_s {
+                                    let _ = self.authority.consider_cert(&cert, now_unix_s);
+                                }
                             }
                         }
                     }
@@ -1628,7 +1633,9 @@ impl NodeCore {
         for ext in &bundle.exts {
             if let Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val } = ext {
                 if let Ok(cert) = AuthCert::decode(val) {
-                    let _ = self.authority.consider_cert(&cert, self.wall_unix_s);
+                    if let Some(now_unix_s) = self.wall_unix_s {
+                        let _ = self.authority.consider_cert(&cert, now_unix_s);
+                    }
                 }
             }
         }
@@ -1645,7 +1652,10 @@ impl NodeCore {
         // below NORMAL (declared ≥ NORMAL passes through unclamped already,
         // per `effective_class5_priority`'s own early return).
         let effective = if bundle.priority < prio::NORMAL {
-            let grant = self.authority.grant_for(&bundle.origin, &bundle.dest, bundle.priority, self.wall_unix_s).copied();
+            let grant = self
+                .wall_unix_s
+                .and_then(|now_unix_s| self.authority.grant_for(&bundle.origin, &bundle.dest, bundle.priority, now_unix_s))
+                .copied();
             let now = self.now;
             let auth_buckets = &mut self.auth_buckets;
             effective_class5_priority(bundle.priority, subscribed, grant.as_ref(), |c| {
@@ -1667,7 +1677,9 @@ impl NodeCore {
         // Doc 18 §5.2.1 item 2: rendering is a pure function of
         // (announcement, cert) with no anti-abuse state — independent of the
         // bucket and of declared priority.
-        let official = self.authority.official(&bundle.origin, &bundle.dest, self.wall_unix_s);
+        let official = self
+            .wall_unix_s
+            .is_some_and(|now_unix_s| self.authority.official(&bundle.origin, &bundle.dest, now_unix_s));
 
         if subscribed {
             self.events.push_back(Event::Announcement {

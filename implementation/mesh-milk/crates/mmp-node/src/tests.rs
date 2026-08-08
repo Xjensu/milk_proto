@@ -1021,6 +1021,90 @@ fn valid_attached_cert_elevates_priority_and_renders_official() {
 }
 
 #[test]
+fn unclocked_authority_cert_fails_closed_even_when_future_dated() {
+    let mut alice = node(13);
+    let mut bob = node(14);
+    let authority = mmp_crypto::Identity::from_seed(&[15; 32]);
+    let scope = bob.subscribe_scope(b"clock/unset");
+    bob.pin_authority_root(scope, authority.public());
+
+    // A zero-initialized clock would incorrectly accept this certificate.
+    // The readiness bit must keep the attached certificate unusable until a
+    // host supplies an actual wall-clock reading.
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        u32::MAX,
+    );
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"clock not ready", Some(&cert))
+        .unwrap();
+
+    contact(&mut alice, &mut bob, 13, 130_000);
+    let ann = drain(&mut bob)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Announcement { effective_priority, official, text, .. } => {
+                Some((effective_priority, official, text))
+            }
+            _ => None,
+        })
+        .expect("subscribed node still surfaces the announcement");
+    assert_eq!(ann.0, prio::NORMAL, "unclocked authority must not elevate");
+    assert!(!ann.1, "unclocked authority must not render official");
+    assert_eq!(ann.2, b"clock not ready");
+}
+
+#[test]
+fn wall_clock_rollback_cannot_revalidate_expired_authority() {
+    let mut alice = node(16);
+    let mut bob = node(17);
+    let authority = mmp_crypto::Identity::from_seed(&[18; 32]);
+    let scope = bob.subscribe_scope(b"clock/rollback");
+    bob.pin_authority_root(scope, authority.public());
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        1_000,
+    );
+
+    bob.set_wall_clock(0);
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"before rollback", Some(&cert))
+        .unwrap();
+    contact(&mut alice, &mut bob, 16, 160_000);
+    let first = drain(&mut bob).into_iter().find_map(|event| match event {
+        Event::Announcement { effective_priority, official, text, .. } if text == b"before rollback" => {
+            Some((effective_priority, official))
+        }
+        _ => None,
+    });
+    assert_eq!(first, Some((prio::OPERATIONAL, true)));
+
+    // Move past not_after + skew, then attempt to roll the receiver's clock
+    // back. The lower sample must be ignored and the certificate stay expired.
+    bob.set_wall_clock(2_000);
+    bob.set_wall_clock(0);
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"after rollback", Some(&cert))
+        .unwrap();
+    contact(&mut alice, &mut bob, 17, 170_000);
+    let second = drain(&mut bob).into_iter().find_map(|event| match event {
+        Event::Announcement { effective_priority, official, text, .. } if text == b"after rollback" => {
+            Some((effective_priority, official))
+        }
+        _ => None,
+    });
+    assert_eq!(second, Some((prio::NORMAL, false)), "rollback must not restore authority");
+}
+
+#[test]
 fn per_authority_budget_caps_elevation_across_distinct_announcements() {
     let mut alice = node(1);
     let mut bob = node(2);
