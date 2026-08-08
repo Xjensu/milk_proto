@@ -7,7 +7,7 @@ use mmp_tal::TalEvent;
 use mmp_types::frame::{FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
-use mmp_types::consts::{FRIENDSHIP_TTL_MS, MAX_BUNDLE};
+use mmp_types::consts::{FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE};
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload};
@@ -16,6 +16,22 @@ use crate::{DeliveryState, Event, Node, SendError, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
+}
+
+#[test]
+fn tick_compacts_idle_admission_bucket_maps() {
+    let mut n = node(250);
+    let origin = Id16([7; 16]);
+    let authority_subject = Key32([8; 32]);
+    assert!(n.core.buckets.admit(&origin, 1, 0, false));
+    assert!(n.core.auth_buckets.admit(&authority_subject, 1, 0));
+    assert_eq!(n.core.buckets.len(), 1);
+    assert_eq!(n.core.auth_buckets.len(), 1);
+
+    n.tick(LIFETIME_MESSAGE_MS + 1);
+
+    assert!(n.core.buckets.is_empty());
+    assert!(n.core.auth_buckets.is_empty());
 }
 
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).

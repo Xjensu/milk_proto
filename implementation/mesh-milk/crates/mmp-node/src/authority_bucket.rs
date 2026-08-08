@@ -20,6 +20,12 @@ use std::collections::BTreeMap;
 
 use mmp_types::ids::Key32;
 
+/// Maximum number of live authority-subject buckets retained by one node.
+/// Subject keys are attacker-controlled once an authority has issued grants,
+/// so the metering map needs a hard bound independent of bundle/storage
+/// quotas. New subjects fail closed when the bound is reached.
+const AUTHORITY_BUCKET_CAP: usize = 4096;
+
 struct Bucket {
     /// Milli-admissions, to keep refill integer-exact at ms granularity.
     level_milli: u64,
@@ -53,6 +59,9 @@ impl AuthorityBuckets {
     /// `ingest`'s SeenIndex already turned replays into `Disposition::Duplicate`
     /// before dispatch, which is exactly the doc 18 §5.4 proof's step (2).
     pub fn admit(&mut self, subject: &Key32, budget_per_h: u16, now_ms: u64) -> bool {
+        if !self.map.contains_key(subject) && self.map.len() >= AUTHORITY_BUCKET_CAP {
+            return false;
+        }
         let capacity = u64::from(budget_per_h) * 1000;
         let bucket = self
             .map
@@ -114,5 +123,27 @@ mod tests {
         assert!(b.admit(&s1, 1, 0));
         assert!(!b.admit(&s1, 1, 0));
         assert!(b.admit(&s2, 1, 0), "s2's bucket is unaffected by s1 exhausting theirs");
+    }
+
+    #[test]
+    fn fresh_subjects_are_rejected_after_capacity_is_reached() {
+        let mut b = AuthorityBuckets::new();
+        for i in 0..AUTHORITY_BUCKET_CAP {
+            let mut bytes = [0u8; 32];
+            bytes[..8].copy_from_slice(&(i as u64).to_le_bytes());
+            assert!(b.admit(&Key32(bytes), 1, 0));
+        }
+        assert_eq!(b.len(), AUTHORITY_BUCKET_CAP);
+        assert!(!b.admit(&Key32([0xff; 32]), 1, 0));
+    }
+
+    #[test]
+    fn idle_compaction_releases_authority_buckets() {
+        let mut b = AuthorityBuckets::new();
+        let subject = Key32([7; 32]);
+        assert!(b.admit(&subject, 1, 0));
+        assert_eq!(b.len(), 1);
+        b.compact(100, 100);
+        assert!(b.is_empty());
     }
 }

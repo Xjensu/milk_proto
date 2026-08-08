@@ -1444,6 +1444,13 @@ impl Node {
         self.core.seen.rotate(now_ms);
         self.core.receipts.rotate(now_ms);
         self.core.claims.expire(now_ms);
+        // Admission buckets are RAM-only accounting state. Compact idle
+        // origins/authority subjects so a Sybil stream cannot leave one map
+        // entry per pseudonymous key forever. The idle horizon matches the
+        // longest ordinary message/symbol lifetime; after that delay a full
+        // token burst is already the conservative refill state.
+        self.core.buckets.compact(now_ms, LIFETIME_MESSAGE_MS);
+        self.core.auth_buckets.compact(now_ms, LIFETIME_MESSAGE_MS);
         self.core.prune_expired_friendships(now_ms);
         // Decision D3: assemblies past BLOB_INTEREST_TTL_MS → Abandoned.
         self.core.sweep_blob_ttl(now_ms);
