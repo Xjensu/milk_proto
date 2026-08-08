@@ -321,6 +321,33 @@ fn malformed_prekey_async_does_not_commit_ratchet_state() {
 }
 
 #[test]
+fn malformed_sealed_async_does_not_commit_ratchet_state() {
+    let mut alice = node(51);
+    let mut bob = node(52);
+    introduce_exchange_only(&mut alice, &mut bob);
+    let msg_id = alice.send_text(&bob.node_id(), "sealed candidate state").unwrap();
+    let (_, raw) = alice.core.store.get(&msg_id).expect("sealed bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).unwrap();
+    let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
+
+    let mut forged = bundle.clone();
+    let AsyncPayload::Sealed { eph, mut ct } = AsyncPayload::decode(&forged.payload).unwrap() else {
+        panic!("exchange-only bootstrap should use sealed async form");
+    };
+    ct[0] ^= 0x80;
+    forged.payload = AsyncPayload::Sealed { eph, ct }.encode();
+    forged.signature = alice.identity.sign(SigDomain::Bundle, &forged.canonical_zeroed());
+
+    assert!(bob.core.open_async(&forged, &conv_id, &alice.core.public).is_none());
+    assert!(!bob.core.convs.contains_key(&conv_id), "failed AEAD must not commit Conv");
+    assert!(!bob.core.pending_async.contains_key(&conv_id), "failed AEAD must not commit pending X3DH state");
+    assert!(!bob.core.pending_first_contact.contains_key(&conv_id), "failed AEAD must not commit pending first-contact state");
+
+    assert!(bob.core.open_async(&bundle, &conv_id, &alice.core.public).is_some());
+    assert!(bob.core.convs.contains_key(&conv_id), "valid async must still establish Conv");
+}
+
+#[test]
 fn sealed_async_cannot_replace_established_conversation() {
     let mut alice = node(45);
     let mut bob = node(46);
