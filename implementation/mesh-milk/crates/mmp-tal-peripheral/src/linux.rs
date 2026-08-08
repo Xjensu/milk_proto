@@ -52,7 +52,7 @@ use crate::{
     DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
-use crate::lifecycle::{AttachResult, LinkLifecycle, StreamSide, StreamToken};
+use crate::lifecycle::{AttachReject, AttachResult, LinkLifecycle, StreamSide, StreamToken};
 
 /// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
 /// tokens are kept alongside the writer so stale callbacks can be rejected;
@@ -301,7 +301,10 @@ async fn run_control(
                     ));
                 }
                 Some(_) => {}
-                None => return,
+                None => {
+                    shutdown_links(&links, &event_gate, &tx).await;
+                    return;
+                }
             },
             evt = notify_ctl.next() => match evt {
                 // Central subscribed to the notify characteristic: this is
@@ -323,9 +326,30 @@ async fn run_control(
                     .await;
                 }
                 Some(_) => {}
-                None => return,
+                None => {
+                    shutdown_links(&links, &event_gate, &tx).await;
+                    return;
+                }
             },
         }
+    }
+}
+
+/// Close every logical link when BlueZ ends the control streams. The sweep is
+/// deliberately transport-local: it purges ingress before publishing Down,
+/// and performs no external D-Bus/socket await while holding the lifecycle
+/// gate.
+async fn shutdown_links(links: &Links, event_gate: &Arc<AsyncMutex<()>>, tx: &EventSender) {
+    let _event_guard = event_gate.lock().await;
+    let drained = {
+        let mut registry = links.lock().await;
+        let drained = registry.lifecycle.drain();
+        registry.states.clear();
+        drained
+    };
+    for (link, generation) in drained {
+        tx.retire_link(link);
+        let _ = try_link_down(tx, link, generation);
     }
 }
 
@@ -359,7 +383,23 @@ async fn ensure_link_up(
     };
 
     let mut links = links.lock().await;
-    let attach = links.lifecycle.attach(link, side, endpoint)?;
+    let attach = match links.lifecycle.attach(link, side, endpoint) {
+        Ok(attach) => attach,
+        Err(AttachReject::DuplicateEndpoint | AttachReject::RetiredEndpoint) => return None,
+        Err(AttachReject::RetiredCapacity) => {
+            // A live link that exhausted the stale-endpoint quarantine cannot
+            // safely admit another callback. Retire it atomically rather than
+            // silently preserving a potentially wedged stream.
+            let generation = links.lifecycle.retire_link(link);
+            links.states.remove(&link);
+            drop(links);
+            tx.retire_link(link);
+            if let Some(generation) = generation {
+                let _ = try_link_down(tx, link, generation);
+            }
+            return None;
+        }
+    };
     let state = if attach.restarted {
         links.states.insert(
             link,
@@ -405,6 +445,9 @@ async fn ensure_link_up(
             retire_current_link(&link_table, tx, attach.token).await;
             return None;
         }
+        // Down fences all ingress generations. Re-install the replacement
+        // stream stamps before publishing its Up event/data.
+        tx.set_streams(link, streams);
     }
     if attach.link_was_new || attach.restarted {
         let quality =

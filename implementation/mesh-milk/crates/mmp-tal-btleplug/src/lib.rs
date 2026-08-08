@@ -87,6 +87,7 @@ use btleplug::api::{
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
 pub use btleplug::platform::PeripheralId;
@@ -300,6 +301,9 @@ pub struct BleCentral {
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>>,
     event_gate: Arc<AsyncMutex<()>>,
+    /// Serializes dials so a reconnect cannot race the two-phase replacement
+    /// of the same deterministic LinkId.
+    dial_gate: Arc<AsyncMutex<()>>,
     next_generation: AtomicU64,
 }
 
@@ -319,6 +323,7 @@ impl BleCentral {
         let links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>> =
             Arc::new(AsyncMutex::new(HashMap::new()));
         let event_gate = Arc::new(AsyncMutex::new(()));
+        let dial_gate = Arc::new(AsyncMutex::new(()));
 
         tokio::spawn(watch_adapter(
             adapter.clone(),
@@ -333,6 +338,7 @@ impl BleCentral {
             events_rx: std::sync::Mutex::new(Some(rx)),
             links,
             event_gate,
+            dial_gate,
             next_generation: AtomicU64::new(0),
         })
     }
@@ -391,6 +397,7 @@ impl BleCentral {
     /// success before that link's RX notifications; callers must drain
     /// [`Self::events`] while the central is active.
     pub async fn dial(&self, peer: PeerHandle) -> Result<LinkId, BleError> {
+        let _dial_guard = self.dial_gate.lock().await;
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
         peripheral.connect().await?;
@@ -411,48 +418,63 @@ impl BleCentral {
         peripheral.subscribe(&rx_characteristic).await?;
         let mut notifications = peripheral.notifications().await?;
 
-        let event_guard = self.event_gate.lock().await;
-        let previous = self
-            .links
-            .lock()
-            .await
-            .get(&link)
-            .map(|state| (state.generation, state.write_gate.clone()));
-        let previous_guard = match previous.as_ref() {
-            Some((_, gate)) => Some(acquire_write_gate(gate).await),
-            None => None,
-        };
-        let previous_state = {
-            let mut links = self.links.lock().await;
-            match previous.as_ref() {
-                Some((generation, _))
-                    if links.get(&link).map(|state| state.generation) == Some(*generation) =>
-                {
-                    links.remove(&link)
+        let (previous_state, old_generation, previous_guard) = {
+            let _event_guard = self.event_gate.lock().await;
+            let previous = self
+                .links
+                .lock()
+                .await
+                .get(&link)
+                .map(|state| (state.generation, state.write_gate.clone()));
+            let previous_guard = match previous.as_ref() {
+                Some((_, gate)) => Some(acquire_write_gate(gate).await),
+                None => None,
+            };
+            let previous_state = {
+                let mut links = self.links.lock().await;
+                match previous.as_ref() {
+                    Some((generation, _))
+                        if links.get(&link).map(|state| state.generation) == Some(*generation) =>
+                    {
+                        links.remove(&link)
+                    }
+                    _ => None,
                 }
-                _ => None,
+            };
+            let old_generation = previous.as_ref().and_then(|(generation, _)| {
+                previous_state.as_ref().map(|_| *generation)
+            });
+            if let Some(generation) = old_generation {
+                // Retire the old ingress generation before the potentially
+                // slow external disconnect. The replacement task repeats the
+                // coalescing Down defensively, preserving Down→Up ordering.
+                let _ = try_link_down(&self.tx, link, generation);
             }
+            (previous_state, old_generation, previous_guard)
         };
-        let old_generation = previous.as_ref().and_then(|(generation, _)| {
-            previous_state.as_ref().map(|_| *generation)
-        });
+        // The write guard has already waited for any in-flight encrypted ATT
+        // sequence, and the old link was removed from the table while the
+        // lifecycle gate was held.  Release it before the bounded external
+        // disconnect so no local task is held behind controller latency.
+        drop(previous_guard);
         if let Some(previous_state) = previous_state {
-            let _ = previous_state.peripheral.disconnect().await;
+            disconnect_bounded(&previous_state.peripheral).await;
         }
         let generation = allocate_generation(&self.next_generation);
         let write_gate = Arc::new(AsyncMutex::new(()));
-        self.links.lock().await.insert(
-            link,
-            LinkState {
-                peripheral,
-                tx_characteristic,
-                chunk_size: DEFAULT_CHUNK,
-                write_gate: write_gate.clone(),
-                generation,
-            },
-        );
-        drop(previous_guard);
-        drop(event_guard);
+        {
+            let _event_guard = self.event_gate.lock().await;
+            self.links.lock().await.insert(
+                link,
+                LinkState {
+                    peripheral,
+                    tx_characteristic,
+                    chunk_size: DEFAULT_CHUNK,
+                    write_gate: write_gate.clone(),
+                    generation,
+                },
+            );
+        }
 
         let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
         let data_tx = self.tx.clone();
@@ -557,36 +579,38 @@ impl BleCentral {
     /// docs) and emit `TalEvent::LinkDown` for it. A no-op (still emits
     /// `LinkDown`) if `link` is already gone from the table.
     pub async fn hangup(&self, link: LinkId) {
-        let _event_guard = self.event_gate.lock().await;
-        let previous = self
-            .links
-            .lock()
-            .await
-            .get(&link)
-            .map(|state| (state.generation, state.write_gate.clone()));
-        let previous_generation = previous.as_ref().map(|(generation, _)| *generation);
-        let _write_guard = match previous.as_ref() {
-            Some((_, gate)) => Some(acquire_write_gate(gate).await),
-            None => None,
-        };
-        let state = {
-            let mut links = self.links.lock().await;
-            match previous.as_ref() {
-                Some((generation, _))
-                    if links.get(&link).map(|state| state.generation) == Some(*generation) =>
-                {
+        let (state, write_guard) = {
+            let _event_guard = self.event_gate.lock().await;
+            let previous = self
+                .links
+                .lock()
+                .await
+                .get(&link)
+                .map(|state| (state.generation, state.write_gate.clone()));
+            let Some((generation, gate)) = previous else {
+                let _ = try_link_down(&self.tx, link, 0);
+                return;
+            };
+            let write_guard = acquire_write_gate(&gate).await;
+            let state = {
+                let mut links = self.links.lock().await;
+                if links.get(&link).map(|state| state.generation) == Some(generation) {
                     links.remove(&link)
+                } else {
+                    None
                 }
-                _ => None,
-            }
-        };
-        if let Some(state) = state {
-            let _ = state.peripheral.disconnect().await;
-            if let Some(generation) = previous_generation {
+            };
+            if state.is_some() {
                 let _ = try_link_down(&self.tx, link, generation);
             }
-        } else if previous.is_none() {
-            let _ = try_link_down(&self.tx, link, 0);
+            (state, Some(write_guard))
+        };
+        // State removal plus the acquired guard makes the old write sequence
+        // quiescent.  Do not retain this local guard across the controller
+        // await below.
+        drop(write_guard);
+        if let Some(state) = state {
+            disconnect_bounded(&state.peripheral).await;
         }
     }
 }
@@ -604,7 +628,10 @@ async fn watch_adapter(
     let uuid = service_uuid();
     let mut events = match adapter.events().await {
         Ok(stream) => stream,
-        Err(_) => return,
+        Err(_) => {
+            shutdown_links(&links, &event_gate, &tx).await;
+            return;
+        }
     };
 
     while let Some(event) = events.next().await {
@@ -626,7 +653,6 @@ async fn watch_adapter(
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
-                let _event_guard = event_gate.lock().await;
                 let previous = links
                     .lock()
                     .await
@@ -641,9 +667,10 @@ async fn watch_adapter(
                 let Some((generation, write_gate, peripheral)) = previous else {
                     continue;
                 };
-                if peripheral.is_connected().await.unwrap_or(false) {
+                if is_connected_bounded(&peripheral).await {
                     continue;
                 }
+                let _event_guard = event_gate.lock().await;
                 let _write_guard = acquire_write_gate(&write_gate).await;
                 let removed = {
                     let mut table = links.lock().await;
@@ -660,6 +687,58 @@ async fn watch_adapter(
             _ => {}
         }
     }
+    shutdown_links(&links, &event_gate, &tx).await;
+}
+
+/// Retire all central links when the adapter event stream ends. The lifecycle
+/// gate and per-link write gates are used only for in-process state; actual
+/// BlueZ disconnect calls happen after the gate is released and are bounded so
+/// an unresponsive adapter cannot strand the rest of the transport.
+async fn shutdown_links(links: &Links, event_gate: &Arc<AsyncMutex<()>>, tx: &EventSender) {
+    let peripherals = {
+        let _event_guard = event_gate.lock().await;
+        let snapshots = {
+            let table = links.lock().await;
+            table
+                .iter()
+                .map(|(&link, state)| {
+                    (link, state.generation, state.write_gate.clone(), state.peripheral.clone())
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut peripherals = Vec::new();
+        for (link, generation, write_gate, peripheral) in snapshots {
+            let _write_guard = acquire_write_gate(&write_gate).await;
+            let removed = {
+                let mut table = links.lock().await;
+                if table.get(&link).map(|state| state.generation) == Some(generation) {
+                    table.remove(&link).is_some()
+                } else {
+                    false
+                }
+            };
+            if removed {
+                let _ = try_link_down(tx, link, generation);
+                peripherals.push(peripheral);
+            }
+        }
+        peripherals
+    };
+    for peripheral in peripherals {
+        disconnect_bounded(&peripheral).await;
+    }
+}
+
+async fn disconnect_bounded(peripheral: &Peripheral) {
+    let _ = timeout(Duration::from_secs(2), peripheral.disconnect()).await;
+}
+
+async fn is_connected_bounded(peripheral: &Peripheral) -> bool {
+    timeout(Duration::from_secs(1), peripheral.is_connected())
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or(false)
 }
 
 fn clamp_rssi(rssi: i16) -> i8 {

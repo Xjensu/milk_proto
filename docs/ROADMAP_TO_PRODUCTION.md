@@ -8,7 +8,7 @@ Every claim below was checked against the workspace at `implementation/mesh-milk
 
 **Addendum, 2026-08-08:** E5-S4 is now committed (`b07a0b7`, `c34069b`, `66786fb` and follow-up documentation): deterministic envelope, bundle, beacon, HELLO, frame-payload, negative, and cross-domain artifacts are under `implementation/mesh-milk/vectors/`, with independent readers and `coverage.json`. The CLI snapshot workflow was corrected in `a73f747`: `connect` now restores persisted claims/groups/replay/receipt state, and exit-time persistence stages the same state before writing; a restart regression test covers this path. The serial workspace matrix passes, `mmp-cli` has 26 tests, clippy is clean, and `layer-check` passes. A real two-machine BLE exchange remains unverified because this Windows host has no usable Linux/BlueZ peripheral path; see `docs/MANUAL_INTEROP_TESTING.md` and `docs/E5-S4_CONFORMANCE_HANDOFF.md` for the reproducible procedure and evidence boundary.
 
-**Current checkpoint, 2026-08-08 (`0343cf5`):** The historical counts and
+**Current checkpoint, 2026-08-08 (continuation after `0343cf5`):** The historical counts and
 commit list above are not the current verification record. Since that addendum,
 the implementation has added strict outbound/inbound frame caps, sender-key
 provenance guards, bounded hostile-count and file-manifest parsing, bounded
@@ -20,17 +20,21 @@ deferred frames and atomic bundle handoff deferral. The node outbound queue is
 also bounded per admitted session (eight data-credit frames plus four control
 reserve frames), with tier-derived global frame/byte limits and affected-link
 atomic teardown on overflow. The central `mmp-tal-btleplug` event ingress is
-also bounded to a 2048-event public FIFO fed by a reserved 64-record control
-ledger and a 1,984-record data lane. Producers never await the public receiver:
+also bounded to a 2048-event public FIFO fed by a 64-record normal control
+ledger, a bounded 64-entry emergency `LinkDown` tombstone lane, and a
+1,984-record data lane. Producers never await the public receiver:
 data overflow retires only the affected link, while control overflow fails
 closed after live state removal. The Linux peripheral API now applies the same
 two-lane policy;
 central per-link TX chunk serialization and monotonic generation fencing are
 enforced for central reconnect, teardown, adapter disconnect, and RX EOF. The
 Linux peripheral now has direction-specific endpoint tokens and generation
-fencing for reader/writer replacement and teardown. Reserved control capacity
-and overflow retirement are implemented; Linux/BlueZ build and hardware
-validation remain open. The latest
+fencing for reader/writer replacement and teardown. Both backends sweep links
+on stream termination and bound external disconnect awaits outside lifecycle
+locks; peripheral retired endpoint identities are capped at 256 per direction
+and fail closed rather than evicting history. Reserved control capacity,
+bounded emergency teardown, and overflow retirement are implemented;
+Linux/BlueZ build and hardware validation remain open. The latest
 serial workspace matrix passes with zero failures; the current handoff records the exact per-crate counts and
 ignored simulation cases in `docs/E5-S4_CONFORMANCE_HANDOFF.md`. The
 specification remains unchanged. The real Linux/BlueZ two-host exchange and a
@@ -44,7 +48,9 @@ tests (including endpoint-token replacement and stale opposite-direction
 callbacks) in addition to the 12 central lifecycle tests. Follow-up
 `0343cf5` adds four peripheral ingress tests and four central ingress tests,
 including full-data-lane control delivery, stale-stream rejection,
-replacement ordering, and nonblocking enqueue. Workspace tests, workspace
+replacement ordering, and nonblocking enqueue. The continuation adds
+emergency-down ordering, explicit retired-link draining, endpoint-cap
+fail-closed handling, and EOF-triggered sweeps. Workspace tests, workspace
 clippy, and `layer-check` pass; direct Linux/BlueZ execution remains a
 hardware/sysroot gate, and the specification directory remains unchanged.
 
@@ -61,7 +67,7 @@ hardware/sysroot gate, and the specification directory remains unchanged.
 | `mmp-node` | Full orchestration: session lifecycle, claims gossip, direct messaging (X3DH first contact + ratchet), groups (pairwise own-key invite/remove/epoch rotation with authenticated sender-key provenance and stale/duplicate rejection), receipts with origin-only purge gate, beacons with ephemeral-ID rotation, tier ladder (doc 11 §2), diagnostics journey log (`diag.rs`, the mechanism behind V2_FEATURES.md Part II §B). | 8 integration tests (`crates/mmp-node/src/lib.rs`): `beacon_rotates_with_slot`, `blocked_peer_is_silently_denied`, `spray_budget_flows_and_message_marked_in_mesh`, `direct_message_delivery_and_receipt`, **`three_node_store_carry_forward`** (store-carry-forward with receipt back-propagation across 3 nodes), `group_create_invite_and_message`, `sender_key_member_must_match_authenticated_origin`, and `removed_member_cannot_reintroduce_stale_sender_key`. |
 | `mmp-store` | `SnapshotStore` — checksummed atomic-write persistence, corrupt-record skip on load. | 1 test: `snapshot_roundtrip_and_corruption_drop`. |
 | `mmp-rs-code` | `no_std` GF(256) systematic Reed-Solomon. | 3 tests: `systematic_and_recovers_from_any_k`, `duplicate_index_rejected`, `corrupted_parity_yields_wrong_data_not_panic`. |
-| `mmp-tal` + `mmp-tal-btleplug` + `mmp-tal-peripheral` | TAL vocabulary (`mmp-tal`, 0 tests — a trait/type crate). Central-role BLE in `mmp-tal-btleplug`: scan, dial, GATT write/notify shuttle, chunking, `LinkId` minting. **Peripheral role (M5b) is now implemented** in the sibling crate `mmp-tal-peripheral`: Linux backend on `bluer` (real BlueZ D-Bus GATT server, verified against actual BlueZ over WSL, not just compiled), Windows/macOS are `PeriphError::Unsupported` stubs with a concrete design sketch for the WinRT path. The development service and characteristic UUIDs have one source of truth in `mmp-tal`; the peripheral crate re-exports them with the central-role inversion made explicit. `mmp-cli` exposes both roles (`connect`=central, `listen`=peripheral). | `mmp-tal-btleplug`: 7 tests (chunking edge cases, LinkId determinism). `mmp-tal-peripheral`: UUID parse/role tests and LinkId recipe-pin coverage. |
+| `mmp-tal` + `mmp-tal-btleplug` + `mmp-tal-peripheral` | TAL vocabulary (`mmp-tal`, 0 tests — a trait/type crate). Central-role BLE in `mmp-tal-btleplug`: scan, dial, GATT write/notify shuttle, chunking, `LinkId` minting. **Peripheral role (M5b) is implemented in code** in the sibling crate `mmp-tal-peripheral`: Linux backend on `bluer` (BlueZ D-Bus GATT server), Windows/macOS are `PeriphError::Unsupported` stubs with a concrete design sketch for the WinRT path. The current stream-token and bounded-ingress hardening is hardware-independent tested on Windows; the Linux build/runtime and real BlueZ exchange remain environment- and hardware-gated. The development service and characteristic UUIDs have one source of truth in `mmp-tal`; the peripheral crate re-exports them with the central-role inversion made explicit. `mmp-cli` exposes both roles (`connect`=central, `listen`=peripheral). | `mmp-tal-btleplug`: 15 focused tests (including generation fencing, bounded ingress, and control-saturation retirement). `mmp-tal-peripheral`: 27 Windows-target tests (including stream fencing, bounded ingress, emergency-down ordering, retired-link draining, and the retired-endpoint cap); Linux/BlueZ execution is not current evidence. |
 | `mmp-ffi` | Complete UniFFI 0.29 surface: constructor takes seed + tier + optional `SnapshotStore` path, transport injection including `on_beacon`, polling (`poll_send`/`poll_event`), groups, claims, `flush()`/persistence policy. Secrets never cross the FFI boundary outward (the FFI type carries public keys, ciphertexts, and events only). | 6 tests: `bad_length_ids_are_rejected_at_the_ffi_boundary`, `unknown_peer_is_reported`, `beacon_is_accepted_with_no_observable_event`, `group_remove_and_set_tier_roundtrip`, `state_survives_restart`, `direct_message_delivery_via_ffi_surface`. |
 | `mmp-cli` | `keygen` / `demo` / `inspect` subcommands, plus **`connect`** (central-role drive loop over `mmp-tal-btleplug`) and **`listen`** (peripheral-role drive loop over `mmp-tal-peripheral`) and `send` (queue-and-wait-for-delivery over `connect`'s loop). Both radio subcommands verified error-clean on hosts without working BLE hardware/adapters (graceful exit 2, no panics); the actual two-machine radio exchange (Phase A's exit gate) still needs a real multi-host BLE test, not yet run. | Hand-rolled `std::env` arg parsing; exercised by the `demo` path plus manual no-hardware error-path runs of `connect`/`send`/`listen`, no dedicated unit tests (radio subcommands are inherently interactive/hardware-driven). |
 | `mmp-sim` | 10-node and 30-node meshes run in CI; a 100-node stress scenario is `#[ignore]`d (opt-in, not part of default CI). Delivery ratio reaches 1.0 in the CI-scale scenarios. | 3 run + 1 ignored: `rng_is_deterministic_for_a_fixed_seed`, `ten_node_random_mesh_delivers_and_receipts`, `thirty_node_mesh_delivers_ci`, `hundred_node_mesh_stress` (ignored). |
@@ -92,7 +98,10 @@ hardware/sysroot gate, and the specification directory remains unchanged.
 - UniFFI bindgen artifacts (Kotlin/Swift) are not produced in CI — `MOBILE_INTEGRATION.md` §3 documents the manual commands but no pipeline runs them.
 - Android AAR / iOS XCFramework build mechanisms and CI jobs exist (`MOBILE_INTEGRATION.md` §3), but no successful remote Actions run or downstream consumer smoke compile is evidenced on the current unpushed branch.
 - RN npm package (`REACT_NATIVE_INTEGRATION.md` specifies the TypeScript API and native module shape) is not published.
-- `mmp-cli` has no radio wiring — `demo` is in-memory only.
+- `mmp-cli` radio wiring is implemented (`connect`, `listen`, and `send`), but
+  no dedicated hardware-integration test runs in CI: only the in-memory
+  `demo` path is deterministic, and the real two-host exchange remains
+  unverified.
 
 **(d) Hardening**
 - `cargo-fuzz` on pre-auth parsers (beacon, handshake first message) is a mandate recorded in doc 07 §8 (attributed there to doc 12). Four fuzz targets now exist under `implementation/mesh-milk/fuzz/`; a curated seed corpus and a measured CPU-hour run remain open. `mmp-types` also has proptest-based mutation testing (`props::*`), which is complementary rather than a replacement for the persistent fuzz corpus.
@@ -111,12 +120,12 @@ hardware/sysroot gate, and the specification directory remains unchanged.
 No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodology). Sizes are relative: S = days, M = one to a few weeks of focused work, L = a substantial multi-week effort, all in single-engineer-equivalent terms.
 
 ### Phase A — "First radio contact"
-- ~~M5b: PC peripheral role~~ **DONE** — `mmp-tal-peripheral`, Linux (`bluer`/BlueZ) verified against real BlueZ over D-Bus in WSL; Windows/macOS stubbed with a documented WinRT design sketch. **[L]**
+- ~~M5b: PC peripheral role~~ **IMPLEMENTED; Linux/BlueZ verification OPEN** — `mmp-tal-peripheral` contains the Linux (`bluer`/BlueZ) backend, while Windows/macOS remain explicit stubs with a documented WinRT design sketch. Hardware-independent lifecycle and ingress tests pass on the Windows target; the Linux target compile and real BlueZ exchange still require a Linux/pkg-config environment and physical adapters. **[L]**
 - ~~`mmp-cli` radio wiring~~ **DONE** — `connect` (central), `listen` (peripheral), `send` (queue + wait-for-delivery) all wired against the real radio crates; verified error-clean without hardware, not yet verified against a real two-machine exchange. **[M]**
 - ~~GATT UUID reconciliation~~ **DONE** — the development UUIDs now have one source of truth in `mmp-tal`, with the peripheral role re-exporting the central-facing values and documenting the role inversion; the SIG-assigned UUID remains a production blocker per OQ-12. **[M]**
 - ~~UniFFI bindings (Kotlin + Swift) generated in CI~~ **CI-WIRED, RUN UNVERIFIED** — `mmp-ffi` ships a `uniffi-bindgen` binary gated behind a `cli` feature and the `mobile-bindings` job defines the artifact upload. A current remote Actions run and downstream Kotlin/Swift consumer smoke compile are still required. **[S]**
 
-**Exit gate:** two PCs (or a PC + a phone dev-kit build) exchange a message and a receipt over real BLE — **still unverified**; everything needed to attempt the Linux-PC procedure (central role, Linux peripheral role, `mmp-cli connect`/`listen`/`send`, matching development UUIDs) is built and workspace-verified. CI artifact production is wired but its successful remote run remains unverified. See `docs/MANUAL_INTEROP_TESTING.md` for the exact procedure and evidence checklist.
+**Exit gate:** two PCs (or a PC + a phone dev-kit build) exchange a message and a receipt over real BLE — **still unverified**. The host-side roles, CLI commands, and matching development UUIDs are implemented; Windows-target tests and workspace checks pass, but the Linux peripheral build/runtime and real multi-host exchange remain environment- and hardware-gated. CI artifact production is wired but its successful remote run remains unverified. See `docs/MANUAL_INTEROP_TESTING.md` for the exact procedure and evidence checklist.
 
 **A defect found and fixed along the way:** the CI `host` job's `ubuntu-latest` leg would have failed the moment `mmp-tal-peripheral` landed, because `bluer` links against `libdbus` and the stock runner image doesn't carry its dev headers. Fixed by installing `libdbus-1-dev pkg-config` before the build step on that leg.
 
@@ -157,6 +166,19 @@ No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodolog
 - v2 handoff: point to `V2_FEATURES.md` Part I (R5/R6/R7/R10/R13/R14/R16/R20) and doc 15's R-items for what comes after GA.
 
 **Exit gate:** signed release artifacts produced by CI; SIG UUID assigned or fallback formally adopted; store compliance docs written; v2 handoff document exists and is reviewed.
+
+### Proposal-derived research and conformance follow-up
+
+The supplied MMP/Φ dialogue is recorded and audited in
+`docs/PROPOSAL_AUDIT_MMP_PHI.md`. It does not change the MMP/1 wire contract.
+The next work is ordered as: (1) resolve the encrypted `ID_PROOF` wording,
+canonical AEAD associated data, and copy-budget security invariant; (2) finish
+transport-level admission/close feedback and Linux/BlueZ evidence; (3) measure
+EDR duty-cycle points, deadline scheduling, and evidence-weighted routing in
+`mmp-sim` against the current binary-spray baseline; (4) prototype mobility
+vouchers and fountain/DoF coding only behind research feature flags. Any claim
+of a 2× improvement requires delivery, latency, airtime, radio energy, and
+whole-phone energy measurements with confidence intervals.
 
 ---
 

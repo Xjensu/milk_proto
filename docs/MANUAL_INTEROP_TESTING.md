@@ -21,7 +21,9 @@ specification/implementation discrepancy instead.
 
 ## 1. Prepare a clean checkout
 
-Use Rust 1.96 (the version pinned by `implementation/mesh-milk/rust-toolchain.toml`).
+Use a stable Rust toolchain satisfying the workspace MSRV of 1.96. The
+repository's `implementation/mesh-milk/rust-toolchain.toml` selects the stable
+channel; it does not pin an exact compiler release.
 From the repository root:
 
 ```powershell

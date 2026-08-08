@@ -65,6 +65,7 @@ All sources cited anywhere in this project. Accessed 2026-06-10 unless noted. Co
 | C6 | "Beyond Traditional DTN Routing: Social Networks for Opportunistic Communication" | https://arxiv.org/pdf/1110.2480 | Survey | H |
 | C7 | "Recent progress in routing protocols of mobile opportunistic networks: A clear taxonomy, analysis and evaluation" (JNCA 2016) | https://www.sciencedirect.com/science/article/abs/pii/S1084804516000084 | Survey | H |
 | C8 | "Survey on Opportunistic Routing for Delay/Disruption Tolerant Networks" | https://www.researchgate.net/publication/320347333_Survey_on_Opportunistic_Routing_for_DelayDisruption_Tolerant_Networks | Survey | M |
+| C9 | RFC 6693 — Probabilistic Routing Protocol for Intermittently Connected Networks (PRoPHET) | https://www.rfc-editor.org/rfc/rfc6693.html | RFC | H |
 
 ## Track D — Sync & consistency
 
@@ -165,6 +166,8 @@ Sources on BLE performance in dense environments and BLE 5.x/6.0 features (exten
 | I12 | Android Police. "The Pixel 10 brings Bluetooth 6 and its improvements to the masses." 2025-08-21 — Pixel 10 first US phone with BT6 Channel Sounding | https://www.androidpolice.com/pixel-10-family-bluetooth-6-channel-sounding/ | Tech press | M |
 | I13 | Nordic Semiconductor news. "Nordic's Android app and nRF54L Series evaluate Bluetooth Channel Sounding using the Google Pixel 10." 2025-10-28 — measured ±1 m accuracy to 20 m via Android CS API vs nRF54L15; CS back-ported to Pixel 9 (Android 16 QPR2) | https://www.nordicsemi.com/Nordic-news/2025/10/Nordics-Android-app-and-nRF54L-Series-evaluate-Bluetooth-Channel-Sounding-using-the-Google-Pixel-10 | Vendor blog | M |
 | I14 | ST Community forum. "STM32WBA BLE Data Throughput example: throughput optimization." 2025 — 2M PHY + DLE, MTU 244–247: phone↔MCU 250–680 kbps (iOS ~30 ms CI vs Android ~7.5 ms); MCU↔MCU ≈950 kbps | https://community.st.com/t5/stm32-mcus-wireless/stm32wba-ble-data-throughput-example-throughput-optimization/td-p/827102 | Forum | L |
+
+| I15 | Bluetooth SIG. "Bluetooth Core 6.0 feature overview" — Channel Sounding, Decision-Based Advertising Filtering, and Monitoring Advertisers | https://www.bluetooth.com/core-specification-6-feature-overview/ | SIG docs | H |
 
 ## Track J — Authenticated broadcast, authority & offline revocation (extension phase, accessed 2026-07-02)
 

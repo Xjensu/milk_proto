@@ -5,6 +5,19 @@
 This checkpoint is commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`). The
 frozen `specification/` directory was not modified.
 
+The current continuation after this checkpoint keeps the public 2048-event
+FIFO bounded while splitting lifecycle admission into a 64-record normal
+control lane plus a bounded 64-entry emergency `LinkDown` tombstone lane and a
+1,984-record data lane. Duplicate teardown is coalesced, stale per-link data is
+purged before admission, and an `Up` cannot be admitted after an emergency
+`Down` for the same link. Central and peripheral stream EOF now trigger link
+sweeps; peripheral endpoint retirement is capped at 256 identities per
+direction and fails closed rather than evicting history. External BLE
+disconnects are bounded and occur outside lifecycle locks. These changes are
+implementation hardening only; the frozen specification remains unchanged.
+The supplied MMP/Φ proposal audit and its amended research plan are recorded
+in `docs/PROPOSAL_AUDIT_MMP_PHI.md`.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
@@ -222,6 +235,14 @@ intentionally ignored deployment/scale cases; workspace clippy and
 `libdbus-sys` pkg-config/sysroot failure before backend compilation. Rustfmt
 could not run because the installed toolchain has no rustfmt component.
 
+The current continuation passes 15 central focused tests and 27 peripheral
+Windows-target tests, including emergency-down ordering, retired-link draining,
+stream-EOF sweeps, and the retired-endpoint cap. Workspace tests pass with 9
+active simulator cases and 4 intentionally ignored deployment/scale cases;
+workspace clippy, `layer-check`, and `mmp-cli -- demo` are clean. The Linux
+target check reproduces the same `libdbus-sys` pkg-config/sysroot failure before
+backend compilation. Rustfmt remains unavailable on this host.
+
 Regenerate vectors with:
 
 ```text
@@ -278,8 +299,8 @@ Record evidence and obtain a protocol decision first.
    stream-token and ingress implementation. The Windows host cannot build
    this backend because the cross-target `libdbus-sys` pkg-config/sysroot is
    absent. Exercise data-lane overflow and control-ledger saturation on Linux,
-   then measure and bound retired endpoint identity storage with a documented
-   policy after reconnect tests; it is intentionally not silently capped.
+   then measure whether the 256-entry-per-direction retired-endpoint cap is
+   appropriate under reconnect stress; replacements fail closed at that cap.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
@@ -306,12 +327,17 @@ Known limitations that must not be hidden by a future “optimization”:
 
 - The public dispatcher can wait behind a stalled consumer, but it owns no
   lifecycle lock; the bounded ingress remains live and memory-bounded.
-- The control ledger has 64 records. Saturation is an overload/fail-closed
-  condition, not a silently lossy normal path; measure it during Linux stress
-  testing and decide whether an operational fatal signal is needed.
+- The normal control ledger has 64 records and the emergency `LinkDown`
+  tombstone lane has at most 64 entries (128 internal lifecycle records in the
+  worst case). If both are full, the live link is still retired and stale data
+  is purged, but the close event may be lost; this remains an overload/fail-
+  closed condition to measure during Linux stress testing and may need an
+  operational fatal signal.
 - BlueZ retired endpoint vectors are retained until logical link close to avoid
-  re-admitting delayed callbacks. Repeated same-direction replacement can grow
-  them; measure endpoint reuse behavior before introducing a cap.
+  re-admitting delayed callbacks. They are bounded at 256 identities per
+  direction; further replacements fail closed rather than evicting history.
+  Linux reconnect testing should measure whether that operational limit needs
+  tuning, without weakening the no-eviction invariant.
 - The Windows host cannot compile the Linux backend: `libdbus-sys` requires a
   Linux pkg-config/sysroot. A successful Windows build is not Linux evidence.
 - `cargo fmt` is unavailable because rustfmt is absent from the pinned toolchain;

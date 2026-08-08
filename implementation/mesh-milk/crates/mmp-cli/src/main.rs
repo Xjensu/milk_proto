@@ -565,7 +565,8 @@ fn cmd_listen(args: &[String]) -> ExitCode {
 /// any event/tick: drain `poll_send` onto the matching BLE link, and drain
 /// `poll_event` to print. `mmp-cli`'s BLE transport is central-only (module
 /// docs), so this loop never calls `Node::beacon`/advertises — that is the
-/// peripheral role's job (HANDOFF M5b, not implemented here).
+/// peripheral role's job, driven by `listen`/`drive_loop_peripheral` (HANDOFF
+/// M5b).
 ///
 /// Dial policy (the handbook leaves this open): dial every peer this
 /// process has seen beacon from, once. A beacon's payload cannot be

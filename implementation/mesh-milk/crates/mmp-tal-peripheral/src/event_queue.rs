@@ -49,6 +49,8 @@ struct ControlRecord {
 struct State {
     data: VecDeque<DataRecord>,
     controls: VecDeque<ControlRecord>,
+    /// Bounded fallback for LinkDown when the normal lifecycle lane is full.
+    emergency_down: HashMap<LinkId, u64>,
     current: HashMap<LinkId, [Option<StreamStamp>; 2]>,
 }
 
@@ -156,6 +158,54 @@ impl EventSender {
             _ => return Err(ControlEnqueueError::InvalidEvent),
         };
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        if let ControlKind::Down = kind {
+            state.current.remove(&link);
+            purge_link(&mut state, link);
+            if let Some(index) = state.controls.iter().position(|pending| {
+                pending.link == link && pending.kind == ControlKind::Down
+            }) {
+                state.controls[index].generation = state.controls[index].generation.max(generation);
+                let mut seen_down = false;
+                state.controls.retain(|pending| {
+                    if pending.link != link {
+                        true
+                    } else if !seen_down {
+                        seen_down = pending.kind == ControlKind::Down;
+                        true
+                    } else {
+                        false
+                    }
+                });
+                drop(state);
+                self.0.notify.notify_one();
+                return Ok(());
+            }
+            if let Some(existing) = state.emergency_down.get_mut(&link) {
+                *existing = (*existing).max(generation);
+                drop(state);
+                self.0.notify.notify_one();
+                return Ok(());
+            }
+            if state.controls.len() >= CONTROL_CAPACITY {
+                let had_same_link = state.controls.iter().any(|pending| pending.link == link);
+                if had_same_link {
+                    state.controls.retain(|pending| pending.link != link);
+                    state.controls.push_back(ControlRecord { link, generation, kind, event });
+                    drop(state);
+                    self.0.notify.notify_one();
+                    return Ok(());
+                }
+                if state.emergency_down.len() >= CONTROL_CAPACITY {
+                    return Err(ControlEnqueueError::Full);
+                }
+                state.emergency_down.insert(link, generation);
+                drop(state);
+                self.0.notify.notify_one();
+                return Ok(());
+            }
+        } else if state.emergency_down.contains_key(&link) {
+            return Err(ControlEnqueueError::Full);
+        }
         if let Some(index) = state.controls.iter().rposition(|pending| pending.link == link) {
             if state.controls[index].kind == kind {
                 state.controls[index].generation = state.controls[index].generation.max(generation);
@@ -177,6 +227,10 @@ impl EventSender {
     }
 }
 
+fn purge_link(state: &mut State, link: LinkId) {
+    state.data.retain(|record| record.link != link);
+}
+
 async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEvent>) {
     loop {
         let notified = inner.notify.notified();
@@ -184,6 +238,9 @@ async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEve
             let mut state = inner.state.lock().expect("event ingress mutex poisoned");
             if let Some(control) = state.controls.pop_front() {
                 Some(control.event)
+            } else if let Some((link, _generation)) = state.emergency_down.iter().next().map(|(link, generation)| (*link, *generation)) {
+                state.emergency_down.remove(&link);
+                Some(TalEvent::LinkDown { link })
             } else {
                 loop {
                     let Some(data) = state.data.pop_front() else { break None };
@@ -212,7 +269,7 @@ async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEve
 
 #[cfg(test)]
 mod tests {
-    use super::{event_channel, DataEnqueueError, StreamStamp, DATA_CAPACITY};
+    use super::{event_channel, DataEnqueueError, StreamStamp, CONTROL_CAPACITY, DATA_CAPACITY};
     use mmp_tal::{LinkQuality, TalEvent};
     use tokio::time::{timeout, Duration};
 
@@ -247,6 +304,7 @@ mod tests {
         tx.try_stream_data(7, reader(1), data(1)).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
         assert_eq!(tx.try_stream_data(7, reader(1), data(2)), Err(DataEnqueueError::Stale));
         tx.try_stream_data(7, reader(2), data(3)).unwrap();
@@ -283,5 +341,23 @@ mod tests {
             rx.recv().await,
             Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality { mtu: 244, ..quality } })
         );
+    }
+
+    #[tokio::test]
+    async fn emergency_down_is_ordered_after_normal_controls() {
+        let (tx, mut rx) = event_channel();
+        for link in 8..(8 + CONTROL_CAPACITY as u64) {
+            tx.try_control(
+                TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() },
+                1,
+            )
+            .unwrap();
+        }
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        let mut seen = Vec::new();
+        for _ in 0..=CONTROL_CAPACITY {
+            seen.push(rx.recv().await.expect("control records must drain"));
+        }
+        assert!(matches!(seen.last(), Some(TalEvent::LinkDown { link: 7 })));
     }
 }
