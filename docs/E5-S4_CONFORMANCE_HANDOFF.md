@@ -1609,3 +1609,26 @@ platform-keystore crash/restart tests, and a real CI run of the Android/Xcode
 packaging jobs. The tier-aware snapshot-size design and the epoch-retention
 policy above remain open; neither should be papered over by changing the wire
 specification.
+
+## 2026-08-09 continuation: bounded snapshots and clustered simulation
+
+`8df61c7` adds an additive `SnapshotLimits` host-policy seam. Hosts that know
+their storage budget can call `SnapshotStore::open_with_limits`; the loader
+checks metadata before reading, reads at most one byte beyond the configured
+complete-image limit, rejects oversized primary and recovery candidates, and
+sets `load_rejected` so a rejected image cannot later be silently replaced by
+an empty snapshot. Persist also removes an oversized temporary image before
+rename. The default unbounded `open` behavior and the `MMPSNAP2` wire format
+remain unchanged. The limit is for the whole image, not the bundle quota, and
+must account for claims, groups, indexes, authority state, and blocklists.
+Fourteen mmp-store tests and its Clippy gate pass.
+
+`a749a14` adds `ClusteredMobility` and `Sim::run_clustered_meetings` for the
+open clustered/SLAW-like simulation gap. The model uses balanced communities,
+seeded intra-community contacts, and a periodic adjacent-community bridge;
+the API rejects configurations that cannot produce valid same-community
+contacts. Determinism and bridge cadence are unit-tested. This is explicitly
+an experimental measurement model, not a claim of calibrated human mobility,
+and it changes no routing or wire behavior. A future measurement pass should
+compare this model against trace-derived contact distributions before using it
+to revise performance claims.
