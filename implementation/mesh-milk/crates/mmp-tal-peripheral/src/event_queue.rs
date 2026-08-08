@@ -16,6 +16,9 @@ use tokio::sync::Notify;
 pub(crate) const TOTAL_CAPACITY: usize = 2048;
 pub(crate) const CONTROL_CAPACITY: usize = 64;
 pub(crate) const DATA_CAPACITY: usize = TOTAL_CAPACITY - CONTROL_CAPACITY;
+/// Hard cap for lifecycle tombstones. Once exhausted, new link identities are
+/// rejected fail-closed rather than evicting history and admitting replays.
+const MAX_GENERATION_TOMBSTONES: usize = 4096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct StreamStamp {
@@ -56,10 +59,10 @@ struct State {
     /// endpoints may be installed before their LinkUp control is published,
     /// so this is tracked separately from `current`.
     control_current: HashMap<LinkId, u64>,
-    /// Highest lifecycle generation admitted by this ingress. LinkLifecycle
-    /// allocates generations process-wide and monotonically, so one floor
-    /// replaces an unbounded per-link tombstone map.
-    last_generation: u64,
+    /// Highest lifecycle generation admitted per stable link identity.
+    last_generation: HashMap<LinkId, u64>,
+    /// Sticky fail-closed state after the bounded tombstone ledger fills.
+    generation_ledger_exhausted: bool,
     /// A physical retirement is purged before its LinkDown control is queued.
     /// Retain that generation so the corresponding first Down remains
     /// deliverable, while later duplicates remain fenced.
@@ -135,6 +138,9 @@ impl EventSender {
     /// queued bytes from any previous direction/generation.
     pub(crate) fn set_streams(&self, link: LinkId, streams: [Option<StreamStamp>; 2]) {
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        if !state.can_track_generation(link) {
+            return;
+        }
         if let Some(incoming_generation) = streams
             .iter()
             .flatten()
@@ -142,10 +148,10 @@ impl EventSender {
             .max()
         {
             let current_control = state.control_current.get(&link).copied();
-            let last_generation = state.last_generation;
+            let last_generation = state.last_generation.get(&link).copied();
             let replacement = state.replacement_generation.get(&link).copied();
             if current_control.is_none()
-                && incoming_generation <= last_generation
+                && last_generation.is_some_and(|last| incoming_generation <= last)
                 && replacement != Some(incoming_generation)
             {
                 // A stream callback from a retired generation must not
@@ -178,12 +184,13 @@ impl EventSender {
         let control_generation = state.control_current.remove(&link);
         state.replacement_generation.remove(&link);
         if let Some(generation) = stream_generation.max(control_generation) {
-            state.last_generation = state.last_generation.max(generation);
-            state
-                .pending_retirement
-                .entry(link)
-                .and_modify(|pending| *pending = (*pending).max(generation))
-                .or_insert(generation);
+            if state.record_generation(link, generation) {
+                state
+                    .pending_retirement
+                    .entry(link)
+                    .and_modify(|pending| *pending = (*pending).max(generation))
+                    .or_insert(generation);
+            }
         }
         state.current.remove(&link);
         state.data.retain(|record| record.link != link);
@@ -226,6 +233,9 @@ impl EventSender {
             _ => return Err(ControlEnqueueError::InvalidEvent),
         };
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        if !state.can_track_generation(link) {
+            return self.control_full();
+        }
         let expected_retirement_down = kind == ControlKind::Down
             && state.pending_retirement.get(&link).copied() == Some(generation)
             && !state.has_newer_generation(link, generation);
@@ -248,7 +258,7 @@ impl EventSender {
             if previous_control.is_some_and(|current| generation > current) {
                 state.replacement_generation.insert(link, generation);
             }
-            state.last_generation = state.last_generation.max(generation);
+            state.record_generation(link, generation);
             state.control_current.remove(&link);
             state.current.remove(&link);
             purge_link(&mut state, link);
@@ -309,7 +319,7 @@ impl EventSender {
                     if state.replacement_generation.get(&link).copied() == Some(admitted_generation) {
                         state.replacement_generation.remove(&link);
                     }
-                    state.last_generation = state.last_generation.max(generation);
+                    state.record_generation(link, generation);
                 }
                 drop(state);
                 self.0.notify.notify_one();
@@ -324,7 +334,7 @@ impl EventSender {
             if state.replacement_generation.get(&link).copied() == Some(generation) {
                 state.replacement_generation.remove(&link);
             }
-            state.last_generation = state.last_generation.max(generation);
+            state.record_generation(link, generation);
         }
         state.controls.push_back(ControlRecord { link, generation, kind, event });
         drop(state);
@@ -334,6 +344,33 @@ impl EventSender {
 }
 
 impl State {
+    fn can_track_generation(&mut self, link: LinkId) -> bool {
+        if self.last_generation.contains_key(&link) {
+            return true;
+        }
+        if self.generation_ledger_exhausted {
+            return false;
+        }
+        if self.last_generation.len() >= MAX_GENERATION_TOMBSTONES {
+            self.generation_ledger_exhausted = true;
+            return false;
+        }
+        true
+    }
+
+    fn record_generation(&mut self, link: LinkId, generation: u64) -> bool {
+        if let Some(last) = self.last_generation.get_mut(&link) {
+            *last = (*last).max(generation);
+            return true;
+        }
+        if self.generation_ledger_exhausted || self.last_generation.len() >= MAX_GENERATION_TOMBSTONES {
+            self.generation_ledger_exhausted = true;
+            return false;
+        }
+        self.last_generation.insert(link, generation);
+        true
+    }
+
     fn has_newer_generation(&self, link: LinkId, generation: u64) -> bool {
         self.control_current
             .get(&link)
@@ -361,7 +398,9 @@ impl State {
         if self.replacement_generation.get(&link).copied() == Some(generation) {
             return false;
         }
-        generation <= self.last_generation
+        self.last_generation
+            .get(&link)
+            .is_some_and(|last| generation <= *last)
     }
 }
 
