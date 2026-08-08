@@ -77,6 +77,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use btleplug::api::{
@@ -117,6 +118,33 @@ const EVENT_QUEUE_CAPACITY: usize = 2048;
 
 fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
     mpsc::channel(EVENT_QUEUE_CAPACITY)
+}
+
+fn generation_is_current(current: Option<u64>, expected: u64) -> bool {
+    current == Some(expected)
+}
+
+fn allocate_generation(counter: &AtomicU64) -> u64 {
+    let mut current = counter.load(Ordering::Relaxed);
+    loop {
+        let next = current.checked_add(1).unwrap_or(1);
+        match counter.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return next,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReplacementSignal {
+    Down,
+    Up,
+}
+
+fn replacement_signals(old_generation: Option<u64>) -> &'static [ReplacementSignal] {
+    const NEW_LINK: &[ReplacementSignal] = &[ReplacementSignal::Up];
+    const REPLACED_LINK: &[ReplacementSignal] = &[ReplacementSignal::Down, ReplacementSignal::Up];
+    if old_generation.is_some() { REPLACED_LINK } else { NEW_LINK }
 }
 
 async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMutexGuard<()> {
@@ -180,6 +208,89 @@ struct LinkState {
     tx_characteristic: Characteristic,
     chunk_size: usize,
     write_gate: Arc<AsyncMutex<()>>,
+    generation: u64,
+}
+
+type Links = Arc<AsyncMutex<HashMap<LinkId, LinkState>>>;
+
+// Lifecycle transitions use the lock order event_gate -> write_gate -> links.
+// This makes removal and its LinkDown enqueue one atomic transition with
+// respect to reconnects, while send() deliberately uses write_gate -> links
+// and never waits for event_gate. The bounded queue send remains under the
+// event gate so a reconnect cannot overtake its close event; a full queue is
+// therefore intentional backpressure, not an unbounded-memory escape hatch.
+
+async fn emit_if_current(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &mpsc::Sender<TalEvent>,
+    link: LinkId,
+    generation: u64,
+    event: TalEvent,
+) -> bool {
+    let _event_guard = event_gate.lock().await;
+    let current = links
+        .lock()
+        .await
+        .get(&link)
+        .map(|state| state.generation);
+    if !generation_is_current(current, generation) {
+        return false;
+    }
+    tx.send(event).await.is_ok()
+}
+
+async fn emit_replacement(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &mpsc::Sender<TalEvent>,
+    link: LinkId,
+    old_generation: Option<u64>,
+    new_generation: u64,
+    quality: LinkQuality,
+) -> bool {
+    let _event_guard = event_gate.lock().await;
+    let current = links
+        .lock()
+        .await
+        .get(&link)
+        .map(|state| state.generation);
+    if !generation_is_current(current, new_generation) {
+        return false;
+    }
+    for signal in replacement_signals(old_generation) {
+        let result = match signal {
+            ReplacementSignal::Down => tx.send(TalEvent::LinkDown { link }).await,
+            ReplacementSignal::Up => {
+                tx.send(TalEvent::LinkUp { link, initiator: true, quality }).await
+            }
+        };
+        if result.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+async fn remove_if_current(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &mpsc::Sender<TalEvent>,
+    link: LinkId,
+    generation: u64,
+    write_gate: &Arc<AsyncMutex<()>>,
+) -> bool {
+    let _event_guard = event_gate.lock().await;
+    let _write_guard = acquire_write_gate(write_gate).await;
+    let mut table = links.lock().await;
+    if table.get(&link).map(|state| state.generation) != Some(generation) {
+        return false;
+    }
+    if table.remove(&link).is_none() {
+        return false;
+    }
+    drop(table);
+    tx.send(TalEvent::LinkDown { link }).await.is_ok()
 }
 
 /// A live BLE central: one Bluetooth adapter, a beacon/disconnect watcher
@@ -196,6 +307,8 @@ pub struct BleCentral {
     // for the instant it takes to `Option::take`, never across an `.await`.
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
     links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>>,
+    event_gate: Arc<AsyncMutex<()>>,
+    next_generation: AtomicU64,
 }
 
 impl BleCentral {
@@ -213,14 +326,22 @@ impl BleCentral {
         let (tx, rx) = event_channel();
         let links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>> =
             Arc::new(AsyncMutex::new(HashMap::new()));
+        let event_gate = Arc::new(AsyncMutex::new(()));
 
-        tokio::spawn(watch_adapter(adapter.clone(), tx.clone(), links.clone()));
+        tokio::spawn(watch_adapter(
+            adapter.clone(),
+            tx.clone(),
+            links.clone(),
+            event_gate.clone(),
+        ));
 
         Ok(BleCentral {
             adapter,
             tx,
             events_rx: std::sync::Mutex::new(Some(rx)),
             links,
+            event_gate,
+            next_generation: AtomicU64::new(0),
         })
     }
 
@@ -298,42 +419,92 @@ impl BleCentral {
         peripheral.subscribe(&rx_characteristic).await?;
         let mut notifications = peripheral.notifications().await?;
 
+        let event_guard = self.event_gate.lock().await;
+        let previous = self
+            .links
+            .lock()
+            .await
+            .get(&link)
+            .map(|state| (state.generation, state.write_gate.clone()));
+        let previous_guard = match previous.as_ref() {
+            Some((_, gate)) => Some(acquire_write_gate(gate).await),
+            None => None,
+        };
+        let previous_state = {
+            let mut links = self.links.lock().await;
+            match previous.as_ref() {
+                Some((generation, _))
+                    if links.get(&link).map(|state| state.generation) == Some(*generation) =>
+                {
+                    links.remove(&link)
+                }
+                _ => None,
+            }
+        };
+        let old_generation = previous.as_ref().and_then(|(generation, _)| {
+            previous_state.as_ref().map(|_| *generation)
+        });
+        if let Some(previous_state) = previous_state {
+            let _ = previous_state.peripheral.disconnect().await;
+        }
+        let generation = allocate_generation(&self.next_generation);
+        let write_gate = Arc::new(AsyncMutex::new(()));
         self.links.lock().await.insert(
             link,
             LinkState {
                 peripheral,
                 tx_characteristic,
                 chunk_size: DEFAULT_CHUNK,
-                write_gate: Arc::new(AsyncMutex::new(())),
+                write_gate: write_gate.clone(),
+                generation,
             },
         );
+        drop(previous_guard);
+        drop(event_guard);
 
         let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
         let data_tx = self.tx.clone();
         let rx_uuid = rx_characteristic.uuid;
+        let links = self.links.clone();
+        let event_gate = self.event_gate.clone();
         tokio::spawn(async move {
-            // Keep LinkUp ahead of every RX notification for this link while
-            // allowing dial() to return even when the shared event queue is
-            // full; the host event loop must drain events to release this
-            // bounded backpressure.
-            if data_tx
-                .send(TalEvent::LinkUp { link, initiator: true, quality })
-                .await
-                .is_err()
+            if !emit_replacement(
+                &links,
+                &event_gate,
+                &data_tx,
+                link,
+                old_generation,
+                generation,
+                quality,
+            )
+            .await
             {
                 return;
             }
             while let Some(notification) = notifications.next().await {
                 if notification.uuid == rx_uuid
-                    && data_tx
-                        .send(TalEvent::LinkData { link, bytes: notification.value })
-                        .await
-                        .is_err()
+                    && !emit_if_current(
+                        &links,
+                        &event_gate,
+                        &data_tx,
+                        link,
+                        generation,
+                        TalEvent::LinkData { link, bytes: notification.value },
+                    )
+                    .await
                 {
-                    // Owner dropped the event receiver; nobody is listening.
                     break;
                 }
             }
+            let _ = remove_if_current(
+                &links,
+                &event_gate,
+                &data_tx,
+                link,
+                generation,
+                &write_gate,
+            )
+            .await;
         });
 
         Ok(link)
@@ -342,7 +513,7 @@ impl BleCentral {
     /// Chunk `bytes` into Write-Without-Response ATT payloads and send them,
     /// in order, on `link`'s TX characteristic.
     pub async fn send(&self, link: LinkId, bytes: &[u8]) -> Result<(), BleError> {
-        let (peripheral, tx_characteristic, chunk_size, write_gate) = {
+        let (peripheral, tx_characteristic, chunk_size, write_gate, generation) = {
             let links = self.links.lock().await;
             let state = links.get(&link).ok_or(BleError::UnknownLink)?;
             (
@@ -350,10 +521,20 @@ impl BleCentral {
                 state.tx_characteristic.clone(),
                 state.chunk_size,
                 state.write_gate.clone(),
+                state.generation,
             )
         };
 
         let _write_guard = acquire_write_gate(&write_gate).await;
+        let current_generation = self
+            .links
+            .lock()
+            .await
+            .get(&link)
+            .map(|state| state.generation);
+        if !generation_is_current(current_generation, generation) {
+            return Err(BleError::UnknownLink);
+        }
         if !peripheral.is_connected().await? {
             return Err(BleError::NotConnected);
         }
@@ -371,21 +552,34 @@ impl BleCentral {
     /// docs) and emit `TalEvent::LinkDown` for it. A no-op (still emits
     /// `LinkDown`) if `link` is already gone from the table.
     pub async fn hangup(&self, link: LinkId) {
-        let write_gate = self
+        let _event_guard = self.event_gate.lock().await;
+        let previous = self
             .links
             .lock()
             .await
             .get(&link)
-            .map(|state| state.write_gate.clone());
-        let _write_guard = match write_gate {
-            Some(gate) => Some(acquire_write_gate(&gate).await),
+            .map(|state| (state.generation, state.write_gate.clone()));
+        let _write_guard = match previous.as_ref() {
+            Some((_, gate)) => Some(acquire_write_gate(gate).await),
             None => None,
         };
-        let state = self.links.lock().await.remove(&link);
+        let state = {
+            let mut links = self.links.lock().await;
+            match previous.as_ref() {
+                Some((generation, _))
+                    if links.get(&link).map(|state| state.generation) == Some(*generation) =>
+                {
+                    links.remove(&link)
+                }
+                _ => None,
+            }
+        };
         if let Some(state) = state {
             let _ = state.peripheral.disconnect().await;
+            let _ = self.tx.send(TalEvent::LinkDown { link }).await;
+        } else if previous.is_none() {
+            let _ = self.tx.send(TalEvent::LinkDown { link }).await;
         }
-        let _ = self.tx.send(TalEvent::LinkDown { link }).await;
     }
 }
 
@@ -396,7 +590,8 @@ impl BleCentral {
 async fn watch_adapter(
     adapter: Adapter,
     tx: mpsc::Sender<TalEvent>,
-    links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>>,
+    links: Links,
+    event_gate: Arc<AsyncMutex<()>>,
 ) {
     let uuid = service_uuid();
     let mut events = match adapter.events().await {
@@ -425,16 +620,33 @@ async fn watch_adapter(
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
-                let write_gate = links
+                let _event_guard = event_gate.lock().await;
+                let previous = links
                     .lock()
                     .await
                     .get(&link)
-                    .map(|state| state.write_gate.clone());
-                let _write_guard = match write_gate {
-                    Some(gate) => Some(acquire_write_gate(&gate).await),
-                    None => None,
+                    .map(|state| {
+                        (
+                            state.generation,
+                            state.write_gate.clone(),
+                            state.peripheral.clone(),
+                        )
+                    });
+                let Some((generation, write_gate, peripheral)) = previous else {
+                    continue;
                 };
-                let removed = links.lock().await.remove(&link).is_some();
+                if peripheral.is_connected().await.unwrap_or(false) {
+                    continue;
+                }
+                let _write_guard = acquire_write_gate(&write_gate).await;
+                let removed = {
+                    let mut table = links.lock().await;
+                    if table.get(&link).map(|state| state.generation) == Some(generation) {
+                        table.remove(&link).is_some()
+                    } else {
+                        false
+                    }
+                };
                 if removed && tx.send(TalEvent::LinkDown { link }).await.is_err() {
                     return;
                 }
@@ -477,10 +689,43 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 
 #[cfg(test)]
 mod tests {
-    use super::{acquire_write_gate, event_channel, mint_link_id, EVENT_QUEUE_CAPACITY};
+    use super::{
+        acquire_write_gate, allocate_generation, event_channel, generation_is_current, mint_link_id,
+        replacement_signals, ReplacementSignal, EVENT_QUEUE_CAPACITY,
+    };
     use mmp_tal::TalEvent;
+    use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
+
+    #[test]
+    fn generation_guard_rejects_stale_and_absent_links() {
+        assert!(generation_is_current(Some(7), 7));
+        assert!(!generation_is_current(Some(8), 7));
+        assert!(!generation_is_current(None, 7));
+    }
+
+    #[test]
+    fn generations_are_monotonic_across_reconnects() {
+        let counter = AtomicU64::new(0);
+        let first = allocate_generation(&counter);
+        let second = allocate_generation(&counter);
+        assert_eq!((first, second), (1, 2));
+
+        // A stale callback from generation one cannot match the replacement;
+        // the replacement remains the only current generation.
+        assert!(!generation_is_current(Some(second), first));
+        assert!(generation_is_current(Some(second), second));
+    }
+
+    #[test]
+    fn replacement_orders_close_before_new_link_up() {
+        assert_eq!(replacement_signals(None), &[ReplacementSignal::Up]);
+        assert_eq!(
+            replacement_signals(Some(1)),
+            &[ReplacementSignal::Down, ReplacementSignal::Up]
+        );
+    }
 
     #[tokio::test]
     async fn write_gate_serializes_concurrent_senders() {
