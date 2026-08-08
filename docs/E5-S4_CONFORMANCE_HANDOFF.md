@@ -1666,3 +1666,28 @@ aggregate and retain the current fail-closed restore behavior. No
 implementation-only group-key cap, TTL, or deterministic regeneration should
 be introduced: each can either lose valid delayed group traffic or reuse a
 spent sender key.
+
+## 2026-08-09 continuation: parser and loopback fail-closed checks
+
+`bcd5288` closes three malformed-input allocation paths without changing any
+wire grammar. `RECON_RANGE`, `RevocationList`, and `PrekeyBatch` now verify that
+the remaining byte count can hold every fixed-width record before reserving a
+vector. The regression corpus includes a zero-record `RECON_RANGE` count of
+255; the precheck avoids approximately 12 KiB of speculative range storage in
+that case, as well as the analogous revocation/prekey reservations. The
+mmp-types suites and Clippy pass, and the deterministic corpus now validates
+44 seeds.
+
+`eecbd80` makes the `mmp-cli demo` a real fail-closed loopback check. It now
+requires both Bob's `MessageReceived` event and Alice's `DeliveryState::Delivered`
+state, prints explicit assertions, and exits non-zero if either signal is
+missing. The manual interop document records that this is host-loopback
+evidence only; it is not evidence of BLE, mobile background, or physical
+radio behavior. The CLI test suite and Clippy pass.
+
+The ignored clustered measurement was run explicitly with seed
+`0x00C1_A57E_D00D`: 5,000 contacts over 4.21 simulated hours produced
+`delivery_ratio=0.200`, p50 `6,146,595 ms`, and p90 `8,569,084 ms`. This is a
+reproducible result for the toy clustered model, not a production performance
+claim. Its low delivery ratio reinforces the need for trace-calibrated contact
+parameters before using SLAW-like simulation to justify a protocol change.
