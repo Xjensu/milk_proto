@@ -35,6 +35,8 @@ pub(crate) enum VaultError {
     Generation,
     /// The provider cannot currently supply or commit the required capability.
     Unavailable,
+    /// Restore was attempted after live sessions or secret runtime state existed.
+    Busy,
 }
 
 /// Ciphertext and provider-owned opaque key material for one node generation.
@@ -431,6 +433,30 @@ mod tests {
         assert_eq!(save_core_from_vault(&mut second, &node.core, &mut rng).unwrap(), 1);
         let (generation, state) = restore_from_vault(&mut second, &node.core.public, &node.core.node_id).unwrap();
         assert_eq!((generation, state.convs.len()), (1, 0));
+    }
+
+    #[test]
+    fn node_vault_restore_is_atomic_and_keeps_secret_surface_internal() {
+        let mut original = Node::new([97; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut peer = Node::new([98; 32], Box::new(MemStore::new()), Tier::Relay);
+        introduce(&mut original, &mut peer);
+        original.send_text(&peer.node_id(), "restart").unwrap();
+        let expected = original.secret_state_snapshot().unwrap();
+
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(16);
+        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+
+        let mut restored = Node::new([97; 32], Box::new(MemStore::new()), Tier::Relay);
+        assert_eq!(restored.restore_secret_state_from_vault(&mut vault).unwrap(), 1);
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), expected.as_slice());
+
+        restored.on_tal_event(mmp_tal::TalEvent::LinkUp {
+            link: 11,
+            initiator: true,
+            quality: Default::default(),
+        });
+        assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Busy));
     }
 
     #[test]

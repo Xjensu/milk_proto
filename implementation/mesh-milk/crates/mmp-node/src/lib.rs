@@ -785,6 +785,36 @@ impl Node {
         Ok(())
     }
 
+    /// Restore one provider-authenticated secret generation before any live
+    /// session or secret runtime state exists. This remains Rust-internal; the
+    /// provider and its DEK never cross UniFFI or React Native.
+    #[allow(dead_code)]
+    pub(crate) fn restore_secret_state_from_vault(
+        &mut self,
+        vault: &mut impl vault::SnapshotVault,
+    ) -> Result<u64, vault::VaultError> {
+        if !self.sessions.is_empty()
+            || !self.outbox.is_empty()
+            || !self.core.convs.is_empty()
+            || !self.core.established_convs.is_empty()
+            || !self.core.pending_async.is_empty()
+            || !self.core.pending_first_contact.is_empty()
+            || !self.core.sent.is_empty()
+            || !self.core.groups.is_empty()
+            || !self.core.sent_dists.is_empty()
+        {
+            return Err(vault::VaultError::Busy);
+        }
+        let (generation, state) = vault::restore_from_vault(vault, &self.core.public, &self.core.node_id)?;
+        self.core.convs = state.convs;
+        self.core.established_convs = state.established_convs;
+        self.core.prekeys = state.prekeys;
+        self.core.pending_async = state.pending_async;
+        self.core.pending_first_contact = state.pending_first_contact;
+        self.core.sent = state.sent;
+        Ok(generation)
+    }
+
     /// Request a peer to act as a patron for this node. The offer is sent on
     /// the next authenticated session and is silently capped by policy.
     pub fn request_friendship(&mut self, peer_identity: Key32) {
