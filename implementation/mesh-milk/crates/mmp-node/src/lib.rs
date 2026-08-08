@@ -2222,6 +2222,7 @@ impl NodeCore {
         // must be side-effect free: otherwise ConversationPending or an
         // unknown peer would still consume local storage and quota.
         let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
+        let _peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
         let conv_id = conversation_id(&self.public, &peer_pub);
         if self.pending_first_contact.contains_key(&conv_id) {
             return Err(SendError::ConversationPending);
