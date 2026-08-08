@@ -1073,6 +1073,7 @@ The latest WSL Ubuntu run now supplies that sysroot and passes:
 CARGO_TARGET_DIR=/tmp/mmp-target-final cargo check -p mmp-tal-peripheral --target x86_64-unknown-linux-gnu  # pass
 CARGO_TARGET_DIR=/tmp/mmp-target-final cargo test -p mmp-tal-peripheral --lib -- --test-threads=1           # 37 passed
 CARGO_TARGET_DIR=/tmp/mmp-target-final cargo clippy -p mmp-tal-peripheral --all-targets -- -D warnings      # pass
+CARGO_TARGET_DIR=/tmp/mmp-target-final-full cargo test --workspace --all-targets -- --test-threads=1       # pass; Linux workspace
 ```
 
 This is still build/test evidence only; a physical two-PC BlueZ run remains
