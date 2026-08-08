@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `c929c70` (`fix(mmp-types): bound hostile parser
-counts and file sizes`). The frozen `specification/` directory was not
+This checkpoint is commit `e24637d` (`fix(mmp-core): bound untrusted
+persistence decoders`). The frozen `specification/` directory was not
 modified.
 
 Recent focused commits, oldest first:
@@ -37,6 +37,10 @@ Recent focused commits, oldest first:
   hardening: `RECON_IDS`/`WANT` counts are checked against remaining bytes before
   allocation, and `FileManifest` rejects every entry above the normative
   8 MiB `FILE_MAX` before any receiver-side offer or blob assembly can use it.
+- `e24637d` — local snapshot hardening: Bloom restore rejects zero/oversized
+  moduli with checked slice arithmetic; SeenIndex and ReceiptFilter reject
+  impossible bucket/exact counts before allocation, while preserving the
+  fixed 12-bucket and 1024-entry limits.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -57,6 +61,9 @@ have artifact/API bridge checks rather than a turnkey consuming application.
   4080-byte maximum application plaintext before the Noise tag.
 - strict negative coverage for hostile `u16::MAX` reconciliation/request
   counts, plus the exact `FILE_MAX` boundary and an oversized-manifest reject.
+- persistence decoder regression coverage for zero/oversized Bloom filters,
+  more-than-12 bucket snapshots, and exact-count claims with no remaining
+  records.
 - independent Beacon and frame-payload grammar checks;
 - `coverage.json`, mapping all committed artifacts to requirement IDs, source
   sections, and verification evidence.
@@ -73,6 +80,9 @@ integration tests; `mmp-sim` passed 9 active tests with 4 intentionally ignored
 scale/deployment cases. Workspace clippy with `-D warnings`, `cargo run -p
 layer-check`, and `cargo run -p mmp-cli -- demo` also passed. Rustfmt could not
 be run because the rustfmt component is not installed in the environment.
+The persistence slice additionally passed 33 `mmp-core` unit tests, 4 focused
+integration tests, and `mmp-store`'s 7 tests after the build cache was cleaned
+to recover 7.1 GiB of disk space.
 
 Regenerate vectors with:
 
