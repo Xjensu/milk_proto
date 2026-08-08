@@ -137,6 +137,17 @@ suite now covers 17 lifecycle cases and the peripheral suite 28 cases. These
 changes close host-side late-start and lock-order hazards, but cannot prove
 BlueZ adapter teardown or mobile OS behavior without the corresponding hosts.
 
+The subsequent continuation closes the remaining peripheral lifecycle lock
+ordering hole in `c3d8c47`: `PeripheralRole::close_link` now removes/fences
+logical state and emits `LinkDown` before a bounded writer-gate wait outside
+`event_gate`. Its regression covers a permanently held writer gate; the
+peripheral suite now has 29 passing cases. Commit `de9b06b` adds a bounded,
+strictly decoded `AuthorityStore` snapshot record. Pinned roots, verified
+public certificates, subscriptions, and sticky revocations now survive
+`SnapshotStore`/UniFFI restart, with signature re-validation and a full FFI
+restart test. Secret ratchet/prekey state remains intentionally excluded until
+a platform-keystore envelope exists.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files
@@ -440,7 +451,7 @@ Record evidence and obtain a protocol decision first.
    class-1, and class-2 interiors only after their normative grammar and key
    context are available.
 4. Reconcile stale status text in the dirty handbook/API/mobile integration
-   files (strict 4096-byte cap and restart persistence claims) with the shipped
+   files (strict 4096-byte cap and secret-ratchet restart claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
 5. Complete the Linux/BlueZ compile and hardware gate for the new peripheral
