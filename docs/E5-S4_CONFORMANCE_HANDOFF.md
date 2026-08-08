@@ -66,6 +66,26 @@ cargo run -p layer-check                                  # pass
 cargo run -p mmp-cli -- demo                              # pass; receipt observed
 ```
 
+## 2026-08-08 lifecycle and mobile-surface follow-up
+
+Two delegated audits closed additional implementation gaps without touching
+the frozen specification:
+
+- `a959f8a` requires an exact successor generation for every vault commit;
+  gaps, forks, and overflow are rejected before provider mutation.
+- `70fa9b7` rejects the reserved maximum prekey generation and makes OTK
+  tombstone/expiry updates transactional on generation overflow.
+- `d6c0d88` adds a CI check that the generated Kotlin and Swift bindings expose
+  the complete intended `MmpNode` API surface, alongside the existing secret-
+  surface check.
+
+The focused evidence is 55 `mmp-node` tests and 35 `mmp-crypto` tests passing,
+plus six mobile-binding checker tests. The remaining mobile documentation
+discrepancies are intentionally not staged because the integration guides
+already contain unrelated user edits; they are listed here for the next clean
+documentation pass. Native radio shells, keystore providers, and physical
+Linux/mobile runs remain external gates.
+
 The remaining exit-gate evidence is physical: two Linux/BlueZ PCs for real
 BLE, followed by a native Android/iOS consuming shell. Windows-only builds
 are not evidence for the Linux peripheral backend or mobile background
