@@ -1193,6 +1193,9 @@ cargo test -p mmp-ffi --lib -- --test-threads=1   # 17 passed
 cargo clippy -p mmp-ffi --all-targets -- -D warnings  # pass
 ```
 
+The subsequent Windows full-workspace matrix also passed, including all
+ignored-test exclusions, followed by workspace clippy with `-D warnings`.
+
 The Linux clippy pass initially exposed a toolchain-version lint in the
 existing ratchet destructor (`for (_, value) in map.iter_mut()`). It was
 rewritten as `map.values_mut()`, preserving zeroization behavior and changing
