@@ -49,6 +49,10 @@ matrix. The conformance reader checks its 81-cell schema and declared verdicts;
 the production test independently exercises the nine diagonal accepts and 72
 off-diagonal rejects. No private key material is emitted.
 
+`coverage.json` is the machine-readable requirement map. Its coverage test
+requires exactly one entry for every committed vector artifact, a normative
+specification source, and explicit verification evidence.
+
 ## What's here
 
 Positive:
@@ -72,6 +76,8 @@ Positive:
   HELLO payload as `hello.json`.
 - `hello.json` — standalone HELLO payload fields and canonical bytes.
 - `rbsr_fingerprint.json` — RBSR range fingerprint of a known Id16 set.
+- `coverage.json` — requirement IDs, normative sources, and verification
+  evidence for every committed artifact.
 
 - `cross_domain_matrix.json` contains deterministic objects and signatures for
   all nine registered `SigDomain` tags and the full 9x9 accept/reject matrix;

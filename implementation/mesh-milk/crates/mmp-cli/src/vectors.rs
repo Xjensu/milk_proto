@@ -520,6 +520,7 @@ pub fn generate() -> Vec<VectorFile> {
         frames_vector(),
         envelope_oversize_negative_vector(),
         bundle_tlv_negative_vector(),
+        coverage_manifest_vector(),
     ]
 }
 
@@ -908,6 +909,46 @@ fn bundle_tlv_negative_vector() -> VectorFile {
         hex(&duplicate),
     );
     VectorFile { name: "bundle_tlv_negative.json", json }
+}
+
+/// Machine-readable map from every committed artifact to its normative
+/// requirement and the verification evidence that consumes it.  Keeping this
+/// manifest generated makes additions fail the same drift gate as wire bytes.
+fn coverage_manifest_vector() -> VectorFile {
+    const ENTRIES: &[(&str, &str, &str, &str)] = &[
+        ("beacon.codec.v1", "beacon.json", "specification/10-message-format.md §5", "independent_fixed_reader+production_roundtrip"),
+        ("bundle.compat.class1.v1", "bundle.json", "specification/10-message-format.md §3", "independent_outer_reader+production_signature"),
+        ("bundle.classes.0-5.v1", "bundles.json", "specification/10-message-format.md §3-§4", "independent_outer_reader+production_payload_invariants"),
+        ("claim.nickname.v1", "claim.json", "specification/06-sync-spec.md §4; specification/10-message-format.md §4.4", "production_roundtrip+signature"),
+        ("negative.budget.clamp.v1", "budget_clamp_negative.json", "specification/05-routing-spec.md §6", "production_invariant"),
+        ("negative.bundle.tlv.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
+        ("negative.cross-domain.v1", "cross_domain_negative.json", "specification/10-message-format.md §3.1", "production_cross_domain_rejection"),
+        ("negative.cross-domain.matrix.v1", "cross_domain_matrix.json", "specification/10-message-format.md §3.1", "independent_schema+production_9x9_matrix"),
+        ("negative.envelope.oversize.v1", "envelope_oversize_negative.json", "specification/10-message-format.md §6.4", "independent_normative_cap+production_runtime_cap"),
+        ("negative.ed25519.s-plus-l.v1", "noncanonical_s_negative.json", "specification/10-message-format.md §6.3", "independent_scalar_arithmetic+strict_verify"),
+        ("negative.lifetime-reset.v1", "lifetime_reset_negative.json", "specification/10-message-format.md §3", "production_bundle_id_invariant"),
+        ("envelope.framing.v1", "envelope.json", "specification/10-message-format.md §2", "independent_envelope_reader+production_roundtrip"),
+        ("frame.hello.v1", "hello.json", "specification/10-message-format.md §2.1", "independent_fixed_reader+production_roundtrip"),
+        ("frame.registry.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("receipt.mac.v1", "receipt.json", "specification/05-routing-spec.md §7", "production_mac_invariant"),
+        ("rbsr.fingerprint.v1", "rbsr_fingerprint.json", "specification/06-sync-spec.md §9", "production_fingerprint_invariant"),
+        ("coverage.manifest.v1", "coverage.json", "specification/12-rust-blueprint.md §7", "machine_readable_manifest_completeness"),
+    ];
+    let mut json = String::from(
+        "{\n  \"schema\": \"mmp-e5-s4-coverage-v1\",\n  \"description\": \"normative requirement coverage for committed MMP/1 vectors\",\n  \"entry_count\": 17,\n  \"entries\": [\n",
+    );
+    for (index, (id, artifact, source, evidence)) in ENTRIES.iter().enumerate() {
+        json.push_str(&format!(
+            "    {{\"id\": \"{}\", \"artifact\": \"{}\", \"source\": \"{}\", \"evidence\": \"{}\" }}{}\n",
+            id,
+            artifact,
+            source,
+            evidence,
+            if index + 1 == ENTRIES.len() { "" } else { "," },
+        ));
+    }
+    json.push_str("  ]\n}\n");
+    VectorFile { name: "coverage.json", json }
 }
 
 fn rbsr_fingerprint_vector() -> VectorFile {

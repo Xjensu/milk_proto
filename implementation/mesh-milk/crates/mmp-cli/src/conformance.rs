@@ -15,6 +15,7 @@ const VECTOR_NAMES: &[&str] = &[
     "bundle.json",
     "bundles.json",
     "claim.json",
+    "coverage.json",
     "cross_domain_negative.json",
     "cross_domain_matrix.json",
     "envelope.json",
@@ -536,6 +537,35 @@ fn committed_vector_inventory_is_explicit_and_complete() {
     let mut expected = VECTOR_NAMES.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>();
     expected.sort();
     assert_eq!(actual, expected, "update VECTOR_NAMES when a vector is added/removed");
+}
+
+#[test]
+fn coverage_manifest_maps_every_committed_vector_once() {
+    let json = vector("coverage.json");
+    assert_eq!(json_string(&json, "schema"), "mmp-e5-s4-coverage-v1");
+    assert_eq!(json_u64(&json, "entry_count"), 17);
+
+    let ids = json_all_strings(&json, "id");
+    let artifacts = json_all_strings(&json, "artifact");
+    let sources = json_all_strings(&json, "source");
+    let evidence = json_all_strings(&json, "evidence");
+    assert_eq!(ids.len(), 17);
+    assert_eq!(artifacts.len(), 17);
+    assert_eq!(sources.len(), 17);
+    assert_eq!(evidence.len(), 17);
+    assert!(sources.iter().all(|source| source.starts_with("specification/")));
+    assert!(evidence.iter().all(|entry| !entry.is_empty()));
+
+    let mut actual = artifacts;
+    actual.sort();
+    let mut expected = VECTOR_NAMES.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(actual, expected, "coverage manifest must map every committed vector exactly once");
+
+    let mut unique_ids = ids.clone();
+    unique_ids.sort();
+    unique_ids.dedup();
+    assert_eq!(unique_ids.len(), ids.len(), "coverage IDs must be unique");
 }
 
 #[test]
