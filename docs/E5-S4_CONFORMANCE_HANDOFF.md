@@ -1306,3 +1306,38 @@ temporary audit directories, and Python cache directories remain unstaged.
 The remaining release gates are the physical two-PC Linux/BlueZ exchange,
 native Android/iOS radio/background measurements, and platform secure-storage
 restart/crash tests.
+
+## 2026-08-09 authority clock readiness and iOS artifact gate
+
+`3357278` closes a receiver-local authority admission fail-open. `NodeCore`
+now represents the host wall clock as an explicit readiness value rather than
+using Unix zero as an implicit timestamp. Before `set_wall_clock` is called,
+attached or gossiped AuthCerts cannot elevate priority and cannot render an
+announcement official; the announcement may still be relayed and surfaced at
+NORMAL priority. Once initialized, backward samples are ignored, so an
+expired certificate cannot be revalidated by an NTP/user-clock rollback.
+Explicit `Some(0)` remains valid for deterministic tests. This is local policy
+only: persisted reboot-time trust and a native trusted-clock provider remain
+platform responsibilities.
+
+The regression suite covers an unclocked future-dated certificate and an
+expiry-then-rollback sequence. The fix changes no wire bytes and does not
+modify the frozen specification.
+
+`a175124` adds the iOS counterpart to the Android packaging gate. The
+XCFramework verifier checks `Info.plist`, required `ios-arm64` and
+`ios-arm64-simulator` slices, safe relative library/header paths, non-empty
+static libraries, header/module-map presence, and non-empty UTF-8 Swift source.
+The build script, CI job, and manual interop procedure invoke the verifier.
+Five synthetic iOS cases and the complete mobile-script suite (21 tests) pass;
+macOS/Xcode execution, Swift compilation, and device radio behavior remain
+external gates.
+
+Fresh evidence:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1       # pass
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # pass
+python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 21 passed
+git diff --name-only -- specification                         # empty
+```
