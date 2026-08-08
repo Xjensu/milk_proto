@@ -1132,13 +1132,13 @@ an authenticated replay that repeatedly supplied tiny/empty reconciliation
 frames to re-trigger the expensive final poll. The latch is local session
 state and does not change the wire format.
 
-The implementation deliberately retains one documented residual: a malicious
-peer can still send a valid nested range in the active domain, and the current
-RBSR `resolve_containing` logic may retire a pending parent before the full
-partition is proven. This is an availability/withholding limitation, not a
-claim of Byzantine delivery correctness. Expected-split plus terminal-response
-tracking (possibly with a frame-level partition proof) is required before
-making that stronger claim.
+The initial audit recorded a residual in which a malicious peer could send a
+valid nested range and retire a pending parent before the full partition was
+proven. That wording describes the pre-`ee1078d` implementation; the bounded
+partition/terminal tracker below addresses this specific premature-advance
+path. It remains an availability/withholding limitation rather than a claim
+of complete Byzantine delivery correctness until the high-volume session
+stress evidence is added.
 
 The CLI now primes a freshly restored node with its current command-clock
 reading before creating a bundle or entering the first drive tick. This fixes
@@ -1177,12 +1177,11 @@ APIs. The regression checks persisted `stored_at`, the full message TTL, and
 retention on the first subsequent tick. This intentionally does not invent a
 cross-reboot clock policy or read wall time in the FFI constructor.
 
-The remaining RBSR availability residual is unchanged: nested same-domain
-ranges can still retire a parent before a complete partition and the
-session-level 500-versus-empty path is not yet a proof of Byzantine-safe
-sequencing. A full interval-coverage/terminal-child tracker is a separate
-state-machine redesign task; do not claim Byzantine convergence until it is
-implemented and tested.
+The remaining RBSR evidence gap is now narrower: the interval-coverage and
+terminal-child tracker is implemented, but a high-volume session-level
+500-versus-empty pump is still required before claiming complete Byzantine
+availability. The wire-preserving implementation and its focused tests are
+recorded in the next section.
 
 Evidence:
 
@@ -1195,6 +1194,33 @@ cargo clippy -p mmp-ffi --all-targets -- -D warnings  # pass
 
 The subsequent Windows full-workspace matrix also passed, including all
 ignored-test exclusions, followed by workspace clippy with `-D warnings`.
+
+## 2026-08-08 bounded RBSR partition tracker
+
+`ee1078d` implements the previously scheduled wire-preserving RBSR state
+redesign. Each pending range now keeps a bounded inclusive interval ledger and
+an `await_terminal` flag. A nested response records coverage but cannot retire
+the parent until the complete span is covered. When a local terminal
+`RECON_IDS` response is emitted for an outstanding obligation, a child pending
+state remains until the peer answers with the corresponding list or split
+ranges. Interval-ledger overflow leaves the obligation open and fails closed.
+
+The original premature-domain-advance exploit is covered by both direct RBSR
+and session tests. The frozen wire fields and frame encodings are unchanged.
+The remaining evidence gap is a high-volume SessionEngine pump with a full
+500-versus-empty store across many frames; current direct reconciliation and
+single-child session tests pass, but that stress case should be added before
+claiming complete Byzantine-availability coverage.
+
+Evidence:
+
+```text
+cargo test -p mmp-core --lib -- --test-threads=1  # 55 passed
+cargo clippy -p mmp-core --all-targets -- -D warnings  # pass
+cargo test --workspace --all-targets -- --test-threads=1  # pass (Windows)
+wsl: cargo test -p mmp-core --lib -- --test-threads=1  # 55 passed
+wsl: cargo test -p mmp-ffi --lib -- --test-threads=1   # 17 passed
+```
 
 The Linux clippy pass initially exposed a toolchain-version lint in the
 existing ratchet destructor (`for (_, value) in map.iter_mut()`). It was
