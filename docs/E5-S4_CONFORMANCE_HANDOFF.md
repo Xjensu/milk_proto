@@ -1264,3 +1264,45 @@ validation remain external gates: this Windows host has no usable WSL/Linux
 BlueZ environment, Bluetooth adapter path, Android consuming shell, or Xcode
 toolchain. The scoped implementation changes are committed separately from
 the user's pre-existing dirty files.
+
+## 2026-08-08 vault, group-policy, and Android artifact gates
+
+`60153df` ties ratchet-secret restore freshness to the normative message
+lifetime (`LIFETIME_MESSAGE_MS`, 72 hours) and rejects an expired provider
+record atomically, leaving the target secret state unchanged. This is still a
+provider contract: native Android Keystore, iOS Keychain, crash-atomic
+replacement, and physical restart testing remain open.
+
+`594129e` makes the immutable-v1 group administrator check symmetric. A
+non-administrator can no longer call `group_invite` to mutate its local
+membership OR-set and create a same-GID fork; the operation fails closed with
+the existing `UnknownPeer` error. No wire field or specification text changed.
+The separate uncommitted `mmp-types::group_control` candidate remains
+quarantined: its unauthenticated/replayable control path is not suitable for
+v1 and must not be staged without a new reviewed protocol version.
+
+`6827e69` adds a native-only Android artifact verifier to both the AAR build
+script and CI. It requires the manifest and arm64-v8a, armeabi-v7a, and
+x86_64 `libmmp_ffi.so` members, rejects `classes.jar`, absolute/traversal or
+duplicate ZIP paths, and checks that the Kotlin artifact contains only
+non-empty source material passing the existing API/secret-surface scanners.
+`efcd211` canonicalizes harmless `.` and repeated-slash ZIP spellings before
+duplicate detection. The verifier has seven focused synthetic tests; the
+complete script suite has 16 passing tests. A real NDK/AAR build remains a CI
+or Android-host gate because this Windows machine has no usable Android NDK
+shell or consuming application.
+
+Current focused evidence:
+
+```text
+cargo test -p mmp-node --lib -- --test-threads=1                 # 63 passed
+cargo clippy -p mmp-node --all-targets -- -D warnings             # pass
+python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 16 passed
+git diff --name-only -- specification                                    # empty
+```
+
+All user-owned dirty documentation, integration guides, `mmp-types` edits,
+temporary audit directories, and Python cache directories remain unstaged.
+The remaining release gates are the physical two-PC Linux/BlueZ exchange,
+native Android/iOS radio/background measurements, and platform secure-storage
+restart/crash tests.
