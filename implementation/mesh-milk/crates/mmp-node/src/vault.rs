@@ -230,34 +230,87 @@ mod tests {
     use rand::{rngs::StdRng, SeedableRng};
     use crate::{Node, Tier};
 
-    struct TestVault {
+    struct ReferenceSnapshotVault {
+        available: bool,
+        high_water: u64,
         record: Option<SealedRecord>,
     }
 
-    impl SnapshotVault for TestVault {
+    impl ReferenceSnapshotVault {
+        /// This is a test-only provider. Its wrapped DEK is deliberately raw
+        /// test material; no production or FFI path may use this type.
+        fn new() -> Self {
+            Self { available: true, high_water: 0, record: None }
+        }
+
+        fn set_available(&mut self, available: bool) {
+            self.available = available;
+        }
+
+        fn high_water_generation(&self) -> u64 {
+            self.high_water
+        }
+
+        fn simulate_record_loss(&mut self) {
+            self.record = None;
+        }
+    }
+
+    impl SnapshotVault for ReferenceSnapshotVault {
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
+            if !self.available {
+                return Err(VaultError::Unavailable);
+            }
             Ok(self.record.clone())
         }
 
-        fn commit(&mut self, expected_generation: u64, mut candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
-            validate_commit_generation(expected_generation, &candidate)?;
-            if self.record.as_ref().map_or(0, |record| record.generation) != expected_generation {
+        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+            if !self.available {
+                return Err(VaultError::Unavailable);
+            }
+            if self.high_water != expected_generation
+                || self.record.as_ref().map_or(0, |record| record.generation) != expected_generation
+            {
                 return Err(VaultError::Generation);
             }
-            candidate.envelope.shrink_to_fit();
-            self.record = Some(SealedRecord {
+            validate_commit_generation(expected_generation, &candidate)?;
+            if candidate.generation != expected_generation.checked_add(1).ok_or(VaultError::Generation)? {
+                return Err(VaultError::Generation);
+            }
+            let envelope_generation = envelope_generation(&candidate.envelope)?;
+            if envelope_generation != candidate.generation || candidate.context.is_empty() {
+                return Err(VaultError::Invalid);
+            }
+
+            // The assignment is the single commit point: all validation above
+            // happens before either high-water or record state changes.
+            let record = SealedRecord {
                 generation: candidate.generation,
                 context: candidate.context,
                 envelope: candidate.envelope,
                 wrapped_dek: dek.to_vec(),
-            });
+            };
+            self.high_water = candidate.generation;
+            self.record = Some(record);
             Ok(())
         }
 
         fn unwrap_dek(&mut self, _context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            if !self.available {
+                return Err(VaultError::Unavailable);
+            }
             let key: [u8; 32] = wrapped_dek.try_into().map_err(|_| VaultError::Invalid)?;
             Ok(Zeroizing::new(key))
         }
+    }
+
+    fn envelope_generation(envelope: &[u8]) -> Result<u64, VaultError> {
+        if envelope.len() < 14 || envelope[..4] != *b"MKS1" || envelope[4] != 1 || envelope[5] != KIND_NODE_SECRET_STATE {
+            return Err(VaultError::Invalid);
+        }
+        let mut bytes = [0u8; 8];
+        bytes.copy_from_slice(&envelope[6..14]);
+        Ok(u64::from_le_bytes(bytes))
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
@@ -302,7 +355,7 @@ mod tests {
     #[test]
     fn save_core_couples_generation_sealing_and_provider_commit() {
         let node = Node::new([94; 32], Box::new(MemStore::new()), Tier::Relay);
-        let mut vault = TestVault { record: None };
+        let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(13);
         assert_eq!(save_core(&mut vault, &node.core, 0, 20_000, &mut rng).unwrap(), 1);
         let record = vault.load().unwrap().unwrap();
@@ -319,5 +372,68 @@ mod tests {
         .unwrap();
         assert_eq!((generation, state.convs.len()), (1, 0));
         assert_eq!(save_core(&mut vault, &node.core, 1, 20_002, &mut rng).unwrap(), 2);
+    }
+
+    #[test]
+    fn reference_vault_rejects_stale_equal_and_forked_generations() {
+        let node = Node::new([95; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(14);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(), 1);
+        let dek = [8; 32];
+
+        let equal = seal_core(&node.core, 1, 30_002, &dek, &mut rng).unwrap();
+        assert_eq!(vault.commit(1, equal, &dek), Err(VaultError::Generation));
+
+        let stale = seal_core(&node.core, 1, 30_001, &dek, &mut rng).unwrap();
+        assert_eq!(vault.commit(2, stale, &dek), Err(VaultError::Generation));
+
+        let fork = seal_core(&node.core, 3, 30_003, &dek, &mut rng).unwrap();
+        assert_eq!(vault.commit(1, fork, &dek), Err(VaultError::Generation));
+        assert_eq!(vault.load().unwrap().unwrap().generation, 1);
+        assert_eq!(vault.high_water_generation(), 1);
+    }
+
+    #[test]
+    fn reference_vault_keeps_high_water_floor_after_record_loss() {
+        let node = Node::new([97; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(16);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(), 1);
+        vault.simulate_record_loss();
+
+        let candidate = seal_core(&node.core, 2, 50_001, &[10; 32], &mut rng).unwrap();
+        assert_eq!(vault.commit(1, candidate, &[10; 32]), Err(VaultError::Generation));
+        assert_eq!(vault.load().unwrap(), None);
+        assert_eq!(vault.high_water_generation(), 1);
+    }
+
+    #[test]
+    fn reference_vault_preserves_record_on_unavailable_or_invalid_commit() {
+        let node = Node::new([96; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(15);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 40_000, &mut rng).unwrap(), 1);
+        let before = vault.load().unwrap();
+        let dek = [9; 32];
+
+        vault.set_available(false);
+        let unavailable = seal_core(&node.core, 2, 40_001, &dek, &mut rng).unwrap();
+        assert_eq!(vault.commit(1, unavailable, &dek), Err(VaultError::Unavailable));
+        assert_eq!(vault.load(), Err(VaultError::Unavailable));
+        vault.set_available(true);
+        assert_eq!(vault.load().unwrap(), before);
+        assert_eq!(vault.high_water_generation(), 1);
+
+        let mut invalid = seal_core(&node.core, 2, 40_002, &dek, &mut rng).unwrap();
+        invalid.envelope.clear();
+        assert_eq!(vault.commit(1, invalid, &dek), Err(VaultError::Invalid));
+        assert_eq!(vault.load().unwrap(), before);
+        assert_eq!(vault.high_water_generation(), 1);
+
+        let mut mismatched = seal_core(&node.core, 2, 40_003, &dek, &mut rng).unwrap();
+        mismatched.envelope[6..14].copy_from_slice(&1u64.to_le_bytes());
+        assert_eq!(vault.commit(1, mismatched, &dek), Err(VaultError::Invalid));
+        assert_eq!(vault.load().unwrap(), before);
     }
 }
