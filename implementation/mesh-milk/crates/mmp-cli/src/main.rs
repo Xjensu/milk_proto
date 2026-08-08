@@ -591,6 +591,7 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
     };
     if let Err(e) = central.start_scan().await {
         eprintln!("mmp-cli: failed to start BLE scan: {e}");
+        central.shutdown_all().await;
         return ExitCode::from(2);
     }
     println!("scanning for MMP peers... (Ctrl-C to stop)");
@@ -629,6 +630,16 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
         while let Some(link) = node.poll_close() {
             central.hangup(link).await;
         }
+        if node.close_actions_dropped() != 0 || central.control_events_dropped() != 0 {
+            eprintln!(
+                "mmp-cli: transport lifecycle overload (node close drops: {}, transport control drops: {}); shutting down",
+                node.close_actions_dropped(),
+                central.control_events_dropped()
+            );
+            central.shutdown_all().await;
+            finish(shared, node, frames_sent, messages_received);
+            return ExitCode::from(2);
+        }
         while let Some((link, bytes)) = node.poll_send() {
             if let Err(e) = central.send(link, &bytes).await {
                 eprintln!("mmp-cli: send on link {link:#x} failed: {e}");
@@ -642,6 +653,7 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
                 Event::MessageReceived { .. } => messages_received += 1,
                 Event::Delivered { id } if watch == Some(*id) => {
                     println!("message {} delivered", hex(id.as_bytes()));
+                    central.shutdown_all().await;
                     finish(shared, node, frames_sent, messages_received);
                     return ExitCode::SUCCESS;
                 }
@@ -651,13 +663,16 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
 
         if watch.is_some() && start.elapsed() >= SEND_TIMEOUT {
             println!("timed out after {}s waiting for delivery", SEND_TIMEOUT.as_secs());
+            central.shutdown_all().await;
             finish(shared, node, frames_sent, messages_received);
             return ExitCode::from(1);
         }
     }
 
+    let overload = node.close_actions_dropped() != 0 || central.control_events_dropped() != 0;
+    central.shutdown_all().await;
     finish(shared, node, frames_sent, messages_received);
-    ExitCode::SUCCESS
+    if overload { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
 /// Dial every beacon-sighted peer not already in `dialed`. See `drive_loop`
@@ -707,6 +722,7 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
     let mut last_advertised_ms = now_ms();
     if let Err(e) = peripheral.advertise(node.beacon(last_advertised_ms).to_vec()).await {
         eprintln!("mmp-cli: failed to start advertising: {e}");
+        peripheral.shutdown_all().await;
         return ExitCode::from(2);
     }
     println!("advertising for MMP peers... (Ctrl-C to stop)");
@@ -748,6 +764,16 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
                 eprintln!("mmp-cli: close on link {link:#x} failed: {e}");
             }
         }
+        if node.close_actions_dropped() != 0 || peripheral.control_events_dropped() != 0 {
+            eprintln!(
+                "mmp-cli: transport lifecycle overload (node close drops: {}, transport control drops: {}); shutting down",
+                node.close_actions_dropped(),
+                peripheral.control_events_dropped()
+            );
+            peripheral.shutdown_all().await;
+            finish(shared, node, frames_sent, messages_received);
+            return ExitCode::from(2);
+        }
         while let Some((link, bytes)) = node.poll_send() {
             if let Err(e) = peripheral.notify(link, &bytes).await {
                 eprintln!("mmp-cli: notify on link {link:#x} failed: {e}");
@@ -763,8 +789,10 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
         }
     }
 
+    let overload = node.close_actions_dropped() != 0 || peripheral.control_events_dropped() != 0;
+    peripheral.shutdown_all().await;
     finish(shared, node, frames_sent, messages_received);
-    ExitCode::SUCCESS
+    if overload { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
 /// Exit path shared by every `drive_loop` return: persist to disk if a

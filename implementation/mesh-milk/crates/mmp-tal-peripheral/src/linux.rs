@@ -248,6 +248,21 @@ impl PeripheralRole {
         Ok(())
     }
 
+    /// Retire every live peripheral link. Hosts should call this on shutdown
+    /// and after observing [`Self::control_events_dropped`] so a saturated
+    /// lifecycle queue cannot leave a BlueZ stream alive.
+    pub async fn shutdown_all(&self) {
+        shutdown_links(&self.links, &self.event_gate, &self.tx).await;
+    }
+
+    /// Return the sticky count of lifecycle events rejected because both
+    /// bounded control lanes were saturated. A non-zero value is a
+    /// fail-closed operational signal; call [`Self::shutdown_all`] before
+    /// attempting further admission.
+    pub fn control_events_dropped(&self) -> u64 {
+        self.tx.control_events_dropped()
+    }
+
     /// Chunk `bytes` to the link's negotiated size and push them, in order,
     /// as GATT notifications. Errors with [`PeriphError::NotSubscribed`] if
     /// the central hasn't subscribed yet; a mid-stream send failure tears the

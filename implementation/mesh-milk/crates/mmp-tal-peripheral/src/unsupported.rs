@@ -89,6 +89,16 @@ impl PeripheralRole {
     }
 
     /// Statically unreachable (no value of `Self` can exist).
+    pub async fn shutdown_all(&self) {
+        match self.never {}
+    }
+
+    /// Statically unreachable (no value of `Self` can exist).
+    pub fn control_events_dropped(&self) -> u64 {
+        match self.never {}
+    }
+
+    /// Statically unreachable (no value of `Self` can exist).
     pub async fn notify(&self, _link: LinkId, _bytes: &[u8]) -> Result<(), PeriphError> {
         match self.never {}
     }

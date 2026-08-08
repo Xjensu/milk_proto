@@ -37,8 +37,15 @@ result.
 ## Host integration
 
 - Central BLE: call `BleCentral::hangup(link)` for every `poll_close()` result.
+- Central BLE: `BleCentral::control_events_dropped()` is a sticky transport
+  ingress-overload counter. A non-zero value means the bounded lifecycle lanes
+  rejected a control event; call `BleCentral::shutdown_all()` and fail closed
+  instead of admitting more links.
 - Linux peripheral BLE: call `PeripheralRole::close_link(link)`; this retires
   the local endpoint and emits the reserved transport `LinkDown` event.
+- Linux peripheral BLE: `PeripheralRole::control_events_dropped()` has the same
+  sticky overload meaning; call `PeripheralRole::shutdown_all()` before
+  retrying transport admission.
 - UniFFI/mobile: call `MmpNode::poll_close()`, close the platform BLE/GATT link,
   then call `MmpNode::link_down(link)` when the platform reports the physical
   teardown. `MmpNode::close_actions_dropped()` is a sticky saturation counter;
@@ -53,9 +60,11 @@ message.
 ## Verification
 
 The node tests cover tier denial, duplicate admission, malformed-session close,
-outbox overflow, stale-frame purge on `LinkDown`, and action visibility. The FFI
-test exercises the mobile-facing denial path. Peripheral and CLI builds verify
-that both host roles expose a close seam.
+outbox overflow, stale-frame purge on `LinkDown`, and action visibility. The
+transport event-queue tests fill both bounded lifecycle lanes and verify the
+sticky saturation counter. The FFI test exercises the mobile-facing denial
+path. Peripheral and CLI builds verify that both host roles expose a close
+seam, an explicit shutdown-all operation, and fail-closed overload handling.
 
 ## Remaining platform work
 

@@ -63,6 +63,7 @@ struct Inner {
     state: Mutex<State>,
     notify: Notify,
     sender_count: AtomicUsize,
+    control_events_dropped: std::sync::atomic::AtomicU64,
 }
 
 /// Cloneable producer for the bounded central event ingress.
@@ -94,6 +95,7 @@ pub(crate) fn event_channel() -> (EventSender, tokio::sync::mpsc::Receiver<TalEv
         state: Mutex::new(State::default()),
         notify: Notify::new(),
         sender_count: AtomicUsize::new(1),
+        control_events_dropped: std::sync::atomic::AtomicU64::new(0),
     });
     tokio::spawn(dispatch(inner.clone(), public_tx));
     (EventSender(inner), public_rx)
@@ -115,6 +117,18 @@ impl Drop for EventSender {
 }
 
 impl EventSender {
+    /// Number of lifecycle controls rejected because both bounded control
+    /// lanes were full. This sticky signal lets a host fail closed even when
+    /// the rejected `LinkDown` cannot be reconstructed from the public FIFO.
+    pub(crate) fn control_events_dropped(&self) -> u64 {
+        self.0.control_events_dropped.load(Ordering::Acquire)
+    }
+
+    fn control_full(&self) -> Result<(), ControlEnqueueError> {
+        self.0.control_events_dropped.fetch_add(1, Ordering::Relaxed);
+        Err(ControlEnqueueError::Full)
+    }
+
     /// Enqueue a beacon or other non-link event without waiting.
     pub(crate) fn try_data(&self, event: TalEvent) -> Result<(), DataEnqueueError> {
         self.try_data_stamped(DataStamp::Unstamped, event)
@@ -211,7 +225,7 @@ impl EventSender {
                         return Ok(());
                     }
                     if state.emergency_down.len() >= CONTROL_CAPACITY {
-                        return Err(ControlEnqueueError::Full);
+                        return self.control_full();
                     }
                     state.emergency_down.insert(link, generation);
                     drop(state);
@@ -225,7 +239,7 @@ impl EventSender {
                 // enqueue an Up behind it: callers must tear down the newly
                 // established transport and retry after overload clears.
                 if state.emergency_down.contains_key(&link) {
-                    return Err(ControlEnqueueError::Full);
+                    return self.control_full();
                 }
                 if let Some(index) = state.controls.iter().rposition(|pending| pending.link == link) {
                     if state.controls[index].kind == ControlKind::Up {
@@ -239,7 +253,7 @@ impl EventSender {
                     }
                 }
                 if state.controls.len() >= CONTROL_CAPACITY {
-                    return Err(ControlEnqueueError::Full);
+                    return self.control_full();
                 }
                 state.current.insert(link, generation);
                 purge_except_generation(&mut state, link, generation);
@@ -403,5 +417,20 @@ mod tests {
         tx.try_link_data(second, 1, TalEvent::LinkData { link: second, bytes: vec![3] }).unwrap();
         assert_eq!(tx.try_control(TalEvent::LinkDown { link: second }, 1), Ok(()));
         assert_eq!(tx.try_link_data(second, 1, TalEvent::LinkData { link: second, bytes: vec![4] }), Err(DataEnqueueError::Stale));
+    }
+
+    #[tokio::test]
+    async fn control_saturation_is_sticky_and_visible() {
+        let (tx, _rx) = event_channel();
+        for link in 8..(8 + CONTROL_CAPACITY as u64) {
+            tx.try_control(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() }, 1)
+                .expect("normal control lane must fill");
+        }
+        for link in 100..(100 + CONTROL_CAPACITY as u64) {
+            tx.try_control(TalEvent::LinkDown { link }, 1)
+                .expect("emergency down lane must fill");
+        }
+        assert_eq!(tx.try_control(TalEvent::LinkDown { link: 999 }, 1), Err(super::ControlEnqueueError::Full));
+        assert_eq!(tx.control_events_dropped(), 1);
     }
 }

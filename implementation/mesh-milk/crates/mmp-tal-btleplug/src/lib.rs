@@ -613,6 +613,21 @@ impl BleCentral {
             disconnect_bounded(&state.peripheral).await;
         }
     }
+
+    /// Retire and physically disconnect every live link. Hosts should call
+    /// this on shutdown and after observing [`Self::control_events_dropped`]
+    /// so a saturated lifecycle queue cannot leave a radio link alive.
+    pub async fn shutdown_all(&self) {
+        shutdown_links(&self.links, &self.event_gate, &self.tx).await;
+    }
+
+    /// Return the sticky count of lifecycle events rejected because the
+    /// transport's bounded control lanes were saturated. A non-zero value is
+    /// a fail-closed operational signal; call [`Self::shutdown_all`] before
+    /// attempting further admission.
+    pub fn control_events_dropped(&self) -> u64 {
+        self.tx.control_events_dropped()
+    }
 }
 
 /// Background task: turns the adapter's `CentralEvent` stream into
