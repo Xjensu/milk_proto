@@ -24,6 +24,7 @@ pub mod prekey;
 pub mod ratchet;
 pub mod receipt;
 pub mod sealed;
+pub mod snapshot;
 
 pub use error::CryptoError;
 pub use identity::{verify, Identity};
