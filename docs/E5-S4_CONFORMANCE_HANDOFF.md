@@ -161,6 +161,8 @@ blocklist: entries are sorted, capped at 1,024, strictly decoded, and restored
 before sessions can be admitted. A restart regression drives a real FFI contact
 and confirms that a previously blocked peer cannot establish again. This is a
 local policy record, not a protocol or identity-revocation replacement.
+Follow-up `8c4834b` makes invalid authority/blocklist staging atomic: a bad
+candidate is ignored and cannot erase the last valid snapshot.
 
 The post-change workspace matrix passes with 43 `mmp-node`, 16 `mmp-ffi`, and
 9 `mmp-store` tests, plus the existing four intentionally ignored simulator
