@@ -1003,6 +1003,21 @@ impl Node {
 
     // --------------------------------------------------------- TAL driving --
 
+    /// Return the concurrent-session admission cap for this public node API.
+    ///
+    /// This is the implementation mapping of specification/11 §3's
+    /// normative T2/T3/Core caps: the standard `Node` exposes `Leaf` as the
+    /// constrained T1 profile (one session), `Relay` as T2 (two sessions),
+    /// and `Anchor` as T3 (eight sessions).  The T0/Core profile is an
+    /// embedded API and is not represented by this `std` `Node` type.
+    fn max_sessions_for_tier(tier: Tier) -> usize {
+        match tier {
+            Tier::Leaf => 1,
+            Tier::Relay => 2,
+            Tier::Anchor => 8,
+        }
+    }
+
     /// Feed one transport-layer event into the node: beacon overheard, a link
     /// coming up/down, or bytes arriving on a link. Drives the per-link
     /// `SessionEngine`s and the E4-S4 opportunistic ratchet epoch bump on
@@ -1015,6 +1030,13 @@ impl Node {
                 }
             }
             TalEvent::LinkUp { link, initiator, .. } => {
+                // Admission denial is intentionally silent (specification/11
+                // §3): retain existing links and emit no handshake output.
+                if self.sessions.contains_key(&link)
+                    || self.sessions.len() >= Self::max_sessions_for_tier(self.core.tier)
+                {
+                    return;
+                }
                 let engine = if initiator {
                     SessionEngine::initiator(&self.identity, &self.hello, self.core.now)
                 } else {

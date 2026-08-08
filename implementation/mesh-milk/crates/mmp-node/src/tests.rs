@@ -4,6 +4,7 @@
 use mmp_core::store::{BundleMeta, SlotState};
 use mmp_core::MemStore;
 use mmp_tal::TalEvent;
+use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
 use mmp_types::authcert::AuthCert;
 use mmp_types::bundle::{class, prio};
 use mmp_types::consts::FRIENDSHIP_TTL_MS;
@@ -53,6 +54,96 @@ fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
 
 fn drain(n: &mut Node) -> Vec<Event> {
     std::iter::from_fn(|| n.poll_event()).collect()
+}
+
+fn link_up(n: &mut Node, link: u64) {
+    n.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: true,
+        quality: Default::default(),
+    });
+}
+
+#[test]
+fn concurrent_session_admission_caps_leaf_relay_anchor() {
+    for (seed, tier, cap) in [
+        (101, Tier::Leaf, 1usize),
+        (102, Tier::Relay, 2usize),
+        (103, Tier::Anchor, 8usize),
+    ] {
+        let mut n = Node::new([seed; 32], Box::new(MemStore::new()), tier);
+        for link in 0..cap {
+            link_up(&mut n, link as u64);
+        }
+        assert_eq!(n.sessions.len(), cap, "tier {tier:?} accepted sessions");
+        let queued_before_rejection = n.outbox.len();
+
+        link_up(&mut n, 10_000);
+
+        assert_eq!(
+            n.sessions.len(),
+            cap,
+            "tier {tier:?} must retain its admitted sessions"
+        );
+        assert_eq!(
+            n.outbox.len(),
+            queued_before_rejection,
+            "quota denial must not queue handshake output"
+        );
+    }
+}
+
+#[test]
+fn duplicate_link_up_preserves_existing_session_and_output() {
+    let mut n = Node::new([104; 32], Box::new(MemStore::new()), Tier::Relay);
+    link_up(&mut n, 7);
+    let queued_after_first = n.outbox.len();
+
+    link_up(&mut n, 7);
+
+    assert_eq!(n.sessions.len(), 1);
+    assert_eq!(
+        n.outbox.len(),
+        queued_after_first,
+        "duplicate LinkUp must not replace the engine or queue another handshake"
+    );
+}
+
+#[test]
+fn session_slot_releases_after_link_down() {
+    let mut n = Node::new([105; 32], Box::new(MemStore::new()), Tier::Leaf);
+    link_up(&mut n, 1);
+    while n.poll_send().is_some() {}
+    link_up(&mut n, 2);
+    assert_eq!(n.sessions.len(), 1, "Leaf quota is one session");
+
+    n.on_tal_event(TalEvent::LinkDown { link: 1 });
+    assert!(n.sessions.is_empty());
+
+    link_up(&mut n, 2);
+    assert_eq!(n.sessions.len(), 1, "LinkDown must release the admission slot");
+}
+
+#[test]
+fn session_slot_releases_when_engine_closes() {
+    let mut n = Node::new([106; 32], Box::new(MemStore::new()), Tier::Leaf);
+    link_up(&mut n, 1);
+    while n.poll_send().is_some() {}
+
+    let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
+    let mut malformed = vec![0u8; 3];
+    malformed[..2].copy_from_slice(&oversized_declared_len.to_le_bytes());
+    n.on_tal_event(TalEvent::LinkData {
+        link: 1,
+        bytes: malformed,
+    });
+    assert!(
+        n.sessions.is_empty(),
+        "a closed engine must be removed before a replacement is admitted"
+    );
+
+    link_up(&mut n, 2);
+    assert_eq!(n.sessions.len(), 1, "Closed must release the admission slot");
 }
 
 #[test]
