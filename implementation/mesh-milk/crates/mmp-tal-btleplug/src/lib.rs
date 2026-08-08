@@ -371,6 +371,16 @@ impl BleCentral {
     /// docs) and emit `TalEvent::LinkDown` for it. A no-op (still emits
     /// `LinkDown`) if `link` is already gone from the table.
     pub async fn hangup(&self, link: LinkId) {
+        let write_gate = self
+            .links
+            .lock()
+            .await
+            .get(&link)
+            .map(|state| state.write_gate.clone());
+        let _write_guard = match write_gate {
+            Some(gate) => Some(acquire_write_gate(&gate).await),
+            None => None,
+        };
         let state = self.links.lock().await.remove(&link);
         if let Some(state) = state {
             let _ = state.peripheral.disconnect().await;
@@ -415,6 +425,15 @@ async fn watch_adapter(
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
+                let write_gate = links
+                    .lock()
+                    .await
+                    .get(&link)
+                    .map(|state| state.write_gate.clone());
+                let _write_guard = match write_gate {
+                    Some(gate) => Some(acquire_write_gate(&gate).await),
+                    None => None,
+                };
                 let removed = links.lock().await.remove(&link).is_some();
                 if removed && tx.send(TalEvent::LinkDown { link }).await.is_err() {
                     return;
