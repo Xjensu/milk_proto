@@ -74,6 +74,10 @@ python scripts/check_mobile_binding.py kotlin "$STAGE/kotlin-bindings"
 mkdir -p "$OUT_DIR"
 ( cd "$STAGE" && zip -rq "../mmp-ffi.aar" AndroidManifest.xml jni )
 ( cd "$STAGE/kotlin-bindings" && zip -rq "../../mmp-ffi-kotlin-bindings.zip" . )
+echo "==> Verifying native-only AAR and Kotlin source artifact"
+python scripts/verify_android_artifacts.py \
+    "$OUT_DIR/mmp-ffi.aar" \
+    "$OUT_DIR/mmp-ffi-kotlin-bindings.zip"
 rm -rf "$STAGE"
 
 echo "==> Done: $OUT_DIR/mmp-ffi.aar, $OUT_DIR/mmp-ffi-kotlin-bindings.zip"

@@ -213,6 +213,7 @@ jobs:
       - env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: bash scripts/build-android-aar.sh mobile-artifacts/android
+      - run: python scripts/verify_android_artifacts.py mobile-artifacts/android/mmp-ffi.aar mobile-artifacts/android/mmp-ffi-kotlin-bindings.zip
       - uses: actions/upload-artifact@v4
         with:
           name: mmp-ffi-aar
