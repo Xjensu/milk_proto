@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use mmp_tal::LinkId;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -27,6 +28,23 @@ pub(crate) async fn acquire_write_gate_bounded(
     gate: &Arc<AsyncMutex<()>>,
 ) -> Option<OwnedMutexGuard<()>> {
     timeout(Duration::from_millis(250), gate.clone().lock_owned()).await.ok()
+}
+
+/// Acquire the lifecycle gate only while admission remains enabled. The flag
+/// is checked both before and after waiting so shutdown wins a race with a
+/// callback that was already queued on the gate.
+pub(crate) async fn acquire_event_gate_if_running(
+    event_gate: &Arc<AsyncMutex<()>>,
+    shutting_down: &AtomicBool,
+) -> Option<OwnedMutexGuard<()>> {
+    if shutting_down.load(Ordering::Acquire) {
+        return None;
+    }
+    let guard = event_gate.clone().lock_owned().await;
+    if shutting_down.load(Ordering::Acquire) {
+        return None;
+    }
+    Some(guard)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +264,27 @@ mod tests {
 
         assert!(completed, "a stuck write gate must time out and fail closed");
         drop(held);
+    }
+
+    #[tokio::test]
+    async fn shutdown_fence_wins_while_waiting_for_event_gate() {
+        let event_gate = Arc::new(AsyncMutex::new(()));
+        let shutting_down = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let held = event_gate.clone().lock_owned().await;
+        let waiter_gate = event_gate.clone();
+        let waiter_shutdown = shutting_down.clone();
+        let waiter = tokio::spawn(async move {
+            super::acquire_event_gate_if_running(&waiter_gate, &waiter_shutdown).await
+        });
+
+        tokio::task::yield_now().await;
+        shutting_down.store(true, std::sync::atomic::Ordering::Release);
+        drop(held);
+
+        assert!(
+            waiter.await.expect("fence waiter must finish").is_none(),
+            "a shutdown racing event admission must reject the link"
+        );
     }
 
     #[test]

@@ -32,6 +32,7 @@
 
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use bluer::adv::{Advertisement, AdvertisementHandle};
@@ -55,7 +56,8 @@ use crate::{
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
 use crate::lifecycle::{
-    acquire_write_gate_bounded, AttachReject, AttachResult, LinkLifecycle, StreamSide, StreamToken,
+    acquire_event_gate_if_running, acquire_write_gate_bounded, AttachReject, AttachResult,
+    LinkLifecycle, StreamSide, StreamToken,
 };
 
 /// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
@@ -98,6 +100,7 @@ pub struct PeripheralRole {
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
     shutdown_tx: watch::Sender<bool>,
+    shutting_down: Arc<AtomicBool>,
 }
 
 impl PeripheralRole {
@@ -156,6 +159,7 @@ impl PeripheralRole {
             states: HashMap::new(),
         }));
         let event_gate = Arc::new(AsyncMutex::new(()));
+        let shutting_down = Arc::new(AtomicBool::new(false));
 
         tokio::spawn(run_control(
             write_ctl,
@@ -164,6 +168,7 @@ impl PeripheralRole {
             links.clone(),
             event_gate.clone(),
             shutdown_rx,
+            shutting_down.clone(),
         ));
 
         Ok(PeripheralRole {
@@ -176,6 +181,7 @@ impl PeripheralRole {
             links,
             event_gate,
             shutdown_tx,
+            shutting_down,
         })
     }
 
@@ -264,6 +270,7 @@ impl PeripheralRole {
     /// and after observing [`Self::control_events_dropped`] so a saturated
     /// lifecycle queue cannot leave a BlueZ stream alive.
     pub async fn shutdown_all(&self) {
+        self.shutting_down.store(true, Ordering::Release);
         let _ = self.shutdown_tx.send(true);
         self.adv.lock().await.take();
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
@@ -325,14 +332,23 @@ async fn run_control(
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
     mut shutdown_rx: watch::Receiver<bool>,
+    shutting_down: Arc<AtomicBool>,
 ) {
     pin_mut!(write_ctl);
     pin_mut!(notify_ctl);
     let mut readers = JoinSet::new();
     loop {
+        if shutting_down.load(Ordering::Acquire) {
+            readers.abort_all();
+            while readers.join_next().await.is_some() {}
+            shutdown_links(&links, &event_gate, &tx).await;
+            return;
+        }
         tokio::select! {
+            biased;
             changed = shutdown_rx.changed() => {
                 if changed.is_ok() && *shutdown_rx.borrow() {
+                    shutting_down.store(true, Ordering::Release);
                     readers.abort_all();
                     while readers.join_next().await.is_some() {}
                     shutdown_links(&links, &event_gate, &tx).await;
@@ -359,6 +375,7 @@ async fn run_control(
                         StreamSide::Reader,
                         endpoint,
                         None,
+                        &shutting_down,
                     )
                     .await else {
                         continue;
@@ -395,6 +412,7 @@ async fn run_control(
                         StreamSide::Writer,
                         endpoint,
                         Some(writer),
+                        &shutting_down,
                     )
                     .await;
                 }
@@ -442,6 +460,7 @@ async fn ensure_link_up(
     side: StreamSide,
     endpoint: i64,
     writer: Option<CharacteristicWriter>,
+    shutting_down: &AtomicBool,
 ) -> Option<AttachResult> {
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
     let link_table = links.clone();
@@ -456,7 +475,7 @@ async fn ensure_link_up(
         // leave the current endpoint fenced and reject the new callback.
         return None;
     }
-    let _event_guard = event_gate.lock().await;
+    let _event_guard = acquire_event_gate_if_running(event_gate, shutting_down).await?;
 
     let mut links = links.lock().await;
     let attach = match links.lifecycle.attach(link, side, endpoint) {

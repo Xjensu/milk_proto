@@ -285,9 +285,15 @@ async fn remove_if_current(
 
 async fn disconnect_removed(removed: Option<(Peripheral, Arc<AsyncMutex<()>>)>) {
     if let Some((peripheral, write_gate)) = removed {
-        let _ = acquire_write_gate_bounded(&write_gate).await;
+        wait_for_disconnected_write_gate(&write_gate).await;
         disconnect_bounded(&peripheral).await;
     }
+}
+
+/// Quiesce a callback that observed a disconnected peripheral without ever
+/// allowing a stalled host write to block lifecycle progress indefinitely.
+async fn wait_for_disconnected_write_gate(write_gate: &Arc<AsyncMutex<()>>) {
+    let _ = acquire_write_gate_bounded(write_gate).await;
 }
 
 /// Enqueue a lifecycle close without awaiting the public receiver.  A full
@@ -704,28 +710,30 @@ async fn watch_adapter(
                     .map(|state| {
                         (
                             state.generation,
-                            state.write_gate.clone(),
                             state.peripheral.clone(),
                         )
                     });
-                let Some((generation, write_gate, peripheral)) = previous else {
+                let Some((generation, peripheral)) = previous else {
                     continue;
                 };
                 if is_connected_bounded(&peripheral).await {
                     continue;
                 }
-                let _event_guard = event_gate.lock().await;
-                let _write_guard = acquire_write_gate(&write_gate).await;
                 let removed = {
+                    let _event_guard = event_gate.lock().await;
                     let mut table = links.lock().await;
                     if table.get(&link).map(|state| state.generation) == Some(generation) {
-                        table.remove(&link).is_some()
+                        let state = table.remove(&link);
+                        if state.is_some() {
+                            let _ = try_link_down(&tx, link, generation);
+                        }
+                        state
                     } else {
-                        false
+                        None
                     }
                 };
-                if removed {
-                    let _ = try_link_down(&tx, link, generation);
+                if let Some(state) = removed {
+                    wait_for_disconnected_write_gate(&state.write_gate).await;
                 }
             }
             _ => {}
@@ -805,11 +813,12 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 mod tests {
     use super::{
         acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
-        mint_link_id,
+        mint_link_id, wait_for_disconnected_write_gate,
     };
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
+    use tokio::time::Duration;
 
     #[test]
     fn generation_guard_rejects_stale_and_absent_links() {
@@ -850,6 +859,16 @@ mod tests {
         let gate = Arc::new(AsyncMutex::new(()));
         let held = acquire_write_gate(&gate).await;
         assert!(acquire_write_gate_bounded(&gate).await.is_none());
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn disconnected_link_cleanup_wait_is_bounded() {
+        let gate = Arc::new(AsyncMutex::new(()));
+        let held = acquire_write_gate(&gate).await;
+        tokio::time::timeout(Duration::from_secs(1), wait_for_disconnected_write_gate(&gate))
+            .await
+            .expect("disconnected-link cleanup must not wait indefinitely");
         drop(held);
     }
 
