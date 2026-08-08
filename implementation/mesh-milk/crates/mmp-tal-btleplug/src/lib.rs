@@ -272,19 +272,22 @@ async fn remove_if_current(
     tx: &EventSender,
     link: LinkId,
     generation: u64,
-    write_gate: &Arc<AsyncMutex<()>>,
-) -> bool {
+) -> Option<(Peripheral, Arc<AsyncMutex<()>>)> {
     let _event_guard = event_gate.lock().await;
-    let _write_guard = acquire_write_gate(write_gate).await;
     let mut table = links.lock().await;
     if table.get(&link).map(|state| state.generation) != Some(generation) {
-        return false;
+        return None;
     }
-    if table.remove(&link).is_none() {
-        return false;
+    let state = table.remove(&link)?;
+    let _ = try_link_down(tx, link, generation);
+    Some((state.peripheral, state.write_gate))
+}
+
+async fn disconnect_removed(removed: Option<(Peripheral, Arc<AsyncMutex<()>>)>) {
+    if let Some((peripheral, write_gate)) = removed {
+        let _ = acquire_write_gate_bounded(&write_gate).await;
+        disconnect_bounded(&peripheral).await;
     }
-    drop(table);
-    try_link_down(tx, link, generation)
 }
 
 /// Enqueue a lifecycle close without awaiting the public receiver.  A full
@@ -534,15 +537,15 @@ impl BleCentral {
                 // ledger is still a fail-closed condition.  Retire the
                 // installed link so no live state remains without a
                 // corresponding lifecycle event.
-                let _ = remove_if_current(
+                let removed = remove_if_current(
                     &links,
                     &event_gate,
                     &data_tx,
                     link,
                     generation,
-                    &write_gate,
                 )
                 .await;
+                disconnect_removed(removed).await;
                 return;
             }
             while let Some(notification) = notifications.next().await {
@@ -560,15 +563,15 @@ impl BleCentral {
                     break;
                 }
             }
-            let _ = remove_if_current(
+            let removed = remove_if_current(
                 &links,
                 &event_gate,
                 &data_tx,
                 link,
                 generation,
-                &write_gate,
             )
             .await;
+            disconnect_removed(removed).await;
         });
 
         Ok(link)
