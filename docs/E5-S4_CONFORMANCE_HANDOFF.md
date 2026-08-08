@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `31a1106` (`test(mmp-node): validate group snapshot
-trailing bytes`). The frozen `specification/` directory was not modified.
+This checkpoint is commit `aa9daa9` (`fix(mmp-core): bound session RX
+reassembly`). The frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -46,6 +46,10 @@ Recent focused commits, oldest first:
 - `31a1106` — corrected the GroupState trailing-byte regression fixture to use
   the valid eight-byte empty OR-Set encoding, so the test exercises the exact
   record-length check rather than an earlier malformed-inner-record path.
+- `aa9daa9` — bounded SessionEngine transport reassembly: oversized prefixes
+  are rejected before append/activity, valid batched envelopes are drained
+  incrementally, and `rx` never grows beyond the frozen envelope cap. RED/GREEN
+  coverage includes split-prefix rejection and a 300-frame aggregate.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -97,6 +101,10 @@ The final post-follow-up workspace matrix passed with 34 `mmp-core`, 4
 `mmp-types` parser/manifest integration tests; `mmp-sim` again passed 9 active
 tests with 4 intentionally ignored cases. Workspace clippy and `layer-check`
 also passed.
+After `aa9daa9`, the serial workspace matrix passed with 36 `mmp-core` unit,
+4 persistence integration, 27 `mmp-node`, 40 `mmp-types`, and 3 parser/manifest
+integration tests; `mmp-sim` passed 9 active tests with 4 ignored deployment or
+scale cases. Workspace clippy, `layer-check`, and the CLI demo all passed.
 
 Regenerate vectors with:
 
@@ -150,6 +158,15 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
+5. Add and enforce the tier-derived `MAX_SESSIONS` admission policy before
+   constructing a SessionEngine. The current implementation still creates a
+   session for every `LinkUp`; this is a separate architectural hardening task
+   because the frozen state-machine documents define caps but the exact Leaf /
+   Relay / Anchor mapping and busy/role behavior must be made explicit in code.
+6. Execute the real two-Linux-PC BlueZ procedure in
+   `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
+   hardware gate. Mobile remains API/artifact-only until native Android/iOS
+   consuming radio shells exist.
 
 ## Worktree hygiene
 
