@@ -440,9 +440,9 @@ struct NodeCore {
     claims: ClaimStore,
     utility: UtilityState,
     buckets: OriginBuckets,
-    /// Doc 18: verification, sticky revocation, scope subscription. RAM-only,
-    /// like `auth_buckets` below (see `authority_bucket.rs`'s module doc for
-    /// the persistence-decision rationale).
+    /// Doc 18: verification, sticky revocation, scope subscription. This is
+    /// runtime state; hosts may persist its validated non-secret snapshot via
+    /// [`Node::authority_snapshot`] and restore it before accepting traffic.
     authority: AuthorityStore,
     auth_buckets: AuthorityBuckets,
     /// Wall clock (unix seconds), for `not_after` checks only (doc 18 §6.3).

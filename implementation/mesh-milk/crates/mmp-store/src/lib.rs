@@ -6,7 +6,7 @@
 //! so resume ≡ reboot. A redb-backed store slots in behind the same trait when
 //! store sizes outgrow snapshot writes (doc 12 §4 alternative noted).
 //!
-//! Beyond the `BundleStore` contents, the same file also carries four more
+//! Beyond the `BundleStore` contents, the same file also carries six more
 //! record kinds under the same MAGIC/checksum/skip-corrupt discipline
 //! (handbook §4.3 "persistence completion", steps 1–3): every currently-held
 //! `Claim` (re-verified on load — a claim that fails signature verification
@@ -16,8 +16,9 @@
 //! bytes); and — unlike groups — a typed `SeenIndex` and `ReceiptFilter`,
 //! since both types already live in `mmp-core`, a crate this one already
 //! depends on for `BundleMeta` etc., so there is no layering reason to treat
-//! them as opaque. One file, one framing, five record kinds — never five
-//! formats.
+//! them as opaque. Authority admission and the explicit blocklist are also
+//! validated, receiver-local records. One file, one framing, seven record
+//! kinds are supported under the same framing.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -458,6 +458,49 @@ changes:
 Do not “fix” these by editing `specification/` during routine implementation.
 Record evidence and obtain a protocol decision first.
 
+### 2026-08-08 continuation update (lifecycle and host persistence)
+
+Commit `7031c79` closes two additional host-side lifecycle races. The central
+adapter watcher now removes and fences a disconnected link under the lifecycle
+gate, emits `LinkDown`, then performs only a bounded writer-gate wait outside
+that gate. The Linux peripheral role now has an atomic shutdown admission
+fence, prioritizes shutdown handling, aborts/joins reader tasks, and rejects a
+link admission racing with `shutdown_all()`. Focused suites are 18 central and
+30 peripheral tests; both suites and their warning-deny clippy checks pass.
+Linux/BlueZ compilation is still blocked on this Windows host by the missing
+Linux pkg-config/sysroot for `libdbus-sys`.
+
+The CLI persistence path is now aligned with UniFFI: `mmp-cli --store` restores
+and stages validated authority admission snapshots and the bounded explicit
+blocklist in addition to claims, groups, `SeenIndex`, and `ReceiptFilter`.
+The restart regression covers pinned/subscribed authority state and a blocked
+peer. The `MMPSNAP2` file remains a checksum/integrity container, not a secret
+store; identity, ratchet, prekey, sender-key, and conversation secrets are not
+written there. The implementation/backlog/roadmap status now explicitly calls
+this non-secret persistence complete while retaining the keystore gate.
+
+### Ratchet-persistence design boundary (do not overclaim)
+
+The CK₀ retirement in `ebb2045` is intentionally an in-memory hardening step:
+`Conv` keeps only a zeroizing derived receipt-MAC key plus directional chain
+state. A future keystore-backed snapshot must therefore persist the derived
+receipt key as secret state; CK₀ itself must never return. A complete restart
+restore also needs the send/receive chain indices and skipped-key window,
+prekey secret/rotation state, conversation DAG heads, the pending first-contact
+marker, and a restart-safe mapping for outgoing BundleIDs to receipt handling.
+Restoring only chain keys would silently lose causal ordering or leave queued
+messages unable to transition to `Delivered`.
+
+The safe next seam is a Rust-only provider owned by Android Keystore/iOS
+Keychain (and a desktop equivalent where appropriate), with an authenticated
+sealed envelope containing version, identity-bound AAD, durable written-at
+metadata, and an explicit 72-hour freshness check. Do not derive a wrapping key
+from the identity seed, expose raw ratchet bytes through UniFFI/JS, or reuse
+`mmp-crypto::aead::seal/open`'s single-use zero nonce for repeated snapshots.
+`SnapshotStore` must receive at most an opaque sealed record after that envelope
+has a reviewed format and atomic save/load semantics. Until then, restart
+continuity is an availability gap and must remain documented as such.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has

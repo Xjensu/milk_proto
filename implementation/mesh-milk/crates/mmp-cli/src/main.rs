@@ -441,20 +441,35 @@ fn restore_snapshot_state(node: &mut Node, shared: &Arc<Mutex<SnapshotStore>>) {
     if let Some(receipts) = store.receipt_filter() {
         node.restore_receipt_filter(receipts.clone());
     }
+    if let Some(authority) = store.authority() {
+        let _ = node.restore_authority(authority);
+    }
+    if let Some(blocklist) = store.blocklist() {
+        let _ = node.restore_blocklist(blocklist);
+    }
 }
 
 /// Stage the complete non-secret node state and atomically persist the shared
-/// snapshot.  Calling `SnapshotStore::persist` alone only writes the bundle
-/// store; claims, groups, and replay/receipt filters are explicitly staged by
-/// the host just before the write.
+/// snapshot. Calling `SnapshotStore::persist` alone only writes the bundle
+/// store; all receiver-local admission/replay state is explicitly staged by
+/// the host just before the write. Identity and ratchet secrets never enter
+/// this file-backed snapshot.
 fn persist_node_state(shared: &Arc<Mutex<SnapshotStore>>, node: &Node) -> std::io::Result<()> {
-    let (claims, group_blobs, seen_index, receipt_filter) =
-        (node.all_claims(), node.all_group_blobs(), node.seen_index(), node.receipt_filter());
+    let (claims, group_blobs, seen_index, receipt_filter, authority, blocklist) = (
+        node.all_claims(),
+        node.all_group_blobs(),
+        node.seen_index(),
+        node.receipt_filter(),
+        node.authority_snapshot(),
+        node.blocklist_snapshot(),
+    );
     let mut store = shared.lock().expect("snapshot store mutex poisoned");
     store.set_claims(claims);
     store.set_group_blobs(group_blobs);
     store.set_seen_index(seen_index);
     store.set_receipt_filter(receipt_filter);
+    store.set_authority(authority);
+    store.set_blocklist(blocklist);
     store.persist()
 }
 
@@ -814,6 +829,7 @@ fn finish(shared: Option<&Arc<Mutex<SnapshotStore>>>, node: &Node, frames_sent: 
 mod tests {
     use super::*;
     use mmp_types::bundle::class;
+    use mmp_types::ids::Key32;
 
     fn temp_snapshot_path() -> std::path::PathBuf {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -827,8 +843,9 @@ mod tests {
 
     /// The CLI must perform the same bootstrap sequence as the FFI host:
     /// restored claims are usable for a send immediately, group membership is
-    /// available before the first contact, and replay/receipt filters survive
-    /// the restart.  This also exercises the exit-time staging helper rather
+    /// available before the first contact, receiver-local authority admission
+    /// and block decisions are retained, and replay/receipt filters survive
+    /// the restart. This also exercises the exit-time staging helper rather
     /// than calling `SnapshotStore::persist` directly.
     #[test]
     fn snapshot_bootstrap_restores_claims_groups_and_filters() {
@@ -856,6 +873,13 @@ mod tests {
         receipts.note_verified_receipt(&receipt_id, 1);
         node.restore_receipt_filter(receipts);
 
+        let authority_scope = Id16([0x66; 16]);
+        node.pin_authority_root(authority_scope, Key32([0x77; 32]));
+        node.subscribe_scope_id(authority_scope);
+        node.block(peer.node_id());
+        let authority_snapshot = node.authority_snapshot();
+        let blocklist_snapshot = node.blocklist_snapshot();
+
         persist_node_state(shared.as_ref().expect("file-backed snapshot"), &node).expect("persist node state");
         drop(shared);
         drop(node);
@@ -866,6 +890,8 @@ mod tests {
         assert_eq!(restored.group_members(&gid), vec![restored.node_id()]);
         assert!(restored.seen_index().contains(&seen_id));
         assert_eq!(restored.receipt_filter().signal(&receipt_id), mmp_core::SuppressSignal::Purge);
+        assert_eq!(restored.authority_snapshot(), authority_snapshot);
+        assert_eq!(restored.blocklist_snapshot(), blocklist_snapshot);
         assert!(reopened.is_some());
 
         remove_snapshot(&path);
