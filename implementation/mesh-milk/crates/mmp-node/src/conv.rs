@@ -42,6 +42,21 @@ impl Conv {
             dag: ConversationDag::new(),
         }
     }
+
+    /// Rebuild a conversation from a fully authenticated provider-local
+    /// snapshot. CK₀ is deliberately absent; the receipt key and both
+    /// directional chains are restored independently.
+    #[allow(dead_code)]
+    pub(crate) fn from_parts(
+        id: Id16,
+        peer: Key32,
+        receipt_key: [u8; 32],
+        send: SendChain,
+        recv: RecvChain,
+        dag: ConversationDag,
+    ) -> Conv {
+        Conv { id, peer, receipt_key: Zeroizing::new(receipt_key), send, recv, dag }
+    }
 }
 
 /// AEAD context-commitment input (doc 16 §4.2, CR-S2): a valid tag implies a

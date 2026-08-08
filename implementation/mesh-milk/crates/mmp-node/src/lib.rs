@@ -22,6 +22,7 @@ mod blob;
 mod conv;
 pub mod diag;
 mod group;
+mod secret_state;
 
 pub use blob::BlobState;
 
@@ -30,6 +31,7 @@ use std::path::{Path, PathBuf};
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use zeroize::Zeroizing;
 
 use mmp_core::authority::{effective_class5_priority, AuthorityStore};
 use mmp_core::bloom::{Bloom, INTERNAL_SALT};
@@ -745,6 +747,32 @@ impl Node {
         }
         self.core.blocklist = parsed;
         true
+    }
+
+    /// Encode the complete local secret-state aggregate for a future
+    /// keystore-backed provider. This Rust-internal primitive is not a
+    /// persistence mechanism and is intentionally absent from UniFFI.
+    #[allow(dead_code)]
+    pub(crate) fn secret_state_snapshot(&self) -> Result<Zeroizing<Vec<u8>>, secret_state::SecretStateError> {
+        secret_state::encode(&self.core)
+    }
+
+    /// Restore a previously authenticated secret-state aggregate before any
+    /// live session or wire output exists. Failed decoding is atomic and never
+    /// mutates the current node.
+    #[allow(dead_code)]
+    pub(crate) fn restore_secret_state(&mut self, bytes: &[u8]) -> Result<(), secret_state::SecretStateError> {
+        if !self.sessions.is_empty() || !self.outbox.is_empty() {
+            return Err(secret_state::SecretStateError::Busy);
+        }
+        let state = secret_state::decode(bytes)?;
+        self.core.convs = state.convs;
+        self.core.established_convs = state.established_convs;
+        self.core.prekeys = state.prekeys;
+        self.core.pending_async = state.pending_async;
+        self.core.pending_first_contact = state.pending_first_contact;
+        self.core.sent = state.sent;
+        Ok(())
     }
 
     /// Request a peer to act as a patron for this node. The offer is sent on
