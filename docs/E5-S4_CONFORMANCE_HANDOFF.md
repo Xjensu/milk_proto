@@ -162,6 +162,11 @@ before sessions can be admitted. A restart regression drives a real FFI contact
 and confirms that a previously blocked peer cannot establish again. This is a
 local policy record, not a protocol or identity-revocation replacement.
 
+The post-change workspace matrix passes with 43 `mmp-node`, 16 `mmp-ffi`, and
+9 `mmp-store` tests, plus the existing four intentionally ignored simulator
+deployment/scale drills; workspace Clippy, `layer-check`, and the CLI demo are
+clean.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files
