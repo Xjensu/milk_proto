@@ -101,6 +101,12 @@ clippy passed with `-D warnings`, `layer-check` passed, and `mmp-cli demo`
 observed the expected two-contact delivery receipt. The four ignored simulator
 tests remain deliberate scale/deployment drills, not failures.
 
+The Linux-target check was also retried from this Windows host and stopped
+before Rust backend compilation at `libdbus-sys`: no Linux pkg-config/sysroot
+is configured (`PKG_CONFIG_SYSROOT_DIR`/`PKG_CONFIG_PATH` are absent). This is
+an environment gate, not evidence against the Linux implementation; perform
+the check on a Linux/BlueZ host before the real two-PC exchange.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
