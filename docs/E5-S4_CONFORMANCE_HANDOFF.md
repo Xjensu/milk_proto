@@ -1331,13 +1331,15 @@ static libraries, header/module-map presence, and non-empty UTF-8 Swift source.
 The build script, CI job, and manual interop procedure invoke the verifier.
 Five synthetic iOS cases and the complete mobile-script suite (21 tests) pass;
 macOS/Xcode execution, Swift compilation, and device radio behavior remain
-external gates.
+external gates. Follow-up `341d767` rejects duplicate `LibraryIdentifier`
+entries instead of silently allowing plist ambiguity; the iOS verifier now
+has six focused cases.
 
 Fresh evidence:
 
 ```text
 cargo test --workspace --all-targets -- --test-threads=1       # pass
 cargo clippy --workspace --all-targets --all-features -- -D warnings  # pass
-python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 21 passed
+python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 22 passed
 git diff --name-only -- specification                         # empty
 ```
