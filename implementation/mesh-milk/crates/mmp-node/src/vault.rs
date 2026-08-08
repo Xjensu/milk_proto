@@ -67,6 +67,14 @@ pub(crate) trait SnapshotVault {
     /// Load the last committed opaque record, if one exists.
     fn load(&mut self) -> Result<Option<SealedRecord>, VaultError>;
 
+    /// Return the durable generation floor, including a floor retained after
+    /// a record is lost or a crash occurs between journal records.
+    fn generation_floor(&mut self) -> Result<u64, VaultError>;
+
+    /// Return a trusted platform time in milliseconds. Process-local clocks
+    /// and caller-provided wall time are not acceptable implementations.
+    fn trusted_now_ms(&mut self) -> Result<u64, VaultError>;
+
     /// Atomically commit `candidate` only when its generation follows
     /// `expected_generation` (zero means no prior record).
     fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError>;
@@ -144,6 +152,19 @@ pub(crate) fn save_core(
     Ok(generation)
 }
 
+/// Seal using the provider's durable generation floor and trusted clock. This
+/// is the only intended save entry point for a native adapter; `save_core`
+/// remains a lower-level test seam with explicit inputs.
+pub(crate) fn save_core_from_vault(
+    vault: &mut impl SnapshotVault,
+    core: &NodeCore,
+    rng: &mut impl CryptoRngCore,
+) -> Result<u64, VaultError> {
+    let expected_generation = vault.generation_floor()?;
+    let written_at_ms = vault.trusted_now_ms()?;
+    save_core(vault, core, expected_generation, written_at_ms, rng)
+}
+
 /// Open and validate a provider-loaded record for the target node.
 pub(crate) fn open_record(
     node_public: &Key32,
@@ -181,6 +202,28 @@ pub(crate) fn open_record(
         return Err(VaultError::Invalid);
     }
     Ok((generation, state))
+}
+
+/// Load, unwrap, and validate one generation without exposing plaintext to
+/// the provider. Every failed step returns before any caller-side restore.
+pub(crate) fn restore_from_vault(
+    vault: &mut impl SnapshotVault,
+    node_public: &Key32,
+    node_id: &Id16,
+) -> Result<(u64, RestoredState), VaultError> {
+    let generation_floor = vault.generation_floor()?;
+    let record = vault.load()?.ok_or(VaultError::Unavailable)?;
+    let dek = vault.unwrap_dek(&record.context, &record.wrapped_dek)?;
+    let now_ms = vault.trusted_now_ms()?;
+    open_record(
+        node_public,
+        node_id,
+        &record,
+        &dek,
+        now_ms,
+        snapshot::DEFAULT_TTL_MS,
+        generation_floor,
+    )
 }
 
 fn parse_context(context: &[u8], public: &Key32, node_id: &Id16) -> Result<HashMap<Id16, Key32>, VaultError> {
@@ -233,6 +276,7 @@ mod tests {
     struct ReferenceSnapshotVault {
         available: bool,
         high_water: u64,
+        trusted_now_ms: u64,
         record: Option<SealedRecord>,
     }
 
@@ -240,7 +284,7 @@ mod tests {
         /// This is a test-only provider. Its wrapped DEK is deliberately raw
         /// test material; no production or FFI path may use this type.
         fn new() -> Self {
-            Self { available: true, high_water: 0, record: None }
+            Self { available: true, high_water: 0, trusted_now_ms: 100_000, record: None }
         }
 
         fn set_available(&mut self, available: bool) {
@@ -262,6 +306,16 @@ mod tests {
                 return Err(VaultError::Unavailable);
             }
             Ok(self.record.clone())
+        }
+
+        fn generation_floor(&mut self) -> Result<u64, VaultError> {
+            if !self.available { return Err(VaultError::Unavailable); }
+            Ok(self.high_water)
+        }
+
+        fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
+            if !self.available { return Err(VaultError::Unavailable); }
+            Ok(self.trusted_now_ms)
         }
 
         fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
@@ -372,6 +426,11 @@ mod tests {
         .unwrap();
         assert_eq!((generation, state.convs.len()), (1, 0));
         assert_eq!(save_core(&mut vault, &node.core, 1, 20_002, &mut rng).unwrap(), 2);
+
+        let mut second = ReferenceSnapshotVault::new();
+        assert_eq!(save_core_from_vault(&mut second, &node.core, &mut rng).unwrap(), 1);
+        let (generation, state) = restore_from_vault(&mut second, &node.core.public, &node.core.node_id).unwrap();
+        assert_eq!((generation, state.convs.len()), (1, 0));
     }
 
     #[test]
