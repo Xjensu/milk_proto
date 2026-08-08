@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use mmp_crypto::conversation_id;
 use mmp_crypto::snapshot::{self, KIND_NODE_SECRET_STATE};
+use mmp_types::consts::LIFETIME_MESSAGE_MS;
 use mmp_types::ids::{Id16, Key32};
 use rand_core::CryptoRngCore;
 use zeroize::Zeroizing;
@@ -25,6 +26,10 @@ const CONTEXT_HEADER_LEN: usize = CONTEXT_MAGIC.len() + 1 + CONTEXT_COVERAGE.len
 const CONTEXT_ENTRY_LEN: usize = 16 + 32;
 const MAX_CONTEXT_ENTRIES: usize = 256;
 const MAX_CONTEXT_BYTES: usize = CONTEXT_HEADER_LEN + MAX_CONTEXT_ENTRIES * CONTEXT_ENTRY_LEN;
+/// Freshness bound for provider-local ratchet/prekey snapshots (doc 08 §5.3).
+/// Keep this policy local to the vault boundary rather than inheriting the
+/// generic envelope default implicitly.
+const RATCHET_PERSIST_TTL_MS: u64 = LIFETIME_MESSAGE_MS;
 
 /// Failure in context construction, sealed-record validation, or provider IO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +186,7 @@ pub(crate) fn open_record(
     ttl_ms: u64,
     generation_floor: u64,
 ) -> Result<(u64, RestoredState), VaultError> {
-    if ttl_ms != snapshot::DEFAULT_TTL_MS {
+    if ttl_ms != RATCHET_PERSIST_TTL_MS {
         return Err(VaultError::Invalid);
     }
     if record.generation == 0 || record.generation == u64::MAX {
@@ -230,7 +235,7 @@ pub(crate) fn restore_from_vault(
         &record,
         &dek,
         now_ms,
-        snapshot::DEFAULT_TTL_MS,
+        RATCHET_PERSIST_TTL_MS,
         generation_floor,
     )
 }
@@ -470,7 +475,7 @@ mod tests {
                 record,
                 &dek,
                 self.trusted_now_ms,
-                snapshot::DEFAULT_TTL_MS,
+                RATCHET_PERSIST_TTL_MS,
                 0,
             )
             .is_ok()
@@ -704,13 +709,13 @@ mod tests {
             envelope: candidate.envelope,
             wrapped_dek: vec![1, 2, 3],
         };
-        let (generation, state) = open_record(&node.core.public, &node.core.node_id, &record, &[7; 32], 10_001, snapshot::DEFAULT_TTL_MS, 1).unwrap();
+        let (generation, state) = open_record(&node.core.public, &node.core.node_id, &record, &[7; 32], 10_001, RATCHET_PERSIST_TTL_MS, 1).unwrap();
         assert_eq!(generation, 1);
         assert_eq!(state.convs.len(), 1);
 
         let mut wrong = record.clone();
         wrong.context[9] ^= 1;
-        assert!(open_record(&node.core.public, &node.core.node_id, &wrong, &[7; 32], 10_001, snapshot::DEFAULT_TTL_MS, 1).is_err());
+        assert!(open_record(&node.core.public, &node.core.node_id, &wrong, &[7; 32], 10_001, RATCHET_PERSIST_TTL_MS, 1).is_err());
         assert!(snapshot::validate_next_generation(generation, 2).is_ok());
         assert!(snapshot::validate_next_generation(generation, 1).is_err());
     }
@@ -748,7 +753,7 @@ mod tests {
             &record,
             &dek,
             20_001,
-            snapshot::DEFAULT_TTL_MS,
+            RATCHET_PERSIST_TTL_MS,
             1,
         )
         .unwrap();
@@ -783,6 +788,25 @@ mod tests {
             quality: Default::default(),
         });
         assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Busy));
+    }
+
+    #[test]
+    fn expired_secret_restore_is_rejected_without_mutating_target() {
+        let mut original = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut peer = Node::new([111; 32], Box::new(MemStore::new()), Tier::Relay);
+        introduce(&mut original, &mut peer);
+        original.send_text(&peer.node_id(), "expires").expect("first send");
+
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(26);
+        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+
+        let mut restored = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
+        let before = restored.secret_state_snapshot().unwrap();
+        vault.trusted_now_ms = 100_000 + RATCHET_PERSIST_TTL_MS + 1;
+
+        assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Invalid));
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
     }
 
     #[test]
