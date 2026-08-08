@@ -4,8 +4,13 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use mmp_types::consts::{BLOOM_BITS_PER_ELEMENT, BLOOM_K};
+use mmp_types::consts::{BLOOM_BITS_PER_ELEMENT, BLOOM_CAPACITY, BLOOM_K};
 use mmp_types::ids::Id16;
+
+const MIN_BLOOM_BITS: usize = 64;
+const MAX_BLOOM_BITS: usize = BLOOM_CAPACITY * BLOOM_BITS_PER_ELEMENT;
+/// Minimum encoded Bloom size (`m:u32`, `count:u32`, and 64 bits).
+pub(crate) const MIN_ENCODED_BYTES: usize = 8 + MIN_BLOOM_BITS / 8;
 
 /// A fixed-size Bloom filter over `Id16`, with BLAKE3-keyed index derivation
 /// (doc 06 §6.1: k = 7 hash indices, ~10 bits/element for ≈1 % FP at
@@ -126,9 +131,19 @@ impl Bloom {
     pub fn decode_prefix(bytes: &[u8]) -> Option<(Bloom, usize)> {
         let m = u32::from_le_bytes(bytes.get(0..4)?.try_into().ok()?);
         let count = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
-        let bits_len = (m as usize).div_ceil(8);
-        let bits = bytes.get(8..8 + bits_len)?;
-        Some((Bloom { bits: bits.to_vec(), m, count }, 8 + bits_len))
+        let m_bits = m as usize;
+        // Every production Bloom has at least the 64-bit floor from
+        // `with_capacity`, and the persistence format is intentionally
+        // bounded by the Standard-tier filter sizing constants.  Rejecting
+        // these values before deriving a slice length prevents zero-modulus
+        // panics after restore and hostile oversized allocations.
+        if !(MIN_BLOOM_BITS..=MAX_BLOOM_BITS).contains(&m_bits) {
+            return None;
+        }
+        let bits_len = m_bits.div_ceil(8);
+        let end = 8usize.checked_add(bits_len)?;
+        let bits = bytes.get(8..end)?;
+        Some((Bloom { bits: bits.to_vec(), m, count }, end))
     }
 }
 

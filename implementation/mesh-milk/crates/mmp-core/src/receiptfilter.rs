@@ -13,7 +13,7 @@ use mmp_types::consts::{
 use mmp_types::frame::SummaryBucket;
 use mmp_types::ids::Id16;
 
-use crate::bloom::{Bloom, INTERNAL_SALT};
+use crate::bloom::{Bloom, INTERNAL_SALT, MIN_ENCODED_BYTES};
 
 /// Hint deprioritizes offers; Purge is the only deletion authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -148,8 +148,15 @@ impl ReceiptFilter {
     /// exactly like any other corrupt disk record, never panics on it.
     pub fn decode(bytes: &[u8]) -> Option<ReceiptFilter> {
         let mut pos = 0usize;
-        let bucket_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
-        pos += 4;
+        let count_end = pos.checked_add(4)?;
+        let bucket_count = u32::from_le_bytes(bytes.get(pos..count_end)?.try_into().ok()?) as usize;
+        pos = count_end;
+        const MIN_BUCKET_BYTES: usize = 8 + MIN_ENCODED_BYTES;
+        if bucket_count > FILTER_BUCKETS
+            || bucket_count > bytes.len().saturating_sub(pos) / MIN_BUCKET_BYTES
+        {
+            return None;
+        }
         let mut buckets = VecDeque::with_capacity(bucket_count);
         for _ in 0..bucket_count {
             let epoch = u64::from_le_bytes(bytes.get(pos..pos + 8)?.try_into().ok()?);
@@ -158,8 +165,15 @@ impl ReceiptFilter {
             pos += consumed;
             buckets.push_back((epoch, bloom));
         }
-        let exact_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
-        pos += 4;
+        let count_end = pos.checked_add(4)?;
+        let exact_count = u32::from_le_bytes(bytes.get(pos..count_end)?.try_into().ok()?) as usize;
+        pos = count_end;
+        // Each exact entry is a 16-byte ID plus an 8-byte expiry.  Check the
+        // count against the remaining bytes before entering the loop so a
+        // hostile snapshot cannot force an unbounded parse.
+        if exact_count > bytes.len().saturating_sub(pos) / 24 {
+            return None;
+        }
         let mut exact = BTreeMap::new();
         for _ in 0..exact_count {
             let mut a = [0u8; 16];

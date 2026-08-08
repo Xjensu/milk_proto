@@ -8,10 +8,10 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
-use mmp_types::consts::{class_max_lifetime_ms, BLOOM_CAPACITY, FILTER_BUCKET_MS};
+use mmp_types::consts::{class_max_lifetime_ms, BLOOM_CAPACITY, FILTER_BUCKETS, FILTER_BUCKET_MS};
 use mmp_types::ids::Id16;
 
-use crate::bloom::{Bloom, INTERNAL_SALT};
+use crate::bloom::{Bloom, INTERNAL_SALT, MIN_ENCODED_BYTES};
 
 const EXACT_RING: usize = 1024;
 
@@ -102,8 +102,18 @@ impl SeenIndex {
     /// disk record (mmp-store never trusts it, never panics on it).
     pub fn decode(bytes: &[u8]) -> Option<SeenIndex> {
         let mut pos = 0usize;
-        let bucket_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
-        pos += 4;
+        let count_end = pos.checked_add(4)?;
+        let bucket_count = u32::from_le_bytes(bytes.get(pos..count_end)?.try_into().ok()?) as usize;
+        pos = count_end;
+        // A valid index rotates at most FILTER_BUCKETS windows.  Also reject
+        // impossible counts before reserving attacker-controlled capacity:
+        // each bucket needs an epoch plus the minimum encoded Bloom.
+        const MIN_BUCKET_BYTES: usize = 8 + MIN_ENCODED_BYTES;
+        if bucket_count > FILTER_BUCKETS
+            || bucket_count > bytes.len().saturating_sub(pos) / MIN_BUCKET_BYTES
+        {
+            return None;
+        }
         let mut buckets = VecDeque::with_capacity(bucket_count);
         for _ in 0..bucket_count {
             let epoch = u64::from_le_bytes(bytes.get(pos..pos + 8)?.try_into().ok()?);
@@ -112,10 +122,14 @@ impl SeenIndex {
             pos += consumed;
             buckets.push_back((epoch, bloom));
         }
-        let recent_count = u32::from_le_bytes(bytes.get(pos..pos + 4)?.try_into().ok()?) as usize;
-        pos += 4;
+        let count_end = pos.checked_add(4)?;
+        let recent_count = u32::from_le_bytes(bytes.get(pos..count_end)?.try_into().ok()?) as usize;
+        pos = count_end;
         if recent_count > EXACT_RING {
             return None; // more entries than the ring can ever legitimately hold
+        }
+        if recent_count > bytes.len().saturating_sub(pos) / 16 {
+            return None;
         }
         let mut recent = VecDeque::with_capacity(recent_count);
         let mut recent_set = BTreeSet::new();
