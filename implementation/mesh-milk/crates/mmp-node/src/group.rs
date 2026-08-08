@@ -23,6 +23,10 @@ pub struct GroupState {
     pub dists: HashMap<(NodeId, u16), SenderKeyDist>,
     pub is_admin: bool,
     next_tag: u64,
+    /// A restored group has a freshly generated local sender key but no
+    /// persisted remote distribution. The first post-restart send must
+    /// re-gossip that key before publishing group ciphertext.
+    needs_distribution: bool,
 }
 
 impl GroupState {
@@ -39,6 +43,7 @@ impl GroupState {
             dists: HashMap::new(),
             is_admin,
             next_tag: 2,
+            needs_distribution: false,
         }
     }
 
@@ -135,7 +140,19 @@ impl GroupState {
             dists: HashMap::new(),
             is_admin,
             next_tag,
+            needs_distribution: true,
         })
+    }
+
+    /// True after a non-secret group restore until the fresh local sender key
+    /// has been scheduled for re-gossip.
+    pub fn needs_distribution(&self) -> bool {
+        self.needs_distribution
+    }
+
+    /// Clear the restart re-gossip marker after scheduling distributions.
+    pub fn mark_distribution_attempted(&mut self) {
+        self.needs_distribution = false;
     }
 }
 
@@ -163,5 +180,13 @@ mod tests {
         trailing.extend_from_slice(&[0u8; 8]);
         trailing.push(0);
         assert!(GroupState::decode(&mut rng, &trailing).is_none());
+    }
+
+    #[test]
+    fn restored_group_requires_one_local_key_regossip() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let original = GroupState::create(&mut rng, mmp_types::ids::Id16([7; 16]), mmp_types::ids::Id16([8; 16]), true);
+        let restored = GroupState::decode(&mut rng, &original.encode()).expect("valid group snapshot");
+        assert!(restored.needs_distribution());
     }
 }

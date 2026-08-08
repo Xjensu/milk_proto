@@ -1109,6 +1109,19 @@ impl Node {
 
     /// Send a text into the group under our sender key (doc 08 §6.2).
     pub fn group_send(&mut self, gid: &Id16, text: &str) -> Result<Id16, SendError> {
+        let me = self.core.node_id;
+        let needs_distribution = self.core.groups.get(gid).is_some_and(GroupState::needs_distribution);
+        if needs_distribution {
+            let members = self.core.groups.get(gid).map(|gs| gs.members.members()).unwrap_or_default();
+            for member in members {
+                if member != me {
+                    self.core.send_own_dist(gid, &member)?;
+                }
+            }
+            if let Some(gs) = self.core.groups.get_mut(gid) {
+                gs.mark_distribution_attempted();
+            }
+        }
         self.core.send_group(gid, text.as_bytes())
     }
 
@@ -1844,13 +1857,15 @@ impl NodeCore {
             let gs = self.groups.get(gid).ok_or(SendError::UnknownPeer)?;
             (gs.local.dist().encode(), gs.epoch)
         };
-        if !self.sent_dists.insert((*gid, *peer, epoch)) {
+        if self.sent_dists.contains(&(*gid, *peer, epoch)) {
             return Ok(()); // already shipped for this epoch
         }
         let mut body = Vec::with_capacity(16 + dist_bytes.len());
         body.extend_from_slice(&self.node_id.0);
         body.extend_from_slice(&dist_bytes);
-        self.send_app(peer, apptype::SENDER_KEY, &body).map(|_| ())
+        self.send_app(peer, apptype::SENDER_KEY, &body).map(|_| {
+            self.sent_dists.insert((*gid, *peer, epoch));
+        })
     }
 
     fn send_group(&mut self, gid: &Id16, text: &[u8]) -> Result<Id16, SendError> {
