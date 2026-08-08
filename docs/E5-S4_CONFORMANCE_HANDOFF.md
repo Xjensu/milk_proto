@@ -2,9 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `e24637d` (`fix(mmp-core): bound untrusted
-persistence decoders`). The frozen `specification/` directory was not
-modified.
+This checkpoint is commit `d420934` (`fix(mesh-milk): bound group snapshot
+decoders`). The frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -41,6 +40,9 @@ Recent focused commits, oldest first:
   moduli with checked slice arithmetic; SeenIndex and ReceiptFilter reject
   impossible bucket/exact counts before allocation, while preserving the
   fixed 12-bucket and 1024-entry limits.
+- `d420934` — group snapshot hardening: OrSet member/tag/tombstone counts are
+  checked against remaining bytes before loops, and GroupState length arithmetic
+  is checked before slicing, including the 32-bit overflow path.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -64,6 +66,8 @@ have artifact/API bridge checks rather than a turnkey consuming application.
 - persistence decoder regression coverage for zero/oversized Bloom filters,
   more-than-12 bucket snapshots, and exact-count claims with no remaining
   records.
+- group persistence regression coverage for hostile OR-Set counts and
+  overflowed/trailing GroupState records.
 - independent Beacon and frame-payload grammar checks;
 - `coverage.json`, mapping all committed artifacts to requirement IDs, source
   sections, and verification evidence.
@@ -83,6 +87,8 @@ be run because the rustfmt component is not installed in the environment.
 The persistence slice additionally passed 33 `mmp-core` unit tests, 4 focused
 integration tests, and `mmp-store`'s 7 tests after the build cache was cleaned
 to recover 7.1 GiB of disk space.
+The group-decoder follow-up passed 34 `mmp-core` unit tests, 27 `mmp-node`
+unit tests, and focused clippy for both crates.
 
 Regenerate vectors with:
 
