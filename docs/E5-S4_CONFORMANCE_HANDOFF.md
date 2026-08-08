@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `d82606b` (`fix(mmp-node): bound outbound queue`). The
+This checkpoint is commit `db84453` (`fix(mmp-tal-btleplug): bound event channel`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -58,6 +58,10 @@ Recent focused commits, oldest first:
   tier-derived global frame/byte budget. Overflow clears only the affected link
   and its session, preserving unrelated links and avoiding partial encrypted-
   frame drops that would make the Noise nonce stream ambiguous.
+- `db84453` — bounded the `mmp-tal-btleplug` event channel to 2048 events.
+  Notification, beacon, link-up, and link-down producers now await capacity;
+  no encrypted notification is dropped on a full host queue, and the dial task
+  emits `LinkUp` before it begins consuming RX notifications.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -143,6 +147,10 @@ outbound-queue overflow regressions. Workspace clippy with `-D warnings`,
 `layer-check`, and the CLI demo passed again. The subsequent full workspace
 matrix passed with 228 active test items and 4 intentionally ignored simulator
 cases.
+After `db84453`, `mmp-tal-btleplug` passed 8 tests (including the bounded FIFO
+backpressure regression) and package clippy passed with `-D warnings`. The
+full workspace matrix remained at 228 active test items with 4 intentionally
+ignored simulator cases.
 
 Regenerate vectors with:
 
@@ -196,11 +204,10 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Audit and bound the `mmp-tal-btleplug` inbound notification channel. The
-   current transport uses an unbounded mpsc path; define an evidence-backed
-   backpressure, drop, or disconnect policy that preserves envelope ordering
-   and does not silently lose encrypted frames. Do not change the frozen
-   protocol semantics while selecting the transport policy.
+5. Audit and bound the Linux `mmp-tal-peripheral` inbound event channel. It
+   still uses an unbounded mpsc path for ATT writes and link-control events;
+   apply the same evidence-backed async backpressure policy without dropping
+   ordered encrypted bytes. Keep the unsupported-platform API compatible.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
