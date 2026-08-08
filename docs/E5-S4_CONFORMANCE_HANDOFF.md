@@ -94,6 +94,13 @@ transport queue tests exercise the full-lane rejection and sticky diagnostic.
 Physical adapter teardown and the Linux/BlueZ interoperability gate remain
 unverified on this Windows host.
 
+Full verification was rerun after these changes on 2026-08-08: the serial
+workspace matrix passed (including 40 `mmp-node`, 14 `mmp-ffi`, 16 central TAL,
+28 peripheral TAL, 26 CLI, and 10 non-ignored simulator tests), workspace
+clippy passed with `-D warnings`, `layer-check` passed, and `mmp-cli demo`
+observed the expected two-contact delivery receipt. The four ignored simulator
+tests remain deliberate scale/deployment drills, not failures.
+
 Recent focused commits, oldest first:
 
 - `7d3c39e` — independent envelope and outer-bundle reader;
