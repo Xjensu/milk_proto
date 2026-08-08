@@ -1456,6 +1456,12 @@ python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*
 git diff --name-only -- specification                                      # empty
 ```
 
+After these continuation commits, the complete workspace matrix also passed:
+`cargo test --workspace --all-targets -- --test-threads=1` and
+`cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+The Windows toolchain does not include the `cargo-fmt` component, so a
+formatter check remains an environment limitation rather than a claimed pass.
+
 The remaining gates are unchanged: Linux/BlueZ two-PC interoperability,
 native Android/iOS runtime and background-radio measurements, and platform
 secure-keystore crash/restart tests. Keep `group_control` quarantined and do
