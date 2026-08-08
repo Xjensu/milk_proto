@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `aa9daa9` (`fix(mmp-core): bound session RX
-reassembly`). The frozen `specification/` directory was not modified.
+This checkpoint is commit `344794b` (`fix(mmp-node): enforce tier session
+admission caps`). The frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -51,6 +51,12 @@ Recent focused commits, oldest first:
   incrementally, and `rx` never grows beyond the frozen envelope cap. RED/GREEN
   coverage includes split-prefix rejection and a 300-frame aggregate.
 
+The latest session-admission slice maps the public `Node` API's Leaf/Relay/
+Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
+`LinkUp` events are silently denied, and slots are released on link-down or
+engine closure. The embedded T0/Core profile is not represented by this `std`
+API and remains a separate implementation gate.
+
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
 that Linux BlueZ PC↔PC BLE is executable today, while Android/iOS currently
@@ -85,7 +91,7 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest serial workspace matrix passed, including 26 `mmp-cli`, 33
+An earlier serial workspace matrix passed, including 26 `mmp-cli`, 33
 `mmp-core`, 26 `mmp-node`, 40 `mmp-types` unit tests, and 3 new parser/manifest
 integration tests; `mmp-sim` passed 9 active tests with 4 intentionally ignored
 scale/deployment cases. Workspace clippy with `-D warnings`, `cargo run -p
@@ -105,6 +111,12 @@ After `aa9daa9`, the serial workspace matrix passed with 36 `mmp-core` unit,
 4 persistence integration, 27 `mmp-node`, 40 `mmp-types`, and 3 parser/manifest
 integration tests; `mmp-sim` passed 9 active tests with 4 ignored deployment or
 scale cases. Workspace clippy, `layer-check`, and the CLI demo all passed.
+After `344794b`, the full serial workspace matrix passed with 36 `mmp-core`
+unit, 4 persistence integration, 31 `mmp-node`, 40 `mmp-types`, and 3
+parser/manifest integration tests; `mmp-sim` passed 9 active tests with 4
+intentionally ignored deployment or scale cases. The workspace inventory lists
+221 active test items. Workspace clippy with `-D warnings`, `layer-check`, and
+the CLI demo all passed again.
 
 Regenerate vectors with:
 
@@ -158,11 +170,11 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Add and enforce the tier-derived `MAX_SESSIONS` admission policy before
-   constructing a SessionEngine. The current implementation still creates a
-   session for every `LinkUp`; this is a separate architectural hardening task
-   because the frozen state-machine documents define caps but the exact Leaf /
-   Relay / Anchor mapping and busy/role behavior must be made explicit in code.
+5. Audit and bound the per-node outbound `VecDeque` in `mmp-node` with an
+   evidence-backed queue/drop policy. Session admission now bounds concurrent
+   `SessionEngine` allocation, but outbound frame accumulation is a separate
+   resource-budget question and must not be changed without checking the
+   frozen retention, delivery, and backpressure semantics.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
