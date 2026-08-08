@@ -1207,18 +1207,19 @@ ranges. Interval-ledger overflow leaves the obligation open and fails closed.
 
 The original premature-domain-advance exploit is covered by both direct RBSR
 and session tests. The frozen wire fields and frame encodings are unchanged.
-The remaining evidence gap is a high-volume SessionEngine pump with a full
-500-versus-empty store across many frames; current direct reconciliation and
-single-child session tests pass, but that stress case should be added before
-claiming complete Byzantine-availability coverage.
+The high-volume SessionEngine pump with a full 500-versus-empty store now also
+passes across many frames, keeping both sessions established and reaching the
+final domain. This is still not a proof against every colluding/withholding
+strategy, but the previously identified premature-parent and asymmetric
+terminal-response paths are covered.
 
 Evidence:
 
 ```text
-cargo test -p mmp-core --lib -- --test-threads=1  # 55 passed
+cargo test -p mmp-core --lib -- --test-threads=1  # 56 passed
 cargo clippy -p mmp-core --all-targets -- -D warnings  # pass
 cargo test --workspace --all-targets -- --test-threads=1  # pass (Windows)
-wsl: cargo test -p mmp-core --lib -- --test-threads=1  # 55 passed
+wsl: cargo test -p mmp-core --lib -- --test-threads=1  # 56 passed
 wsl: cargo test -p mmp-ffi --lib -- --test-threads=1   # 17 passed
 ```
 

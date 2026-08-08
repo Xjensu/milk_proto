@@ -954,6 +954,42 @@ mod rx_bound_tests {
     }
 
     #[test]
+    fn high_volume_asymmetric_reconciliation_keeps_session_alive() {
+        let ia = identity(5);
+        let ib = identity(6);
+        let mut ids = Vec::with_capacity(500);
+        for value in 0u16..500 {
+            let mut bytes = [0u8; 16];
+            bytes[14..].copy_from_slice(&value.to_be_bytes());
+            ids.push(Id16(bytes));
+        }
+        let mut ha = host_with_ids(Vec::new());
+        let mut hb = host_with_ids(ids);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..1_000 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+        assert_eq!(a.domain_cursor, DOMAINS.len() - 1, "all domains should be reached");
+        assert!(a.final_wants_sent);
+    }
+
+    #[test]
     fn final_wants_are_polled_once_per_session() {
         let local = identity(1);
         let peer = identity(2);
