@@ -186,6 +186,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mmp-mobile-bindings
+          if-no-files-found: error
           path: |
             implementation/mesh-milk/bindings/kotlin
             implementation/mesh-milk/bindings/swift
@@ -217,6 +218,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mmp-ffi-aar
+          if-no-files-found: error
           path: implementation/mesh-milk/mobile-artifacts/android
 
   # docs/AGILE_BACKLOG.md E2-S5: wraps mmp-ffi's iOS staticlib (device +
@@ -238,6 +240,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mmp-core-xcframework
+          if-no-files-found: error
           path: implementation/mesh-milk/mobile-artifacts/ios
 
   # Pre-auth-parser fuzzing (doc 07 §8 / doc 12 §7 mandate, E5-S6). The `fuzz/`
