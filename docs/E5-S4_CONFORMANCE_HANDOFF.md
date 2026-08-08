@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `dc47c72` (`fix(mmp-core): enforce normative frame
-credits`). The frozen `specification/` directory was not modified.
+This checkpoint is commit `d82606b` (`fix(mmp-node): bound outbound queue`). The
+frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -50,6 +50,14 @@ Recent focused commits, oldest first:
   are rejected before append/activity, valid batched envelopes are drained
   incrementally, and `rx` never grows beyond the frozen envelope cap. RED/GREEN
   coverage includes split-prefix rejection and a 300-frame aggregate.
+- `dc47c72` — normative HELLO/CREDIT flow control: peer credits are enforced,
+  deferred frames are bounded, and atomic BUNDLE+BUDGET handoff waits for two
+  credits so receive-window replenishment cannot deadlock.
+- `d82606b` — bounded `mmp-node` outbound queue: each admitted session is
+  limited to eight data-credit frames plus four control-reserve frames, with a
+  tier-derived global frame/byte budget. Overflow clears only the affected link
+  and its session, preserving unrelated links and avoiding partial encrypted-
+  frame drops that would make the Noise nonce stream ambiguous.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -130,6 +138,11 @@ parser/manifest integration tests; `mmp-sim` again passed 9 active tests with
 4 intentionally ignored deployment or scale cases. The workspace inventory
 lists 225 active test items. Workspace clippy with `-D warnings`,
 `layer-check`, and the CLI demo all passed again.
+After `d82606b`, the focused `mmp-node` suite passed 34 tests, including three
+outbound-queue overflow regressions. Workspace clippy with `-D warnings`,
+`layer-check`, and the CLI demo passed again. The subsequent full workspace
+matrix passed with 228 active test items and 4 intentionally ignored simulator
+cases.
 
 Regenerate vectors with:
 
@@ -183,11 +196,11 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Audit and bound the per-node outbound `VecDeque` in `mmp-node` with an
-   evidence-backed queue/drop policy. Session admission now bounds concurrent
-   `SessionEngine` allocation, but outbound frame accumulation is a separate
-   resource-budget question and must not be changed without checking the
-   frozen retention, delivery, and backpressure semantics.
+5. Audit and bound the `mmp-tal-btleplug` inbound notification channel. The
+   current transport uses an unbounded mpsc path; define an evidence-backed
+   backpressure, drop, or disconnect policy that preserves envelope ordering
+   and does not silently lose encrypted frames. Do not change the frozen
+   protocol semantics while selecting the transport policy.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
