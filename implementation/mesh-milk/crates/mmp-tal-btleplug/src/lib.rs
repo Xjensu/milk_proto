@@ -77,7 +77,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use btleplug::api::{
@@ -139,6 +139,13 @@ async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMut
     gate.clone().lock_owned().await
 }
 
+/// Wait briefly for an in-flight ATT write to quiesce. Teardown must not hold
+/// the lifecycle gate forever behind a stalled host write; a timeout is safe
+/// because the subsequent physical disconnect fences the link.
+async fn acquire_write_gate_bounded(gate: &Arc<AsyncMutex<()>>) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    timeout(Duration::from_millis(250), acquire_write_gate(gate)).await.ok()
+}
+
 /// A scanned or dial-able peer: `btleplug`'s peripheral identity plus the
 /// most recent RSSI this crate observed for it (`None` if never seen with a
 /// resolvable RSSI, e.g. the platform didn't report one).
@@ -160,6 +167,9 @@ pub enum BleError {
     UnknownLink,
     /// The peripheral for a link is not currently connected.
     NotConnected,
+    /// This central has entered terminal shutdown and will not admit new
+    /// scans or dials.
+    ShuttingDown,
     /// `btleplug` itself reported an error.
     Btleplug(btleplug::Error),
 }
@@ -170,6 +180,7 @@ impl fmt::Display for BleError {
             BleError::NoAdapter => write!(f, "no BLE adapter available"),
             BleError::UnknownLink => write!(f, "unknown link"),
             BleError::NotConnected => write!(f, "not connected"),
+            BleError::ShuttingDown => write!(f, "BLE central is shutting down"),
             BleError::Btleplug(e) => write!(f, "btleplug error: {e}"),
         }
     }
@@ -179,7 +190,7 @@ impl std::error::Error for BleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             BleError::Btleplug(e) => Some(e),
-            BleError::NoAdapter | BleError::UnknownLink | BleError::NotConnected => None,
+            BleError::NoAdapter | BleError::UnknownLink | BleError::NotConnected | BleError::ShuttingDown => None,
         }
     }
 }
@@ -304,6 +315,10 @@ pub struct BleCentral {
     /// Serializes dials so a reconnect cannot race the two-phase replacement
     /// of the same deterministic LinkId.
     dial_gate: Arc<AsyncMutex<()>>,
+    /// Terminal lifecycle flag set before shutdown drains the link table. The
+    /// insertion check under `event_gate` closes the race with an in-flight
+    /// dial that has not yet installed its physical link.
+    shutting_down: AtomicBool,
     next_generation: AtomicU64,
 }
 
@@ -339,6 +354,7 @@ impl BleCentral {
             links,
             event_gate,
             dial_gate,
+            shutting_down: AtomicBool::new(false),
             next_generation: AtomicU64::new(0),
         })
     }
@@ -361,6 +377,9 @@ impl BleCentral {
     /// Start scanning, filtered to [`DEV_SERVICE_UUID`]. Sightings surface as
     /// `TalEvent::Beacon` on the [`Self::events`] stream.
     pub async fn start_scan(&self) -> Result<(), BleError> {
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(BleError::ShuttingDown);
+        }
         self.adapter
             .start_scan(ScanFilter { services: vec![service_uuid()] })
             .await?;
@@ -398,82 +417,100 @@ impl BleCentral {
     /// [`Self::events`] while the central is active.
     pub async fn dial(&self, peer: PeerHandle) -> Result<LinkId, BleError> {
         let _dial_guard = self.dial_gate.lock().await;
+        if self.shutting_down.load(Ordering::Acquire) {
+            return Err(BleError::ShuttingDown);
+        }
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
-        peripheral.connect().await?;
-        peripheral.discover_services().await?;
+        if let Err(e) = peripheral.connect().await {
+            disconnect_bounded(&peripheral).await;
+            return Err(e.into());
+        }
+        if let Err(e) = peripheral.discover_services().await {
+            disconnect_bounded(&peripheral).await;
+            return Err(e.into());
+        }
 
         let characteristics = peripheral.characteristics();
         let tx_characteristic = characteristics
             .iter()
             .find(|c| c.uuid == tx_characteristic_uuid())
             .cloned()
-            .ok_or(btleplug::Error::NoSuchCharacteristic)?;
+            .ok_or(btleplug::Error::NoSuchCharacteristic);
+        let tx_characteristic = match tx_characteristic {
+            Ok(characteristic) => characteristic,
+            Err(e) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(e.into());
+            }
+        };
         let rx_characteristic = characteristics
             .iter()
             .find(|c| c.uuid == rx_characteristic_uuid())
             .cloned()
-            .ok_or(btleplug::Error::NoSuchCharacteristic)?;
+            .ok_or(btleplug::Error::NoSuchCharacteristic);
+        let rx_characteristic = match rx_characteristic {
+            Ok(characteristic) => characteristic,
+            Err(e) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(e.into());
+            }
+        };
 
-        peripheral.subscribe(&rx_characteristic).await?;
-        let mut notifications = peripheral.notifications().await?;
+        if let Err(e) = peripheral.subscribe(&rx_characteristic).await {
+            disconnect_bounded(&peripheral).await;
+            return Err(e.into());
+        }
+        let mut notifications = match peripheral.notifications().await {
+            Ok(notifications) => notifications,
+            Err(e) => {
+                disconnect_bounded(&peripheral).await;
+                return Err(e.into());
+            }
+        };
 
-        let (previous_state, old_generation, previous_guard) = {
+        let (previous_state, old_generation) = {
             let _event_guard = self.event_gate.lock().await;
-            let previous = self
-                .links
-                .lock()
-                .await
-                .get(&link)
-                .map(|state| (state.generation, state.write_gate.clone()));
-            let previous_guard = match previous.as_ref() {
-                Some((_, gate)) => Some(acquire_write_gate(gate).await),
-                None => None,
-            };
-            let previous_state = {
-                let mut links = self.links.lock().await;
-                match previous.as_ref() {
-                    Some((generation, _))
-                        if links.get(&link).map(|state| state.generation) == Some(*generation) =>
-                    {
-                        links.remove(&link)
-                    }
-                    _ => None,
-                }
-            };
-            let old_generation = previous.as_ref().and_then(|(generation, _)| {
-                previous_state.as_ref().map(|_| *generation)
-            });
+            let previous_state = self.links.lock().await.remove(&link);
+            let old_generation = previous_state.as_ref().map(|state| state.generation);
             if let Some(generation) = old_generation {
                 // Retire the old ingress generation before the potentially
                 // slow external disconnect. The replacement task repeats the
                 // coalescing Down defensively, preserving Down→Up ordering.
                 let _ = try_link_down(&self.tx, link, generation);
             }
-            (previous_state, old_generation, previous_guard)
+            (previous_state, old_generation)
         };
-        // The write guard has already waited for any in-flight encrypted ATT
-        // sequence, and the old link was removed from the table while the
-        // lifecycle gate was held.  Release it before the bounded external
-        // disconnect so no local task is held behind controller latency.
-        drop(previous_guard);
         if let Some(previous_state) = previous_state {
+            // A stalled write cannot hold the lifecycle gate: the old state
+            // was removed first. Wait briefly for quiescence, then fence it
+            // with the bounded physical disconnect.
+            let _ = acquire_write_gate_bounded(&previous_state.write_gate).await;
             disconnect_bounded(&previous_state.peripheral).await;
         }
         let generation = allocate_generation(&self.next_generation);
         let write_gate = Arc::new(AsyncMutex::new(()));
-        {
+        let shutting_down = {
             let _event_guard = self.event_gate.lock().await;
-            self.links.lock().await.insert(
-                link,
-                LinkState {
-                    peripheral,
-                    tx_characteristic,
-                    chunk_size: DEFAULT_CHUNK,
-                    write_gate: write_gate.clone(),
-                    generation,
-                },
-            );
+            if self.shutting_down.load(Ordering::Acquire) {
+                true
+            } else {
+                self.links.lock().await.insert(
+                    link,
+                    LinkState {
+                        peripheral: peripheral.clone(),
+                        tx_characteristic,
+                        chunk_size: DEFAULT_CHUNK,
+                        write_gate: write_gate.clone(),
+                        generation,
+                    },
+                );
+                false
+            }
+        };
+        if shutting_down {
+            disconnect_bounded(&peripheral).await;
+            return Err(BleError::ShuttingDown);
         }
 
         let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
@@ -579,45 +616,29 @@ impl BleCentral {
     /// docs) and emit `TalEvent::LinkDown` for it. A no-op (still emits
     /// `LinkDown`) if `link` is already gone from the table.
     pub async fn hangup(&self, link: LinkId) {
-        let (state, write_guard) = {
+        let state = {
             let _event_guard = self.event_gate.lock().await;
-            let previous = self
-                .links
-                .lock()
-                .await
-                .get(&link)
-                .map(|state| (state.generation, state.write_gate.clone()));
-            let Some((generation, gate)) = previous else {
+            let mut links = self.links.lock().await;
+            let Some(state) = links.remove(&link) else {
                 let _ = try_link_down(&self.tx, link, 0);
                 return;
             };
-            let write_guard = acquire_write_gate(&gate).await;
-            let state = {
-                let mut links = self.links.lock().await;
-                if links.get(&link).map(|state| state.generation) == Some(generation) {
-                    links.remove(&link)
-                } else {
-                    None
-                }
-            };
-            if state.is_some() {
-                let _ = try_link_down(&self.tx, link, generation);
-            }
-            (state, Some(write_guard))
+            let _ = try_link_down(&self.tx, link, state.generation);
+            state
         };
-        // State removal plus the acquired guard makes the old write sequence
-        // quiescent.  Do not retain this local guard across the controller
-        // await below.
-        drop(write_guard);
-        if let Some(state) = state {
-            disconnect_bounded(&state.peripheral).await;
-        }
+        // Remove logical state before waiting. A stalled host write cannot
+        // block the lifecycle gate; the bounded wait lets an in-flight write
+        // finish when possible, while the physical disconnect fences it when
+        // it does not.
+        let _ = acquire_write_gate_bounded(&state.write_gate).await;
+        disconnect_bounded(&state.peripheral).await;
     }
 
     /// Retire and physically disconnect every live link. Hosts should call
     /// this on shutdown and after observing [`Self::control_events_dropped`]
     /// so a saturated lifecycle queue cannot leave a radio link alive.
     pub async fn shutdown_all(&self) {
+        self.shutting_down.store(true, Ordering::Release);
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
     }
 
@@ -706,40 +727,25 @@ async fn watch_adapter(
 }
 
 /// Retire all central links when the adapter event stream ends. The lifecycle
-/// gate and per-link write gates are used only for in-process state; actual
-/// BlueZ disconnect calls happen after the gate is released and are bounded so
-/// an unresponsive adapter cannot strand the rest of the transport.
+/// gate is held only while the table is drained and `LinkDown` tombstones are
+/// queued; a stalled host write cannot block lifecycle progress. Each write
+/// gate is waited on only briefly before the bounded physical disconnect.
 async fn shutdown_links(links: &Links, event_gate: &Arc<AsyncMutex<()>>, tx: &EventSender) {
-    let peripherals = {
+    let links_to_disconnect = {
         let _event_guard = event_gate.lock().await;
-        let snapshots = {
-            let table = links.lock().await;
-            table
-                .iter()
-                .map(|(&link, state)| {
-                    (link, state.generation, state.write_gate.clone(), state.peripheral.clone())
-                })
-                .collect::<Vec<_>>()
-        };
-        let mut peripherals = Vec::new();
-        for (link, generation, write_gate, peripheral) in snapshots {
-            let _write_guard = acquire_write_gate(&write_gate).await;
-            let removed = {
-                let mut table = links.lock().await;
-                if table.get(&link).map(|state| state.generation) == Some(generation) {
-                    table.remove(&link).is_some()
-                } else {
-                    false
-                }
-            };
-            if removed {
-                let _ = try_link_down(tx, link, generation);
-                peripherals.push(peripheral);
-            }
+        let mut table = links.lock().await;
+        let drained = table
+            .drain()
+            .map(|(link, state)| (link, state.generation, state.write_gate, state.peripheral))
+            .collect::<Vec<_>>();
+        for (link, generation, _, _) in &drained {
+            let _ = try_link_down(tx, *link, *generation);
         }
-        peripherals
+        drained
     };
-    for peripheral in peripherals {
+
+    for (_, _, write_gate, peripheral) in links_to_disconnect {
+        let _ = acquire_write_gate_bounded(&write_gate).await;
         disconnect_bounded(&peripheral).await;
     }
 }
@@ -790,7 +796,8 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_write_gate, allocate_generation, generation_is_current, mint_link_id,
+        acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
+        mint_link_id,
     };
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
@@ -828,6 +835,14 @@ mod tests {
 
         drop(first);
         second.await.expect("second sender must acquire after the first releases");
+    }
+
+    #[tokio::test]
+    async fn bounded_write_gate_wait_returns_on_stuck_sender() {
+        let gate = Arc::new(AsyncMutex::new(()));
+        let held = acquire_write_gate(&gate).await;
+        assert!(acquire_write_gate_bounded(&gate).await.is_none());
+        drop(held);
     }
 
     #[test]
