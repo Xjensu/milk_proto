@@ -99,7 +99,29 @@ impl SnapshotStore {
     }
 
     fn load(&mut self) {
-        let Ok(bytes) = std::fs::read(&self.path) else { return };
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // `persist` fsyncs a complete temporary image before the
+                // Windows replace step. If the process dies after the old
+                // path is removed but before rename completes, the primary
+                // is absent while this candidate may still be recoverable.
+                // Only a fully framed, semantically validated image may be
+                // considered; a primary (even one containing corrupt records)
+                // always wins and never falls back to `.tmp`.
+                let temp = self.path.with_extension("tmp");
+                let Ok(temp_bytes) = std::fs::read(temp) else { return };
+                if !validate_complete_snapshot(&temp_bytes) {
+                    return;
+                }
+                temp_bytes
+            }
+            Err(_) => return,
+        };
+        self.load_bytes(&bytes);
+    }
+
+    fn load_bytes(&mut self, bytes: &[u8]) {
         if bytes.len() < 8 || &bytes[..8] != MAGIC {
             return;
         }
@@ -333,6 +355,59 @@ fn valid_blocklist(bytes: &[u8]) -> bool {
         .is_some()
 }
 
+/// Validate a temporary snapshot as one complete image before using it as a
+/// recovery source. The normal primary-file loader intentionally skips bad
+/// records so one damaged bundle does not hide every other record; recovery
+/// from a replacement candidate is stricter because accepting a truncated
+/// image would silently replace a missing primary with partial state.
+fn validate_complete_snapshot(bytes: &[u8]) -> bool {
+    if bytes.len() < MAGIC.len() || &bytes[..MAGIC.len()] != MAGIC {
+        return false;
+    }
+
+    let mut pos = MAGIC.len();
+    while pos < bytes.len() {
+        let Some(length_end) = pos.checked_add(4) else { return false };
+        let Some(length_bytes) = bytes.get(pos..length_end) else { return false };
+        let Ok(length_bytes) = <[u8; 4]>::try_from(length_bytes) else { return false };
+        let length = u32::from_le_bytes(length_bytes) as usize;
+        let Some(after_length) = pos.checked_add(4) else { return false };
+        pos = after_length;
+        let Some(record_end) = pos.checked_add(length) else { return false };
+        let Some(checksum_end) = record_end.checked_add(32) else { return false };
+        if checksum_end > bytes.len() {
+            return false;
+        }
+        let record = &bytes[pos..record_end];
+        let checksum = &bytes[record_end..checksum_end];
+        if blake3::hash(record).as_bytes() != checksum {
+            return false;
+        }
+        let Some((&kind, payload)) = record.split_first() else { return false };
+        let semantically_valid = match kind {
+            RECORD_BUNDLE => decode_record(payload).is_some(),
+            RECORD_CLAIM => Claim::decode(payload).ok().is_some_and(|claim| {
+                verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig).is_ok()
+            }),
+            // GroupState is deliberately opaque at this layer; mmp-node
+            // performs its strict decoder before adopting a group.
+            RECORD_GROUP => true,
+            RECORD_SEEN_INDEX => SeenIndex::decode(payload).is_some(),
+            RECORD_RECEIPT_FILTER => ReceiptFilter::decode(payload).is_some(),
+            RECORD_AUTHORITY => mmp_core::AuthorityStore::decode(payload).is_some(),
+            RECORD_BLOCKLIST => valid_blocklist(payload),
+            // Unknown kinds are forward-compatible as long as framing and
+            // checksum are intact; the normal loader skips them too.
+            _ => true,
+        };
+        if !semantically_valid {
+            return false;
+        }
+        pos = checksum_end;
+    }
+    pos == bytes.len()
+}
+
 fn write_record(f: &mut std::fs::File, record: &[u8]) -> std::io::Result<()> {
     f.write_all(&(record.len() as u32).to_le_bytes())?;
     f.write_all(record)?;
@@ -478,6 +553,99 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.get(&Id16([1; 16])).is_none());
+    }
+
+    #[test]
+    fn complete_temp_recovers_only_when_primary_is_absent() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tmp-recovery.mmp");
+        let candidate_path = dir.join("tmp-recovery-candidate.mmp");
+        let temp = path.with_extension("tmp");
+        for file in [&path, &candidate_path, &temp] {
+            let _ = std::fs::remove_file(file);
+        }
+
+        let meta = |id: u8| BundleMeta {
+            id: Id16([id; 16]),
+            class: 1,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: 3,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        };
+
+        let mut primary = SnapshotStore::open(&path);
+        primary.put(meta(1), b"old");
+        primary.persist().unwrap();
+        let primary_bytes = std::fs::read(&path).unwrap();
+
+        let mut candidate = SnapshotStore::open(&candidate_path);
+        candidate.put(meta(2), b"new");
+        candidate.persist().unwrap();
+        let candidate_bytes = std::fs::read(&candidate_path).unwrap();
+        std::fs::remove_file(&candidate_path).unwrap();
+
+        // Model a crash after the destination was removed but before rename.
+        std::fs::write(&temp, &candidate_bytes).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let recovered = SnapshotStore::open(&path);
+        assert!(recovered.get(&Id16([2; 16])).is_some(), "complete temp image must be recovered");
+        assert!(recovered.get(&Id16([1; 16])).is_none());
+
+        // A valid primary always wins; an unvalidated temp must never shadow it.
+        std::fs::write(&path, &primary_bytes).unwrap();
+        std::fs::write(&temp, b"MMPSNAP2\x01\x02").unwrap();
+        let retained = SnapshotStore::open(&path);
+        assert!(retained.get(&Id16([1; 16])).is_some());
+        assert!(retained.get(&Id16([2; 16])).is_none());
+    }
+
+    #[test]
+    fn incomplete_or_corrupt_temp_is_rejected_when_primary_is_absent() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tmp-recovery-invalid.mmp");
+        let temp = path.with_extension("tmp");
+        for file in [&path, &temp] {
+            let _ = std::fs::remove_file(file);
+        }
+
+        // A cut length prefix is not a complete candidate.
+        let mut incomplete = MAGIC.to_vec();
+        incomplete.extend_from_slice(&8u32.to_le_bytes());
+        incomplete.extend_from_slice(&[0xaa, 0xbb]);
+        std::fs::write(&temp, incomplete).unwrap();
+        let empty = SnapshotStore::open(&path);
+        assert_eq!(empty.len(), 0);
+
+        // A complete frame with a bad checksum is also rejected, rather than
+        // being fed to the normal drop-corrupt-record loader.
+        let mut corrupt = MAGIC.to_vec();
+        let record = [RECORD_BUNDLE, 0u8];
+        corrupt.extend_from_slice(&(record.len() as u32).to_le_bytes());
+        corrupt.extend_from_slice(&record);
+        corrupt.extend_from_slice(&[0u8; 32]);
+        std::fs::write(&temp, corrupt).unwrap();
+        let empty = SnapshotStore::open(&path);
+        assert_eq!(empty.len(), 0);
+
+        // Framing/checksum alone is insufficient for a known record kind:
+        // a semantically malformed bundle must also be rejected.
+        let malformed_record = [RECORD_BUNDLE, 0u8];
+        let mut malformed = MAGIC.to_vec();
+        malformed.extend_from_slice(&(malformed_record.len() as u32).to_le_bytes());
+        malformed.extend_from_slice(&malformed_record);
+        malformed.extend_from_slice(blake3::hash(&malformed_record).as_bytes());
+        std::fs::write(&temp, malformed).unwrap();
+        let empty = SnapshotStore::open(&path);
+        assert_eq!(empty.len(), 0);
     }
 
     /// E2-S6 acceptance: a file truncated mid-write (crash right after the
