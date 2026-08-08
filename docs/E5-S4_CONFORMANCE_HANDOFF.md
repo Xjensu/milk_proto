@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `db84453` (`fix(mmp-tal-btleplug): bound event channel`). The
+This checkpoint is commit `d57657c` (`fix(mmp-tal-peripheral): bound event channel`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -62,6 +62,13 @@ Recent focused commits, oldest first:
   Notification, beacon, link-up, and link-down producers now await capacity;
   no encrypted notification is dropped on a full host queue, and the dial task
   emits `LinkUp` before it begins consuming RX notifications.
+- `31ccfd5` — preserved the central link lifecycle ordering while adding the
+  bounded channel: `dial` returns without self-deadlocking a full event loop,
+  but its per-link producer still sends `LinkUp` before reading notifications.
+- `d57657c` — applied the same 2048-event bounded FIFO/backpressure policy to
+  the Linux peripheral API and aligned the unsupported-platform receiver type.
+  ATT read/control producers await capacity rather than silently dropping
+  ordered bytes; Linux runtime compilation remains BlueZ/pkg-config gated here.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -151,6 +158,12 @@ After `db84453`, `mmp-tal-btleplug` passed 8 tests (including the bounded FIFO
 backpressure regression) and package clippy passed with `-D warnings`. The
 full workspace matrix remained at 228 active test items with 4 intentionally
 ignored simulator cases.
+After `d57657c`, `mmp-tal-peripheral` passed 15 Windows-target tests,
+including its bounded FIFO regression, and package clippy passed with
+`-D warnings`. A Linux-target check was attempted but stopped in
+`libdbus-sys` before compiling the backend because this Windows host lacks a
+configured Linux pkg-config/sysroot; the real BlueZ build/hardware gate is
+unchanged.
 
 Regenerate vectors with:
 
@@ -204,10 +217,11 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Audit and bound the Linux `mmp-tal-peripheral` inbound event channel. It
-   still uses an unbounded mpsc path for ATT writes and link-control events;
-   apply the same evidence-backed async backpressure policy without dropping
-   ordered encrypted bytes. Keep the unsupported-platform API compatible.
+5. Add generation fencing for stable `LinkId` reconnects in both real BLE
+   backends, and serialize the central TX chunk loop per link. A stale reader
+   or disconnect callback must not remove a replacement session or inject old
+   encrypted bytes. Also design reserved control capacity/overflow retirement
+   so a stalled consumer cannot delay `LinkDown` indefinitely behind data.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
