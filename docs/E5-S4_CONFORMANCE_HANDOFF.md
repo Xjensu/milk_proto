@@ -1468,3 +1468,33 @@ secure-keystore crash/restart tests. Keep `group_control` quarantined and do
 not introduce MMP/Φ research mechanisms into v1 until trace-driven, physical,
 and adversarial measurements justify them. The Windows host lacks the Linux
 BlueZ/pkg-config environment needed to close the physical gate.
+
+## 2026-08-09 continuation: storage, vault, and packaging follow-up
+
+`f83c975` hardens the primary snapshot loader against hostile record lengths.
+Length-prefix, record-end, checksum-end, and slice boundaries now use checked
+arithmetic, matching the already-safe complete-temp validator. A truncated
+`u32::MAX` record fixture is rejected without panic. `mmp-store` has 11 unit
+tests plus one integration regression passing. A separate design item remains:
+`SnapshotStore::load` still reads the whole local file before record parsing;
+introducing a storage-file byte cap requires an explicit policy decision and is
+not silently inferred here.
+
+`7d08611` closes a vault restore TOCTOU race. After decrypting and validating a
+record, `restore_from_vault` re-reads the provider's durable generation floor
+and rejects a record superseded during the expensive open step. The
+`FloorAdvancingAfterClockVault` fixture exercises this race. The node vault
+suite has 70 passing tests and its focused Clippy gate is clean. A fully
+linearizable multi-process restore still requires a provider transaction
+contract; this patch closes the concrete post-initial-floor window.
+
+`8528916` makes iOS packaging reruns deterministic. The build script removes
+the previous XCFramework and Swift-bindings directory before copying new
+sources, and fails closed when the bindings path collides with a non-directory.
+Static ordering/collision coverage and Bash syntax checks were added; the full
+Python artifact suite has 31 passing tests. This remains packaging validation,
+not Xcode compilation or CoreBluetooth evidence.
+
+These changes preserve the frozen wire contract. The remaining external gates
+are still Linux/BlueZ two-PC exchange, native Android/iOS runtime and energy
+measurements, and platform keystore crash/restart testing.
