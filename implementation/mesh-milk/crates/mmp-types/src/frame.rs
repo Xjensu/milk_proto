@@ -528,8 +528,14 @@ impl Frame {
                 let domain = r.u8()?;
                 let lo = r.id16()?;
                 let hi = r.id16()?;
-                let n = r.u16()?;
-                let mut ids = Vec::with_capacity(n as usize);
+                let n = r.u16()? as usize;
+                // Each advertised ID occupies 16 bytes.  Reject an
+                // impossible count before reserving attacker-controlled
+                // capacity (e.g. u16::MAX with an empty remainder).
+                if n > r.remaining() / 16 {
+                    return Err(WireError::Truncated);
+                }
+                let mut ids = Vec::with_capacity(n);
                 for _ in 0..n {
                     ids.push(r.id16()?);
                 }
@@ -537,8 +543,13 @@ impl Frame {
                 Frame::ReconIds { domain, lo, hi, ids }
             }
             FT_WANT => {
-                let n = r.u16()?;
-                let mut ids = Vec::with_capacity(n as usize);
+                let n = r.u16()? as usize;
+                // See RECON_IDS above: the count is untrusted and each ID is
+                // fixed-width, so capacity is bounded by bytes actually left.
+                if n > r.remaining() / 16 {
+                    return Err(WireError::Truncated);
+                }
+                let mut ids = Vec::with_capacity(n);
                 for _ in 0..n {
                     ids.push(r.id16()?);
                 }

@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use crate::consts::{ALBUM_MAX_FILES, MIME_MAX, NAME_MAX};
+use crate::consts::{ALBUM_MAX_FILES, FILE_MAX, MIME_MAX, NAME_MAX};
 use crate::err::WireError;
 use crate::ids::{Id16, Key32, Sig64};
 use crate::wire::{BufExt, Reader};
@@ -63,6 +63,9 @@ impl FileEntry {
         let name = r.varbytes(NAME_MAX)?.to_vec();
         let mime = r.varbytes(MIME_MAX)?.to_vec();
         let size = r.u32()?;
+        if u64::from(size) > FILE_MAX {
+            return Err(WireError::BadValue("file size"));
+        }
         let file_root = r.id16()?;
         let rs_k = r.u8()?;
         let rs_n = r.u8()?;
