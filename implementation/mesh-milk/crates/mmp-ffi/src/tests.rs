@@ -99,6 +99,33 @@ fn bad_length_ids_are_rejected_at_the_ffi_boundary() {
 }
 
 #[test]
+fn successor_revocation_forwards_and_validates_fixed_length_keys() {
+    let bob = node(2);
+    let successor = node(3);
+    let successor_key = successor.public_key();
+    let countersig = [0xa5u8; 64];
+
+    let claim_bytes = bob
+        .revoke_identity_with_successor(9, successor_key.clone(), countersig.to_vec())
+        .expect("valid 32/64-byte inputs");
+    let claim = mmp_types::claim::Claim::decode(&claim_bytes).expect("well-formed claim");
+    let revocation = mmp_types::claim::Revocation::decode(&claim.body).expect("well-formed body");
+    assert_eq!(revocation.revoked_key.0.to_vec(), bob.public_key());
+    assert_eq!(revocation.reason, 9);
+    assert_eq!(revocation.successor, Some(mmp_types::ids::Key32(successor_key.clone().try_into().unwrap())));
+    assert_eq!(revocation.successor_countersig, Some(mmp_types::ids::Sig64(countersig)));
+
+    assert_eq!(
+        bob.revoke_identity_with_successor(9, vec![0u8; 31], countersig.to_vec()),
+        Err(super::FfiError::BadArg)
+    );
+    assert_eq!(
+        bob.revoke_identity_with_successor(9, successor_key, vec![0u8; 63]),
+        Err(super::FfiError::BadArg)
+    );
+}
+
+#[test]
 fn unknown_peer_is_reported() {
     let alice = node(1);
     let stranger = vec![0xabu8; 16];

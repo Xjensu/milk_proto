@@ -30,7 +30,7 @@ use mmp_store::SnapshotStore;
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_types::authcert::AuthCert;
 use mmp_types::claim::Claim;
-use mmp_types::ids::{Id16, Key32};
+use mmp_types::ids::{Id16, Key32, Sig64};
 
 use store::SharedStore;
 
@@ -114,6 +114,12 @@ fn id16_from(bytes: &[u8]) -> Result<Id16, FfiError> {
 fn key32_from(bytes: &[u8]) -> Result<Key32, FfiError> {
     let arr: [u8; 32] = bytes.try_into().map_err(|_| FfiError::BadArg)?;
     Ok(Key32(arr))
+}
+
+/// Parse a 64-byte Ed25519 signature out of an FFI byte vector.
+fn sig64_from(bytes: &[u8]) -> Result<Sig64, FfiError> {
+    let arr: [u8; 64] = bytes.try_into().map_err(|_| FfiError::BadArg)?;
+    Ok(Sig64(arr))
 }
 
 // ---------------------------------------------------------------- types ----
@@ -860,12 +866,26 @@ impl MmpNode {
     /// Publish a self-revocation claim (doc handbook §4.6): tombstones every
     /// other claim we own — nodes that adopt it refuse new sessions with us
     /// and stop using our prekey batch for X3DH. Irreversible once gossiped
-    /// and adopted. No successor (see [`mmp_node::Node::revoke_identity`]'s
-    /// doc comment for why that's out of scope here). Returns the encoded
+    /// and adopted. No successor. Returns the encoded
     /// claim, already queued into gossip — the return value is for local
     /// display/logging, not something the caller needs to re-submit.
     pub fn revoke_identity(&self, reason: u8) -> Vec<u8> {
         self.lock().revoke_identity(reason)
+    }
+
+    /// Publish a self-revocation claim with a proposed successor. `successor`
+    /// must be exactly 32 bytes and `countersig` exactly 64 bytes; the latter
+    /// is the successor's already-produced signature over
+    /// `revoked_key ‖ successor` under `mmp1/claim`.
+    pub fn revoke_identity_with_successor(
+        &self,
+        reason: u8,
+        successor: Vec<u8>,
+        countersig: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
+        let successor = key32_from(&successor)?;
+        let countersig = sig64_from(&countersig)?;
+        Ok(self.lock().revoke_identity_with_successor(reason, successor, countersig))
     }
 
     // ------------------------------------------------------ blob plane (§4.4) --

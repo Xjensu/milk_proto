@@ -28,6 +28,7 @@ use mmp_tal::{LinkQuality, TalEvent};
 use mmp_tal_btleplug::{BleCentral, PeerHandle, PeripheralId};
 use mmp_tal_peripheral::PeripheralRole;
 use mmp_types::ids::{Id16, NodeId};
+use rand::{rngs::OsRng, RngCore};
 
 const USAGE: &str = "\
 mmp-cli — MMP/1 reference PC node
@@ -98,7 +99,13 @@ fn cmd_keygen(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    let seed = random_seed();
+    let seed = match random_seed() {
+        Ok(seed) => seed,
+        Err(error) => {
+            eprintln!("mmp-cli keygen: OS CSPRNG unavailable: {error}");
+            return ExitCode::from(2);
+        }
+    };
     if let Err(e) = std::fs::write(path, hex(&seed)) {
         eprintln!("mmp-cli keygen: failed to write '{path}': {e}");
         return ExitCode::from(2);
@@ -139,19 +146,16 @@ fn cmd_vectors(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// 32 bytes of process entropy hashed through BLAKE3 — no OS RNG dependency
-/// pulled into this crate (doc 12 §12: `blake3` is already vendored via
-/// `mmp-types`; nothing new). Fine for local dev key generation; a real
-/// deployment should use an OS CSPRNG (mmp-crypto's seam, HANDOFF M5).
-fn random_seed() -> [u8; 32] {
-    let mut buf = Vec::with_capacity(32);
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
-    buf.extend_from_slice(&now.as_nanos().to_le_bytes());
-    buf.extend_from_slice(&std::process::id().to_le_bytes());
-    // Stack address of a local: cheap extra entropy, ASLR-dependent.
-    let stack_marker = 0u8;
-    buf.extend_from_slice(&(&stack_marker as *const u8 as usize).to_le_bytes());
-    *blake3::hash(&buf).as_bytes()
+/// Generate a 256-bit identity seed from the operating system CSPRNG.
+///
+/// Identity material must never be derived from clocks, process identifiers,
+/// or address-space layout: those values are observable/predictable and can
+/// make two independently generated identities guessable. The error is kept
+/// explicit so `keygen` fails closed when the OS cannot provide entropy.
+fn random_seed() -> Result<[u8; 32], rand::Error> {
+    let mut seed = [0u8; 32];
+    OsRng.try_fill_bytes(&mut seed)?;
+    Ok(seed)
 }
 
 fn hex(bytes: &[u8]) -> String {

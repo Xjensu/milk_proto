@@ -366,6 +366,27 @@ fn peer_revoked_event_carries_the_verified_successor() {
 }
 
 #[test]
+fn revoke_identity_with_successor_publishes_signed_successor_claim() {
+    let mut bob = node(2);
+    let carol = node(3);
+    let carol_identity = mmp_crypto::Identity::from_seed(&[3; 32]);
+    let countersig = carol_identity.sign(
+        SigDomain::Claim,
+        &mmp_types::claim::succession_signed_object(&bob.public_key(), &carol.public_key()),
+    );
+
+    let claim_bytes = bob.revoke_identity_with_successor(7, carol.public_key(), countersig);
+    let claim = mmp_types::claim::Claim::decode(&claim_bytes).expect("well-formed claim");
+    assert_eq!(claim.field, mmp_types::claim::field::REVOCATION);
+    assert_eq!(claim.owner, bob.public_key());
+    let revocation = mmp_types::claim::Revocation::decode(&claim.body).expect("well-formed body");
+    assert_eq!(revocation.revoked_key, bob.public_key());
+    assert_eq!(revocation.reason, 7);
+    assert_eq!(revocation.successor, Some(carol.public_key()));
+    assert_eq!(revocation.successor_countersig, Some(countersig));
+}
+
+#[test]
 fn beacon_rotates_with_slot() {
     let n = node(1);
     let b1 = n.beacon(0);

@@ -21,6 +21,7 @@ mmp-tal-btleplug = { path = "../mmp-tal-btleplug" }
 mmp-tal-peripheral = { path = "../mmp-tal-peripheral" }
 mmp-types = { path = "../mmp-types" }
 blake3 = { workspace = true }
+rand = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "time"] }
 
 # `connect`/`send` drive a real node over BLE central role (mmp-tal-btleplug,

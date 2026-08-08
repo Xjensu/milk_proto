@@ -1129,6 +1129,7 @@ dependencies = [
  "mmp-tal-btleplug",
  "mmp-tal-peripheral",
  "mmp-types",
+ "rand 0.8.6",
  "tokio",
 ]
 

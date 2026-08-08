@@ -737,11 +737,7 @@ impl Node {
     /// prekey batch for X3DH (`send_app`), via `ClaimStore::merge`'s
     /// tombstone rule. Irreversible once gossiped and adopted — there is no
     /// "un-revoke." No successor: this is a pure "this identity is dead"
-    /// tombstone. A succession claim needs the successor's own
-    /// counter-signature (`succession_signed_object`) and is out of scope for
-    /// this single-call entry point — build a [`Revocation`] with `successor`
-    /// / `successor_countersig` set and call [`Node::publish_claim`] directly
-    /// if succession is needed. Returns the claim's encoded bytes.
+    /// tombstone. Returns the claim's encoded bytes.
     pub fn revoke_identity(&mut self, reason: u8) -> Vec<u8> {
         let body = Revocation {
             revoked_key: self.core.public,
@@ -753,6 +749,28 @@ impl Node {
         // A revocation is a one-shot tombstone (immutable once adopted, doc
         // 06 §4.6) — unlike `set_nickname`'s host-tracked seq, there is never
         // a second write to race against, so a fixed seq is correct here.
+        self.publish_claim(field::REVOCATION, 1, body)
+    }
+
+    /// Publish a self-revocation claim that names a proposed successor. The
+    /// `countersig` must already be the successor's signature over
+    /// [`mmp_types::claim::succession_signed_object`]; this method packages it
+    /// into the revocation claim and returns the encoded claim bytes. Peers
+    /// verify that countersignature before surfacing the successor, while the
+    /// revocation itself remains effective even when it is invalid.
+    pub fn revoke_identity_with_successor(
+        &mut self,
+        reason: u8,
+        successor: Key32,
+        countersig: Sig64,
+    ) -> Vec<u8> {
+        let body = Revocation {
+            revoked_key: self.core.public,
+            reason,
+            successor: Some(successor),
+            successor_countersig: Some(countersig),
+        }
+        .encode();
         self.publish_claim(field::REVOCATION, 1, body)
     }
 
