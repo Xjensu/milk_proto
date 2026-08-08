@@ -34,9 +34,11 @@ ESTABLISHED
 The proof signs the channel-binding object
 `handshake_hash ‖ initiator_identity_pubkey ‖ responder_identity_pubkey` under
 the `mmp1/chanbind` domain. The claimed identity must match the identity key
-carried in the Noise peer introduction. Any plaintext proof, pre-proof
-application frame, mismatched key, failed signature, or failed admission closes
-the session silently.
+carried in the Noise peer introduction. Plaintext proofs, pre-proof application
+frames, invalid ciphertext, and malformed transport records take the protocol
+error path (ERROR + CLOSE where the session can still emit it). A mismatched
+claimed key, failed identity signature, or local admission denial is an
+intentional silent close after the encrypted record has been decoded.
 
 ## Evidence
 
