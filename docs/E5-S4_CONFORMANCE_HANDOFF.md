@@ -1001,3 +1001,98 @@ No specification file is modified by these fixes. The remaining release
 gates are native secure-storage and crash-atomic providers, Linux BlueZ
 adapter execution with two physical PCs, and real Android/iOS device and
 background-radio measurements.
+
+## 2026-08-08 non-secret snapshot crash recovery
+
+`60d88fa` closes the remove-before-rename recovery window in
+`mmp-store::SnapshotStore`. `persist` already fsyncs the temporary image; if
+the primary path is absent after a crash, `open` now considers the `.tmp`
+candidate only after validating complete framing, every record checksum, and
+known-record semantics. An existing primary always wins, even if its normal
+loader skips an individual corrupt record. Group payloads remain intentionally
+opaque at this layer and are strictly decoded by `mmp-node` before adoption.
+Unknown framed record kinds remain forward-compatible.
+
+Evidence:
+
+```text
+cargo test -p mmp-store --lib -- --test-threads=1          # 11 passed
+cargo clippy -p mmp-store --lib --tests -- -D warnings     # pass
+```
+
+This is non-secret snapshot recovery only. It does not add a monotonic
+generation floor to `SnapshotStore` or claim rollback protection for a stale
+temporary image after deliberate primary loss; the native secret vault's
+generation/floor contract remains separate.
+
+## 2026-08-08 RBSR pending-range correctness hardening
+
+`4f3803a` fixes a latent session-availability bug in `mmp-core::rbsr`.
+Previously, the reconciler tracked only an integer `open` count. When a large
+range was partitioned, the original parent could remain counted after all
+terminal lists had completed, so `SessionEngine::maybe_advance_domain` could
+never move to the next domain. A forged reply could also decrement an
+unrelated outstanding request.
+
+The reconciler now tracks canonical `(lo, hi, count, fingerprint)` descriptors,
+resolves exact echoes and bound-correlated ID lists, retires a containing
+parent when a valid partition arrives, and derives `open` from the pending set.
+The wire format and domain values are unchanged. Tests include the previously
+failing 800-versus-800 divergent-set convergence and an unmatched-echo
+regression.
+
+Evidence:
+
+```text
+cargo test -p mmp-core --lib -- --test-threads=1           # 50 passed
+cargo clippy -p mmp-core --lib --tests -- -D warnings      # pass
+```
+
+## 2026-08-08 peripheral quarantine hardening
+
+`e19548d` closes a stale-callback fail-open at the Linux peripheral lifecycle
+cap. When the retired-endpoint ledger is exhausted, the old path deleted the
+`LinkId` record; a delayed BlueZ callback could then re-admit an old endpoint as
+fresh. The new path keeps a quarantined record, clears active stream tokens,
+emits the retirement event, and rejects later callbacks for that `LinkId` until
+process shutdown. This is deliberately fail-closed and bounded; it changes no
+wire value.
+
+Evidence:
+
+```text
+cargo test -p mmp-tal-peripheral --lib -- --test-threads=1  # 37 passed
+cargo clippy -p mmp-tal-peripheral --lib --tests -- -D warnings  # pass
+```
+
+The Linux target check still stops before Rust backend compilation on this
+Windows host because `libdbus-sys` cannot find a Linux pkg-config/sysroot.
+The latest WSL Ubuntu run now supplies that sysroot and passes:
+
+```text
+CARGO_TARGET_DIR=/tmp/mmp-target-final cargo check -p mmp-tal-peripheral --target x86_64-unknown-linux-gnu  # pass
+CARGO_TARGET_DIR=/tmp/mmp-target-final cargo test -p mmp-tal-peripheral --lib -- --test-threads=1           # 37 passed
+CARGO_TARGET_DIR=/tmp/mmp-target-final cargo clippy -p mmp-tal-peripheral --all-targets -- -D warnings      # pass
+```
+
+This is still build/test evidence only; a physical two-PC BlueZ run remains
+required.
+
+## 2026-08-08 remaining audit findings
+
+The mobile surface audit found no safe code change that can substitute for a
+native Android/iOS consumer. Existing dirty mobile/API guides contain stale
+examples (UniFFI `--features cli`, target-specific iOS static-library paths,
+constructor and `linkData` signatures, omitted friendship/announcement/file
+events, persistence wording, an unsafe JS seed/clock sketch, and missing JNA
+runtime documentation). They were intentionally not staged because they are
+user-owned edits. A separate documentation review should correct them and
+label the TypeScript snippets as abbreviated where appropriate.
+
+The audit also confirmed that `mmp-cli::now_ms()` currently uses Unix wall-clock
+milliseconds while persisted bundle deadlines and `Node::tick` otherwise use
+monotonic values. Replacing it with process-relative `Instant` without a
+restart/timebase design would make persisted TTL behavior nondeterministic.
+This is a time-model design gate, not a safe one-line patch; do not claim the
+CLI as a strict monotonic-clock implementation until that design has a
+restart regression test and explicit persisted-clock policy.
