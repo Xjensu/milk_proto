@@ -826,3 +826,21 @@ cargo clippy -p mmp-crypto --no-default-features --lib -- -D warnings  # pass
 cargo run -p layer-check                                  # pass
 cargo run -p mmp-cli -- demo                              # pass; receipt observed
 ```
+
+## 2026-08-08 final verification pass
+
+After `ab8d349` and `1f9b9d4`, the complete workspace test suite was rerun
+serially and passed. The follow-up checks also passed:
+
+```text
+cargo clippy --workspace --all-targets -- -D warnings  # pass
+cargo check -p mmp-crypto --no-default-features      # pass
+cargo run -p layer-check                              # pass
+cargo run -p mmp-cli -- demo                          # pass; delivery receipt observed
+```
+
+The Linux BlueZ target remains an environment-gated check on this Windows
+host: `libdbus-sys` cannot find a Linux pkg-config/sysroot. No claim is made
+for Linux compilation or live BLE behavior until that command is run in a
+Linux environment. Android/iOS native keystore, crash-atomic persistence,
+background-radio, and physical-device tests are still open exit gates.
