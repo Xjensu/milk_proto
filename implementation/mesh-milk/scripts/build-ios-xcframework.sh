@@ -28,7 +28,16 @@ for target in aarch64-apple-ios aarch64-apple-ios-sim; do
     }
 done
 
-rm -rf "$STAGE" "$OUT_DIR/MmpCore.xcframework"
+mkdir -p "$OUT_DIR"
+if [[ -e "$OUT_DIR/swift-bindings" && ! -d "$OUT_DIR/swift-bindings" ]]; then
+    echo "error: Swift bindings output path is not a directory: $OUT_DIR/swift-bindings" >&2
+    exit 1
+fi
+# Remove every derived output before building.  In particular, `cp -r` would
+# otherwise copy the new `swift-source` directory inside a prior
+# `swift-bindings` directory and leave stale generated files visible to the
+# recursive verifier on a successful rerun.
+rm -rf "$STAGE" "$OUT_DIR/MmpCore.xcframework" "$OUT_DIR/swift-bindings"
 mkdir -p "$STAGE/headers"
 
 echo "==> Building mmp-ffi staticlib for aarch64-apple-ios (device) and aarch64-apple-ios-sim (simulator)"
@@ -68,7 +77,6 @@ xcodebuild -create-xcframework \
     -library target/aarch64-apple-ios-sim/release/libmmp_ffi.a -headers "$STAGE/headers" \
     -output "$OUT_DIR/MmpCore.xcframework"
 
-mkdir -p "$OUT_DIR"
 cp -r "$STAGE/swift-source" "$OUT_DIR/swift-bindings"
 echo "==> Verifying XCFramework shape and Swift source artifact"
 python scripts/verify_ios_artifacts.py \
