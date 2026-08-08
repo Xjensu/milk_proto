@@ -839,8 +839,50 @@ cargo run -p layer-check                              # pass
 cargo run -p mmp-cli -- demo                          # pass; delivery receipt observed
 ```
 
-The Linux BlueZ target remains an environment-gated check on this Windows
-host: `libdbus-sys` cannot find a Linux pkg-config/sysroot. No claim is made
-for Linux compilation or live BLE behavior until that command is run in a
-Linux environment. Android/iOS native keystore, crash-atomic persistence,
-background-radio, and physical-device tests are still open exit gates.
+At the time of this verification block, the Linux BlueZ target was still
+environment-gated on the Windows host because `libdbus-sys` could not find a
+Linux pkg-config/sysroot. The later WSL continuation below supersedes that
+build limitation. Android/iOS native keystore, crash-atomic persistence,
+background-radio, and physical-device tests remain open exit gates.
+
+## 2026-08-08 Linux transport and recovery continuation
+
+WSL Ubuntu supplied a real Linux build environment. The transport follow-up
+closed stale lifecycle races without changing the wire protocol:
+
+- `4ba26ef` fences stale LinkUp/LinkDown generations in both BLE ingress
+  queues;
+- `2f9a245` prevents a delayed peripheral retirement tombstone from purging a
+  reused stable LinkId;
+- `56821a1` restores per-LinkId high-water tracking with a bounded 4096-entry
+  ledger and fail-closed admission rather than unsafe eviction;
+- `d68638a` groups the Linux link-up request arguments and clears the
+  Linux-only Clippy `too_many_arguments` gate.
+
+The bounded ledger is an ingress resource policy, not a wire or routing
+parameter. It rejects new identities after exhaustion; it never evicts stale
+generation history. Existing LinkIds remain serviceable. The peripheral
+pre-announcement path also refuses unknown streams after ledger exhaustion.
+
+Linux evidence, run with a temporary target directory under WSL to avoid NTFS
+incremental-build locking, is now:
+
+```text
+cargo check -p mmp-tal-peripheral --target x86_64-unknown-linux-gnu  # pass
+cargo test --workspace --all-targets -- --test-threads=1              # pass
+cargo clippy -p mmp-tal-btleplug -p mmp-tal-peripheral --all-targets -- -D warnings  # pass
+btleplug library tests: 20 passed
+peripheral library tests: 34 passed
+```
+
+The complete WSL workspace run also passed the 58 `mmp-node` tests, vector,
+crypto, simulator, FFI, store, and adversarial suites. Windows rerun of the
+complete workspace also passed after the same commits. These are build and
+simulation results only; no physical Bluetooth adapter or two-PC radio result
+has been obtained yet.
+
+The journaled vault model in `fbd4b85` remains test-only. It covers write,
+fsync, replace, floor-update, reopen recovery, corrupted-current fallback,
+and rollback-safe floor behavior. It is evidence for the native adapter
+contract, not an Android Keystore, iOS Keychain, or production filesystem
+implementation.
