@@ -1524,3 +1524,27 @@ is tier-agnostic and bundles, claims, groups, indexes, authority state, and
 blocklists have different quotas. A future tier-aware `SnapshotLimits` or
 streaming parser is required before imposing a safe file cap. Group control
 remains quarantined pending its normative schema decision.
+
+## 2026-08-09 continuation: embedded allocation, Android CI, and groups
+
+`228e518` hardens the lower `mmp-core` resource boundary. `Bloom::with_capacity`
+now uses saturating arithmetic and clamps requested bits to the existing
+production maximum before allocating. A `usize::MAX` request is therefore
+bounded rather than overflowing or attempting an attacker-sized allocation.
+The persistence-decoder integration suite has five passing cases for these
+limits, and `mmp-core --no-default-features` still builds. The wire format is
+unchanged.
+
+`2a02cdc` fixes the Android cross-target CI environment. The `android-check`
+job now provisions NDK r26d, installs `cargo-ndk`, exports `ANDROID_NDK_HOME`,
+and runs `cargo ndk -t arm64-v8a check --workspace`; this addresses the
+previous missing `aarch64-linux-android-clang` failure. YAML regression tests
+cover the setup, environment, and command.
+
+`ab91e1c` bounds TOFU group admission. A valid epoch-1 sender-key distribution
+could previously create one `GroupState` per fresh random group ID, and
+restoration could insert unlimited blobs. New network groups and restored
+groups are capped at 256 live entries while updates to existing IDs remain
+allowed. The node suite has 71 passing tests, including a 257th-group
+regression; this is local resource policy and does not modify the frozen wire
+contract.
