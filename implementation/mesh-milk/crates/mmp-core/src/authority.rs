@@ -258,6 +258,11 @@ impl AuthorityStore {
     /// issuer cannot revoke into a scope it doesn't own (mirrors §5.2's
     /// cross-scope rule for grants).
     pub fn merge_revocation_list(&mut self, issuer: &Key32, list: &RevocationList) {
+        // Unknown suites remain opaque claim bodies and must never be
+        // interpreted by the v1 authority store.
+        if list.suite != 0x01 {
+            return;
+        }
         for entry in &list.entries {
             if self.roots.get(&entry.scope).map(|(i, _)| i) != Some(issuer) {
                 continue;
@@ -426,6 +431,26 @@ mod tests {
         let later_empty = RevocationList { suite: 1, entries: vec![] };
         store.merge_revocation_list(&issuer.public(), &later_empty);
         assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none(), "sticky: omission must not restore");
+    }
+
+    #[test]
+    fn unknown_revocation_suite_is_opaque_and_not_applied() {
+        let issuer = Identity::from_seed(&[1; 32]);
+        let subject = Key32([2; 32]);
+        let scope = Id16([3; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, issuer.public());
+        let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
+        store.consider_cert(&cert, 0).unwrap();
+
+        // Unknown suites are retained for opaque relay/storage, but v1 must
+        // not interpret their entries as v1 revocations.
+        let future = RevocationList {
+            suite: 0x02,
+            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 999 }],
+        };
+        store.merge_revocation_list(&issuer.public(), &future);
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
     }
 
     #[test]

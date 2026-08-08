@@ -1619,6 +1619,12 @@ impl NodeCore {
     /// §5.2.2: "priority buys order, never volume").
     fn handle_announcement(&mut self, bundle: &Bundle) {
         let Ok(body) = AnnouncementBody::decode(&bundle.payload) else { return };
+        // Unknown announcement suites are opaque future-version payloads:
+        // relay/storage may retain them, but v1 must not render or act on an
+        // unimplemented body grammar.
+        if body.suite != 0x01 {
+            return;
+        }
         if mmp_crypto::verify(SigDomain::Announce, &bundle.origin, &body.signed_object(), &body.sig).is_err() {
             return;
         }

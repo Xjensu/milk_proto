@@ -5,7 +5,7 @@ use mmp_core::store::{BundleMeta, SlotState};
 use mmp_core::MemStore;
 use mmp_tal::TalEvent;
 use mmp_types::frame::{FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
-use mmp_types::authcert::AuthCert;
+use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{FRIENDSHIP_TTL_MS, MAX_BUNDLE};
 use mmp_types::domain::SigDomain;
@@ -973,6 +973,37 @@ fn unauthenticated_announcement_clamps_to_normal_but_still_reaches_subscribers()
     assert_eq!(text, b"no authority yet");
     assert_eq!(effective, prio::NORMAL, "clamped: no trusted root, no attached cert");
     assert!(!official);
+}
+
+#[test]
+fn unknown_announcement_suite_is_relay_only_and_not_rendered() {
+    let alice = node(31);
+    let mut bob = node(32);
+    let scope = bob.subscribe_scope(b"future/announcement-suite");
+    let mut body = AnnouncementBody {
+        suite: 0x02,
+        ann_type: 1,
+        scope,
+        not_after: 0,
+        text: b"future grammar".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    let mut bundle = Bundle {
+        class: mmp_types::bundle::class::ANNOUNCEMENT,
+        flags: 0,
+        origin: alice.public_key(),
+        dest: scope,
+        lifetime_ms: 60_000,
+        priority: prio::OPERATIONAL,
+        exts: Vec::new(),
+        payload: body.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+
+    bob.core.handle_announcement(&bundle);
+    assert!(!bob.core.events.iter().any(|event| matches!(event, Event::Announcement { .. })));
 }
 
 #[test]
