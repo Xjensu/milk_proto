@@ -15,6 +15,19 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 OUT_DIR="${1:-mobile-artifacts/ios}"
 STAGE="$OUT_DIR/.stage"
+
+echo "==> Checking Apple packaging prerequisites"
+command -v cargo >/dev/null 2>&1 || { echo "error: cargo is required" >&2; exit 1; }
+command -v xcodebuild >/dev/null 2>&1 || { echo "error: xcodebuild is required (run on macOS with Xcode)" >&2; exit 1; }
+command -v xcrun >/dev/null 2>&1 || { echo "error: xcrun is required (run on macOS with Xcode)" >&2; exit 1; }
+xcrun --find clang >/dev/null 2>&1 || { echo "error: Xcode command-line tools are not selected" >&2; exit 1; }
+for target in aarch64-apple-ios aarch64-apple-ios-sim; do
+    rustup target list --installed | grep -Fxq "$target" || {
+        echo "error: missing Rust target $target (install with: rustup target add $target)" >&2
+        exit 1
+    }
+done
+
 rm -rf "$STAGE" "$OUT_DIR/MmpCore.xcframework"
 mkdir -p "$STAGE/headers"
 

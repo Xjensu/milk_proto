@@ -311,6 +311,10 @@ impl SessionEngine {
             self.protocol_error(errcode::PROTOCOL);
             return;
         };
+        if plain.len() > MAX_FRAME_PAYLOAD {
+            self.protocol_error(errcode::OVERSIZE);
+            return;
+        }
         let Ok(frame) = Frame::decode_payload(typ, &plain) else {
             // Unknown frame type or malformed: ERROR(unsupported) + CLOSE.
             self.protocol_error(errcode::UNSUPPORTED);
@@ -606,7 +610,8 @@ impl SessionEngine {
 mod wire_budget_tests {
     use super::{envelope_payload_within_cap, frame_payload_within_cap};
     use mmp_types::consts::MAX_FRAME_PAYLOAD;
-    use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
+    use mmp_types::frame::{read_envelope, Frame, MAX_ENVELOPE_PAYLOAD, FT_BUNDLE, FT_FRIEND_OFFER};
+    use mmp_types::WireError;
 
     #[test]
     fn outbound_payload_budget_rejects_release_oversize_inputs() {
@@ -614,5 +619,25 @@ mod wire_budget_tests {
         assert!(!frame_payload_within_cap(MAX_FRAME_PAYLOAD + 1));
         assert!(envelope_payload_within_cap(MAX_ENVELOPE_PAYLOAD));
         assert!(!envelope_payload_within_cap(MAX_ENVELOPE_PAYLOAD + 1));
+    }
+
+    #[test]
+    fn receive_caps_accept_exact_boundary_and_reject_one_byte_over() {
+        let mut at_cap = vec![0u8; 3 + MAX_FRAME_PAYLOAD];
+        at_cap[..2].copy_from_slice(&(MAX_FRAME_PAYLOAD as u16).to_le_bytes());
+        at_cap[2] = FT_BUNDLE;
+        assert!(matches!(read_envelope(&at_cap), Ok(Some(_))));
+
+        let over = (MAX_FRAME_PAYLOAD + 1) as u16;
+        let mut one_over = vec![0u8; 3 + over as usize];
+        one_over[..2].copy_from_slice(&over.to_le_bytes());
+        one_over[2] = FT_BUNDLE;
+        assert_eq!(read_envelope(&one_over), Err(WireError::Oversize));
+    }
+
+    #[test]
+    fn receive_caps_reject_aggregate_plaintext_before_frame_decode() {
+        let payload = vec![0u8; MAX_FRAME_PAYLOAD + 1];
+        assert_eq!(Frame::decode_payload(FT_FRIEND_OFFER, &payload), Err(WireError::Oversize));
     }
 }

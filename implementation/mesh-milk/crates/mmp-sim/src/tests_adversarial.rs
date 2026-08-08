@@ -18,7 +18,7 @@ use mmp_crypto::Identity;
 use mmp_node::diag::JourneyEvent;
 use mmp_types::bundle::class;
 use mmp_types::claim::field;
-use mmp_types::consts::{FILTER_BUCKET_MS, L_MAX, LIFETIME_MESSAGE_MS, ORIGIN_BUCKET_BURST};
+use mmp_types::consts::{FILTER_BUCKET_MS, L_MAX, LIFETIME_MESSAGE_MS, MAX_FRAME_PAYLOAD, ORIGIN_BUCKET_BURST};
 use mmp_types::frame::{Frame, Summary, SummaryBucket};
 use mmp_types::ids::Id16;
 use mmp_types::payload::ReceiptPayload;
@@ -141,7 +141,10 @@ fn flood_origin_is_throttled_but_others_deliver() {
     // smaller size) keep the bound — and so the bundle count needed to prove
     // "sent >> admitted" at the story's ~50x ratio — small enough to stay a
     // CI-fast scenario (every bundle costs a real Ed25519 sign + verify).
-    const PAYLOAD_LEN: usize = 3972;
+    // The Bundle itself may be 4096 bytes, but the encrypted frame has a
+    // 16-byte Noise tag. Keep the adversarial payload at the largest value
+    // that still fits the frozen 4096-byte envelope cap.
+    const PAYLOAD_LEN: usize = MAX_FRAME_PAYLOAD - 16 - 124;
     let cost_per_bundle = (PAYLOAD_LEN + 124) as u64;
     let bound = ORIGIN_BUCKET_BURST / cost_per_bundle;
     // 12x (not the story's illustrative "~50x") keeps this a CI-fast
@@ -220,7 +223,7 @@ fn quota_abuse_degrades_gracefully() {
     // SAME declared priority (1) as the honest message — so the only thing
     // that can protect the honest bundle at eviction time is `eviction_order`'s
     // size tie-break, not a priority shortcut.
-    const PAYLOAD_LEN: usize = 3972;
+    const PAYLOAD_LEN: usize = MAX_FRAME_PAYLOAD - 16 - 124;
     const WIRE_LEN: u64 = (58 + 2 + PAYLOAD_LEN + 64) as u64;
     let cost_per_admit = (PAYLOAD_LEN + 124) as u64;
     // Upper bound on admits from a single fresh origin's burst (no elapsed

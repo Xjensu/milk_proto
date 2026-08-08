@@ -865,20 +865,20 @@ fn bundle_wire_with_raw_exts(exts: &[u8]) -> Vec<u8> {
     wire
 }
 
-/// Negative envelope vectors distinguish the frozen logical frame cap from
-/// this implementation's receive-side AEAD headroom.  Doc 10 §2 says a
-/// frame payload is ≤4096 bytes; `read_envelope` accepts up to 4128 bytes so a
-/// post-handshake ciphertext can carry its 32-byte authentication overhead.
+/// Negative envelope vectors pin the frozen 4096-byte envelope cap.  The
+/// receive-side reader and the logical frame decoder intentionally share this
+/// limit; the Noise 16-byte tag is accounted for by the outbound plaintext
+/// budget rather than by widening the wire envelope.
 fn envelope_oversize_negative_vector() -> VectorFile {
-    const RUNTIME_HEADROOM: usize = mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
+    const RUNTIME_CAP: usize = mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
     debug_assert_eq!(MAX_FRAME_PAYLOAD, 4096);
-    debug_assert_eq!(RUNTIME_HEADROOM, 4128);
+    debug_assert_eq!(RUNTIME_CAP, 4096);
     let normative_over = raw_envelope(FT_BUNDLE, MAX_FRAME_PAYLOAD + 1, 0xa1);
-    let runtime_over = raw_envelope(FT_BUNDLE, RUNTIME_HEADROOM + 1, 0xa2);
+    let runtime_over = raw_envelope(FT_BUNDLE, RUNTIME_CAP + 33, 0xa2);
     let json = format!(
-        "{{\n  \"description\": \"negative envelope lengths: doc 10 §2 caps the logical frame payload at 4096 bytes, while the current receive parser permits 4128 bytes for AEAD headroom\",\n  \"normative_frame_payload_cap\": {},\n  \"runtime_envelope_payload_cap\": {},\n  \"cases\": [\n    {{\"name\": \"logical_payload_4097\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"accept_headroom\"}},\n    {{\"name\": \"envelope_payload_4129\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"reject_oversize\"}}\n  ]\n}}\n",
+        "{{\n  \"description\": \"negative envelope lengths: the frozen logical and runtime envelope payload cap is 4096 bytes\",\n  \"normative_frame_payload_cap\": {},\n  \"runtime_envelope_payload_cap\": {},\n  \"cases\": [\n    {{\"name\": \"logical_payload_4097\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"reject_oversize\"}},\n    {{\"name\": \"envelope_payload_4129\", \"payload_len\": {}, \"wire\": \"{}\", \"normative_verdict\": \"reject\", \"runtime_verdict\": \"reject_oversize\"}}\n  ]\n}}\n",
         MAX_FRAME_PAYLOAD,
-        RUNTIME_HEADROOM,
+        RUNTIME_CAP,
         normative_over.len() - 3,
         hex(&normative_over),
         runtime_over.len() - 3,
@@ -1175,16 +1175,14 @@ mod tests {
         assert_eq!(200u8.min(L_MAX), L_MAX);
     }
 
-    /// The frozen logical payload cap and the receive-side AEAD headroom are
-    /// intentionally tested separately.  A 4097-byte logical payload is
-    /// over doc 10's 4096-byte limit but still fits this implementation's
-    /// 4128-byte encrypted-envelope allowance; 4129 bytes must be rejected by
-    /// the production incremental reader before a buffer can grow.
+    /// The frozen logical payload and receive-envelope caps are both 4096
+    /// bytes.  Both one-byte-over and substantially-over inputs must be
+    /// rejected before the incremental reader can grow a buffer.
     #[test]
     fn oversized_envelope_vectors_pin_normative_and_runtime_caps() {
         let logical_over = raw_envelope(FT_BUNDLE, MAX_FRAME_PAYLOAD + 1, 0xa1);
         assert_eq!(logical_over.len() - 3, MAX_FRAME_PAYLOAD + 1);
-        assert!(read_envelope(&logical_over).unwrap().is_some(), "runtime headroom should accept 4097 bytes");
+        assert_eq!(read_envelope(&logical_over), Err(WireError::Oversize));
 
         let runtime_over = raw_envelope(FT_BUNDLE, mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 1, 0xa2);
         assert_eq!(

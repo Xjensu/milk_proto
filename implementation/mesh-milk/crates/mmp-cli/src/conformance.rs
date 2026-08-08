@@ -604,17 +604,17 @@ fn envelope_reader_rejects_truncation_and_trailing_bytes() {
 }
 
 #[test]
-fn oversized_envelope_vector_records_normative_cap_and_runtime_headroom() {
+fn oversized_envelope_vector_records_normative_and_runtime_cap() {
     let json = vector("envelope_oversize_negative.json");
     let payload_lengths = json_all_u64(&json, "payload_len");
     let wires = json_all_strings(&json, "wire");
     let normative = json_all_strings(&json, "normative_verdict");
     let runtime = json_all_strings(&json, "runtime_verdict");
     assert_eq!(json_u64(&json, "normative_frame_payload_cap"), 4096);
-    assert_eq!(json_u64(&json, "runtime_envelope_payload_cap"), 4128);
+    assert_eq!(json_u64(&json, "runtime_envelope_payload_cap"), 4096);
     assert_eq!(payload_lengths, vec![4097, 4129]);
     assert_eq!(normative, vec!["reject", "reject"]);
-    assert_eq!(runtime, vec!["accept_headroom", "reject_oversize"]);
+    assert_eq!(runtime, vec!["reject_oversize", "reject_oversize"]);
 
     for (index, wire_hex) in wires.iter().enumerate() {
         let wire = decode_hex("wire", wire_hex);
@@ -623,8 +623,7 @@ fn oversized_envelope_vector_records_normative_cap_and_runtime_headroom() {
         assert_eq!(wire[2], mmp_types::frame::FT_BUNDLE);
         assert_eq!(read_envelope_normative(&wire), Err("payload exceeds doc 10 logical cap"));
         // The independent structural reader accepts both byte streams; the
-        // production reader's separate implementation headroom is exercised
-        // below in the production-codec test.
+        // production reader must reject them at the frozen cap boundary.
         assert!(read_envelope_independent(&wire).is_ok());
         assert!(payload_lengths[index] > 4096);
     }

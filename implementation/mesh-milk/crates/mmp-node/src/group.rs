@@ -63,10 +63,17 @@ impl GroupState {
         self.epoch
     }
 
-    pub fn learn_remote(&mut self, member: NodeId, dist: &SenderKeyDist) {
+    /// Learn a sender-key distribution once. Replacing an existing receiver
+    /// chain for the same `(member, epoch)` would reset its replay window and
+    /// permit an already-seen group message to be accepted again.
+    pub fn learn_remote(&mut self, member: NodeId, dist: &SenderKeyDist) -> bool {
+        if self.dists.contains_key(&(member, dist.epoch)) {
+            return false;
+        }
         self.remotes
             .insert((member, dist.epoch), RemoteSenderKey::from_dist(dist, RATCHET_WINDOW));
         self.dists.insert((member, dist.epoch), dist.clone());
+        true
     }
 
     /// Persistence encoding (mmp-store snapshot, handbook §4.3 step 2):

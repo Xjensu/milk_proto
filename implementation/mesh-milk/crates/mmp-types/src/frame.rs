@@ -460,6 +460,9 @@ impl Frame {
     /// inverse of [`Frame::typ`] + [`Frame::encode_payload`]. Rejects any
     /// `typ` not among the `FT_*` constants.
     pub fn decode_payload(typ: u8, payload: &[u8]) -> Result<Frame, WireError> {
+        if payload.len() > MAX_FRAME_PAYLOAD {
+            return Err(WireError::Oversize);
+        }
         let mut r = Reader::new(payload);
         let frame = match typ {
             FT_HS => Frame::Hs(payload.to_vec()),
@@ -578,9 +581,11 @@ impl Frame {
     }
 }
 
-/// Envelope cap on the wire: logical payload cap + AEAD tag headroom for the
-/// post-handshake channel (frames after HS travel encrypted, doc 10 §2).
-pub const MAX_ENVELOPE_PAYLOAD: usize = MAX_FRAME_PAYLOAD + 32;
+/// Envelope cap on the wire. The frozen format uses one 4096-byte cap for
+/// every envelope payload, including post-handshake ciphertext (doc 10 §2).
+/// Noise's 16-byte AEAD tag is accounted for by the outbound plaintext budget
+/// rather than by widening this wire cap.
+pub const MAX_ENVELOPE_PAYLOAD: usize = MAX_FRAME_PAYLOAD;
 
 /// Incremental envelope reader for a byte stream. Returns `Ok(None)` while the
 /// frame is incomplete; the caller's reassembly buffer is pre-allocated to the

@@ -2,10 +2,9 @@
 
 ## Checkpoint
 
-This checkpoint is on commit `7f29d7d` (`fix(mmp-core): enforce outbound frame
-caps`). The frozen `specification/` directory was not modified.
-The implementation changes are intentionally limited to deterministic test
-vectors, test-only readers, and their documentation.
+This checkpoint records the strict-cap and sender-key provenance hardening
+following commit `7f29d7d` (`fix(mmp-core): enforce outbound frame caps`). The
+frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -23,7 +22,14 @@ Recent focused commits, oldest first:
   claims, group blobs, replay state, and receipt suppression state.
 - `7f29d7d` — runtime outbound frame/envelope cap checks in `SessionEngine`,
   preventing release builds from emitting locally generated oversized frames;
-  the 4096-vs-4128 wire-policy discrepancy remains deliberately unresolved.
+  The receive framing, post-decrypt validation, and `Frame::decode_payload`
+  paths now reject payloads above the frozen 4096-byte cap. The 16-byte Noise
+  AEAD tag therefore leaves a 4080-byte maximum encrypted application payload.
+- follow-up group hardening binds each direct sender-key `member` to the
+  authenticated origin, rejects stale/non-member distributions, and suppresses
+  duplicate `(member, epoch)` receiver-chain resets. Admin forwarding was
+  removed because the frozen sender-key record has no provenance proof for
+  another member.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -40,8 +46,8 @@ have artifact/API bridge checks rather than a turnkey consuming application.
 - all nine registered signing domains and their full cross-verification matrix;
 - lifetime-reset and budget-clamp invariants;
 - unknown-critical, out-of-order, and duplicate TLVs;
-- the normative 4096-byte logical frame cap versus the implementation's
-  4128-byte encrypted-envelope headroom.
+- the normative 4096-byte logical frame and encrypted-envelope cap, with
+  4080-byte maximum application plaintext before the Noise tag.
 - independent Beacon and frame-payload grammar checks;
 - `coverage.json`, mapping all committed artifacts to requirement IDs, source
   sections, and verification evidence.
@@ -52,7 +58,8 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 26 `mmp-cli` tests and 31 `mmp-core` tests.
+The latest focused run passed 26 `mmp-cli`, 31 `mmp-core`, 42 `mmp-types`, and
+26 `mmp-node` tests.
 Workspace clippy with
 `-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
 workspace test matrix also passed during this checkpoint. Rustfmt could not be
@@ -77,36 +84,33 @@ cargo run -p layer-check
 These are implementation/specification discrepancies, not silent protocol
 changes:
 
-1. Document 10's logical frame cap is 4096 bytes, while the current runtime
-   `MAX_ENVELOPE_PAYLOAD` is 4128 bytes to leave room for an AEAD tag. The
-   vector records 4097 as normative-reject/runtime-accept and 4129 as runtime
-   reject. A production decision is still required: make runtime admission
-   strictly 4096, or obtain an explicit specification revision.
-2. `SigDomain::GroupMsg` is used by the current class-2 implementation but is
+1. `SigDomain::GroupMsg` is used by the current class-2 implementation but is
    not one of the nine registered document-10 domains. It is excluded from the
    9×9 matrix and remains provisional.
-3. Class-4 Merkle-path framing is an implementation extension beyond the
+2. Class-4 Merkle-path framing is an implementation extension beyond the
    frozen class-4 description.
-4. Class-5 `AnnouncementBody` carries a `suite` byte required by the current
+3. Class-5 `AnnouncementBody` carries a `suite` byte required by the current
    document-18 signing preimage but omitted from the frozen document-10
-   listing. The vector is explicitly marked provisional.
+    listing. The vector is explicitly marked provisional.
+4. Group bootstrap still uses the authenticated peer as a trust-on-first-use
+   inviter because the frozen sender-key record has no admin-signed membership
+   envelope. The candidate control schema remains quarantined; this is a
+   documented residual risk, not a specification edit.
 
 Do not “fix” these by editing `specification/` during routine implementation.
 Record evidence and obtain a protocol decision first.
 
 ## Highest-priority remaining work
 
-1. Decide and implement the 4096/4128 admission policy after a specification
-   review; add an interoperability regression test for the chosen behavior.
-2. Run the manual BLE procedure on two Linux PCs. The current Windows host has
+1. Run the manual BLE procedure on two Linux PCs. The current Windows host has
    a working Bluetooth adapter but no usable BlueZ peripheral path, so this
    hardware gate cannot be executed here. Mobile work currently stops
    at building and exercising the FFI artifacts until a real Android/iOS host
    application is supplied.
-3. Keep the candidate group-control implementation quarantined until a
+2. Keep the candidate group-control implementation quarantined until a
    normative control schema/domain decision resolves the findings in
    `docs/GROUP_CONTROL_SECURITY_AUDIT.md`.
-4. Add independent cryptographic/payload vectors for the remaining opaque HS,
+3. Add independent cryptographic/payload vectors for the remaining opaque HS,
    class-1, and class-2 interiors only after their normative grammar and key
    context are available.
 

@@ -78,3 +78,21 @@ If a protocol amendment is approved, implement in this order:
 
 Until those decisions exist, changing the specification or promoting the
 candidate code would create a second, incompatible protocol surface.
+
+## Bounded production-path hardening
+
+The frozen pairwise sender-key path remains in use, but the following
+fail-closed checks are now implemented in `mmp-node` without promoting the
+candidate control schema:
+
+- the body `member` must equal the authenticated direct-bundle origin;
+- an unknown group may bootstrap only from an authenticated epoch-1 own-key
+  distribution (the current wire format has no admin signature to authorize
+  anything stronger);
+- removed/non-member origins and stale epochs are rejected; and
+- a `(member, epoch)` distribution is accepted once, preventing receiver-chain
+  reset on duplicate delivery.
+
+Admin-signed membership authorization and a bounded unknown-group admission
+policy remain open protocol work. They require a normative control envelope and
+registered signing domain, so the specification is intentionally unchanged.

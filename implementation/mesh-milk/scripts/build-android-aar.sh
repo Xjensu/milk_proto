@@ -24,6 +24,25 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 OUT_DIR="${1:-mobile-artifacts/android}"
 STAGE="$OUT_DIR/.stage"
+
+echo "==> Checking Android packaging prerequisites"
+command -v cargo >/dev/null 2>&1 || { echo "error: cargo is required" >&2; exit 1; }
+command -v zip >/dev/null 2>&1 || { echo "error: zip is required" >&2; exit 1; }
+cargo ndk --version >/dev/null 2>&1 || {
+    echo "error: cargo-ndk is required (install with: cargo install cargo-ndk)" >&2
+    exit 1
+}
+if [[ -z "${ANDROID_NDK_HOME:-}" || ! -d "$ANDROID_NDK_HOME" ]]; then
+    echo "error: ANDROID_NDK_HOME must point to an installed Android NDK" >&2
+    exit 1
+fi
+for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android; do
+    rustup target list --installed | grep -Fxq "$target" || {
+        echo "error: missing Rust target $target (install with: rustup target add $target)" >&2
+        exit 1
+    }
+done
+
 rm -rf "$STAGE"
 mkdir -p "$STAGE/jni/arm64-v8a" "$STAGE/jni/armeabi-v7a" "$STAGE/jni/x86_64"
 

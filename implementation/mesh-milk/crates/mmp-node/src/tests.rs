@@ -9,6 +9,7 @@ use mmp_types::bundle::{class, prio};
 use mmp_types::consts::FRIENDSHIP_TTL_MS;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
+use mmp_types::payload::apptype;
 
 use crate::{DeliveryState, Event, Node, SendError, Tier};
 
@@ -199,6 +200,48 @@ fn spray_budget_flows_and_message_marked_in_mesh() {
 }
 
 #[test]
+fn sender_key_member_must_match_authenticated_origin() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    introduce(&mut alice, &mut bob);
+
+    let gid = alice.create_group();
+    let dist = alice.core.groups.get(&gid).unwrap().local.dist().encode();
+    let mut forged = Vec::with_capacity(16 + dist.len());
+    forged.extend_from_slice(&bob.node_id().0);
+    forged.extend_from_slice(&dist);
+    alice.core.send_app(&bob.node_id(), apptype::SENDER_KEY, &forged).unwrap();
+
+    contact(&mut alice, &mut bob, 91, 910_000);
+    let events = drain(&mut bob);
+    assert!(!bob.core.groups.contains_key(&gid), "forged sender-key must not auto-adopt a group");
+    assert!(!events.iter().any(|event| matches!(event, Event::GroupInvite { gid: g, .. } if *g == gid)));
+}
+
+#[test]
+fn removed_member_cannot_reintroduce_stale_sender_key() {
+    let mut alice = node(11);
+    let mut bob = node(12);
+    introduce(&mut alice, &mut bob);
+
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).unwrap();
+    contact(&mut alice, &mut bob, 92, 920_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let old_dist = bob.core.groups.get(&gid).unwrap().local.dist().encode();
+    alice.group_remove(&gid, &bob.node_id()).unwrap();
+    let mut stale = Vec::with_capacity(16 + old_dist.len());
+    stale.extend_from_slice(&bob.node_id().0);
+    stale.extend_from_slice(&old_dist);
+    bob.core.send_app(&alice.node_id(), apptype::SENDER_KEY, &stale).unwrap();
+
+    contact(&mut bob, &mut alice, 93, 930_000);
+    assert!(!alice.group_members(&gid).contains(&bob.node_id()));
+}
+
+#[test]
 fn group_create_invite_and_message() {
     let mut alice = node(1);
     let mut bob = node(2);
@@ -214,8 +257,8 @@ fn group_create_invite_and_message() {
     // Dist messages travel as ordinary class-1 bundles: one contact each.
     contact(&mut alice, &mut bob, 1, 10_000);
     contact(&mut alice, &mut carol, 2, 20_000);
-    // Bob's reciprocal dist reached Alice; Alice (admin) forwards Bob's key to
-    // Carol on the next contact.
+    // Each member distributes only its own key. No sender-key provenance is
+    // inferred from an admin relay.
     contact(&mut alice, &mut carol, 3, 30_000);
     contact(&mut alice, &mut bob, 4, 40_000);
 

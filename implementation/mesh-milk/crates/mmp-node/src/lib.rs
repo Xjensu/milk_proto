@@ -937,34 +937,15 @@ impl Node {
         gid
     }
 
-    /// Invite `peer`: add to the member set and ship them every sender key we
-    /// hold (ours + known members') through the pairwise channel.
+    /// Invite `peer`: add it to the member set and ship our sender key through
+    /// the pairwise channel. Each member distributes only its own key; a
+    /// recipient must never trust a relay to assert another member's origin.
     pub fn group_invite(&mut self, gid: &Id16, peer: &NodeId) -> Result<(), SendError> {
-        let me = self.core.node_id;
         {
             let gs = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
             gs.add_member(*peer);
         }
         self.core.send_own_dist(gid, peer)?;
-        // Forward the dists of every other member we know (admin duty).
-        let known: Vec<(NodeId, Vec<u8>)> = self
-            .core
-            .groups
-            .get(gid)
-            .map(|gs| {
-                gs.dists
-                    .iter()
-                    .filter(|((m, e), _)| *m != *peer && *m != me && *e == gs.epoch)
-                    .map(|((m, _), dist)| (*m, dist.encode()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        for (member, dist) in known {
-            let mut body = Vec::with_capacity(16 + dist.len());
-            body.extend_from_slice(&member.0);
-            body.extend_from_slice(&dist);
-            let _ = self.core.send_app(peer, apptype::SENDER_KEY, &body);
-        }
         Ok(())
     }
 
@@ -1616,34 +1597,43 @@ impl NodeCore {
         let member = Id16(member);
         let Ok(dist) = SenderKeyDist::decode(&body[16..]) else { return };
         let gid = dist.gid;
-        let created = !self.groups.contains_key(&gid);
+        // The outer direct bundle authenticates `from`; the body member is
+        // merely an assertion and must be exactly that authenticated sender.
+        // Without this binding, a peer could inject or relay a different
+        // member's symmetric chain seed and reset receiver state.
+        if member != *from || dist.epoch == 0 {
+            return;
+        }
         let me = self.node_id;
-        let gs = self.groups.entry(gid).or_insert_with(|| {
-            // Invited: adopt the group; the inviter is admin (v1 immutable set).
-            GroupState::create(&mut self.rng, gid, me, false)
-        });
-        gs.add_member(member);
-        gs.learn_remote(member, &dist);
+        let created = !self.groups.contains_key(&gid);
         if created {
+            // Bootstrap is TOFU in the current sender-key wire format: only
+            // epoch one may create a local group, and the authenticated
+            // inviter becomes the initial remote member. A future protocol
+            // revision must carry the admin-signed membership proof required
+            // by doc 07 before this admission can be made stronger.
+            if dist.epoch != 1 {
+                return;
+            }
+            let mut gs = GroupState::create(&mut self.rng, gid, me, false);
+            gs.add_member(*from);
+            if !gs.learn_remote(*from, &dist) {
+                return;
+            }
+            self.groups.insert(gid, gs);
             self.events.push_back(Event::GroupInvite { gid, from: *from });
+        } else {
+            let Some(gs) = self.groups.get_mut(&gid) else { return };
+            // A removed/non-member peer cannot reintroduce sender-key state.
+            if !gs.members.contains(from) || dist.epoch < gs.epoch {
+                return;
+            }
+            if !gs.learn_remote(*from, &dist) {
+                return;
+            }
         }
         // Reciprocate our own sender key so the sender can read us.
         let _ = self.send_own_dist(&gid, from);
-        // Admin duty: forward the new member's dist to everyone else.
-        let (is_admin, others) = {
-            let gs = self.groups.get(&gid).expect("just inserted");
-            (gs.is_admin, gs.members.members())
-        };
-        if is_admin {
-            let mut fwd = Vec::with_capacity(16 + body.len() - 16);
-            fwd.extend_from_slice(&member.0);
-            fwd.extend_from_slice(&body[16..]);
-            for m in others {
-                if m != me && m != member && m != *from {
-                    let _ = self.send_app(&m, apptype::SENDER_KEY, &fwd);
-                }
-            }
-        }
     }
 
     fn deliver_group(&mut self, bundle: &Bundle) {

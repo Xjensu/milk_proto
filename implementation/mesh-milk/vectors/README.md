@@ -97,11 +97,10 @@ Negative (each states the rejection/invariant it pins):
 - `budget_clamp_negative.json` — a budget grant over `L_MAX` is clamped on
   receive (AUDIT F3).
 - `envelope_oversize_negative.json` — two deterministic length-prefix cases:
-  doc 10's normative logical payload cap is 4096 bytes, while the current
-  receive parser permits 4128 bytes (`MAX_ENVELOPE_PAYLOAD`) for encrypted
-  AEAD headroom. The 4097-byte case is rejected by the normative independent
-  reader but accepted by the runtime allowance; 4129 bytes is rejected by
-  both.
+  the frozen logical and runtime envelope payload cap is 4096 bytes. Both
+  4097 and 4129-byte prefixes are rejected before buffer growth. Noise's
+  16-byte AEAD tag is accounted for by the outbound encrypted-plaintext
+  budget (4080 bytes), not by widening the envelope cap.
 - `bundle_tlv_negative.json` — production and independent readers reject an
   unknown critical TLV, out-of-order types, and duplicate types. The malformed
   extension runs retain otherwise valid outer bundle framing so rejection is
