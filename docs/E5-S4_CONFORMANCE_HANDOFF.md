@@ -535,8 +535,11 @@ BundleID delivery tracking, and the current prekey secret batch. Its tests
 cover byte-stable round-trip plus malformed-input atomicity and busy-restore
 rejection. This is an encoding seam only: it is not written to `MMPSNAP2`, not
 passed to UniFFI/React Native, and not yet wrapped by a platform keystore.
-Group sender-key ratchets, OTK consumption/tombstones, durable generation, and
-crash-atomic provider commit remain explicit restart-continuity gates.
+Group sender-key ratchets, durable generation, and crash-atomic provider commit
+remain explicit restart-continuity gates. The prekey aggregate now includes
+provider-local generation/expiry metadata and idempotent OTK-consumption
+tombstones; enforcing expiry/rotation still requires the trusted-clock and
+native-provider work below.
 
 Commit `9357a49` adds the Rust-internal `SnapshotVault` seam. Its candidate
 record binds pairwise/prekey coverage, identity, node ID, and sorted

@@ -34,6 +34,13 @@ mutates anything. Restore is refused while a live session or queued wire
 output exists. The aggregate is still plaintext by design and must be sealed
 under the envelope above before any persistence.
 
+The prekey component now uses the metadata-bearing provider-local state codec
+added in the follow-up implementation: it carries the private SPK/OTK batch,
+generation, local expiry metadata, and idempotent OTK-consumption tombstones.
+The frozen signed prekey claim grammar and duplicate-replay behavior are
+unchanged; expiry enforcement and key rotation still require a trusted clock
+and an explicit lifecycle policy.
+
 This slice deliberately does not claim complete Node restart continuity. Group
 sender-key ratchets, one-time-prekey consumption/tombstone metadata, durable
 generation/rollback state, provider transactions, and crash recovery remain
