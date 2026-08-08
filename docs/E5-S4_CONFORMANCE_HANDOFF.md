@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `d420934` (`fix(mesh-milk): bound group snapshot
-decoders`). The frozen `specification/` directory was not modified.
+This checkpoint is commit `31a1106` (`test(mmp-node): validate group snapshot
+trailing bytes`). The frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -43,6 +43,9 @@ Recent focused commits, oldest first:
 - `d420934` — group snapshot hardening: OrSet member/tag/tombstone counts are
   checked against remaining bytes before loops, and GroupState length arithmetic
   is checked before slicing, including the 32-bit overflow path.
+- `31a1106` — corrected the GroupState trailing-byte regression fixture to use
+  the valid eight-byte empty OR-Set encoding, so the test exercises the exact
+  record-length check rather than an earlier malformed-inner-record path.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -89,6 +92,11 @@ integration tests, and `mmp-store`'s 7 tests after the build cache was cleaned
 to recover 7.1 GiB of disk space.
 The group-decoder follow-up passed 34 `mmp-core` unit tests, 27 `mmp-node`
 unit tests, and focused clippy for both crates.
+The final post-follow-up workspace matrix passed with 34 `mmp-core`, 4
+`mmp-core` persistence integration, 27 `mmp-node`, 40 `mmp-types`, and 3
+`mmp-types` parser/manifest integration tests; `mmp-sim` again passed 9 active
+tests with 4 intentionally ignored cases. Workspace clippy and `layer-check`
+also passed.
 
 Regenerate vectors with:
 
