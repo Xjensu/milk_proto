@@ -189,6 +189,8 @@ impl PrekeyStore {
             || self.one_time.len() > u16::MAX as usize
             || self.consumed.len() > PREKEY_BATCH
             || self.generation == 0
+            || self.spk_not_after_ms == u64::MAX
+            || self.otk_not_after_ms == u64::MAX
         {
             return Err(CryptoError::Snapshot);
         }
@@ -405,11 +407,86 @@ mod lifecycle_tests {
     #[test]
     fn state_snapshot_rejects_unsorted_or_unknown_tombstones() {
         let mut rng = StdRng::seed_from_u64(42);
-        let original = PrekeyStore::generate(&mut rng, 2);
+        let mut original = PrekeyStore::generate(&mut rng, 4);
+        original.mark_otk_consumed(0).unwrap();
+        original.mark_otk_consumed(1).unwrap();
         let mut snapshot = original.snapshot_state().unwrap().to_vec();
         // Header: version + SPK + generation + two expiries + counts.
-        snapshot[59..61].copy_from_slice(&1u16.to_le_bytes());
-        snapshot.extend_from_slice(&2u16.to_le_bytes());
+        const HEADER: usize = STATE_SNAPSHOT_HEADER_LEN;
+        const RECORD: usize = SNAPSHOT_RECORD_LEN;
+        let tombstones = HEADER + 4 * RECORD;
+        snapshot[tombstones..tombstones + 2].copy_from_slice(&1u16.to_le_bytes());
+        snapshot[tombstones + 2..tombstones + 4].copy_from_slice(&0u16.to_le_bytes());
         assert!(PrekeyStore::restore_state(&snapshot).is_err());
+
+        let mut unknown = original.snapshot_state().unwrap().to_vec();
+        unknown[tombstones..tombstones + 2].copy_from_slice(&4u16.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&unknown).is_err());
+
+        let mut duplicate = original.snapshot_state().unwrap().to_vec();
+        duplicate[tombstones + 2..tombstones + 4].copy_from_slice(&0u16.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&duplicate).is_err());
+    }
+
+    #[test]
+    fn state_snapshot_rejects_every_truncation_and_trailing_bytes() {
+        let mut rng = StdRng::seed_from_u64(43);
+        let mut original = PrekeyStore::generate(&mut rng, 3);
+        original.mark_otk_consumed(1).unwrap();
+        original.set_expiry(10_000, 20_000).unwrap();
+        let snapshot = original.snapshot_state().unwrap();
+
+        for len in 0..snapshot.len() {
+            assert!(
+                PrekeyStore::restore_state(&snapshot[..len]).is_err(),
+                "truncated state at {len} bytes must be rejected"
+            );
+        }
+        for suffix in [0u8, 1, u8::MAX] {
+            let mut trailing = snapshot.to_vec();
+            trailing.push(suffix);
+            assert!(PrekeyStore::restore_state(&trailing).is_err());
+        }
+    }
+
+    #[test]
+    fn state_snapshot_rejects_count_amplification_before_allocation() {
+        let mut rng = StdRng::seed_from_u64(44);
+        let original = PrekeyStore::generate(&mut rng, 2);
+        let snapshot = original.snapshot_state().unwrap();
+
+        let mut key_count = snapshot.to_vec();
+        key_count[57..59].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&key_count).is_err());
+
+        let mut tombstone_count = snapshot.to_vec();
+        tombstone_count[59..61].copy_from_slice(&u16::MAX.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&tombstone_count).is_err());
+    }
+
+    #[test]
+    fn state_snapshot_rejects_invalid_generation_and_expiry_values() {
+        let mut rng = StdRng::seed_from_u64(45);
+        let original = PrekeyStore::generate(&mut rng, 2);
+        let snapshot = original.snapshot_state().unwrap();
+
+        let mut zero_generation = snapshot.to_vec();
+        zero_generation[33..41].copy_from_slice(&0u64.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&zero_generation).is_err());
+
+        let mut max_spk_expiry = snapshot.to_vec();
+        max_spk_expiry[41..49].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&max_spk_expiry).is_err());
+
+        let mut max_otk_expiry = snapshot.to_vec();
+        max_otk_expiry[49..57].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&max_otk_expiry).is_err());
+
+        let mut invalid_live = PrekeyStore::generate(&mut rng, 1);
+        invalid_live.generation = 0;
+        assert!(invalid_live.snapshot_state().is_err());
+        invalid_live.generation = 1;
+        invalid_live.spk_not_after_ms = u64::MAX;
+        assert!(invalid_live.snapshot_state().is_err());
     }
 }
