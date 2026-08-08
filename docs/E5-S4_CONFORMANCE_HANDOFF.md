@@ -42,6 +42,21 @@ roots deliberately; this preserves receipt and ratchet integrity, while
 restart/rekey recovery remains an availability gate for a future live-session
 implementation.
 
+The first-contact ordering boundary is now explicit in commit `c585978`:
+after an async (prekey or sealed) root-establishing send, application sends for
+that conversation return `ConversationPending` until the authenticated
+delivery receipt arrives. This prevents a later direct bundle from overtaking
+the root in a DTN queue. The pending marker expires with the first bundle, and
+receipt handling also clears markers for first-contact bundles that do not have
+ordinary `SentMessage` tracking (for example, an own sender-key distribution).
+Oversized admission is preflighted against the canonical wire length before
+ephemeral material, sender-chain indices, or conversation state are consumed;
+the regression test proves that a rejected oversized first send can be retried
+as a valid prekey bundle. File resend/dedup coverage now performs the required
+receipt contact before minting its second manifest. This is an availability
+tradeoff, not a wire change: callers should retry `ConversationPending` after
+delivery evidence or bundle expiry.
+
 Verification at this checkpoint:
 
 ```text
