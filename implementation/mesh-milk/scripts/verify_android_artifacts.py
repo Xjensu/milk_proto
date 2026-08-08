@@ -38,6 +38,12 @@ REQUIRED_ABI_LIBRARIES = (
     "jni/armeabi-v7a/libmmp_ffi.so",
     "jni/x86_64/libmmp_ffi.so",
 )
+_ALLOWED_AAR_DIRECTORIES = {
+    "jni",
+    "jni/arm64-v8a",
+    "jni/armeabi-v7a",
+    "jni/x86_64",
+}
 _WINDOWS_ABSOLUTE = re.compile(r"^[A-Za-z]:/")
 
 
@@ -98,9 +104,13 @@ def _verify_aar(archive_path: Path) -> list[str]:
         if "AndroidManifest.xml" not in members:
             violations.append("AAR is missing AndroidManifest.xml")
         else:
-            manifest = archive.read(members["AndroidManifest.xml"])  # type: ignore[arg-type]
-            if not manifest:
-                violations.append("AAR AndroidManifest.xml is empty")
+            manifest_info = members["AndroidManifest.xml"]
+            if _is_directory(manifest_info):
+                violations.append("AAR AndroidManifest.xml is a directory")
+            else:
+                manifest = archive.read(manifest_info)  # type: ignore[arg-type]
+                if not manifest:
+                    violations.append("AAR AndroidManifest.xml is empty")
 
         for path in REQUIRED_ABI_LIBRARIES:
             info = members.get(path)
@@ -111,12 +121,14 @@ def _verify_aar(archive_path: Path) -> list[str]:
             elif not archive.read(info):  # type: ignore[arg-type]
                 violations.append(f"AAR native library is empty: {path}")
 
-        classes_jars = sorted(
-            name for name, info in members.items()
-            if not _is_directory(info) and PurePosixPath(name).name == "classes.jar"
-        )
-        for name in classes_jars:
-            violations.append(f"native-only AAR must not contain classes.jar: {name}")
+        required = set(REQUIRED_ABI_LIBRARIES) | {"AndroidManifest.xml"}
+        for name, info in members.items():
+            if name in required or (_is_directory(info) and name in _ALLOWED_AAR_DIRECTORIES):
+                continue
+            if not _is_directory(info) and PurePosixPath(name).name == "classes.jar":
+                violations.append(f"native-only AAR must not contain classes.jar: {name}")
+            else:
+                violations.append(f"unexpected member in native-only AAR: {name}")
     finally:
         archive.close()
     return violations

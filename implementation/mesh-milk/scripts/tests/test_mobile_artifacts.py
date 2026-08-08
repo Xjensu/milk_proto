@@ -74,6 +74,19 @@ class MobileArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(aar, bindings)
             self.assertTrue(any("classes.jar" in item for item in violations))
 
+    def test_unexpected_native_aar_payload_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            aar = directory / "mmp-ffi.aar"
+            bindings = directory / "bindings.zip"
+            members = _valid_aar_members()
+            members["META-INF/old-signature.SF"] = b"stale payload"
+            _write_zip(aar, members)
+            _write_zip(bindings, {"mmp_ffi.kt": _kotlin()})
+
+            violations = VERIFY.verify_artifacts(aar, bindings)
+            self.assertTrue(any("unexpected member" in item for item in violations))
+
     def test_zip_path_traversal_is_rejected_before_extraction(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)

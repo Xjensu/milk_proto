@@ -72,6 +72,17 @@ echo "==> Checking generated Kotlin binding API and secret boundary"
 python scripts/check_mobile_binding.py kotlin "$STAGE/kotlin-bindings"
 
 mkdir -p "$OUT_DIR"
+# `zip` updates an existing archive in place and retains members that are not
+# present in the new input set.  Remove prior outputs so a rerun cannot ship a
+# stale ABI, classes.jar, or other payload from an older build.  Refuse a
+# non-file collision rather than allowing a surprising recursive operation.
+for artifact in "$OUT_DIR/mmp-ffi.aar" "$OUT_DIR/mmp-ffi-kotlin-bindings.zip"; do
+    if [[ -e "$artifact" && ! -f "$artifact" ]]; then
+        echo "error: output path is not a regular file: $artifact" >&2
+        exit 1
+    fi
+    rm -f "$artifact"
+done
 ( cd "$STAGE" && zip -rq "../mmp-ffi.aar" AndroidManifest.xml jni )
 ( cd "$STAGE/kotlin-bindings" && zip -rq "../../mmp-ffi-kotlin-bindings.zip" . )
 echo "==> Verifying native-only AAR and Kotlin source artifact"
