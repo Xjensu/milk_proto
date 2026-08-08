@@ -200,6 +200,11 @@ and Linux/BlueZ validation gate.
 The peripheral lifecycle tests additionally cover duplicate endpoints,
 direction-specific replacement, reconnect generation non-reuse, and delayed
 opposite-direction callbacks. They do not substitute for a Linux BlueZ build.
+After `a4ecfb8`, the full workspace test matrix completed with no failures
+(four simulator/deployment cases intentionally ignored), workspace clippy and
+`layer-check` remained clean, and the Linux-target check stopped in
+`libdbus-sys` before Rust compilation because this Windows host has no
+configured Linux pkg-config/sysroot.
 
 Regenerate vectors with:
 
