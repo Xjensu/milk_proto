@@ -828,15 +828,17 @@ mod rx_bound_tests {
     use alloc::vec;
     use mmp_types::frame::{FT_CREDIT, FT_HS, FT_ID_PROOF, FT_SUMMARY};
 
-    struct EmptyIds;
+    struct EmptyIds {
+        ids: Vec<Id16>,
+    }
 
     impl IdSource for EmptyIds {
         fn ids_in(&mut self, _domain: u8, _lo: &Id16, _hi: &Id16) -> Vec<Id16> {
-            Vec::new()
+            self.ids.iter().filter(|id| **id >= *_lo && **id <= *_hi).copied().collect()
         }
 
-        fn has(&mut self, _id: &Id16) -> bool {
-            false
+        fn has(&mut self, id: &Id16) -> bool {
+            self.ids.binary_search(id).is_ok()
         }
     }
 
@@ -888,7 +890,11 @@ mod rx_bound_tests {
     }
 
     fn host() -> EmptyHost {
-        EmptyHost { ids: EmptyIds, loads: 0, load_bytes: None, wants_calls: 0 }
+        EmptyHost { ids: EmptyIds { ids: Vec::new() }, loads: 0, load_bytes: None, wants_calls: 0 }
+    }
+
+    fn host_with_ids(ids: Vec<Id16>) -> EmptyHost {
+        EmptyHost { ids: EmptyIds { ids }, loads: 0, load_bytes: None, wants_calls: 0 }
     }
 
     #[test]
@@ -906,6 +912,45 @@ mod rx_bound_tests {
         assert!(!b.accepts_recon_init(1), "a later domain cannot replace an unresolved domain");
         b.recon.as_mut().expect("reconciler installed").open = 0;
         assert!(b.accepts_recon_init(1), "the next domain is accepted after completion");
+    }
+
+    #[test]
+    fn session_waits_for_terminal_child_before_advancing_domain() {
+        let local = identity(3);
+        let peer = identity(4);
+        let hello = hello();
+        let local_id = Id16([0x42; 16]);
+        let mut session = SessionEngine::initiator(&local, &hello, 1000).unwrap();
+        let mut host = host_with_ids(vec![local_id]);
+        session.phase = Phase::Established;
+        session.peer_node = Some(peer.node_id());
+
+        let mut recon = Reconciler::new(DOMAINS[0]);
+        let Frame::ReconInit { range: full, .. } = recon.init_frame(host.ids(&peer.node_id())) else {
+            panic!("the initial frame must be a range");
+        };
+        session.recon = Some(recon);
+
+        let partial = Range { lo: local_id, hi: local_id, count: 0, fp: crate::fingerprint(&[]) };
+        session.on_established(
+            Frame::ReconRange { domain: DOMAINS[0], ranges: vec![partial] },
+            &mut host,
+        );
+        assert_eq!(session.domain_cursor, 0, "a partial child must not advance the domain");
+        assert_eq!(session.recon.as_ref().expect("reconciler").open, 2);
+
+        session.on_established(
+            Frame::ReconIds { domain: DOMAINS[0], lo: local_id, hi: local_id, ids: Vec::new() },
+            &mut host,
+        );
+        assert_eq!(session.domain_cursor, 0, "the parent remains incomplete after one terminal child");
+        assert_eq!(session.recon.as_ref().expect("reconciler").open, 1);
+
+        session.on_established(
+            Frame::ReconRange { domain: DOMAINS[0] | DOMAIN_REPLY_FLAG, ranges: vec![full] },
+            &mut host,
+        );
+        assert_eq!(session.domain_cursor, 1, "the next domain starts only after the child and parent resolve");
     }
 
     #[test]

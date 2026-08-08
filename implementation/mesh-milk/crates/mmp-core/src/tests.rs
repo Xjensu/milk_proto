@@ -401,6 +401,14 @@ fn rbsr_ignores_unmatched_echo_without_closing_domain() {
     let init = recon.init_frame(&mut src);
     assert_eq!(recon.open, 1);
 
+    let local_id = src.ids[0];
+    let partial = Range { lo: local_id, hi: local_id, count: 0, fp: fingerprint(&[]) };
+    let response = recon.on_range(&partial, false, &mut src);
+    assert!(matches!(response.first(), Some(Frame::ReconIds { .. })));
+    assert_eq!(recon.open, 2, "a nested terminal response must remain outstanding");
+    recon.on_ids(&local_id, &local_id, &[], &mut src);
+    assert_eq!(recon.open, 1, "the terminal child resolves only after the peer answers");
+
     let forged = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 };
     assert!(recon.on_range(&forged, true, &mut src).is_empty());
     assert_eq!(recon.open, 1, "a forged echo must not resolve a different request");

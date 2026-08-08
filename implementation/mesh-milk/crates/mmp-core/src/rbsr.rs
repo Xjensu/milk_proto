@@ -12,7 +12,7 @@
 //! - An ID list for a range is answered with our own list at most once per
 //!   range (`listed` set), and always yields WANTs for the IDs we lack.
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use mmp_types::consts::{RBSR_B_F, RBSR_T_LIST};
@@ -21,6 +21,12 @@ use mmp_types::ids::Id16;
 
 /// High bit of the wire `domain` byte marks a resolution echo.
 pub const DOMAIN_REPLY_FLAG: u8 = 0x80;
+
+/// Bound the per-parent interval ledger used to prevent a single nested range
+/// from prematurely resolving a pending parent. Honest binary partitions use
+/// at most `RBSR_B_F` children; excess untrusted fragments are ignored until
+/// the session times out rather than growing memory without limit.
+const MAX_COVERAGE_INTERVALS_PER_PARENT: usize = RBSR_B_F * 4;
 
 /// `FP(range) = BLAKE3(xor_fold(ids) ‖ count)[0..8]` (doc 06 §3): a
 /// commutative (order-independent) fingerprint of a set of IDs, used to
@@ -53,6 +59,41 @@ fn id_dec(id: &Id16) -> Id16 {
     Id16::MIN
 }
 
+/// Byte-wise increment (saturating at MAX), used to check inclusive interval
+/// coverage without converting identifiers to an integer type.
+fn id_inc(id: &Id16) -> Id16 {
+    let mut b = id.0;
+    for i in (0..16).rev() {
+        if b[i] < 0xff {
+            b[i] += 1;
+            return Id16(b);
+        }
+        b[i] = 0;
+    }
+    Id16::MAX
+}
+
+/// Whether sorted inclusive intervals cover an entire parent span. Intervals
+/// are stored in a `BTreeSet`, so the scan is deterministic and naturally
+/// coalesces overlap while rejecting gaps.
+fn interval_set_covers(parent: (Id16, Id16), intervals: &BTreeSet<(Id16, Id16)>) -> bool {
+    let (parent_lo, parent_hi) = parent;
+    let mut cursor = parent_lo;
+    for (lo, hi) in intervals {
+        if *hi < cursor {
+            continue;
+        }
+        if *lo > cursor {
+            return false;
+        }
+        if *hi >= parent_hi {
+            return true;
+        }
+        cursor = id_inc(hi);
+    }
+    cursor > parent_hi
+}
+
 /// Split `[lo, hi]` into ≤ `parts` count-balanced sub-ranges of `ids`
 /// (ids are our sorted local elements within the range).
 fn split_ranges(lo: &Id16, hi: &Id16, ids: &[Id16], parts: usize) -> Vec<(Id16, Id16, Vec<Id16>)> {
@@ -83,6 +124,16 @@ fn split_ranges(lo: &Id16, hi: &Id16, ids: &[Id16], parts: usize) -> Vec<(Id16, 
     out
 }
 
+type RangeKey = (Id16, Id16, u32, u64);
+
+struct PendingState {
+    /// Child intervals observed for this outstanding range.
+    coverage: BTreeSet<(Id16, Id16)>,
+    /// A terminal `RECON_IDS` response was emitted for this range and the
+    /// peer must still answer with its corresponding list or split ranges.
+    await_terminal: bool,
+}
+
 /// One domain's reconciliation state on one side of a session.
 pub struct Reconciler {
     /// The wire domain byte this reconciler is running RBSR for.
@@ -90,10 +141,10 @@ pub struct Reconciler {
     /// Ranges we already sent our full ID list for.
     listed: BTreeSet<(Id16, Id16)>,
     /// Canonical descriptors for requests emitted by this side that are
-    /// still awaiting a peer response. Keeping descriptors rather than only
-    /// a scalar count prevents partitioned responses from leaving a parent
-    /// range permanently open and rejects unrelated echoes.
-    pending: BTreeSet<(Id16, Id16, u32, u64)>,
+    /// still awaiting a peer response. Each descriptor carries bounded
+    /// partition coverage and terminal-response state, preventing a single
+    /// nested range from resolving a parent prematurely.
+    pending: BTreeMap<RangeKey, PendingState>,
     /// Unresolved ranges we have in flight (drives domain completion).
     pub open: usize,
     /// IDs the peer has that we lack (drained by the session into WANT).
@@ -116,7 +167,7 @@ impl Reconciler {
         Reconciler {
             domain,
             listed: BTreeSet::new(),
-            pending: BTreeSet::new(),
+            pending: BTreeMap::new(),
             open: 0,
             missing: BTreeSet::new(),
         }
@@ -158,8 +209,9 @@ impl Reconciler {
             self.resolve_exact(range);
             return Vec::new();
         }
-        self.resolve_containing(&range.lo, &range.hi);
+        let has_obligation = self.containing_key(&range.lo, &range.hi).is_some();
         if our_fp == range.fp && ids.len() as u32 == range.count {
+            self.note_range_response(&range.lo, &range.hi);
             // Match → echo so the asker resolves this range.
             return alloc::vec![Frame::ReconRange {
                 domain: self.domain | DOMAIN_REPLY_FLAG,
@@ -171,10 +223,20 @@ impl Reconciler {
         // exceed MAX_FRAME_PAYLOAD and kill the session. Split whenever our
         // own set is larger than the terminal-list threshold.
         if ids.len() <= RBSR_T_LIST {
+            self.note_range_response(&range.lo, &range.hi);
+            if has_obligation {
+                self.track_terminal(&Range {
+                    lo: range.lo,
+                    hi: range.hi,
+                    count: ids.len() as u32,
+                    fp: our_fp,
+                });
+            }
             return self.list_frames(&range.lo, &range.hi, ids);
         }
         // Mismatch, local side exceeds the terminal threshold: reply with
         // OUR count-balanced splits, even if the peer advertised a small set.
+        self.note_range_response(&range.lo, &range.hi);
         let mut ranges = Vec::with_capacity(RBSR_B_F);
         for (lo, hi, sub) in split_ranges(&range.lo, &range.hi, &ids, RBSR_B_F) {
             ranges.push(Range { lo, hi, count: sub.len() as u32, fp: fingerprint(&sub) });
@@ -187,10 +249,10 @@ impl Reconciler {
     ///
     /// Pre-existing bug fixed here (found during E5-S1 blob-plane
     /// acceptance testing, not part of that story's own design): the peer
-    /// reaching a terminal list only proves THEIR side of `[lo, hi]` is small
-    /// (`on_range`'s own size check is an OR over both sides, by design —
-    /// either side alone being small ends that side's recursion). It says
-    /// nothing about how many IDs WE hold in that same range. Unconditionally
+    /// reaching a terminal list only proves THEIR side of `[lo, hi]` is small.
+    /// The responder must independently keep its own terminal list within the
+    /// wire threshold; a peer's claimed count is not a payload-size guarantee.
+    /// Unconditionally
     /// echoing `ours` back here — the previous behavior — could dump
     /// thousands of IDs into a single `Frame::ReconIds` (16 B/ID), silently
     /// exceeding `MAX_FRAME_PAYLOAD`: `debug_assert!` in `encode_payload`/
@@ -240,43 +302,87 @@ impl Reconciler {
     }
 
     fn track(&mut self, range: &Range) {
-        self.pending.insert(Self::key(range));
+        self.pending.entry(Self::key(range)).or_insert(PendingState {
+            coverage: BTreeSet::new(),
+            await_terminal: false,
+        });
         self.refresh_open();
     }
 
     fn track_all(&mut self, ranges: &[Range]) {
         for range in ranges {
-            self.pending.insert(Self::key(range));
+            self.pending.entry(Self::key(range)).or_insert(PendingState {
+                coverage: BTreeSet::new(),
+                await_terminal: false,
+            });
         }
         self.refresh_open();
     }
 
+    fn track_terminal(&mut self, range: &Range) {
+        let state = self.pending.entry(Self::key(range)).or_insert(PendingState {
+            coverage: BTreeSet::new(),
+            await_terminal: false,
+        });
+        state.await_terminal = true;
+        self.refresh_open();
+    }
+
     fn resolve_exact(&mut self, range: &Range) -> bool {
-        let removed = self.pending.remove(&Self::key(range));
+        let removed = self.pending.remove(&Self::key(range)).is_some();
         self.refresh_open();
         removed
     }
 
     fn resolve_bounds(&mut self, lo: &Id16, hi: &Id16) -> bool {
-        let key = self.pending.iter().find(|(pending_lo, pending_hi, _, _)| pending_lo == lo && pending_hi == hi).copied();
-        let removed = key.is_some_and(|key| self.pending.remove(&key));
+        let key = self
+            .pending
+            .iter()
+            .filter(|(key, _state)| key.0 == *lo && key.1 == *hi)
+            .max_by_key(|(_, state)| state.await_terminal)
+            .map(|(key, _)| *key);
+        let removed = key.is_some_and(|key| self.pending.remove(&key).is_some());
         self.refresh_open();
         removed
     }
 
-    fn resolve_containing(&mut self, lo: &Id16, hi: &Id16) -> bool {
-        let mut best: Option<(Id16, Id16, u32, u64)> = None;
-        for key in &self.pending {
+    fn containing_key(&self, lo: &Id16, hi: &Id16) -> Option<RangeKey> {
+        let mut best: Option<(RangeKey, bool)> = None;
+        for (key, state) in &self.pending {
             if key.0 <= *lo && *hi <= key.1 {
-                let better = best.is_none_or(|old| key.0 > old.0 || (key.0 == old.0 && key.1 < old.1));
+                let better = best.is_none_or(|(old, old_terminal)| {
+                    key.0 > old.0
+                        || (key.0 == old.0 && key.1 < old.1)
+                        || (key.0 == old.0 && key.1 == old.1 && state.await_terminal && !old_terminal)
+                });
                 if better {
-                    best = Some(*key);
+                    best = Some((*key, state.await_terminal));
                 }
             }
         }
-        let removed = best.is_some_and(|key| self.pending.remove(&key));
+        best.map(|(key, _)| key)
+    }
+
+    /// Record one response interval for the innermost pending obligation.
+    /// Returns the matched key, if any. A parent is retired only after the
+    /// union covers the full inclusive span and no terminal response remains.
+    fn note_range_response(&mut self, lo: &Id16, hi: &Id16) -> Option<RangeKey> {
+        let key = self.containing_key(lo, hi)?;
+        let state = self.pending.get_mut(&key)?;
+        state.await_terminal = false;
+        if !state.coverage.contains(&(*lo, *hi)) {
+            if state.coverage.len() >= MAX_COVERAGE_INTERVALS_PER_PARENT {
+                self.refresh_open();
+                return Some(key);
+            }
+            state.coverage.insert((*lo, *hi));
+        }
+        let complete = interval_set_covers((key.0, key.1), &state.coverage);
+        if complete && !state.await_terminal {
+            self.pending.remove(&key);
+        }
         self.refresh_open();
-        removed
+        Some(key)
     }
 
     fn list_frames(&mut self, lo: &Id16, hi: &Id16, ids: Vec<Id16>) -> Vec<Frame> {
