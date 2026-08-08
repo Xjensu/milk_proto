@@ -227,7 +227,8 @@ impl EventSender {
         };
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
         let expected_retirement_down = kind == ControlKind::Down
-            && state.pending_retirement.get(&link).copied() == Some(generation);
+            && state.pending_retirement.get(&link).copied() == Some(generation)
+            && !state.has_newer_generation(link, generation);
         if expected_retirement_down {
             state.pending_retirement.remove(&link);
         } else if state.lifecycle_is_stale(link, generation) {
@@ -333,6 +334,18 @@ impl EventSender {
 }
 
 impl State {
+    fn has_newer_generation(&self, link: LinkId, generation: u64) -> bool {
+        self.control_current
+            .get(&link)
+            .is_some_and(|current| *current > generation)
+            || self
+                .current
+                .get(&link)
+                .into_iter()
+                .flat_map(|streams| streams.iter().flatten())
+                .any(|stamp| stamp.generation > generation)
+    }
+
     fn lifecycle_is_stale(&self, link: LinkId, generation: u64) -> bool {
         if let Some(current) = self.control_current.get(&link).copied() {
             let stream_generation = self
@@ -480,6 +493,19 @@ mod tests {
         assert_eq!(tx.try_stream_data(7, reader(1), data(9)), Err(DataEnqueueError::Stale));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
+    }
+
+    #[tokio::test]
+    async fn stale_retirement_tombstone_cannot_purge_reused_link() {
+        let (tx, _rx) = event_channel();
+        tx.set_streams(7, [Some(reader(1)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.retire_link(7);
+        // A later physical attachment reuses the stable LinkId with a newer
+        // generation before its LinkUp is published.
+        tx.set_streams(7, [Some(reader(2)), None]);
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_stream_data(7, reader(2), data(9)).expect("new stream must survive stale Down");
     }
 
     #[tokio::test]
