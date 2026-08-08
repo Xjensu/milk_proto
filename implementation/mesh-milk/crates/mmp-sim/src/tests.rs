@@ -12,6 +12,31 @@
 use crate::Sim;
 
 #[test]
+fn clustered_mobility_plan_is_deterministic_and_has_bridge_contacts() {
+    let mut first = crate::ClusteredMobility::new(12, 3, 4).expect("valid plan");
+    let mut second = crate::ClusteredMobility::new(12, 3, 4).expect("valid plan");
+    let mut rng_a = crate::Rng::new(0xD15C_0DE);
+    let mut rng_b = crate::Rng::new(0xD15C_0DE);
+    let mut bridge_count = 0;
+    for _ in 0..12 {
+        let a = first.next_pair(&mut rng_a);
+        let b = second.next_pair(&mut rng_b);
+        assert_eq!(a, b, "same seed must yield the same contact plan");
+        assert_ne!(a.0, a.1, "a contact cannot contain the same node twice");
+        if a.2 {
+            bridge_count += 1;
+        }
+    }
+    assert_eq!(bridge_count, 3, "every fourth contact bridges adjacent communities");
+}
+
+#[test]
+fn clustered_mobility_rejects_invalid_configuration() {
+    assert!(crate::ClusteredMobility::new(2, 3, 4).is_none());
+    assert!(crate::ClusteredMobility::new(4, 2, 0).is_none());
+}
+
+#[test]
 fn ten_node_random_mesh_delivers_and_receipts() {
     const N: usize = 10;
     const SENDER: usize = 0;

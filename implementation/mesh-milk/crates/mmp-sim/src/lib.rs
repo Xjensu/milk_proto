@@ -47,6 +47,63 @@ impl Rng {
     }
 }
 
+/// Deterministic clustered-contact model for simulation experiments.
+///
+/// Nodes are partitioned into equal-sized communities. Most contacts stay
+/// inside the currently active community; every `bridge_every`th contact
+/// crosses to the next community. This is a deliberately small, explicit
+/// approximation of clustered human mobility, not a claim that the model is
+/// SLAW-calibrated. The seed still controls all choices, so a run is exactly
+/// reproducible.
+pub struct ClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    bridge_every: usize,
+    contact_index: usize,
+}
+
+impl ClusteredMobility {
+    /// Build a plan for `node_count` nodes and `community_count` communities.
+    /// Every community must contain at least two nodes so an intra-community
+    /// contact is always possible; `bridge_every` must be non-zero.
+    pub fn new(node_count: usize, community_count: usize, bridge_every: usize) -> Option<Self> {
+        if community_count < 2
+            || bridge_every == 0
+            || node_count < community_count.saturating_mul(2)
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        Some(Self { communities, bridge_every, contact_index: 0 })
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let community = (self.contact_index / self.bridge_every) % self.communities.len();
+        let is_bridge = self.contact_index % self.bridge_every == 0;
+        let pair = if is_bridge {
+            let next = (community + 1) % self.communities.len();
+            let left = self.pick(&self.communities[community], rng);
+            let right = self.pick(&self.communities[next], rng);
+            (left, right, true)
+        } else {
+            let members = &self.communities[community];
+            let first = self.pick(members, rng);
+            let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+            let first_index = members.iter().position(|node| *node == first).expect("picked member");
+            (first, members[(first_index + offset) % members.len()], false)
+        };
+        self.contact_index = self.contact_index.saturating_add(1);
+        pair
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
 /// A whole-scenario counter block, exposed so scenario tests can assert on
 /// outcomes beyond pass/fail (delivery ratio, quota headroom, ...).
 #[derive(Debug, Default, Clone, Copy)]
@@ -376,6 +433,30 @@ impl Sim {
             let dt = min_gap_ms + self.rng.below(span);
             self.meet(i, j, dt);
         }
+    }
+
+    /// Run a deterministic clustered-contact schedule. This is a simulation
+    /// model for the open SLAW/clustered-mobility measurement gap, not a
+    /// production routing behavior. Invalid community parameters leave the
+    /// simulator unchanged and return `false`.
+    pub fn run_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        bridge_every: usize,
+    ) -> bool {
+        let Some(mut plan) = ClusteredMobility::new(self.nodes.len(), community_count, bridge_every) else {
+            return false;
+        };
+        let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
+        for _ in 0..count {
+            let (i, j, _) = plan.next_pair(&mut self.rng);
+            let dt = min_gap_ms + self.rng.below(span);
+            self.meet(i, j, dt);
+        }
+        true
     }
 
     /// One conductor round (doc 17 §3.2, E6-S3): `conductor` meets each node
