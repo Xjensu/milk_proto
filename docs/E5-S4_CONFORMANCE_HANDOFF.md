@@ -501,6 +501,26 @@ from the identity seed, expose raw ratchet bytes through UniFFI/JS, or reuse
 has a reviewed format and atomic save/load semantics. Until then, restart
 continuity is an availability gap and must remain documented as such.
 
+Commit `51e00eb` adds the first safe implementation slice for that future
+boundary: strict provider-local codecs for `SendChain`, `RecvChain` (including
+bounded skipped keys), and `PrekeyStore`. The codecs reject unsupported
+versions, truncation/trailing bytes, counter wrap, oversized windows/batches,
+duplicate or unsorted records, invalid epoch/index combinations, and non-
+contiguous prekey IDs. Secret buffers and temporary key material are
+zeroizing, and `mmp-crypto` now passes both its standard and no-`std` library
+checks. These methods are not persistence by themselves and are not exposed
+through FFI.
+
+The proposed generic persistence seam on the separate `codex/e5-s4-conformance`
+branch was reviewed and deliberately not merged. It did not make generation
+rollback rejection, identity/conversation-bound AAD, nonce uniqueness,
+crash-atomic multi-state commit, trusted TTL enforcement, or complete receipt/
+DAG/pending/prekey state mandatory. The resulting design gate is recorded in
+`docs/KEYSTORE_SNAPSHOT_DESIGN.md`: Rust must seal one complete typed aggregate
+under a fresh-nonce AEAD, the native provider may wrap only a DEK/opaque handle,
+and missing or rollback-unsafe keystore state must fail closed without a
+cleartext fallback.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has
