@@ -157,10 +157,16 @@ impl PrekeyStore {
     /// published wire batch. The tombstone is provider-local state and is
     /// intentionally idempotent for duplicate bundles.
     pub fn mark_otk_consumed(&mut self, id: u16) -> Result<(), CryptoError> {
-        if !self.one_time.contains_key(&id) || !self.consumed.insert(id) {
+        if !self.one_time.contains_key(&id) || self.consumed.contains(&id) {
             return Ok(());
         }
-        self.generation = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        // Compute the next durable generation before mutating the tombstone.
+        // `u64::MAX` is reserved as an invalid/sentinel generation throughout
+        // the snapshot and vault layers, so never create it locally and never
+        // leave a consumed tombstone behind when the increment is rejected.
+        let next_generation = self.next_generation()?;
+        self.consumed.insert(id);
+        self.generation = next_generation;
         Ok(())
     }
 
@@ -176,10 +182,27 @@ impl PrekeyStore {
         if spk_not_after_ms == u64::MAX || otk_not_after_ms == u64::MAX {
             return Err(CryptoError::Snapshot);
         }
+        // Validate the generation before changing either expiry field so a
+        // rejected overflow cannot leave a partially updated lifecycle state.
+        let next_generation = self.next_generation()?;
         self.spk_not_after_ms = spk_not_after_ms;
         self.otk_not_after_ms = otk_not_after_ms;
-        self.generation = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        self.generation = next_generation;
         Ok(())
+    }
+
+    /// Return the next valid provider generation without mutating state.
+    /// Zero and `u64::MAX` are reserved sentinels and must never appear in a
+    /// persisted prekey state generation.
+    fn next_generation(&self) -> Result<u64, CryptoError> {
+        if self.generation == 0 || self.generation == u64::MAX {
+            return Err(CryptoError::Snapshot);
+        }
+        let next = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        if next == u64::MAX {
+            return Err(CryptoError::Snapshot);
+        }
+        Ok(next)
     }
 
     /// Encode private keys plus local generation/expiry/consumption metadata.
@@ -189,6 +212,7 @@ impl PrekeyStore {
             || self.one_time.len() > u16::MAX as usize
             || self.consumed.len() > PREKEY_BATCH
             || self.generation == 0
+            || self.generation == u64::MAX
             || self.spk_not_after_ms == u64::MAX
             || self.otk_not_after_ms == u64::MAX
         {
@@ -228,6 +252,7 @@ impl PrekeyStore {
         let count = u16::from_le_bytes(bytes[57..59].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
         let consumed_count = u16::from_le_bytes(bytes[59..61].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
         if generation == 0
+            || generation == u64::MAX
             || spk_not_after_ms == u64::MAX
             || otk_not_after_ms == u64::MAX
             || count > PREKEY_BATCH
@@ -474,6 +499,10 @@ mod lifecycle_tests {
         zero_generation[33..41].copy_from_slice(&0u64.to_le_bytes());
         assert!(PrekeyStore::restore_state(&zero_generation).is_err());
 
+        let mut max_generation = snapshot.to_vec();
+        max_generation[33..41].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert!(PrekeyStore::restore_state(&max_generation).is_err());
+
         let mut max_spk_expiry = snapshot.to_vec();
         max_spk_expiry[41..49].copy_from_slice(&u64::MAX.to_le_bytes());
         assert!(PrekeyStore::restore_state(&max_spk_expiry).is_err());
@@ -486,7 +515,27 @@ mod lifecycle_tests {
         invalid_live.generation = 0;
         assert!(invalid_live.snapshot_state().is_err());
         invalid_live.generation = 1;
+        invalid_live.generation = u64::MAX;
+        assert!(invalid_live.snapshot_state().is_err());
+        invalid_live.generation = 1;
         invalid_live.spk_not_after_ms = u64::MAX;
         assert!(invalid_live.snapshot_state().is_err());
+    }
+
+    #[test]
+    fn generation_overflow_is_rejected_without_partial_mutation() {
+        let mut rng = StdRng::seed_from_u64(46);
+        let mut store = PrekeyStore::generate(&mut rng, 1);
+        store.generation = u64::MAX - 1;
+        let before = store.snapshot_state().unwrap();
+
+        assert!(store.mark_otk_consumed(0).is_err());
+        assert!(!store.otk_consumed(0));
+        assert_eq!(store.snapshot_state().unwrap().as_slice(), before.as_slice());
+
+        assert!(store.set_expiry(10_000, 20_000).is_err());
+        assert_eq!(store.spk_not_after_ms, 0);
+        assert_eq!(store.otk_not_after_ms, 0);
+        assert_eq!(store.snapshot_state().unwrap().as_slice(), before.as_slice());
     }
 }
