@@ -14,6 +14,15 @@ use mmp_types::consts::{CONTACT_GRAPH_CAP, GAMMA_PER_HOUR, P_INIT, P_TABLE_CAP, 
 use mmp_types::ids::NodeId;
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
+/// Local hard cap for each 24 h N-hat event window.
+///
+/// Beacons are an unauthenticated hint plane, so a peer can inject an
+/// arbitrary number of distinct ephemeral IDs without ever completing a
+/// session.  The time horizon alone does not bound the event queue when the
+/// attacker keeps the clock in one window.  Keep the window in the same
+/// bounded-state order as the ContactGraph; once N-hat is above the routing
+/// clamp this cap does not change the origin spray budget.
+const N_HAT_WINDOW_CAP: usize = CONTACT_GRAPH_CAP;
 /// EWMA α = 0.25/day (doc 05 §3).
 const EWMA_ALPHA_PER_DAY: f32 = 0.25;
 /// Collision discount for unresolved ephem_ids.
@@ -198,6 +207,16 @@ impl UtilityState {
             self.resolved_seen.pop_front();
         }
         while self.ephem_seen.front().is_some_and(|(t, _)| *t < horizon) {
+            self.ephem_seen.pop_front();
+        }
+        // The 24 h expiry is not a memory bound: an unauthenticated beacon
+        // source can generate an unbounded number of events at one timestamp.
+        // Evict oldest entries first so the estimate remains a recent-window
+        // estimate while all allocations stay bounded.
+        while self.resolved_seen.len() > N_HAT_WINDOW_CAP {
+            self.resolved_seen.pop_front();
+        }
+        while self.ephem_seen.len() > N_HAT_WINDOW_CAP {
             self.ephem_seen.pop_front();
         }
     }

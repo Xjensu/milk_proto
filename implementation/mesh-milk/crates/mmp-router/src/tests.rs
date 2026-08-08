@@ -5,7 +5,7 @@ use alloc::vec;
 
 use mmp_core::receiptfilter::SuppressSignal;
 use mmp_core::store::{BundleMeta, SlotState};
-use mmp_types::consts::L_MAX;
+use mmp_types::consts::{CONTACT_GRAPH_CAP, L_MAX};
 use mmp_types::ids::Id16;
 
 use crate::quota::OriginBuckets;
@@ -197,4 +197,22 @@ fn utility_grows_with_contacts_and_ages() {
     u.note_ephem([2; 8], 20);
     let n = u.n_hat(30);
     assert!(n > 1.0 && n < 4.0, "n_hat = {n}");
+}
+
+#[test]
+fn utility_ephem_window_is_bounded_under_beacon_flood() {
+    let mut u = UtilityState::new();
+    // Beacon ephem_ids are unauthenticated input.  Keep all events in one
+    // horizon so time-based trimming alone cannot make the allocation finite.
+    for i in 0u16..5000 {
+        let mut ephem = [0u8; 8];
+        ephem[..2].copy_from_slice(&i.to_be_bytes());
+        u.note_ephem(ephem, 1);
+    }
+
+    // The implementation cap is the bounded N-hat window, discounted by the
+    // unresolved-ephemeral factor.  In particular, this must not grow with
+    // the number of hostile advertisements.
+    let n = u.n_hat(1);
+    assert!(n <= 0.75 * CONTACT_GRAPH_CAP as f32, "n_hat grew beyond bounded window: {n}");
 }
