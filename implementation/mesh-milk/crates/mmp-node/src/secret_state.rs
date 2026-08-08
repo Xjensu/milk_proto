@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use mmp_crypto::prekey::PrekeyStore;
+use mmp_crypto::prekey::PREKEY_NONE;
 use mmp_crypto::snapshot::MAX_PLAINTEXT_BYTES;
 use mmp_crypto::ratchet::{RecvChain, SendChain};
 use mmp_core::ConversationDag;
@@ -130,7 +131,11 @@ pub(crate) fn encode(core: &NodeCore) -> Result<Zeroizing<Vec<u8>>, SecretStateE
 }
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
-    if bytes.len() < HEADER_LEN || bytes[..MAGIC.len()] != MAGIC || bytes[MAGIC.len()] != VERSION {
+    if bytes.len() < HEADER_LEN
+        || bytes.len() > MAX_PLAINTEXT_BYTES
+        || bytes[..MAGIC.len()] != MAGIC
+        || bytes[MAGIC.len()] != VERSION
+    {
         return Err(SecretStateError::Invalid);
     }
     let mut pos = MAGIC.len() + 1;
@@ -147,6 +152,18 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         || sent_count > MAX_SENT
         || prekeys_len > MAX_COMPONENT_BYTES
     {
+        return Err(SecretStateError::Invalid);
+    }
+    let minimum_body = conv_count
+        .checked_mul(16 + 32 + 32 + 4 + 4 + 4)
+        .and_then(|n| n.checked_add(established_count.checked_mul(16)?))
+        .and_then(|n| n.checked_add(pending_async_count.checked_mul(16 + 32 + 2)?))
+        .and_then(|n| n.checked_add(pending_first_count.checked_mul(16 + 16)?))
+        .and_then(|n| n.checked_add(sent_count.checked_mul(16 + 16 + 1)?))
+        .and_then(|n| n.checked_add(prekeys_len))
+        .and_then(|n| n.checked_add(HEADER_LEN))
+        .ok_or(SecretStateError::Invalid)?;
+    if minimum_body > bytes.len() {
         return Err(SecretStateError::Invalid);
     }
 
@@ -193,7 +210,7 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         }
         let eph = Key32(read_array(bytes, &mut pos)?);
         let prekey = read_u16(bytes, &mut pos)?;
-        if !convs.contains_key(&id) || pending_async.insert(id, (eph, prekey)).is_some() {
+        if prekey == PREKEY_NONE || eph.0 == [0; 32] || !convs.contains_key(&id) || pending_async.insert(id, (eph, prekey)).is_some() {
             return Err(SecretStateError::Invalid);
         }
         previous_pending = Some(id);
@@ -233,6 +250,16 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         return Err(SecretStateError::Invalid);
     }
     let prekeys = PrekeyStore::restore(&bytes[pos..prekey_end]).map_err(|_| SecretStateError::Invalid)?;
+    for (conv, first) in &pending_first_contact {
+        if let Some(message) = sent.get(first) {
+            if message.conv != *conv || matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired) {
+                return Err(SecretStateError::Invalid);
+            }
+        }
+    }
+    if pending_async.keys().any(|conv| pending_first_contact.contains_key(conv)) {
+        return Err(SecretStateError::Invalid);
+    }
     Ok(RestoredState { convs, established_convs, prekeys, pending_async, pending_first_contact, sent })
 }
 

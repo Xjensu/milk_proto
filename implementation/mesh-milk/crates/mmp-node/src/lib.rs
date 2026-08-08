@@ -23,6 +23,7 @@ mod conv;
 pub mod diag;
 mod group;
 mod secret_state;
+mod vault;
 
 pub use blob::BlobState;
 
@@ -762,7 +763,16 @@ impl Node {
     /// mutates the current node.
     #[allow(dead_code)]
     pub(crate) fn restore_secret_state(&mut self, bytes: &[u8]) -> Result<(), secret_state::SecretStateError> {
-        if !self.sessions.is_empty() || !self.outbox.is_empty() {
+        if !self.sessions.is_empty()
+            || !self.outbox.is_empty()
+            || !self.core.convs.is_empty()
+            || !self.core.established_convs.is_empty()
+            || !self.core.pending_async.is_empty()
+            || !self.core.pending_first_contact.is_empty()
+            || !self.core.sent.is_empty()
+            || !self.core.groups.is_empty()
+            || !self.core.sent_dists.is_empty()
+        {
             return Err(secret_state::SecretStateError::Busy);
         }
         let state = secret_state::decode(bytes)?;
