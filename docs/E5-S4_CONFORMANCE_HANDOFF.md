@@ -548,6 +548,44 @@ ciphertext. A failed distribution leaves the marker set and fails the send;
 this is an availability/re-gossip policy, not persistence of sender-key
 secrets.
 
+### 2026-08-08 secret-continuity and verification update
+
+The prekey provider-local codec now has a version-2 state form containing the
+private SPK/OTK material, lifecycle generation, local expiry metadata, and
+sorted idempotent OTK-consumption tombstones. Successful authenticated prekey
+first contact records the tombstone without changing the frozen signed batch
+wire grammar. The pairwise aggregate consumes this state form, so a sealed
+generation does not silently forget local OTK use. Expiry enforcement and
+rotation remain trusted-clock/provider policy gates.
+
+The Rust-internal `SnapshotVault` contract now couples fresh-DEK sealing to a
+single provider commit candidate and validates identity-bound context,
+conversation-ID derivation, fixed 72-hour freshness, and a generation floor on
+restore. The reference provider test proves generation CAS and round-trip open;
+it is not a durable native backend and must not be described as restart
+continuity in product documentation.
+
+The group restore path explicitly marks its regenerated local sender key as
+requiring re-gossip. The first post-restore group send schedules distributions
+before emitting ciphertext, and a failed distribution leaves the marker set.
+
+Verification on this Windows host:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1   # pass; 4 simulator/deployment cases intentionally ignored
+cargo clippy --workspace --all-targets -- -D warnings      # pass
+cargo run -p layer-check                                  # pass
+cargo run -p mmp-cli -- demo                              # pass; receipt observed
+```
+
+The Linux target check was attempted again with
+`cargo check -p mmp-tal-peripheral --target x86_64-unknown-linux-gnu` and
+stopped in `libdbus-sys`: this Windows host has no Linux pkg-config/sysroot.
+This is an environment gate, not Linux/BlueZ evidence. Execute the two-PC
+procedure in `docs/MANUAL_INTEROP_TESTING.md` on Linux before claiming physical
+interoperability. Android/iOS remain artifact/API gates until consuming apps
+and physical-device runs exist.
+
 Commit `9357a49` adds the Rust-internal `SnapshotVault` seam. Its candidate
 record binds pairwise/prekey coverage, identity, node ID, and sorted
 conversation/peer context; `save_core` couples fresh-DEK sealing to a provider
