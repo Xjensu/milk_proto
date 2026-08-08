@@ -386,6 +386,10 @@ impl BleCentral {
         self.adapter
             .start_scan(ScanFilter { services: vec![service_uuid()] })
             .await?;
+        if self.shutting_down.load(Ordering::Acquire) {
+            let _ = self.adapter.stop_scan().await;
+            return Err(BleError::ShuttingDown);
+        }
         Ok(())
     }
 
