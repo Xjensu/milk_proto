@@ -737,3 +737,31 @@ must not be swept into a conformance commit:
   `docs/E5-S4_IMPLEMENTATION_PLAN.md` (planning/audit material).
 
 Stage files explicitly by path. Do not use a blanket `git add .`.
+
+## 2026-08-08 vault restore regression update
+
+The Rust-internal vault seam now has a focused lifecycle regression in
+`mmp-node::vault`: after a first authenticated contact, the established
+conversation is sealed, restored into a fresh node, and paired with the
+ordinary non-secret identity-claim bootstrap. The restored conversation stays
+at epoch `(0, 0)` until the next live contact; that contact advances both
+directions to `(1, 1)`. This proves the persisted `established_convs` marker is
+consumed by the existing teardown ratchet policy and does not cause a premature
+bump during restore.
+
+The test is state-machine evidence only. The reference provider still stores a
+raw DEK in a test fixture, and no Android Keystore, iOS Keychain, Linux secure
+storage, crash-atomic native record, or mobile background run has been
+implemented. Those remain explicit exit gates rather than claims hidden behind
+the Rust adapter contract.
+
+Verification after this regression:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1   # pass
+cargo clippy --workspace --all-targets -- -D warnings      # pass
+cargo check -p mmp-crypto --no-default-features          # pass
+cargo clippy -p mmp-crypto --no-default-features --lib -- -D warnings  # pass
+cargo run -p layer-check                                  # pass
+cargo run -p mmp-cli -- demo                              # pass; receipt observed
+```

@@ -1,7 +1,7 @@
 # Keystore-backed secret-state design (implementation plan)
 
-Status: partially implemented primitive, no wire change, not yet wired into
-`mmp-node` or UniFFI.
+Status: Rust-internal primitive and restore seam implemented; no wire change,
+no platform-keystore adapter, and no UniFFI/React Native exposure.
 The frozen `specification/` directory is intentionally unchanged.
 
 ## Current boundary
@@ -79,6 +79,13 @@ the node is quiescent before asking the provider to load/unlock a generation,
 then applies the already validated aggregate in one in-memory swap. A busy
 node returns `VaultError::Busy` without touching state; no provider secret or
 plaintext crosses the FFI boundary.
+
+The follow-up restore regression covers the lifecycle invariant that matters
+after a process restart: identity claims are reintroduced through the ordinary
+non-secret bootstrap path, the restored established conversation remains at
+its persisted epoch, and the first subsequent authenticated contact advances
+both ratchet sides exactly once. This is evidence for the Rust state machine,
+not evidence of a native keystore or mobile lifecycle implementation.
 
 ## Required secret-state inventory
 

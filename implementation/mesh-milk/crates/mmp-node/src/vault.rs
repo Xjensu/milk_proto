@@ -374,6 +374,37 @@ mod tests {
         for claim in b.own_claims() { a.ingest_claim(claim, true); }
     }
 
+    fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
+        a.tick(now);
+        b.tick(now);
+        a.on_tal_event(mmp_tal::TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality: Default::default(),
+        });
+        b.on_tal_event(mmp_tal::TalEvent::LinkUp {
+            link,
+            initiator: false,
+            quality: Default::default(),
+        });
+        for _ in 0..300 {
+            let mut quiet = true;
+            while let Some((l, bytes)) = a.poll_send() {
+                quiet = false;
+                b.on_tal_event(mmp_tal::TalEvent::LinkData { link: l, bytes });
+            }
+            while let Some((l, bytes)) = b.poll_send() {
+                quiet = false;
+                a.on_tal_event(mmp_tal::TalEvent::LinkData { link: l, bytes });
+            }
+            if quiet {
+                break;
+            }
+        }
+        a.on_tal_event(mmp_tal::TalEvent::LinkDown { link });
+        b.on_tal_event(mmp_tal::TalEvent::LinkDown { link });
+    }
+
     #[test]
     fn sealed_record_binds_identity_conversations_and_generation() {
         let mut node = Node::new([91; 32], Box::new(MemStore::new()), Tier::Relay);
@@ -457,6 +488,33 @@ mod tests {
             quality: Default::default(),
         });
         assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Busy));
+    }
+
+    #[test]
+    fn restored_established_conversation_bumps_epoch_on_first_post_restore_contact() {
+        let mut original = Node::new([99; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut peer = Node::new([100; 32], Box::new(MemStore::new()), Tier::Relay);
+        introduce(&mut original, &mut peer);
+
+        original.send_text(&peer.node_id(), "before restart").unwrap();
+        contact(&mut original, &mut peer, 21, 10_000);
+        assert_eq!(original.conv_epoch(&peer.node_id()), Some((0, 0)));
+        assert_eq!(peer.conv_epoch(&original.node_id()), Some((0, 0)));
+
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(17);
+        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+
+        let mut restored = Node::new([99; 32], Box::new(MemStore::new()), Tier::Relay);
+        assert_eq!(restored.restore_secret_state_from_vault(&mut vault).unwrap(), 1);
+        // Identity claims are non-secret bootstrap state and are expected to
+        // come from the ordinary snapshot/QR path alongside the vault.
+        introduce(&mut restored, &mut peer);
+        assert_eq!(restored.conv_epoch(&peer.node_id()), Some((0, 0)));
+
+        contact(&mut restored, &mut peer, 22, 20_000);
+        assert_eq!(restored.conv_epoch(&peer.node_id()), Some((1, 1)));
+        assert_eq!(peer.conv_epoch(&restored.node_id()), Some((1, 1)));
     }
 
     #[test]
