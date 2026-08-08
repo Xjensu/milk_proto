@@ -60,6 +60,7 @@ use mmp_types::consts::{
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
     ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody, Summary,
+    MAX_ENVELOPE_PAYLOAD,
 };
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
@@ -75,6 +76,11 @@ use mmp_tal::{LinkId, TalEvent};
 
 /// Well-known scope for claim gossip bundles (dest is routing-opaque).
 const CLAIM_SCOPE: Id16 = Id16([0xff; 16]);
+/// The core grants eight data-frame credits; reserve four control frames for
+/// handshake/credit/close traffic when sizing the host-side queue.
+const OUTBOX_DATA_CREDIT_WINDOW: usize = 8;
+const OUTBOX_CONTROL_RESERVE: usize = 4;
+const OUTBOX_FRAME_BYTES: usize = MAX_ENVELOPE_PAYLOAD + 3;
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1018,6 +1024,42 @@ impl Node {
         }
     }
 
+    fn outbox_frame_cap(tier: Tier) -> usize {
+        Self::max_sessions_for_tier(tier) * (OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE)
+    }
+
+    fn outbox_over_budget(
+        outbox: &VecDeque<(LinkId, Vec<u8>)>,
+        tier: Tier,
+        link: LinkId,
+        additional_bytes: usize,
+    ) -> bool {
+        let mut total_frames = 0usize;
+        let mut total_bytes = 0usize;
+        let mut link_frames = 0usize;
+        let mut link_bytes = 0usize;
+        for (queued_link, bytes) in outbox {
+            total_frames = total_frames.saturating_add(1);
+            total_bytes = total_bytes.saturating_add(bytes.len());
+            if *queued_link == link {
+                link_frames = link_frames.saturating_add(1);
+                link_bytes = link_bytes.saturating_add(bytes.len());
+            }
+        }
+        let frame_cap = Self::outbox_frame_cap(tier);
+        let byte_cap = frame_cap.saturating_mul(OUTBOX_FRAME_BYTES);
+        total_frames >= frame_cap
+            || total_bytes.saturating_add(additional_bytes) > byte_cap
+            || link_frames >= OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE
+            || link_bytes.saturating_add(additional_bytes)
+                > (OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE).saturating_mul(OUTBOX_FRAME_BYTES)
+    }
+
+    fn clear_link_outbox(&mut self, link: LinkId) {
+        self.outbox.retain(|(queued_link, _)| *queued_link != link);
+        self.sessions.remove(&link);
+    }
+
     /// Feed one transport-layer event into the node: beacon overheard, a link
     /// coming up/down, or bytes arriving on a link. Drives the per-link
     /// `SessionEngine`s and the E4-S4 opportunistic ratchet epoch bump on
@@ -1087,22 +1129,36 @@ impl Node {
     }
 
     fn pump_link(&mut self, link: LinkId) {
-        let Some(engine) = self.sessions.get_mut(&link) else { return };
-        while let Some(bytes) = engine.poll_out() {
-            self.outbox.push_back((link, bytes));
-        }
+        let mut overflowed = false;
         let mut closed = false;
-        while let Some(ev) = engine.poll_event() {
-            match ev {
-                SessionEvent::Established { peer, .. } => {
-                    self.core.utility.note_contact(&peer, 1000, self.core.now);
-                    self.core.events.push_back(Event::Established { peer });
-                    self.core.events.push_back(Event::ContactSeen { peer });
+        {
+            let Some(engine) = self.sessions.get_mut(&link) else { return };
+            while let Some(bytes) = engine.poll_out() {
+                if Self::outbox_over_budget(&self.outbox, self.core.tier, link, bytes.len()) {
+                    overflowed = true;
+                    break;
                 }
-                SessionEvent::Closed => closed = true,
+                self.outbox.push_back((link, bytes));
+            }
+            if !overflowed {
+                while let Some(ev) = engine.poll_event() {
+                    match ev {
+                        SessionEvent::Established { peer, .. } => {
+                            self.core.utility.note_contact(&peer, 1000, self.core.now);
+                            self.core.events.push_back(Event::Established { peer });
+                            self.core.events.push_back(Event::ContactSeen { peer });
+                        }
+                        SessionEvent::Closed => closed = true,
+                    }
+                }
             }
         }
-        if closed {
+        if overflowed {
+            // Never drop one encrypted frame and continue: that would leave
+            // the Noise nonce stream ambiguous. Drop the affected session and
+            // all of its queued frames, preserving unrelated links.
+            self.clear_link_outbox(link);
+        } else if closed {
             self.sessions.remove(&link);
         }
     }

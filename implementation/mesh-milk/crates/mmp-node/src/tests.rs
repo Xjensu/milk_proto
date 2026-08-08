@@ -110,6 +110,47 @@ fn duplicate_link_up_preserves_existing_session_and_output() {
 }
 
 #[test]
+fn outbound_queue_overflow_clears_only_the_affected_link() {
+    let mut n = Node::new([107; 32], Box::new(MemStore::new()), Tier::Leaf);
+    let unrelated = 99;
+    for _ in 0..1_000 {
+        n.outbox.push_back((unrelated, vec![0u8; MAX_ENVELOPE_PAYLOAD]));
+    }
+
+    link_up(&mut n, 1);
+
+    assert!(!n.sessions.contains_key(&1), "overflow must terminate the affected session");
+    assert!(!n.outbox.iter().any(|(link, _)| *link == 1), "affected-link frames must be cleared atomically");
+    assert!(n.outbox.iter().any(|(link, _)| *link == unrelated), "unrelated queued traffic must survive");
+}
+
+#[test]
+fn outbound_queue_per_link_cap_is_enforced() {
+    let mut n = Node::new([108; 32], Box::new(MemStore::new()), Tier::Leaf);
+    for _ in 0..12 {
+        n.outbox.push_back((1, vec![0u8; MAX_ENVELOPE_PAYLOAD]));
+    }
+
+    link_up(&mut n, 1);
+
+    assert!(!n.sessions.contains_key(&1));
+    assert!(!n.outbox.iter().any(|(link, _)| *link == 1));
+}
+
+#[test]
+fn outbound_queue_byte_cap_is_enforced_before_frame_cap() {
+    let mut n = Node::new([109; 32], Box::new(MemStore::new()), Tier::Leaf);
+    for _ in 0..11 {
+        n.outbox.push_back((1, vec![0u8; MAX_ENVELOPE_PAYLOAD + 500]));
+    }
+
+    link_up(&mut n, 1);
+
+    assert!(!n.sessions.contains_key(&1));
+    assert!(!n.outbox.iter().any(|(link, _)| *link == 1));
+}
+
+#[test]
 fn session_slot_releases_after_link_down() {
     let mut n = Node::new([105; 32], Box::new(MemStore::new()), Tier::Leaf);
     link_up(&mut n, 1);
