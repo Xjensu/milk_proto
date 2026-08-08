@@ -886,3 +886,25 @@ fsync, replace, floor-update, reopen recovery, corrupted-current fallback,
 and rollback-safe floor behavior. It is evidence for the native adapter
 contract, not an Android Keystore, iOS Keychain, or production filesystem
 implementation.
+
+## 2026-08-08 allocator overflow hardening
+
+The final transport audit found one additional fail-open boundary: both
+generation allocators previously wrapped `u64::MAX` back to `1`. `b826774`
+now fails closed instead. The central backend returns
+`BleError::GenerationExhausted`; the peripheral lifecycle returns
+`AttachReject::GenerationExhausted` without replacing an existing endpoint.
+Regression tests prove the counter is not mutated on overflow and a live
+replacement remains current.
+
+Post-fix evidence:
+
+```text
+Windows btleplug generation/lifecycle tests: 5 passed
+Windows peripheral lifecycle tests: 13 passed
+Windows workspace Clippy (-D warnings): pass
+WSL generation/lifecycle tests and Linux Clippy: pass
+```
+
+This is an implementation safety invariant only; generation values and wire
+format remain unchanged.
