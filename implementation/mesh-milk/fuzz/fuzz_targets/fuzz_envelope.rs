@@ -1,8 +1,10 @@
 //! Doc 12 §7.2 target 2. `read_envelope` runs before any authentication (it's
 //! the length-prefix framing every session frame arrives inside); when it
-//! yields a `(type, payload)` pair, `Frame::decode_payload` is the next
-//! pre-auth step for frame types that precede identity proof (HELLO, HS,
-//! ID_PROOF itself). Chaining both mirrors the real parse loop. Invariant: no
+//! yields a `(type, payload)` pair, `Frame::decode_payload` hardens the payload
+//! grammar. HELLO and HS are pre-proof inputs; ID_PROOF is deliberately fuzzed
+//! as a decoded payload even though the live protocol carries it encrypted as
+//! the first Noise transport record. Chaining both mirrors the parser boundary.
+//! Invariant: no
 //! panic, no OOM — a length prefix exceeding `MAX_ENVELOPE_PAYLOAD` is
 //! `Err(Oversize)`, never an unbounded allocation (AUDIT F10 class).
 

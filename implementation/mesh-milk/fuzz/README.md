@@ -5,7 +5,9 @@ is proven, so their input is fully attacker-controlled with no cost to the attac
 
 1. `fuzz_beacon` → `Beacon::decode` — unauthenticated broadcast, 24 B fixed input.
 2. `fuzz_envelope` → `read_envelope` + `Frame::decode_payload` — the session-frame length-prefix
-   framing plus payload decode for pre-auth frame types (HELLO, HS, ID_PROOF).
+   framing plus payload decode. HELLO and HS are pre-identity/authentication inputs; ID_PROOF is
+   included to harden its decoded payload grammar, but the protocol carries it as the first
+   encrypted Noise transport record (not as a pre-channel wire frame).
 3. `fuzz_bundle` → `Bundle::decode_canonical` — every bundle any relay ever sees, before
    `verify_strict` (doc 03 §4.1.2 step 1).
 4. `fuzz_hs` → `NoiseHandshake::responder().advance()` — the first message from an unauthenticated
