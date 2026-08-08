@@ -105,11 +105,14 @@ const DEFAULT_CHUNK: usize = 20;
 ///
 /// One maximum-size 4096-byte envelope takes `ceil((4096 + 3) / 20) = 205`
 /// current-floor ATT notifications. Eight concurrently admitted sessions
-/// therefore need at most 1640 queued data events for one envelope each;
-/// rounding to 2048 leaves room for link/control and beacon events. The
-/// channel is count-bounded (not byte-bounded): a future larger negotiated
-/// ATT MTU still has a finite controller bound, while producers await
-/// capacity instead of dropping an encrypted chunk.
+/// therefore need 1640 queued data events for one envelope each; rounding to
+/// 2048 establishes a deliberate ingress-memory threshold with link/control
+/// and beacon headroom. It is not intended to absorb the entire possible
+/// eight-frame credit burst; once full, producers await the host event loop
+/// and the protocol's own CREDIT window continues to govern the wire rate.
+/// The channel is count-bounded (not byte-bounded): a future larger negotiated
+/// ATT MTU still has a finite controller bound, while producers await capacity
+/// instead of dropping an encrypted chunk.
 const EVENT_QUEUE_CAPACITY: usize = 2048;
 
 fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
@@ -266,7 +269,9 @@ impl BleCentral {
 
     /// Connect to `peer`, discover the MMP GATT service, subscribe to RX
     /// notifications, and mint a [`LinkId`] for it (see module docs for the
-    /// characteristic-UUID placeholders). Emits `TalEvent::LinkUp` on success.
+    /// characteristic-UUID placeholders). Schedules `TalEvent::LinkUp` on
+    /// success before that link's RX notifications; callers must drain
+    /// [`Self::events`] while the central is active.
     pub async fn dial(&self, peer: PeerHandle) -> Result<LinkId, BleError> {
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
@@ -297,6 +302,10 @@ impl BleCentral {
         let data_tx = self.tx.clone();
         let rx_uuid = rx_characteristic.uuid;
         tokio::spawn(async move {
+            // Keep LinkUp ahead of every RX notification for this link while
+            // allowing dial() to return even when the shared event queue is
+            // full; the host event loop must drain events to release this
+            // bounded backpressure.
             if data_tx
                 .send(TalEvent::LinkUp { link, initiator: true, quality })
                 .await
