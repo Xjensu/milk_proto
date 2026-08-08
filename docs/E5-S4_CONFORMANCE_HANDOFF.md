@@ -538,6 +538,16 @@ passed to UniFFI/React Native, and not yet wrapped by a platform keystore.
 Group sender-key ratchets, OTK consumption/tombstones, durable generation, and
 crash-atomic provider commit remain explicit restart-continuity gates.
 
+Commit `9357a49` adds the Rust-internal `SnapshotVault` seam. Its candidate
+record binds pairwise/prekey coverage, identity, node ID, and sorted
+conversation/peer context; `save_core` couples fresh-DEK sealing to a provider
+commit and enforces the next-generation rule before the provider call. Restore
+validates the fixed 72-hour TTL, context hash, local conversation IDs, and a
+generation floor. This is an adapter contract plus reference tests, not a
+durable keystore implementation: platform wrapping, trusted clock/high-water
+storage, crash recovery, OTK lifecycle metadata, and native Android/iOS gates
+remain open.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has

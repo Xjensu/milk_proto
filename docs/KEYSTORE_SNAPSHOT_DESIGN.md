@@ -41,6 +41,18 @@ unimplemented gates. Group membership/epoch records may continue through the
 existing non-secret snapshot path, but group cryptographic material must not be
 silently regenerated as if it were restored secret state.
 
+Commit `9357a49` adds the Rust-internal vault seam around that aggregate. A
+canonical context binds the pairwise/prekey coverage version, local Ed25519
+public key, node ID, and sorted `(conversation ID, peer key)` entries. The
+sealed candidate carries its generation; `save_core` generates and zeroizes a
+DEK, seals the aggregate, checks the next-generation rule, and calls one
+provider commit operation that must atomically wrap the DEK and publish the
+record. Loading validates the fixed 72-hour TTL, context, identity-bound
+conversation IDs, envelope generation, and a caller-supplied durable
+generation floor. The provider trait remains an adapter contract: no durable
+high-water mark, crash recovery, trusted platform clock, or native keystore
+implementation exists yet.
+
 ## Required secret-state inventory
 
 One atomic generation must cover all state whose mismatch can break delivery or
