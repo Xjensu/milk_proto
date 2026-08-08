@@ -694,6 +694,11 @@ impl MmpNode {
     /// - `Some(path)`: file-backed [`SnapshotStore`] at `path`, opened (or
     ///   created) immediately so any prior snapshot's bundles are available
     ///   right away.
+    ///
+    /// After construction, the host must call [`MmpNode::tick`] once with
+    /// its current same-boot monotonic millisecond value before invoking any
+    /// method that can enqueue a bundle. The constructor intentionally does
+    /// not read a wall clock or infer a reboot offset for persisted deadlines.
     #[uniffi::constructor]
     pub fn new(seed: Vec<u8>, tier: FfiTier, store_path: Option<String>) -> Result<Arc<Self>, FfiError> {
         let seed: [u8; 32] = seed.try_into().map_err(|_| FfiError::BadArg)?;
@@ -754,7 +759,8 @@ impl MmpNode {
     }
 
     /// Send a text message to `dest`; returns the BundleID to track via
-    /// [`MmpNode::message_state`] / [`FfiEvent::Delivered`].
+    /// [`MmpNode::message_state`] / [`FfiEvent::Delivered`]. Call
+    /// [`MmpNode::tick`] first after construction.
     pub fn send_text(&self, dest: Vec<u8>, text: String) -> Result<Vec<u8>, FfiError> {
         let dest = id16_from(&dest)?;
         self.lock().send_text(&dest, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
@@ -779,6 +785,7 @@ impl MmpNode {
     }
 
     /// Send text into group `gid` under our sender key. Returns the BundleID.
+    /// Call [`MmpNode::tick`] first after construction.
     pub fn group_send(&self, gid: Vec<u8>, text: String) -> Result<Vec<u8>, FfiError> {
         let gid = id16_from(&gid)?;
         self.lock().group_send(&gid, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
@@ -850,6 +857,7 @@ impl MmpNode {
     /// given, is an encoded [`AuthCert`] attached as TLV `0x81` (RECOMMENDED
     /// for `priority` ≤ 1/OPERATIONAL, doc 18 §5.2.1) so stranger receivers
     /// can elevate it without prior claim-gossip.
+    /// Call [`MmpNode::tick`] before the first announcement after construction.
     pub fn publish_announcement(
         &self,
         scope: Vec<u8>,
@@ -924,6 +932,7 @@ impl MmpNode {
     /// Share `data` (≤ `FILE_MAX`, 8 MiB) into the 1:1 conversation with
     /// `peer`: RS-encode → Merkle → mint class-4 symbol bundles (deduped by
     /// content address) → send the signed `FileManifest` (doc 16).
+    /// Call [`MmpNode::tick`] before the first file send after construction.
     pub fn send_file(&self, peer: Vec<u8>, name: String, mime: String, data: Vec<u8>) -> Result<FfiFileSend, FfiError> {
         let peer = id16_from(&peer)?;
         self.lock().send_file(&peer, &name, &mime, &data).map(FfiFileSend::from).map_err(map_send_error)
@@ -1020,6 +1029,10 @@ impl MmpNode {
     /// [`Self::last_persist_error`], not returned or panicked on, since a
     /// host driving `tick` from a timer has no natural way to react to an
     /// `Err` return.
+    /// Call once immediately after construction, before any bundle-producing
+    /// API. Values must be nondecreasing for the lifetime of the process. Do
+    /// not substitute wall-clock time or infer a reboot offset; persisted
+    /// clock policy remains host-owned.
     pub fn tick(&self, now_ms: u64) {
         // Node lock is taken and released here, before any snapshot lock is
         // touched below — the fixed node-then-snapshot order (see

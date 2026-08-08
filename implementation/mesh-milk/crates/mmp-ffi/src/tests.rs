@@ -8,6 +8,10 @@
 //! those bindings call into.
 
 use super::{FfiError, FfiEvent, FfiTier, MmpNode};
+use mmp_core::store::BundleStore;
+use mmp_store::SnapshotStore;
+use mmp_types::consts::LIFETIME_MESSAGE_MS;
+use mmp_types::ids::Id16;
 
 fn node(seed: u8) -> std::sync::Arc<MmpNode> {
     MmpNode::new(vec![seed; 32], FfiTier::Relay, None).expect("valid 32-byte seed")
@@ -81,6 +85,35 @@ fn direct_message_delivery_via_ffi_surface() {
         alice_events.iter().any(|e| matches!(e, FfiEvent::Delivered { id } if *id == msg_id)),
         "alice got the delivery receipt: {alice_events:?}"
     );
+}
+
+#[test]
+fn first_tick_anchors_persisted_message_deadline() {
+    let dir = TempDir::new("first-tick-deadline");
+    let path = dir.file("alice.mmp");
+    let bob = node(22);
+    let alice = MmpNode::new(vec![21u8; 32], FfiTier::Relay, Some(path.clone())).expect("valid seed");
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    const NOW: u64 = 123_456;
+    alice.tick(NOW);
+    let message = alice.send_text(bob.node_id(), "clock anchored".to_string()).expect("known peer");
+    alice.flush().expect("flush to a writable temp dir must succeed");
+
+    let id = Id16(message.as_slice().try_into().expect("FFI returns a 16-byte BundleID"));
+    let snapshot = SnapshotStore::open(path);
+    let meta = snapshot
+        .all_meta()
+        .into_iter()
+        .find(|candidate| candidate.id == id)
+        .expect("queued message metadata is persisted");
+    assert_eq!(meta.stored_at, NOW);
+    assert_eq!(meta.expires_at - meta.stored_at, LIFETIME_MESSAGE_MS);
+
+    alice.tick(NOW + 1);
+    assert!(alice.store_len() > 0, "the first post-send tick must retain the message");
 }
 
 #[test]
@@ -218,6 +251,7 @@ fn state_survives_restart() {
         introduce(&alice, &bob);
         drain(&alice);
         drain(&bob);
+        alice.tick(100_000);
 
         // Queue a bundle in alice's store without ever contacting bob, so
         // the bundle (and alice's own claim-gossip bundles) stay put.

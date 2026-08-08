@@ -373,6 +373,14 @@ fn rbsr_converges_on_disjoint_and_overlapping_sets() {
     let (ma, mb, _) = reconcile(vec![], rand_ids(10, 4));
     assert_eq!(ma.len(), 10);
     assert!(mb.is_empty());
+
+    // Large-vs-empty must remain wire-safe and converge through split ranges;
+    // this is the asymmetric case that previously could emit an oversized
+    // terminal ID list.
+    let large = rand_ids(500, 5);
+    let (ma, mb, _) = reconcile(vec![], large.clone());
+    assert_eq!(ma.len(), large.len());
+    assert!(mb.is_empty());
 }
 
 #[test]
@@ -400,6 +408,25 @@ fn rbsr_ignores_unmatched_echo_without_closing_domain() {
     let Frame::ReconInit { range, .. } = init else { panic!("init must be a range") };
     recon.on_range(&range, true, &mut src);
     assert!(recon.is_done());
+}
+
+#[test]
+fn rbsr_large_local_small_remote_does_not_emit_oversized_ids() {
+    use mmp_types::consts::MAX_FRAME_PAYLOAD;
+    use mmp_types::frame::{Frame, Range};
+
+    let mut src = VecSource { ids: rand_ids(500, 123) };
+    let mut recon = Reconciler::new(3);
+    let request = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: fingerprint(&[]) };
+    let frames = recon.on_range(&request, false, &mut src);
+
+    assert_eq!(frames.len(), 1);
+    let Frame::ReconRange { ranges, .. } = &frames[0] else {
+        panic!("a large local set must be split instead of listed");
+    };
+    assert!(!ranges.is_empty());
+    assert!(frames[0].encode_payload().len() <= MAX_FRAME_PAYLOAD);
+    assert!(recon.open > 0, "split ranges remain pending until their leaves resolve");
 }
 
 // -------------------------------------------------------- session e2e ------

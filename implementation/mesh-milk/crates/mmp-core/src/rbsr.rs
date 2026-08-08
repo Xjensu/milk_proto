@@ -166,10 +166,15 @@ impl Reconciler {
                 ranges: alloc::vec![Range { lo: range.lo, hi: range.hi, count: ids.len() as u32, fp: our_fp }],
             }];
         }
-        if ids.len() <= RBSR_T_LIST || range.count as usize <= RBSR_T_LIST {
+        // The response carries OUR IDs. A small peer-advertised count does
+        // not make a large local set wire-safe: listing `ids` here could
+        // exceed MAX_FRAME_PAYLOAD and kill the session. Split whenever our
+        // own set is larger than the terminal-list threshold.
+        if ids.len() <= RBSR_T_LIST {
             return self.list_frames(&range.lo, &range.hi, ids);
         }
-        // Mismatch, both sides big: reply with OUR count-balanced splits.
+        // Mismatch, local side exceeds the terminal threshold: reply with
+        // OUR count-balanced splits, even if the peer advertised a small set.
         let mut ranges = Vec::with_capacity(RBSR_B_F);
         for (lo, hi, sub) in split_ranges(&range.lo, &range.hi, &ids, RBSR_B_F) {
             ranges.push(Range { lo, hi, count: sub.len() as u32, fp: fingerprint(&sub) });
