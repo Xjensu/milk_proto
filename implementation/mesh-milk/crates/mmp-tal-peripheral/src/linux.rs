@@ -45,6 +45,7 @@ use bluer::{Adapter, Session, Uuid};
 use futures::{pin_mut, StreamExt};
 use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use tokio::task::JoinSet;
+use tokio::time::{timeout, Duration};
 
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
@@ -437,17 +438,18 @@ async fn ensure_link_up(
 ) -> Option<AttachResult> {
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
     let link_table = links.clone();
-    let _event_guard = event_gate.lock().await;
-    let old_write_gate = links
-        .lock()
-        .await
-        .states
-        .get(&link)
-        .map(|state| state.write_gate.clone());
+    let old_write_gate = links.lock().await.states.get(&link).map(|state| state.write_gate.clone());
+    let had_old_write_gate = old_write_gate.is_some();
     let _old_write_guard = match old_write_gate {
-        Some(gate) => Some(gate.lock_owned().await),
+        Some(gate) => timeout(Duration::from_millis(250), gate.lock_owned()).await.ok(),
         None => None,
     };
+    if had_old_write_gate && _old_write_guard.is_none() {
+        // A replacement must not wait forever behind a stalled notification;
+        // leave the current endpoint fenced and reject the new callback.
+        return None;
+    }
+    let _event_guard = event_gate.lock().await;
 
     let mut links = links.lock().await;
     let attach = match links.lifecycle.attach(link, side, endpoint) {
@@ -604,25 +606,23 @@ async fn link_down_if_current(
     tx: &EventSender,
     token: StreamToken,
 ) {
-    let _event_guard = event_gate.lock().await;
-    let write_gate = links
-        .lock()
-        .await
-        .states
-        .get(&token.link)
-        .map(|state| state.write_gate.clone());
-    let Some(write_gate) = write_gate else { return };
-    let _write_guard = write_gate.lock_owned().await;
-    let mut links = links.lock().await;
-    if !links.lifecycle.close_if_current(token) {
-        return;
-    }
-    links.states.remove(&token.link);
-    drop(links);
-    tx.retire_link(token.link);
-    // Control saturation is fail-closed: the logical link is already gone,
-    // and no stale data can be admitted even if the host is not draining.
-    let _ = try_link_down(tx, token.link, token.generation);
+    let write_gate = {
+        let _event_guard = event_gate.lock().await;
+        let mut links = links.lock().await;
+        if !links.lifecycle.close_if_current(token) {
+            return;
+        }
+        let Some(state) = links.states.remove(&token.link) else { return };
+        tx.retire_link(token.link);
+        // Control saturation is fail-closed: the logical link is already gone,
+        // and no stale data can be admitted even if the host is not draining.
+        let _ = try_link_down(tx, token.link, token.generation);
+        state.write_gate
+    };
+    // Do not hold the lifecycle gate while waiting for a concurrent notify.
+    // The bounded wait is enough to preserve an in-flight write when healthy;
+    // BlueZ socket drop on return fences the link if it is not.
+    let _ = timeout(Duration::from_millis(250), write_gate.lock_owned()).await;
 }
 
 /// Control saturation is fail-closed: the link is already retired and all
