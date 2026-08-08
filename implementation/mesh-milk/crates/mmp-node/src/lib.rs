@@ -65,7 +65,7 @@ use mmp_types::consts::{
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
     ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody, Summary,
-    MAX_ENVELOPE_PAYLOAD,
+    FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD,
 };
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
@@ -1234,6 +1234,23 @@ impl Node {
         self.sessions.remove(&link);
     }
 
+    fn is_close_frame(bytes: &[u8]) -> bool {
+        matches!(bytes.get(2), Some(typ) if *typ == FT_ERROR || *typ == FT_CLOSE)
+    }
+
+    fn has_close_frame(&self, link: LinkId) -> bool {
+        self.outbox.iter().any(|(queued_link, bytes)| *queued_link == link && bytes.get(2) == Some(&FT_CLOSE))
+    }
+
+    fn clear_link_outbox_preserving_close(&mut self, link: LinkId) {
+        // SessionEngine emits ERROR+CLOSE before publishing Closed. Data
+        // queued by an earlier pump is no longer valid once the session has
+        // entered CLOSING, but those terminal control frames must still reach
+        // the transport before the host tears the physical link down.
+        self.outbox.retain(|(queued_link, bytes)| *queued_link != link || Self::is_close_frame(bytes));
+        self.sessions.remove(&link);
+    }
+
     fn request_close(&mut self, link: LinkId) {
         if self.close_actions.contains(&link) {
             return;
@@ -1354,7 +1371,7 @@ impl Node {
             self.clear_link_outbox(link);
             self.request_close(link);
         } else if closed {
-            self.clear_link_outbox(link);
+            self.clear_link_outbox_preserving_close(link);
             self.request_close(link);
         }
     }
@@ -1364,11 +1381,21 @@ impl Node {
         self.outbox.pop_front()
     }
 
-    /// Return the next transport-local close action. The host must close the
-    /// physical link and then feed [`TalEvent::LinkDown`] back to the node;
-    /// this action is not a protocol frame and does not change the wire
-    /// specification.
+    /// Return the next transport-local close action once terminal wire output
+    /// has drained. The host must close the physical link and then feed
+    /// [`TalEvent::LinkDown`] back to the node; this action is not a protocol
+    /// frame and does not change the wire specification. `None` can therefore
+    /// mean "send the pending CLOSE first", not only "no close is needed".
     pub fn poll_close(&mut self) -> Option<LinkId> {
+        // A graceful/protocol-error close is a two-step wire operation. Do
+        // not hand the host the physical teardown action until its CLOSE
+        // envelope has been drained through poll_send; otherwise a host that
+        // follows the normal close-then-send polling order would drop it.
+        if let Some(&link) = self.close_actions.front() {
+            if self.has_close_frame(link) {
+                return None;
+            }
+        }
         self.close_actions.pop_front()
     }
 

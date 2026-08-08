@@ -4,7 +4,7 @@
 use mmp_core::store::{BundleMeta, SlotState};
 use mmp_core::MemStore;
 use mmp_tal::TalEvent;
-use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
+use mmp_types::frame::{FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::AuthCert;
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{FRIENDSHIP_TTL_MS, MAX_BUNDLE};
@@ -66,6 +66,29 @@ fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
     }
     a.on_tal_event(TalEvent::LinkDown { link });
     b.on_tal_event(TalEvent::LinkDown { link });
+}
+
+/// Establish a session and drain its normal synchronization output, leaving
+/// both physical links up for tests that exercise post-handshake close paths.
+fn establish(a: &mut Node, b: &mut Node, link: u64) {
+    a.tick(0);
+    b.tick(0);
+    a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: Default::default() });
+    b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: Default::default() });
+    for _ in 0..300 {
+        let mut quiet = true;
+        while let Some((l, bytes)) = a.poll_send() {
+            quiet = false;
+            b.on_tal_event(TalEvent::LinkData { link: l, bytes });
+        }
+        while let Some((l, bytes)) = b.poll_send() {
+            quiet = false;
+            a.on_tal_event(TalEvent::LinkData { link: l, bytes });
+        }
+        if quiet {
+            break;
+        }
+    }
 }
 
 fn drain(n: &mut Node) -> Vec<Event> {
@@ -208,8 +231,8 @@ fn session_slot_releases_after_link_down() {
 #[test]
 fn session_slot_releases_when_engine_closes() {
     let mut n = Node::new([106; 32], Box::new(MemStore::new()), Tier::Leaf);
-    link_up(&mut n, 1);
-    while n.poll_send().is_some() {}
+    let mut peer = Node::new([113; 32], Box::new(MemStore::new()), Tier::Leaf);
+    establish(&mut n, &mut peer, 1);
 
     let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
     let mut malformed = vec![0u8; 3];
@@ -222,10 +245,46 @@ fn session_slot_releases_when_engine_closes() {
         n.sessions.is_empty(),
         "a closed engine must be removed before a replacement is admitted"
     );
+    assert_eq!(n.poll_close(), None, "physical close waits for terminal wire frames");
+    let terminal_types: Vec<u8> = std::iter::from_fn(|| n.poll_send().map(|(_, bytes)| bytes[2])).collect();
+    assert_eq!(terminal_types, vec![FT_ERROR, FT_CLOSE]);
     assert_eq!(n.poll_close(), Some(1), "local session closure must reach the transport host");
 
     link_up(&mut n, 2);
     assert_eq!(n.sessions.len(), 1, "Closed must release the admission slot");
+}
+
+#[test]
+fn timer_close_flushes_close_before_physical_teardown() {
+    let mut n = Node::new([111; 32], Box::new(MemStore::new()), Tier::Leaf);
+    let mut peer = Node::new([114; 32], Box::new(MemStore::new()), Tier::Leaf);
+    establish(&mut n, &mut peer, 1);
+
+    n.tick(10_001); // SESSION_IDLE_MS + 1 in the frozen timer table.
+    assert!(!n.sessions.contains_key(&1));
+    assert_eq!(n.poll_close(), None, "CLOSE must be drained before teardown");
+    let (link, bytes) = n.poll_send().expect("timer close frame");
+    assert_eq!(link, 1);
+    assert_eq!(bytes[2], FT_CLOSE);
+    assert!(n.poll_send().is_none());
+    assert_eq!(n.poll_close(), Some(1));
+}
+
+#[test]
+fn terminal_close_preserves_unrelated_link_outbox() {
+    let mut n = Node::new([112; 32], Box::new(MemStore::new()), Tier::Leaf);
+    let mut peer = Node::new([115; 32], Box::new(MemStore::new()), Tier::Leaf);
+    establish(&mut n, &mut peer, 1);
+    n.outbox.push_back((99, vec![0, 0, 0x20, 0xaa]));
+
+    let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
+    let mut malformed = vec![0u8; 3];
+    malformed[..2].copy_from_slice(&oversized_declared_len.to_le_bytes());
+    n.on_tal_event(TalEvent::LinkData { link: 1, bytes: malformed });
+
+    let queued: Vec<(u64, u8)> = std::iter::from_fn(|| n.poll_send().map(|(link, bytes)| (link, bytes[2]))).collect();
+    assert_eq!(queued, vec![(99, 0x20), (1, FT_ERROR), (1, FT_CLOSE)]);
+    assert_eq!(n.poll_close(), Some(1));
 }
 
 #[test]

@@ -473,7 +473,28 @@ fn persist_node_state(shared: &Arc<Mutex<SnapshotStore>>, node: &Node) -> std::i
     store.persist()
 }
 
-fn now_ms() -> u64 {
+/// Best-effort wall-clock source used by the standalone CLI.
+///
+/// The node API calls its injected value `now_ms` and uses it as a monotonic
+/// process timebase. The CLI also needs persisted snapshot deadlines to age
+/// across a restart, so it intentionally supplies Unix milliseconds here.
+/// This adapter does not clamp, rebase, or infer reboot offsets; those policies
+/// belong to the host that owns the clock (the mobile FFI contract makes this
+/// explicit). Keeping the source behind a seam makes that limitation visible
+/// and lets tests exercise call ordering without a real clock.
+trait ClockSource {
+    fn now_ms(&mut self) -> u64;
+}
+
+struct WallClock;
+
+impl ClockSource for WallClock {
+    fn now_ms(&mut self) -> u64 {
+        wall_clock_ms()
+    }
+}
+
+fn wall_clock_ms() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64
 }
 
@@ -482,12 +503,8 @@ fn now_ms() -> u64 {
 /// the current snapshot format stores absolute millisecond deadlines; without
 /// this first tick, a `send` bundle created before the drive loop's first tick
 /// would expire immediately when the loop supplies the Unix timestamp.
-fn prime_node_clock(node: &mut Node) {
-    prime_node_clock_at(node, now_ms());
-}
-
-fn prime_node_clock_at(node: &mut Node, now_ms: u64) {
-    node.tick(now_ms);
+fn prime_node_clock<C: ClockSource>(node: &mut Node, clock: &mut C) {
+    node.tick(clock.now_ms());
 }
 
 fn cmd_connect(args: &[String]) -> ExitCode {
@@ -504,7 +521,8 @@ fn cmd_connect(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
-    prime_node_clock(&mut node);
+    let mut clock = WallClock;
+    prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -514,7 +532,7 @@ fn cmd_connect(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop(&mut node, shared.as_ref(), None))
+    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut clock, None))
 }
 
 fn cmd_send(args: &[String]) -> ExitCode {
@@ -535,7 +553,8 @@ fn cmd_send(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
-    prime_node_clock(&mut node);
+    let mut clock = WallClock;
+    prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let msg_id = match node.send_text(&dest, &positional[2]) {
@@ -558,7 +577,7 @@ fn cmd_send(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop(&mut node, shared.as_ref(), Some(msg_id)))
+    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut clock, Some(msg_id)))
 }
 
 fn cmd_listen(args: &[String]) -> ExitCode {
@@ -575,7 +594,8 @@ fn cmd_listen(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
-    prime_node_clock(&mut node);
+    let mut clock = WallClock;
+    prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
 
     let rt = match tokio::runtime::Runtime::new() {
@@ -585,7 +605,7 @@ fn cmd_listen(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop_peripheral(&mut node, shared.as_ref()))
+    rt.block_on(drive_loop_peripheral(&mut node, shared.as_ref(), &mut clock))
 }
 
 /// THE reference "how to host a node" loop (handbook §4.2), central role.
@@ -612,7 +632,12 @@ fn cmd_listen(args: &[String]) -> ExitCode {
 /// `watch`, set only by `send`, is the message id to wait for: the loop
 /// returns as soon as `Event::Delivered { id }` matches it, or after
 /// `SEND_TIMEOUT` with no such event (exit code 1, see module docs).
-async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>, watch: Option<Id16>) -> ExitCode {
+async fn drive_loop<C: ClockSource>(
+    node: &mut Node,
+    shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    clock: &mut C,
+    watch: Option<Id16>,
+) -> ExitCode {
     let central = match BleCentral::new().await {
         Ok(c) => c,
         Err(e) => {
@@ -638,7 +663,7 @@ async fn drive_loop(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>,
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                node.tick(now_ms());
+                node.tick(clock.now_ms());
             }
             ev = events.recv() => {
                 match ev {
@@ -741,7 +766,11 @@ async fn dial_new_peers(central: &BleCentral, dialed: &mut HashSet<PeripheralId>
 /// watches for a specific delivery (that is `send`'s job over the central
 /// role), so this loop always runs until Ctrl-C or the peripheral's event
 /// channel closes.
-async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<SnapshotStore>>>) -> ExitCode {
+async fn drive_loop_peripheral<C: ClockSource>(
+    node: &mut Node,
+    shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    clock: &mut C,
+) -> ExitCode {
     let peripheral = match PeripheralRole::new().await {
         Ok(p) => p,
         Err(e) => {
@@ -750,7 +779,7 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
         }
     };
 
-    let mut last_advertised_ms = now_ms();
+    let mut last_advertised_ms = clock.now_ms();
     if let Err(e) = peripheral.advertise(node.beacon(last_advertised_ms).to_vec()).await {
         eprintln!("mmp-cli: failed to start advertising: {e}");
         peripheral.shutdown_all().await;
@@ -767,7 +796,7 @@ async fn drive_loop_peripheral(node: &mut Node, shared: Option<&Arc<Mutex<Snapsh
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                let now = now_ms();
+                let now = clock.now_ms();
                 node.tick(now);
                 if mmp_tal_peripheral::readvertise_due(last_advertised_ms, now) {
                     match peripheral.advertise(node.beacon(now).to_vec()).await {
@@ -844,8 +873,23 @@ fn finish(shared: Option<&Arc<Mutex<SnapshotStore>>>, node: &Node, frames_sent: 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
     use mmp_types::bundle::class;
     use mmp_types::ids::Key32;
+
+    struct SequenceClock(VecDeque<u64>);
+
+    impl SequenceClock {
+        fn new(values: impl IntoIterator<Item = u64>) -> Self {
+            Self(values.into_iter().collect())
+        }
+    }
+
+    impl ClockSource for SequenceClock {
+        fn now_ms(&mut self) -> u64 {
+            self.0.pop_front().expect("test clock exhausted")
+        }
+    }
 
     fn temp_snapshot_path() -> std::path::PathBuf {
         let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
@@ -866,11 +910,20 @@ mod tests {
             node.ingest_claim(claim, false);
         }
 
-        prime_node_clock_at(&mut node, 1_000_000);
+        let mut clock = SequenceClock::new([1_000_000, 1_000_001]);
+        prime_node_clock(&mut node, &mut clock);
         node.send_text(&peer.node_id(), "clock-safe").expect("peer claims are present");
         assert!(node.store_len() > 0);
-        node.tick(1_000_001);
+        node.tick(clock.now_ms());
         assert!(node.store_len() > 0, "the first drive tick must not expire a freshly queued bundle");
+    }
+
+    #[test]
+    fn cli_clock_seam_forwards_raw_samples_without_skew_policy() {
+        let mut clock = SequenceClock::new([1_000, 1_001, 999]);
+        assert_eq!(clock.now_ms(), 1_000);
+        assert_eq!(clock.now_ms(), 1_001);
+        assert_eq!(clock.now_ms(), 999);
     }
 
     /// The CLI must perform the same bootstrap sequence as the FFI host:

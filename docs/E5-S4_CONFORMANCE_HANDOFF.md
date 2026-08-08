@@ -1230,3 +1230,37 @@ no protocol or persistence bytes. Windows crypto tests/clippy and the WSL
 crypto/core clippy checks now pass. Rustfmt remains unavailable in the pinned
 Windows toolchain (`rustfmt` component not installed); `git diff --check` is
 clean.
+
+## 2026-08-08 CLI clock seam and terminal-close flush
+
+The standalone CLI's wall-clock dependency is now isolated behind a private
+`ClockSource` seam. `WallClock` preserves the existing Unix-millisecond
+snapshot behavior, while deterministic tests can inject raw samples (including
+rollback) without silently introducing clamping, reboot inference, or an
+`Instant`-based persistence policy. The FFI/mobile same-boot monotonic contract
+remains unchanged and is still the required native-host boundary.
+
+The transport lifecycle audit also found that `Node::pump_link` removed the
+`ERROR`/`CLOSE` frames emitted immediately before `SessionEvent::Closed`, and
+that `poll_close()` could ask the host to tear down the physical link before
+those frames were drained. The implementation now discards stale data for the
+closed link, retains terminal control frames, and defers the host close action
+until the `CLOSE` envelope has been polled. Regressions cover malformed input
+(`ERROR` then `CLOSE`), timer-triggered `CLOSE`, and unrelated-link outbox
+isolation. No wire fields or specification files changed.
+
+Fresh evidence after these changes:
+
+```text
+cargo test -p mmp-cli --bin mmp-cli -- --test-threads=1  # 28 passed
+cargo test -p mmp-node --lib -- --test-threads=1          # 61 passed
+cargo clippy -p mmp-node -p mmp-cli --all-targets -- -D warnings  # pass
+cargo test --workspace --all-targets -- --test-threads=1        # pass (Windows)
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # pass
+```
+
+The physical Linux/BlueZ exchange and native Android/iOS radio/keystore
+validation remain external gates: this Windows host has no usable WSL/Linux
+BlueZ environment, Bluetooth adapter path, Android consuming shell, or Xcode
+toolchain. The scoped implementation changes are committed separately from
+the user's pre-existing dirty files.
