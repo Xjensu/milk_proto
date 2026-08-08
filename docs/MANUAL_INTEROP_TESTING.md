@@ -179,8 +179,21 @@ rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 scripts/build-ios-xcframework.sh mobile-artifacts/ios
 ```
 
-The script produces `MmpCore.xcframework` and a Swift bindings directory. It
-runs the corresponding source-level gate,
+The script produces `MmpCore.xcframework` and a Swift bindings directory, then
+verifies that both the `ios-arm64` device slice and the
+`ios-arm64-simulator` slice contain a non-empty static library and headers and
+that the Swift source artifact is present. To rerun the structural check after
+copying artifacts between hosts:
+
+```bash
+python scripts/verify_ios_artifacts.py \
+  mobile-artifacts/ios/MmpCore.xcframework \
+  mobile-artifacts/ios/swift-bindings
+```
+
+The verifier is an artifact-shape gate, not a Swift compiler or CoreBluetooth
+test. It does not upgrade an artifact pass into mobile interoperability. The
+build script also runs the corresponding source-level gate,
 `scripts/check_mobile_binding.py swift <generated-bindings-dir>`, before moving
 the Swift source into the output. As with Android, this verifies generated API
 coverage and the secret denylist only; it is not a Swift compiler or hardware

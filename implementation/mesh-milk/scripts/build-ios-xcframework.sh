@@ -70,6 +70,10 @@ xcodebuild -create-xcframework \
 
 mkdir -p "$OUT_DIR"
 cp -r "$STAGE/swift-source" "$OUT_DIR/swift-bindings"
+echo "==> Verifying XCFramework shape and Swift source artifact"
+python scripts/verify_ios_artifacts.py \
+    "$OUT_DIR/MmpCore.xcframework" \
+    "$OUT_DIR/swift-bindings"
 rm -rf "$STAGE"
 
 echo "==> Done: $OUT_DIR/MmpCore.xcframework, $OUT_DIR/swift-bindings/"

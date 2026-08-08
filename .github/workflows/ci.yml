@@ -234,6 +234,7 @@ jobs:
         with:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - run: bash scripts/build-ios-xcframework.sh mobile-artifacts/ios
+      - run: python scripts/verify_ios_artifacts.py mobile-artifacts/ios/MmpCore.xcframework mobile-artifacts/ios/swift-bindings
       - uses: actions/upload-artifact@v4
         with:
           name: mmp-core-xcframework
