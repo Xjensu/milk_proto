@@ -112,7 +112,7 @@ hardware/sysroot gate, and the specification directory remains unchanged.
 **(d) Hardening**
 - `cargo-fuzz` on pre-auth parsers (beacon, handshake first message) is a mandate recorded in doc 07 §8 (attributed there to doc 12). Four fuzz targets now exist under `implementation/mesh-milk/fuzz/`; a curated seed corpus and a measured CPU-hour run remain open. `mmp-types` also has proptest-based mutation testing (`props::*`), which is complementary rather than a replacement for the persistent fuzz corpus.
 - Doc 10 §6.4 test vectors, independent readers, and a coverage manifest are now committed under `implementation/mesh-milk/vectors/`; a real two-host radio interop run remains outstanding.
-- Adversarial simulations per doc 14 §3 (Implementation drills, must-pass before v1.0): replay, flood, quota abuse, eclipse, Bloom-poison, and Byzantine double-grant scenarios are active in `mmp-sim`; remaining work is to map the double-grant result into the release invariant and add trace-driven optimization measurements.
+- Adversarial simulations per doc 14 §3 (Implementation drills, must-pass before v1.0): replay, flood, quota abuse, eclipse, Bloom-poison, and Byzantine double-grant scenarios are active in `mmp-sim`; the double-grant result is recorded as a receiver-local invariant in `docs/COPY_BUDGET_SECURITY_INVARIANT.md`, while trace-driven optimization measurements remain open.
 - 1k-node scale validation against doc 13 targets: `mmp-sim`'s largest scenario is the 100-node ignored stress test; nothing at 1k exists.
 - External security review: not started (pre-requisite: the above hardening steps, per usual practice).
 
