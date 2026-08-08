@@ -660,6 +660,25 @@ fn sender_key_member_must_match_authenticated_origin() {
 }
 
 #[test]
+fn non_admin_cannot_invite_into_an_immutable_v1_group() {
+    let mut alice = node(21);
+    let mut bob = node(22);
+    let mut carol = node(23);
+    introduce(&mut alice, &mut bob);
+    introduce(&mut alice, &mut carol);
+    introduce(&mut bob, &mut carol);
+
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).unwrap();
+    contact(&mut alice, &mut bob, 94, 940_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    assert_eq!(bob.group_invite(&gid, &carol.node_id()), Err(SendError::UnknownPeer));
+    assert!(!bob.group_members(&gid).contains(&carol.node_id()));
+}
+
+#[test]
 fn removed_member_cannot_reintroduce_stale_sender_key() {
     let mut alice = node(11);
     let mut bob = node(12);

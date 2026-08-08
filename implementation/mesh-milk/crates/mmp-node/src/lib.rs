@@ -1107,9 +1107,14 @@ impl Node {
     /// Invite `peer`: add it to the member set and ship our sender key through
     /// the pairwise channel. Each member distributes only its own key; a
     /// recipient must never trust a relay to assert another member's origin.
+    /// Only the immutable v1 group administrator may mutate membership;
+    /// non-admin members fail closed just like [`Self::group_remove`].
     pub fn group_invite(&mut self, gid: &Id16, peer: &NodeId) -> Result<(), SendError> {
         {
             let gs = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+            if !gs.is_admin {
+                return Err(SendError::UnknownPeer);
+            }
             gs.add_member(*peer);
         }
         self.core.send_own_dist(gid, peer)?;
