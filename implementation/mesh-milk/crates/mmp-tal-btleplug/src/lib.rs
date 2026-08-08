@@ -642,6 +642,7 @@ impl BleCentral {
     /// so a saturated lifecycle queue cannot leave a radio link alive.
     pub async fn shutdown_all(&self) {
         self.shutting_down.store(true, Ordering::Release);
+        let _ = self.adapter.stop_scan().await;
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
     }
 

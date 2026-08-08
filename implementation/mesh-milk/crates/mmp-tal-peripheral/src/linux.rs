@@ -259,6 +259,7 @@ impl PeripheralRole {
     /// lifecycle queue cannot leave a BlueZ stream alive.
     pub async fn shutdown_all(&self) {
         let _ = self.shutdown_tx.send(true);
+        self.adv.lock().await.take();
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
     }
 
