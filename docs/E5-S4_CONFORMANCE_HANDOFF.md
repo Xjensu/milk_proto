@@ -565,6 +565,14 @@ restore. The reference provider test proves generation CAS and round-trip open;
 it is not a durable native backend and must not be described as restart
 continuity in product documentation.
 
+The follow-up reference-provider tests (`9e3a408`) exercise a durable
+high-water floor, stale/equal/forked generation rejection, unavailable-provider
+behavior, and record preservation on invalid commit. `772a59c` adds the
+high-level save/restore seam that obtains the generation floor and trusted
+clock from the provider instead of accepting caller wall time. The provider
+implementation remains test-only; native key wrapping and crash-safe durable
+storage are still required.
+
 The group restore path explicitly marks its regenerated local sender key as
 requiring re-gossip. The first post-restore group send schedules distributions
 before emitting ciphertext, and a failed distribution leaves the marker set.

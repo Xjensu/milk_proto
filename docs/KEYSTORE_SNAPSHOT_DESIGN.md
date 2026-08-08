@@ -64,6 +64,16 @@ generation floor. The provider trait remains an adapter contract: no durable
 high-water mark, crash recovery, trusted platform clock, or native keystore
 implementation exists yet.
 
+Commit `9e3a408` adds a test-only reference provider with an explicit durable
+high-water floor and atomic failure behavior. Commit `772a59c` then makes the
+production-facing seam consume the provider's generation floor and trusted
+clock through `save_core_from_vault`/`restore_from_vault`; callers no longer
+need to supply an arbitrary wall-clock timestamp or remember the rollback
+floor. The reference provider is deliberately confined to tests and stores a
+raw DEK only as a test fixture. A real adapter must wrap the DEK in Android
+Keystore, iOS Keychain, or an equivalent capability and persist the floor and
+record transactionally.
+
 ## Required secret-state inventory
 
 One atomic generation must cover all state whose mismatch can break delivery or
