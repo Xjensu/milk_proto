@@ -156,11 +156,11 @@ mod tests {
         let overflow = header(u32::MAX);
         assert!(GroupState::decode(&mut rng, &overflow).is_none());
 
-        // Empty OR-Set encoding is four zero bytes (member count and
+        // Empty OR-Set encoding is two four-byte counts (member count and
         // tombstone count).  A trailing byte must not be accepted as part of
-        // a valid group snapshot.
-        let mut trailing = header(4);
-        trailing.extend_from_slice(&[0u8; 4]);
+        // an otherwise valid group snapshot.
+        let mut trailing = header(8);
+        trailing.extend_from_slice(&[0u8; 8]);
         trailing.push(0);
         assert!(GroupState::decode(&mut rng, &trailing).is_none());
     }
