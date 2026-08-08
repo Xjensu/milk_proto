@@ -611,6 +611,12 @@ not prove native provider behavior or React Native runtime behavior; it proves
 that the generated UniFFI surface cannot accidentally expose the internal
 snapshot types.
 
+Commit `f6c4c68` wires the validated vault load into a Rust-internal Node
+restore method. It rejects sessions, queued output, existing pairwise/group
+secret state, or pending markers before provider access, then performs one
+aggregate swap; the regression covers successful restart restoration and
+busy-state rejection. This still stops before native keystore I/O.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has

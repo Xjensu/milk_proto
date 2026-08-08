@@ -74,6 +74,12 @@ raw DEK only as a test fixture. A real adapter must wrap the DEK in Android
 Keystore, iOS Keychain, or an equivalent capability and persist the floor and
 record transactionally.
 
+Commit `f6c4c68` adds the Rust-internal Node restore adapter. It checks that
+the node is quiescent before asking the provider to load/unlock a generation,
+then applies the already validated aggregate in one in-memory swap. A busy
+node returns `VaultError::Busy` without touching state; no provider secret or
+plaintext crosses the FFI boundary.
+
 ## Required secret-state inventory
 
 One atomic generation must cover all state whose mismatch can break delivery or
