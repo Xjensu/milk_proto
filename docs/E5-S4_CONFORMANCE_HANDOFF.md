@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `7226f1f` (`fix(mmp-tal-btleplug): fence link generations`). The
+This checkpoint is commit `a4ecfb8` (`fix(mmp-tal-peripheral): fence BlueZ stream generations`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -82,6 +82,12 @@ Recent focused commits, oldest first:
   teardown callbacks cannot affect a replacement with the same stable
   `LinkId`. Replacement ordering is explicitly `LinkDown` then `LinkUp`, and
   the bounded queue remains the backpressure boundary.
+- `a4ecfb8` — added direction-specific monotonic BlueZ stream tokens backed by
+  endpoint identities. Linux reader and writer callbacks now reject stale
+  data/teardown, serialize notification writes against same-direction socket
+  replacement, and retire delayed opposite-direction callbacks. The
+  hardware-independent lifecycle tests run on Windows; Linux compilation and
+  real BlueZ execution remain environment-gated.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -191,6 +197,9 @@ because the installed toolchain lacks the rustfmt component.
 The lifecycle regressions exercise generation allocation and replacement signal
 ordering without BLE hardware; direct callback scheduling remains a real-radio
 and Linux/BlueZ validation gate.
+The peripheral lifecycle tests additionally cover duplicate endpoints,
+direction-specific replacement, reconnect generation non-reuse, and delayed
+opposite-direction callbacks. They do not substitute for a Linux BlueZ build.
 
 Regenerate vectors with:
 
@@ -244,13 +253,15 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Extend generation fencing to the Linux peripheral backend. Its reader and
-   writer callbacks still need direction-specific monotonic tokens so a stale
-   BlueZ stream cannot remove a replacement or inject old encrypted bytes.
+5. Complete the Linux/BlueZ compile and hardware gate for the new peripheral
+   stream-token implementation. The Windows host cannot build this backend
+   because the cross-target `libdbus-sys` pkg-config/sysroot is absent.
    Separately design reserved control capacity/overflow retirement so a stalled
-   consumer cannot delay `LinkDown` indefinitely behind data; central lifecycle
-   transitions currently hold the event gate across bounded sends, so this is
-   an explicit follow-up rather than an unbounded-queue workaround.
+   consumer cannot delay `LinkDown` indefinitely behind data; both backends
+   currently hold lifecycle gates across bounded sends, so this is an explicit
+   follow-up rather than an unbounded-queue workaround. Retired endpoint
+   identity storage is intentionally not silently capped; measure and bound it
+   with a documented policy after Linux reconnect tests.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
