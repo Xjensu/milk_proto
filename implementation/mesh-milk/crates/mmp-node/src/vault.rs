@@ -132,6 +132,10 @@ pub(crate) fn seal_core(
 
 /// Check the CAS condition that every provider commit must enforce durably.
 pub(crate) fn validate_commit_generation(expected_generation: u64, candidate: &SealedCandidate) -> Result<(), VaultError> {
+    let next_generation = expected_generation.checked_add(1).ok_or(VaultError::Generation)?;
+    if candidate.generation != next_generation {
+        return Err(VaultError::Generation);
+    }
     snapshot::validate_next_generation(expected_generation, candidate.generation).map_err(|_| VaultError::Generation)
 }
 
@@ -429,6 +433,17 @@ mod tests {
         assert!(open_record(&node.core.public, &node.core.node_id, &wrong, &[7; 32], 10_001, snapshot::DEFAULT_TTL_MS, 1).is_err());
         assert!(snapshot::validate_next_generation(generation, 2).is_ok());
         assert!(snapshot::validate_next_generation(generation, 1).is_err());
+    }
+
+    #[test]
+    fn commit_generation_rejects_gaps_and_overflow() {
+        let node = Node::new([101; 32], Box::new(MemStore::new()), Tier::Leaf);
+        let mut rng = StdRng::seed_from_u64(18);
+        let gap = seal_core(&node.core, 3, 11_000, &[11; 32], &mut rng).unwrap();
+        assert_eq!(validate_commit_generation(1, &gap), Err(VaultError::Generation));
+
+        let overflow = seal_core(&node.core, u64::MAX - 1, 11_001, &[11; 32], &mut rng).unwrap();
+        assert_eq!(validate_commit_generation(u64::MAX - 1, &overflow), Err(VaultError::Generation));
     }
 
     #[test]
