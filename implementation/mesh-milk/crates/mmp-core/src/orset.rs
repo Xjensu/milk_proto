@@ -149,25 +149,42 @@ impl OrSet {
     pub fn decode(bytes: &[u8]) -> Option<OrSet> {
         let mut pos = 0usize;
         let u32_at = |b: &[u8], p: &mut usize| -> Option<u32> {
-            let v = b.get(*p..*p + 4)?;
-            *p += 4;
+            let end = p.checked_add(4)?;
+            let v = b.get(*p..end)?;
+            *p = end;
             Some(u32::from_le_bytes(v.try_into().ok()?))
         };
         let u64_at = |b: &[u8], p: &mut usize| -> Option<u64> {
-            let v = b.get(*p..*p + 8)?;
-            *p += 8;
+            let end = p.checked_add(8)?;
+            let v = b.get(*p..end)?;
+            *p = end;
             Some(u64::from_le_bytes(v.try_into().ok()?))
         };
 
         let member_count = u32_at(bytes, &mut pos)?;
+        // Each member needs a 16-byte ID and a 4-byte tag count, followed by
+        // the mandatory 4-byte tombstone count.  Reject impossible counts
+        // before entering the member loop; this keeps a hostile snapshot
+        // from turning a tiny count field into an expensive parse.
+        const MEMBER_MIN_BYTES: usize = 16 + 4;
+        if bytes.len().saturating_sub(pos) < 4
+            || member_count as usize
+                > (bytes.len().saturating_sub(pos) - 4) / MEMBER_MIN_BYTES
+        {
+            return None;
+        }
         let mut adds = BTreeMap::new();
         for _ in 0..member_count {
-            let member_bytes = bytes.get(pos..pos + 16)?;
-            pos += 16;
+            let member_end = pos.checked_add(16)?;
+            let member_bytes = bytes.get(pos..member_end)?;
+            pos = member_end;
             let mut arr = [0u8; 16];
             arr.copy_from_slice(member_bytes);
             let member: NodeId = Id16(arr);
             let tag_count = u32_at(bytes, &mut pos)?;
+            if tag_count as usize > bytes.len().saturating_sub(pos) / 8 {
+                return None;
+            }
             let mut tags = BTreeSet::new();
             for _ in 0..tag_count {
                 tags.insert(u64_at(bytes, &mut pos)?);
@@ -175,6 +192,9 @@ impl OrSet {
             adds.insert(member, tags);
         }
         let tombstone_count = u32_at(bytes, &mut pos)?;
+        if tombstone_count as usize > bytes.len().saturating_sub(pos) / 8 {
+            return None;
+        }
         let mut tombstones = BTreeSet::new();
         for _ in 0..tombstone_count {
             tombstones.insert(u64_at(bytes, &mut pos)?);
@@ -183,5 +203,31 @@ impl OrSet {
             return None; // trailing garbage: treat as corrupt, not forward-compat
         }
         Some(OrSet { adds, tombstones })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::OrSet;
+
+    #[test]
+    fn decode_rejects_hostile_member_tag_and_tombstone_counts() {
+        // The counts are disk-controlled.  They must be rejected from the
+        // remaining-byte arithmetic before any unbounded loop begins.
+        let mut members = Vec::new();
+        members.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(OrSet::decode(&members).is_none());
+
+        let mut tags = Vec::new();
+        tags.extend_from_slice(&1u32.to_le_bytes()); // one member
+        tags.extend_from_slice(&[0u8; 16]);
+        tags.extend_from_slice(&u32::MAX.to_le_bytes());
+        tags.extend_from_slice(&0u32.to_le_bytes()); // trailing tombstone_count
+        assert!(OrSet::decode(&tags).is_none());
+
+        let mut tombstones = Vec::new();
+        tombstones.extend_from_slice(&0u32.to_le_bytes()); // member_count
+        tombstones.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(OrSet::decode(&tombstones).is_none());
     }
 }

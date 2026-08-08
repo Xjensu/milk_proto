@@ -120,8 +120,9 @@ impl GroupState {
         let is_admin = bytes[18] != 0;
         let next_tag = u64::from_le_bytes(bytes[19..27].try_into().ok()?);
         let orset_len = u32::from_le_bytes(bytes[27..31].try_into().ok()?) as usize;
-        let orset_bytes = bytes.get(31..31 + orset_len)?;
-        if bytes.len() != 31 + orset_len {
+        let end = 31usize.checked_add(orset_len)?;
+        let orset_bytes = bytes.get(31..end)?;
+        if bytes.len() != end {
             return None; // trailing garbage: treat as corrupt
         }
         let members = OrSet::decode(orset_bytes)?;
@@ -135,5 +136,32 @@ impl GroupState {
             is_admin,
             next_tag,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GroupState;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    fn header(orset_len: u32) -> Vec<u8> {
+        let mut bytes = vec![0u8; 31];
+        bytes[27..31].copy_from_slice(&orset_len.to_le_bytes());
+        bytes
+    }
+
+    #[test]
+    fn decode_rejects_overflowed_or_trailing_group_state() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let overflow = header(u32::MAX);
+        assert!(GroupState::decode(&mut rng, &overflow).is_none());
+
+        // Empty OR-Set encoding is four zero bytes (member count and
+        // tombstone count).  A trailing byte must not be accepted as part of
+        // a valid group snapshot.
+        let mut trailing = header(4);
+        trailing.extend_from_slice(&[0u8; 4]);
+        trailing.push(0);
+        assert!(GroupState::decode(&mut rng, &trailing).is_none());
     }
 }
