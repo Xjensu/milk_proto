@@ -81,6 +81,18 @@ The current production plan is amended in this order:
 6. **File-plane P2:** compare Reed–Solomon and fountain/DoF coding under real BLE contact traces and embedded resource limits. Preserve the existing signed Merkle root until a complete replacement contract and vectors exist.
 7. **Release governance P1:** add a specification manifest/status table and a published-ref link check for `ROADMAP.md`, `CHANGELOG.md`, and `COUNCIL-REVIEW.md`.
 
+8. **Host resource policy P0/P1:** expose complete-snapshot quotas to FFI
+   consumers, keep parser and beacon-population allocations bounded under
+   unauthenticated input, and test fail-closed persistence behavior. These are
+   receiver-local controls; they must not be presented as global Byzantine
+   copy-budget enforcement.
+9. **Platform drive-loop P1:** keep the native radio adapters outside the Rust
+   wire/core layers, but provide a host-testable Kotlin coordinator for
+   monotonic ticking, callback ordering, MTU-minus-three fragmentation,
+   back-pressure, stale-link filtering, and foreground relay demotion. Mark
+   source-only validation separately from Kotlin compilation and physical BLE
+   evidence.
+
 ### Implemented from the amended plan
 
 The conformance/security work is now executable without changing the wire
@@ -94,6 +106,16 @@ with the frozen header-binding rule, with details in
 `docs/AEAD_AD_CONFORMANCE.md`. The remaining document contradiction is recorded
 as an implementation erratum in `docs/ID_PROOF_ERRATUM.md`; the `specification/`
 files remain untouched.
+
+The newly completed non-wire work is tracked separately: `bcd5288` adds
+fixed-width count prechecks to three codecs; `fe0aee9` caps the router's rolling
+ephemeral/resolved beacon windows; `74194e5` exposes
+`MmpNode::new_with_store_limit` while preserving the legacy constructor; and
+`79dc056` adds the Android-SDK-free Kotlin `MeshDrive` source seam with seven
+source-level tests. `5aa2626` updates the manual PC/mobile procedure with
+these boundaries. The full workspace test/clippy gates and 41 Python tests pass,
+but Kotlin/JVM compilation, Android/iOS background behavior, and Linux/BlueZ
+two-PC exchange remain external gates.
 
 ## Source register
 
