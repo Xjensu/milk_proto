@@ -26,11 +26,12 @@
 //! own unit tests (`prekey_agreement_matches_both_sides`,
 //! `sign_verify_and_cross_domain_rejects`); the golden-file forms are follow-up.
 
-use mmp_crypto::{receipt, Identity};
+use mmp_crypto::{merkle, receipt, Identity};
+use mmp_types::authcert::{scope_id_of, AnnouncementBody};
 use mmp_types::beacon::Beacon;
 use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
 use mmp_types::claim::{field, Claim};
-use mmp_types::consts::L_MAX;
+use mmp_types::consts::{LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE, L_MAX};
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
     write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
@@ -39,6 +40,8 @@ use mmp_types::frame::{
     FT_RECON_INIT, FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
 };
 use mmp_types::ids::{Id16, Key32, Sig64};
+use mmp_types::payload::{DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
+use mmp_types::tlv::{encode_exts, Ext, TLV_SCOPE_INFO};
 
 /// One generated vector file: a stable filename and its exact JSON contents
 /// (already newline-terminated). Filenames are the wire contract with other
@@ -85,11 +88,279 @@ fn vector_bundle() -> (Bundle, Identity) {
     (b, id)
 }
 
+/// One outer-bundle class fixture.  The payload bytes are always produced by
+/// the corresponding `mmp-types` codec; `provisional` records where the
+/// frozen specification does not fully define the implementation-owned inner
+/// representation (for example the Merkle path framing added by E5-S1).
+struct BundleClassCase {
+    name: &'static str,
+    class_name: &'static str,
+    payload_schema: &'static str,
+    status: &'static str,
+    provisional: bool,
+    provisional_reason: &'static str,
+    bundle: Bundle,
+    inner_pubkey: Option<Key32>,
+}
+
+/// Sign a bundle with the production outer-bundle codec and domain.  Keeping
+/// this helper next to the class catalog makes every grouped vector obey the
+/// same canonical lifetime-zeroing rule as the existing `bundle.json`.
+struct BundleDraft {
+    class_id: u8,
+    flags: u8,
+    dest: Id16,
+    lifetime_ms: u64,
+    priority: u8,
+    exts: Vec<Ext>,
+    payload: Vec<u8>,
+}
+
+fn signed_class_bundle(identity: &Identity, draft: BundleDraft) -> Bundle {
+    let BundleDraft { class_id, flags, dest, lifetime_ms, priority, exts, payload } = draft;
+    let mut bundle = Bundle {
+        class: class_id,
+        flags,
+        origin: identity.public(),
+        dest,
+        lifetime_ms,
+        priority,
+        exts,
+        payload,
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle
+}
+
+/// Deterministic outer-bundle catalog for classes 0 through 5.  This catalog
+/// intentionally does not alter the legacy `bundle.json` fixture: that file
+/// remains the class-1 compatibility vector used by older consumers.
+fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
+    let identity = vector_identity();
+
+    // Class 0: a real receipt MAC over a fixed public conversation root.  The
+    // derived receipt key is not emitted in the artifact (secrets rule).
+    let receipt_root = [0x33u8; 32];
+    let delivered = Id16([0x44; 16]);
+    let receipt_key = receipt::receipt_key(&receipt_root);
+    let receipt = ReceiptPayload { delivered, mac: receipt::receipt_mac(&receipt_key, &delivered) };
+    let class0 = signed_class_bundle(
+        &identity,
+        BundleDraft {
+            class_id: class::CONTROL,
+            flags: 0,
+            dest: Id16([0x55; 16]),
+            lifetime_ms: LIFETIME_CONTROL_MS,
+            priority: prio::EMERGENCY,
+            exts: Vec::new(),
+            payload: receipt.encode(),
+        },
+    );
+
+    // Class 1: the clear routing tuple is normative; ciphertext is a fixed
+    // opaque AEAD-shaped fixture (tag/key context intentionally omitted).
+    let direct = DirectPayload {
+        conv: Id16([0x31; 16]),
+        epoch: 7,
+        index: 11,
+        ct: vec![0xd1; 32],
+    };
+    let class1 = signed_class_bundle(
+        &identity,
+        BundleDraft {
+            class_id: class::DIRECT,
+            flags: FLAG_WANTS_RECEIPT,
+            dest: Id16([0x22; 16]),
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: prio::OPERATIONAL,
+            exts: Vec::new(),
+            payload: direct.encode(),
+        },
+    );
+
+    // Class 2: use a deterministic group-member identity as the fixture's
+    // group-signature public key.  Production group sender-key distribution
+    // is pairwise and therefore not represented in this outer vector.
+    let group_identity = Identity::from_seed(&[0x33; 32]);
+    let gid = Id16([0x42; 16]);
+    let mut group = GroupPayload {
+        gid,
+        epoch: 5,
+        member: group_identity.node_id(),
+        chain_index: 9,
+        ct: vec![0xe2; 32],
+        member_sig: Sig64::ZERO,
+    };
+    // The domain-separated signature is valid under the published fixture
+    // key, while the omitted chain key means the ciphertext is not decrypted
+    // by this vector test.
+    group.member_sig = group_identity.sign(SigDomain::GroupMsg, &group.signed_object());
+    let class2 = signed_class_bundle(
+        &group_identity,
+        BundleDraft {
+            class_id: class::GROUP,
+            flags: 0,
+            dest: gid,
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: prio::OPERATIONAL,
+            exts: vec![Ext::GroupEpoch(group.epoch)],
+            payload: group.encode(),
+        },
+    );
+
+    // Class 3: a complete, inner-signed nickname Claim (the destination is
+    // the well-known claim gossip scope used by mmp-node).
+    let mut claim = Claim {
+        owner: identity.public(),
+        field: field::NICKNAME,
+        seq: 12,
+        body: b"bundle-class-vector".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    claim.sig = identity.sign(SigDomain::Claim, &claim.signed_object());
+    let class3 = signed_class_bundle(
+        &identity,
+        BundleDraft {
+            class_id: class::CLAIM,
+            flags: 0,
+            dest: Id16([0xff; 16]),
+            lifetime_ms: LIFETIME_CLAIM_MS,
+            priority: prio::NORMAL,
+            exts: Vec::new(),
+            payload: claim.encode(),
+        },
+    );
+
+    // Class 4: construct a valid production Merkle path over four symbols so
+    // the SymbolInfo coordinates and path leaf index can be checked without
+    // inventing path bytes.  The path framing itself is an implementation
+    // extension beyond frozen doc 10 §4.5, hence the explicit status label.
+    let symbols: Vec<Vec<u8>> = (0..4)
+        .map(|index| vec![0x60 + index as u8; SYMBOL_SIZE])
+        .collect();
+    let leaves: Vec<[u8; 32]> = symbols.iter().map(|symbol| merkle::hash_block(symbol)).collect();
+    let symbol_index = 2usize;
+    let path = merkle::merkle_path(&leaves, symbol_index);
+    let mut root = [0u8; 16];
+    root.copy_from_slice(&merkle::merkle_root(&leaves)[..16]);
+    let symbol = SymbolPayload { path: path.encode(), symbol: symbols[symbol_index].clone() };
+    let class4 = signed_class_bundle(
+        &identity,
+        BundleDraft {
+            class_id: class::SYMBOL,
+            flags: 0,
+            dest: Id16([0x77; 16]),
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: prio::BULK,
+            exts: vec![Ext::SymbolInfo {
+                root: Id16(root),
+                block: 0,
+                sym: symbol_index as u16,
+                k: RS_DATA_K as u8,
+                n: RS_TOTAL_N as u8,
+            }],
+            payload: symbol.encode(),
+        },
+    );
+
+    // Class 5: public announcement.  `AnnouncementBody::suite` is retained
+    // by the implementation because doc 18 includes it in the signed
+    // preimage, while frozen doc 10 §4.6 omits it; this is recorded, not
+    // silently normalized, in the vector metadata.
+    let scope = scope_id_of(b"train/vector/001");
+    let mut announcement = AnnouncementBody {
+        suite: 1,
+        ann_type: 1,
+        scope,
+        not_after: 1_900_000_000,
+        text: b"platform-change vector".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    announcement.sig = identity.sign(SigDomain::Announce, &announcement.signed_object());
+    let class5 = signed_class_bundle(
+        &identity,
+        BundleDraft {
+            class_id: class::ANNOUNCEMENT,
+            flags: 0,
+            dest: scope,
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: prio::OPERATIONAL,
+            exts: vec![Ext::Optional { typ: TLV_SCOPE_INFO, val: b"train/vector/001".to_vec() }],
+            payload: announcement.encode(),
+        },
+    );
+
+    vec![
+        BundleClassCase {
+            name: "control_receipt",
+            class_name: "control",
+            payload_schema: "ReceiptPayload",
+            status: "normative",
+            provisional: false,
+            provisional_reason: "",
+            bundle: class0,
+            inner_pubkey: None,
+        },
+        BundleClassCase {
+            name: "direct_message",
+            class_name: "direct",
+            payload_schema: "DirectPayload",
+            status: "normative_schema_opaque_ciphertext",
+            provisional: true,
+            provisional_reason: "AEAD key, nonce context, and plaintext are intentionally omitted",
+            bundle: class1,
+            inner_pubkey: None,
+        },
+        BundleClassCase {
+            name: "group_message",
+            class_name: "group",
+            payload_schema: "GroupPayload",
+            status: "implementation_assigned_groupmsg_domain",
+            provisional: true,
+            provisional_reason: "sender-key distribution and chain secret are outside the outer vector",
+            bundle: class2,
+            inner_pubkey: Some(group_identity.public()),
+        },
+        BundleClassCase {
+            name: "claim_record",
+            class_name: "claim",
+            payload_schema: "Claim",
+            status: "normative",
+            provisional: false,
+            provisional_reason: "",
+            bundle: class3,
+            inner_pubkey: None,
+        },
+        BundleClassCase {
+            name: "blob_symbol",
+            class_name: "symbol",
+            payload_schema: "SymbolPayload+SymbolInfo",
+            status: "implementation_extension",
+            provisional: true,
+            provisional_reason: "Merkle path framing is implementation-owned beyond frozen doc 10 §4.5",
+            bundle: class4,
+            inner_pubkey: None,
+        },
+        BundleClassCase {
+            name: "authority_announcement",
+            class_name: "announcement",
+            payload_schema: "AnnouncementBody",
+            status: "implementation_extension_spec_gap",
+            provisional: true,
+            provisional_reason: "suite byte is present in doc 18 preimage but omitted by frozen doc 10 §4.6",
+            bundle: class5,
+            inner_pubkey: None,
+        },
+    ]
+}
+
 /// Build every vector, deterministically. Same output every call, on every
 /// machine — asserted by `regeneration_is_deterministic`.
 pub fn generate() -> Vec<VectorFile> {
     vec![
         bundle_vector(),
+        bundles_vector(),
         beacon_vector(),
         hello_vector(),
         claim_vector(),
@@ -246,6 +517,53 @@ BundleID = BLAKE3(canonical)[0..16], and the mmp1/bundle signature over the cano
         hex(&b.signature.0),
     );
     VectorFile { name: "bundle.json", json }
+}
+
+/// Serialize the complete class-0..5 catalog as one grouped JSON artifact.
+/// Every byte field is lowercase hex; metadata explicitly calls out
+/// implementation/provisional payload portions so consumers do not mistake
+/// an opaque cryptographic fixture for an interoperable plaintext example.
+fn bundles_vector() -> VectorFile {
+    let cases = vector_bundle_class_cases();
+    debug_assert_eq!(cases.len(), 6);
+    let mut json = String::from(
+        "{\n  \"description\": \"deterministic outer Bundle vectors for classes 0 through 5; bundle.json remains the legacy class-1 compatibility vector\",\n  \"bundle_count\": 6,\n  \"bundles\": [\n",
+    );
+    for (index, case) in cases.iter().enumerate() {
+        let bundle = &case.bundle;
+        let mut ext_wire = Vec::new();
+        encode_exts(&bundle.exts, &mut ext_wire);
+        let inner_pubkey = case
+            .inner_pubkey
+            .map(|key| format!("\"{}\"", hex(&key.0)))
+            .unwrap_or_else(|| "null".to_owned());
+        json.push_str(&format!(
+            "    {{\"name\": \"{}\", \"class\": {}, \"class_name\": \"{}\", \"payload_schema\": \"{}\", \"status\": \"{}\", \"provisional\": {}, \"provisional_reason\": \"{}\", \"outer_signature_domain\": \"mmp1/bundle\", \"origin_pubkey\": \"{}\", \"dest\": \"{}\", \"lifetime_ms\": {}, \"priority\": {}, \"flags\": {}, \"extensions_wire\": \"{}\", \"payload_len\": {}, \"payload\": \"{}\", \"canonical_zeroed\": \"{}\", \"wire\": \"{}\", \"bundle_id\": \"{}\", \"signature\": \"{}\", \"inner_pubkey\": {} }}{}\n",
+            case.name,
+            bundle.class,
+            case.class_name,
+            case.payload_schema,
+            case.status,
+            case.provisional,
+            case.provisional_reason,
+            hex(&bundle.origin.0),
+            hex(&bundle.dest.0),
+            bundle.lifetime_ms,
+            bundle.priority,
+            bundle.flags,
+            hex(&ext_wire),
+            bundle.payload.len(),
+            hex(&bundle.payload),
+            hex(&bundle.canonical_zeroed()),
+            hex(&bundle.encode()),
+            hex(&bundle.id().0),
+            hex(&bundle.signature.0),
+            inner_pubkey,
+            if index + 1 == cases.len() { "" } else { "," },
+        ));
+    }
+    json.push_str("  ]\n}\n");
+    VectorFile { name: "bundles.json", json }
 }
 
 /// The one beacon the beacon vector and its invariant test share.
@@ -529,6 +847,82 @@ mod tests {
             assert_eq!(typ, expected_type, "frame {} has wrong envelope tag", case.name);
             assert_eq!(payload, case.frame.encode_payload(), "frame {} payload drift", case.name);
             assert_eq!(Frame::decode_payload(typ, payload).expect("frame payload must decode"), case.frame);
+        }
+    }
+
+    /// Every bundle class has a production-codec roundtrip and the outer
+    /// mmp1/bundle signature is checked independently.  Where a class has a
+    /// complete, unambiguous inner schema, its own decoder/signature/path
+    /// invariant is checked too; opaque cryptographic fixtures are deliberately
+    /// not treated as decryptable test messages.
+    #[test]
+    fn every_bundle_class_roundtrips_and_validates_declared_invariants() {
+        let cases = vector_bundle_class_cases();
+        assert_eq!(cases.iter().map(|case| case.bundle.class).collect::<Vec<_>>(), (0u8..=5).collect::<Vec<_>>());
+        for case in &cases {
+            let wire = case.bundle.encode();
+            let decoded = Bundle::decode_canonical(&wire).expect("bundle class wire must decode");
+            assert_eq!(&decoded, &case.bundle, "class {} bundle drifted", case.bundle.class);
+            assert_eq!(decoded.id(), case.bundle.id());
+            verify(
+                SigDomain::Bundle,
+                &decoded.origin,
+                &decoded.canonical_zeroed(),
+                &decoded.signature,
+            )
+            .unwrap_or_else(|_| panic!("class {} outer signature must verify", case.bundle.class));
+
+            match case.bundle.class {
+                class::CONTROL => {
+                    assert_eq!(ReceiptPayload::decode(&decoded.payload).unwrap().encode(), decoded.payload);
+                }
+                class::DIRECT => {
+                    assert_eq!(DirectPayload::decode(&decoded.payload).unwrap().encode(), decoded.payload);
+                }
+                class::GROUP => {
+                    let group = GroupPayload::decode(&decoded.payload).unwrap();
+                    let member_pubkey = case.inner_pubkey.expect("group fixture public key");
+                    verify(SigDomain::GroupMsg, &member_pubkey, &group.signed_object(), &group.member_sig)
+                        .expect("group fixture signature must verify under its declared fixture key");
+                    assert_eq!(group.encode(), decoded.payload);
+                }
+                class::CLAIM => {
+                    let claim = Claim::decode(&decoded.payload).unwrap();
+                    verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig)
+                        .expect("claim inner signature must verify");
+                    assert_eq!(claim.encode(), decoded.payload);
+                }
+                class::SYMBOL => {
+                    let symbol = SymbolPayload::decode(&decoded.payload).unwrap();
+                    let path = merkle::MerklePath::decode(&symbol.path).unwrap();
+                    let info = decoded
+                        .exts
+                        .iter()
+                        .find_map(|ext| match ext {
+                            Ext::SymbolInfo { root, block, sym, .. } => Some((*root, *block, *sym)),
+                            _ => None,
+                        })
+                        .expect("symbol bundle must carry SymbolInfo");
+                    let leaf = merkle::hash_block(&symbol.symbol);
+                    let root = merkle::compute_root(&leaf, &path).unwrap();
+                    assert_eq!(root[..16], info.0.0, "symbol path root prefix must match SymbolInfo");
+                    assert_eq!(path.leaf_index(), u64::from(info.1) * RS_TOTAL_N as u64 + u64::from(info.2));
+                    assert_eq!(symbol.encode(), decoded.payload);
+                }
+                class::ANNOUNCEMENT => {
+                    let announcement = AnnouncementBody::decode(&decoded.payload).unwrap();
+                    verify(
+                        SigDomain::Announce,
+                        &decoded.origin,
+                        &announcement.signed_object(),
+                        &announcement.sig,
+                    )
+                    .expect("announcement inner signature must verify");
+                    assert_eq!(announcement.scope, decoded.dest, "announcement scope must bind to bundle dest");
+                    assert_eq!(announcement.encode(), decoded.payload);
+                }
+                other => panic!("unexpected class {} in class catalog", other),
+            }
         }
     }
 }

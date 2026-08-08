@@ -25,14 +25,14 @@ The consuming test (`mmp-cli`, `vectors::tests`) is the guard. It:
 3. re-verifies the production invariants — recomputed BundleID, signature
    verification, and cross-domain rejection
    (`positive_vector_invariants_hold`, `negative_vector_invariants_hold`);
-4. runs a separate, test-only byte reader over the committed envelope and
-   bundle vectors (`vectors::conformance`) so those framing, length, and
-   lifetime-canonicalization checks do not call the production decoders.
+4. runs a separate, test-only byte reader over the committed envelope, bundle,
+   and grouped class vectors (`vectors::conformance`) so those framing,
+   length, class, payload-boundary, and lifetime-canonicalization checks do
+   not call the production decoders.
 
-The independent reader currently covers HELLO, envelope/frame framing, and
-the outer-bundle subset only. It is not evidence that every frame payload or
-bundle class already has an independent implementation; those remain E5-S4
-follow-up work.
+The independent reader still does not decrypt class-1/2 ciphertext or verify
+the class-2 sender-key chain. The grouped class artifact records those fields
+as provisional rather than presenting opaque bytes as interoperable plaintext.
 
 If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 **review the diff before committing**. That review is the checkpoint doc 10
@@ -41,6 +41,13 @@ If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 ## What's here
 
 Positive:
+- `bundles.json` — one deterministic outer Bundle for every registered class
+  0 through 5. Each record includes class metadata, extension/payload bytes,
+  canonical and wire bytes, content address, and outer signature. Class 4's
+  Merkle-path framing and class 5's `suite` byte are explicitly marked
+  implementation/provisional because the frozen docs do not describe those
+  implementation details identically; class-1/2 cryptographic interiors are
+  opaque fixtures and carry the same warning.
 - `bundle.json` — class-1 bundle: canonical (lifetime-zeroed) bytes, full wire
   bytes, `BundleID = BLAKE3(canonical)[0..16]`, and the `mmp1/bundle` signature.
 - `beacon.json` — the 24-byte beacon codec (doc 10 §5).

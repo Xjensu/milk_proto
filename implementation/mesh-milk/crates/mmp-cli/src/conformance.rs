@@ -13,6 +13,7 @@ const VECTOR_NAMES: &[&str] = &[
     "beacon.json",
     "budget_clamp_negative.json",
     "bundle.json",
+    "bundles.json",
     "claim.json",
     "cross_domain_negative.json",
     "envelope.json",
@@ -208,8 +209,14 @@ fn read_bundle_independent(wire: &[u8]) -> Result<BundleView<'_>, &'static str> 
     Ok(BundleView {
         wire,
         canonical,
+        class: ver_class & 0x0f,
+        flags: wire[1],
         lifetime_ms: decode_u40(&wire[50..55]),
         origin: &wire[2..34],
+        dest: &wire[34..50],
+        priority: wire[55],
+        extensions: &wire[FIXED_HEADER_LEN..ext_end],
+        payload: &wire[payload_start..payload_end],
         signature: &wire[wire.len() - SIG_LEN..],
     })
 }
@@ -217,8 +224,14 @@ fn read_bundle_independent(wire: &[u8]) -> Result<BundleView<'_>, &'static str> 
 struct BundleView<'a> {
     wire: &'a [u8],
     canonical: Vec<u8>,
+    class: u8,
+    flags: u8,
     lifetime_ms: u64,
     origin: &'a [u8],
+    dest: &'a [u8],
+    priority: u8,
+    extensions: &'a [u8],
+    payload: &'a [u8],
     signature: &'a [u8],
 }
 
@@ -356,6 +369,63 @@ fn bundle_reader_rejects_tampered_layout_without_production_decoder() {
         read_bundle_independent(&bad_payload_length),
         Err("payload length does not consume the unsigned bundle")
     ));
+}
+
+#[test]
+fn grouped_bundle_vector_covers_classes_zero_through_five() {
+    let json = vector("bundles.json");
+    let classes = json_all_u64(&json, "class");
+    let names = json_all_strings(&json, "name");
+    let statuses = json_all_strings(&json, "status");
+    let origins = json_all_strings(&json, "origin_pubkey");
+    let dests = json_all_strings(&json, "dest");
+    let payloads = json_all_strings(&json, "payload");
+    let canonicals = json_all_strings(&json, "canonical_zeroed");
+    let wires = json_all_strings(&json, "wire");
+    let ids = json_all_strings(&json, "bundle_id");
+    let signatures = json_all_strings(&json, "signature");
+    let payload_lengths = json_all_u64(&json, "payload_len");
+    assert_eq!(json_u64(&json, "bundle_count"), 6);
+    assert_eq!(classes, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(names.len(), 6);
+    assert_eq!(statuses.len(), 6);
+    assert_eq!(origins.len(), 6);
+    assert_eq!(dests.len(), 6);
+    assert_eq!(payloads.len(), 6);
+    assert_eq!(canonicals.len(), 6);
+    assert_eq!(wires.len(), 6);
+    assert_eq!(ids.len(), 6);
+    assert_eq!(signatures.len(), 6);
+    assert_eq!(payload_lengths.len(), 6);
+
+    // The metadata labels the two known spec/implementation boundaries rather
+    // than presenting them as frozen-wire facts.
+    assert_eq!(statuses[4], "implementation_extension");
+    assert_eq!(statuses[5], "implementation_extension_spec_gap");
+
+    for index in 0..6 {
+        let wire = decode_hex("wire", &wires[index]);
+        let payload = decode_hex("payload", &payloads[index]);
+        let expected_canonical = decode_hex("canonical_zeroed", &canonicals[index]);
+        let expected_id = decode_hex("bundle_id", &ids[index]);
+        let expected_origin = decode_hex("origin_pubkey", &origins[index]);
+        let expected_dest = decode_hex("dest", &dests[index]);
+        let expected_signature = decode_hex("signature", &signatures[index]);
+        assert_eq!(payload.len(), payload_lengths[index] as usize, "{} payload length", names[index]);
+        let view = read_bundle_independent(&wire).expect("grouped bundle must satisfy independent layout reader");
+        assert_eq!(u64::from(view.class), classes[index], "{} class", names[index]);
+        assert_eq!(view.payload, payload, "{} payload bytes", names[index]);
+        assert_eq!(view.canonical, expected_canonical, "{} canonical bytes", names[index]);
+        assert_eq!(view.origin, expected_origin, "{} origin binding", names[index]);
+        assert_eq!(view.dest, expected_dest, "{} destination", names[index]);
+        assert_eq!(view.signature, expected_signature, "{} outer signature", names[index]);
+        assert_eq!(view.flags & !0b111, 0, "{} reserved flags", names[index]);
+        assert!(view.priority <= 3, "{} priority", names[index]);
+        assert_eq!(view.extensions.len(), u16::from_le_bytes([wire[56], wire[57]]) as usize);
+        assert_eq!(view.canonical.len(), wire.len() - 64, "{} canonical size", names[index]);
+        let digest = blake3::hash(&view.canonical);
+        assert_eq!(&digest.as_bytes()[..16], expected_id, "{} content address", names[index]);
+    }
 }
 
 #[test]
