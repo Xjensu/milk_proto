@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is commit `344794b` (`fix(mmp-node): enforce tier session
-admission caps`). The frozen `specification/` directory was not modified.
+This checkpoint is commit `dc47c72` (`fix(mmp-core): enforce normative frame
+credits`). The frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
 
@@ -56,6 +56,13 @@ Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
 `LinkUp` events are silently denied, and slots are released on link-down or
 engine closure. The embedded T0/Core profile is not represented by this `std`
 API and remains a separate implementation gate.
+
+The current frame-credit slice implements specification/09 §5.2: peer HELLO
+credits are clamped to the normative eight-frame window, every established
+data frame consumes one credit, CREDIT grants replenish the window, and a
+two-frame receive reserve prevents BUNDLE+BUDGET deadlock. Deferred frames are
+bounded at 256 per session; bundle requests are retained until two credits are
+available, so `load_for_handoff` is never called for an unsendable pair.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -117,6 +124,12 @@ parser/manifest integration tests; `mmp-sim` passed 9 active tests with 4
 intentionally ignored deployment or scale cases. The workspace inventory lists
 221 active test items. Workspace clippy with `-D warnings`, `layer-check`, and
 the CLI demo all passed again.
+After `dc47c72`, the full serial workspace matrix passed with 40 `mmp-core`
+unit, 4 persistence integration, 31 `mmp-node`, 40 `mmp-types`, and 3
+parser/manifest integration tests; `mmp-sim` again passed 9 active tests with
+4 intentionally ignored deployment or scale cases. The workspace inventory
+lists 225 active test items. Workspace clippy with `-D warnings`,
+`layer-check`, and the CLI demo all passed again.
 
 Regenerate vectors with:
 
