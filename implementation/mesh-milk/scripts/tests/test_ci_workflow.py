@@ -8,6 +8,19 @@ WORKFLOW = Path(__file__).parents[4] / ".github" / "workflows" / "ci.yml"
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_android_check_provisions_ndk_toolchain(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["android-check"]["steps"]
+        setup = [step for step in steps if step.get("uses") == "nttld/setup-ndk@v1"]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(setup[0]["with"]["ndk-version"], "r26d")
+        self.assertTrue(
+            any(step.get("run") == "cargo install cargo-ndk --locked" for step in steps)
+        )
+        ndk_checks = [step for step in steps if step.get("run") == "cargo ndk -t arm64-v8a check --workspace"]
+        self.assertEqual(len(ndk_checks), 1)
+        self.assertEqual(ndk_checks[0]["env"]["ANDROID_NDK_HOME"], "${{ steps.setup-ndk.outputs.ndk-path }}")
+
     def test_host_workspace_tests_use_serial_threads(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         test_steps = [

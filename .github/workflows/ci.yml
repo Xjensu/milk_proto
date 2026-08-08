@@ -56,7 +56,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-linux-android
-      - run: cargo check --workspace --target aarch64-linux-android
+      # blake3's cc build script needs the Android clang wrapper; the Rust
+      # target alone is insufficient. cargo-ndk supplies the NDK compiler and
+      # linker environment for the same target used by the AAR job below.
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - run: cargo install cargo-ndk --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a check --workspace
 
   ios-check:
     runs-on: macos-latest
