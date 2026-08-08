@@ -82,6 +82,7 @@ pub fn seal(
 ) -> Result<Vec<u8>, CryptoError> {
     if kind == 0
         || plaintext.len() > MAX_PLAINTEXT_BYTES
+        || generation == 0
         || generation == u64::MAX
         || written_at_ms == 0
     {
@@ -127,7 +128,7 @@ pub fn open(
     let mut generation_bytes = [0u8; 8];
     generation_bytes.copy_from_slice(&header[6..14]);
     let generation = u64::from_le_bytes(generation_bytes);
-    if generation == u64::MAX {
+    if generation == 0 || generation == u64::MAX {
         return Err(snapshot_error());
     }
     let mut written_at_bytes = [0u8; 8];
@@ -162,6 +163,18 @@ pub fn open(
         return Err(snapshot_error());
     }
     Ok((generation, Zeroizing::new(plaintext)))
+}
+
+/// Validate that `candidate` is the next durable generation after
+/// `committed`. Providers must perform this check atomically with their
+/// compare-and-swap/commit operation; this helper cannot itself prevent a
+/// rollback in a stateless caller.
+pub fn validate_next_generation(committed: u64, candidate: u64) -> Result<(), CryptoError> {
+    if candidate == 0 || candidate == u64::MAX || candidate <= committed {
+        Err(snapshot_error())
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -224,6 +237,9 @@ mod tests {
     #[test]
     fn rejects_stale_future_and_oversized_plaintext() {
         let mut rng = StdRng::seed_from_u64(9);
+        assert!(validate_next_generation(0, 1).is_ok());
+        assert!(validate_next_generation(1, 1).is_err());
+        assert!(validate_next_generation(1, 0).is_err());
         assert!(seal(KIND_NODE_SECRET_STATE, 1, 0, CONTEXT, &[7u8; 32], &mut rng, b"x").is_err());
         let stale = seal(KIND_NODE_SECRET_STATE, 1, 1_000, CONTEXT, &[7u8; 32], &mut rng, b"x").unwrap();
         assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &stale, 1_001 + DEFAULT_TTL_MS, DEFAULT_TTL_MS).is_err());
