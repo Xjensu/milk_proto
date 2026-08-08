@@ -1558,6 +1558,38 @@ that all group-state growth is bounded. Do not add an arbitrary epoch limit
 without first reconciling it with the epoch-rotation and offline-delivery
 rules in the frozen specification.
 
+## 2026-08-09 epoch-retention audit: no safe v1 local eviction rule
+
+The follow-up audit confirms that the residual is not safely fixable with an
+implementation-only epoch cap or TTL:
+
+* `SenderKeyDist` contains only `gid`, `epoch`, `chain_seed`, and `sig_pub`;
+  it carries no issuance time, expiry, retention watermark, or authenticated
+  membership proof. `GroupState::learn_remote` therefore has no evidence from
+  which it can prove that one `(member, epoch)` is no longer needed.
+* The receiver currently accepts every authenticated member distribution with
+  `dist.epoch >= gs.epoch` and retains each unique pair in both `remotes` and
+  `dists`. `RATCHET_WINDOW` bounds message-index reordering *inside one epoch*;
+  it does not bound the number of epochs.
+* A valid offline path can miss an arbitrary number of membership rotations,
+  then receive a later epoch distribution followed by a delayed bundle from an
+  older epoch. Any fixed `N`-epoch window can reject that path. A receive-time
+  TTL is also insufficient: the frozen bundle lifetime is mutable and is
+  deliberately normalized out of the signed identity/AEAD form, so a node
+  cannot recover the bundle's original creation time from the group payload or
+  the distribution.
+
+The per-origin admission bucket limits the attack rate but not the retained
+state lifetime. Thus a malicious authenticated member can eventually occupy
+all `u16` epoch slots for one admitted group without violating the v1 wire
+grammar. The correct next step is a normative retention signal (for example an
+authenticated epoch anchor with validity/watermark metadata) or a local store
+index that tracks all unexpired group bundles referencing each key. Neither is
+available in the frozen v1 contract. Until one is specified and tested against
+partition/reordering scenarios, silently evicting or rejecting future epochs
+would be an availability regression; leave this item open rather than add an
+arbitrary cap.
+
 ## 2026-08-09 final local verification
 
 The post-hardening local gate passed:
