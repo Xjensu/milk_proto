@@ -45,6 +45,7 @@ use bluer::{Adapter, Session, Uuid};
 use futures::{pin_mut, StreamExt};
 use tokio::sync::{mpsc, Mutex as AsyncMutex};
 
+use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
 use crate::{
     event_channel, mint_link_id, LinkId, LinkQuality, PeriphError, TalEvent,
@@ -86,7 +87,7 @@ pub struct PeripheralRole {
     _session: Session,
     _app: ApplicationHandle,
     adv: AsyncMutex<Option<AdvertisementHandle>>,
-    tx: mpsc::Sender<TalEvent>,
+    tx: EventSender,
     // `std::sync::Mutex` (not tokio's) is correct: held only for the instant
     // of an `Option::take`, never across an `.await`.
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
@@ -206,7 +207,8 @@ impl PeripheralRole {
     /// exactly one receiver per `PeripheralRole`; calling this a second time
     /// panics — hold on to the first receiver instead. (Same contract as
     /// `BleCentral::events`.) Drain it while the peripheral is active: the
-    /// bounded queue applies backpressure rather than dropping ATT writes.
+    /// bounded ingress retires a link on data overflow rather than dropping
+    /// an ordered ATT write; lifecycle controls have reserved capacity.
     pub fn events(&self) -> mpsc::Receiver<TalEvent> {
         self.events_rx
             .lock()
@@ -261,7 +263,7 @@ impl PeripheralRole {
 async fn run_control(
     write_ctl: bluer::gatt::local::CharacteristicControl,
     notify_ctl: bluer::gatt::local::CharacteristicControl,
-    tx: mpsc::Sender<TalEvent>,
+    tx: EventSender,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
 ) {
@@ -335,7 +337,7 @@ async fn run_control(
 async fn ensure_link_up(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     link: LinkId,
     att_mtu: usize,
     side: StreamSide,
@@ -343,6 +345,7 @@ async fn ensure_link_up(
     writer: Option<CharacteristicWriter>,
 ) -> Option<AttachResult> {
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
+    let link_table = links.clone();
     let _event_guard = event_gate.lock().await;
     let old_write_gate = links
         .lock()
@@ -391,19 +394,39 @@ async fn ensure_link_up(
             }
         }
     }
-
+    let streams = [
+        state.reader_token.map(stream_stamp),
+        state.writer_token.map(stream_stamp),
+    ];
     drop(links);
+    tx.set_streams(link, streams);
     if attach.restarted {
-        if tx.send(TalEvent::LinkDown { link }).await.is_err() {
-            return Some(attach);
+        if !try_link_down(tx, link, attach.token.generation) {
+            retire_current_link(&link_table, tx, attach.token).await;
+            return None;
         }
     }
     if attach.link_was_new || attach.restarted {
         let quality =
             LinkQuality { mtu: (chunk_size + framing::ATT_HEADER) as u16, ..LinkQuality::default() };
-        let _ = tx.send(TalEvent::LinkUp { link, initiator: false, quality }).await;
+        if tx
+            .try_control(TalEvent::LinkUp { link, initiator: false, quality }, attach.token.generation)
+            .is_err()
+        {
+            retire_current_link(&link_table, tx, attach.token).await;
+            return None;
+        }
     }
     Some(attach)
+}
+
+async fn retire_current_link(links: &Links, tx: &EventSender, token: StreamToken) {
+    let mut links = links.lock().await;
+    if links.lifecycle.close_if_current(token) {
+        links.states.remove(&token.link);
+        drop(links);
+        tx.retire_link(token.link);
+    }
 }
 
 /// Forward every inbound ATT write as `LinkData`; when the socket closes
@@ -412,7 +435,7 @@ async fn ensure_link_up(
 async fn read_loop(
     reader: CharacteristicReader,
     token: StreamToken,
-    tx: mpsc::Sender<TalEvent>,
+    tx: EventSender,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
 ) {
@@ -436,7 +459,7 @@ async fn read_loop(
 async fn emit_data_if_current(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     token: StreamToken,
     bytes: Vec<u8>,
 ) -> bool {
@@ -445,7 +468,22 @@ async fn emit_data_if_current(
     if !is_current {
         return false;
     }
-    tx.send(TalEvent::LinkData { link: token.link, bytes }).await.is_ok()
+    let result = tx.try_stream_data(
+        token.link,
+        stream_stamp(token),
+        TalEvent::LinkData { link: token.link, bytes },
+    );
+    drop(_event_guard);
+    match result {
+        Ok(()) => true,
+        Err(DataEnqueueError::Stale) => false,
+        Err(DataEnqueueError::Full) => {
+            // Dropping one encrypted chunk would leave the session stream
+            // ambiguous. Retire only this link and emit its reserved Down.
+            link_down_if_current(links, event_gate, tx, token).await;
+            false
+        }
+    }
 }
 
 /// Remove-then-emit under the lifecycle gate: only the callback that owns the
@@ -453,7 +491,7 @@ async fn emit_data_if_current(
 async fn link_down_if_current(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     token: StreamToken,
 ) {
     let _event_guard = event_gate.lock().await;
@@ -471,7 +509,29 @@ async fn link_down_if_current(
     }
     links.states.remove(&token.link);
     drop(links);
-    let _ = tx.send(TalEvent::LinkDown { link: token.link }).await;
+    tx.retire_link(token.link);
+    // Control saturation is fail-closed: the logical link is already gone,
+    // and no stale data can be admitted even if the host is not draining.
+    let _ = try_link_down(tx, token.link, token.generation);
+}
+
+/// Control saturation is fail-closed: the link is already retired and all
+/// queued data has been purged, so no stale encrypted bytes can be delivered.
+fn try_link_down(tx: &EventSender, link: LinkId, generation: u64) -> bool {
+    match tx.try_control(TalEvent::LinkDown { link }, generation) {
+        Ok(()) => true,
+        Err(ControlEnqueueError::Full | ControlEnqueueError::InvalidEvent) => false,
+    }
+}
+
+fn stream_stamp(token: StreamToken) -> StreamStamp {
+    StreamStamp {
+        generation: token.generation,
+        side: match token.side {
+            StreamSide::Reader => 0,
+            StreamSide::Writer => 1,
+        },
+    }
 }
 
 fn service_uuid() -> Uuid {

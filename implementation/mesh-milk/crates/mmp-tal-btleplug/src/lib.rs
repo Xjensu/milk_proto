@@ -96,28 +96,27 @@ pub use mmp_tal::{
 };
 
 pub mod framing;
+mod event_queue;
+use event_queue::{ControlEnqueueError, DataEnqueueError, EventSender};
 
 /// Conservative default per-link chunk size: 23-byte ATT MTU floor minus the
 /// 3-byte ATT header. See module docs ("Chunk size / MTU") for why this
 /// crate cannot currently raise it per-link.
 const DEFAULT_CHUNK: usize = 20;
 
-/// Maximum number of transport events waiting for the host event loop.
+/// Bounded transport-ingress sizing.
 ///
 /// One maximum-size 4096-byte envelope takes `ceil((4096 + 3) / 20) = 205`
 /// current-floor ATT notifications. Eight concurrently admitted sessions
 /// therefore need 1640 queued data events for one envelope each; rounding to
-/// 2048 establishes a deliberate ingress-memory threshold with link/control
-/// and beacon headroom. It is not intended to absorb the entire possible
-/// eight-frame credit burst; once full, producers await the host event loop
-/// and the protocol's own CREDIT window continues to govern the wire rate.
-/// The channel is count-bounded (not byte-bounded): a future larger negotiated
-/// ATT MTU still has a finite controller bound, while producers await capacity
-/// instead of dropping an encrypted chunk.
-const EVENT_QUEUE_CAPACITY: usize = 2048;
-
-fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
-    mpsc::channel(EVENT_QUEUE_CAPACITY)
+/// 2048 establishes a deliberate ingress-memory threshold. The internal bus
+/// reserves 64 control records and exposes 1984 data slots. Producers never
+/// await the host event loop: a full data lane retires only the affected link
+/// (preserving stream ordering), while low-priority beacon data may be lost.
+/// The public `events()` receiver remains a bounded Tokio FIFO fed by a
+/// dispatcher, so a stalled consumer cannot hold lifecycle locks.
+fn event_channel() -> (EventSender, mpsc::Receiver<TalEvent>) {
+    event_queue::event_channel()
 }
 
 fn generation_is_current(current: Option<u64>, expected: u64) -> bool {
@@ -133,18 +132,6 @@ fn allocate_generation(counter: &AtomicU64) -> u64 {
             Err(observed) => current = observed,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReplacementSignal {
-    Down,
-    Up,
-}
-
-fn replacement_signals(old_generation: Option<u64>) -> &'static [ReplacementSignal] {
-    const NEW_LINK: &[ReplacementSignal] = &[ReplacementSignal::Up];
-    const REPLACED_LINK: &[ReplacementSignal] = &[ReplacementSignal::Down, ReplacementSignal::Up];
-    if old_generation.is_some() { REPLACED_LINK } else { NEW_LINK }
 }
 
 async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMutexGuard<()> {
@@ -216,14 +203,14 @@ type Links = Arc<AsyncMutex<HashMap<LinkId, LinkState>>>;
 // Lifecycle transitions use the lock order event_gate -> write_gate -> links.
 // This makes removal and its LinkDown enqueue one atomic transition with
 // respect to reconnects, while send() deliberately uses write_gate -> links
-// and never waits for event_gate. The bounded queue send remains under the
-// event gate so a reconnect cannot overtake its close event; a full queue is
-// therefore intentional backpressure, not an unbounded-memory escape hatch.
+// and never waits for event_gate. Lifecycle producers use synchronous
+// reserved-control/data ingress; only the detached dispatcher awaits the
+// public receiver, so reconnect gates never inherit host-consumer latency.
 
 async fn emit_if_current(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     link: LinkId,
     generation: u64,
     event: TalEvent,
@@ -237,13 +224,13 @@ async fn emit_if_current(
     if !generation_is_current(current, generation) {
         return false;
     }
-    tx.send(event).await.is_ok()
+    !matches!(tx.try_link_data(link, generation, event), Err(DataEnqueueError::Full | DataEnqueueError::Stale))
 }
 
 async fn emit_replacement(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     link: LinkId,
     old_generation: Option<u64>,
     new_generation: u64,
@@ -258,24 +245,19 @@ async fn emit_replacement(
     if !generation_is_current(current, new_generation) {
         return false;
     }
-    for signal in replacement_signals(old_generation) {
-        let result = match signal {
-            ReplacementSignal::Down => tx.send(TalEvent::LinkDown { link }).await,
-            ReplacementSignal::Up => {
-                tx.send(TalEvent::LinkUp { link, initiator: true, quality }).await
-            }
-        };
-        if result.is_err() {
+    if let Some(old_generation) = old_generation {
+        if !try_link_down(tx, link, old_generation) {
             return false;
         }
     }
-    true
+    tx.try_control(TalEvent::LinkUp { link, initiator: true, quality }, new_generation)
+        .is_ok()
 }
 
 async fn remove_if_current(
     links: &Links,
     event_gate: &Arc<AsyncMutex<()>>,
-    tx: &mpsc::Sender<TalEvent>,
+    tx: &EventSender,
     link: LinkId,
     generation: u64,
     write_gate: &Arc<AsyncMutex<()>>,
@@ -290,7 +272,17 @@ async fn remove_if_current(
         return false;
     }
     drop(table);
-    tx.send(TalEvent::LinkDown { link }).await.is_ok()
+    try_link_down(tx, link, generation)
+}
+
+/// Enqueue a lifecycle close without awaiting the public receiver.  A full
+/// control ledger is a fail-closed overload: callers have already removed the
+/// link from the live table, and the ingress has no stale data for it.
+fn try_link_down(tx: &EventSender, link: LinkId, generation: u64) -> bool {
+    match tx.try_control(TalEvent::LinkDown { link }, generation) {
+        Ok(()) => true,
+        Err(ControlEnqueueError::Full | ControlEnqueueError::InvalidEvent) => false,
+    }
 }
 
 /// A live BLE central: one Bluetooth adapter, a beacon/disconnect watcher
@@ -302,7 +294,7 @@ async fn remove_if_current(
 /// hosts have exactly one).
 pub struct BleCentral {
     adapter: Adapter,
-    tx: mpsc::Sender<TalEvent>,
+    tx: EventSender,
     // `std::sync::Mutex` (not tokio's) is correct here: it is only ever held
     // for the instant it takes to `Option::take`, never across an `.await`.
     events_rx: std::sync::Mutex<Option<mpsc::Receiver<TalEvent>>>,
@@ -348,8 +340,8 @@ impl BleCentral {
     /// Take ownership of this central's event stream. There is exactly one
     /// receiver per `BleCentral`; calling this a second time panics — hold
     /// on to the first receiver instead of calling this again. The receiver
-    /// must be drained while the central is active: radio producers apply
-    /// bounded backpressure rather than dropping ordered link bytes.
+    /// must be drained while the central is active. Link-data overflow retires
+    /// the affected link; beacon overflow is intentionally lossy.
     pub fn events(&self) -> mpsc::Receiver<TalEvent> {
         self.events_rx
             .lock()
@@ -479,6 +471,19 @@ impl BleCentral {
             )
             .await
             {
+                // Control events have reserved capacity, but a saturated
+                // ledger is still a fail-closed condition.  Retire the
+                // installed link so no live state remains without a
+                // corresponding lifecycle event.
+                let _ = remove_if_current(
+                    &links,
+                    &event_gate,
+                    &data_tx,
+                    link,
+                    generation,
+                    &write_gate,
+                )
+                .await;
                 return;
             }
             while let Some(notification) = notifications.next().await {
@@ -559,6 +564,7 @@ impl BleCentral {
             .await
             .get(&link)
             .map(|state| (state.generation, state.write_gate.clone()));
+        let previous_generation = previous.as_ref().map(|(generation, _)| *generation);
         let _write_guard = match previous.as_ref() {
             Some((_, gate)) => Some(acquire_write_gate(gate).await),
             None => None,
@@ -576,9 +582,11 @@ impl BleCentral {
         };
         if let Some(state) = state {
             let _ = state.peripheral.disconnect().await;
-            let _ = self.tx.send(TalEvent::LinkDown { link }).await;
+            if let Some(generation) = previous_generation {
+                let _ = try_link_down(&self.tx, link, generation);
+            }
         } else if previous.is_none() {
-            let _ = self.tx.send(TalEvent::LinkDown { link }).await;
+            let _ = try_link_down(&self.tx, link, 0);
         }
     }
 }
@@ -589,7 +597,7 @@ impl BleCentral {
 /// the adapter's event stream ends or nobody is listening on `tx` anymore.
 async fn watch_adapter(
     adapter: Adapter,
-    tx: mpsc::Sender<TalEvent>,
+    tx: EventSender,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
 ) {
@@ -614,9 +622,7 @@ async fn watch_adapter(
                         .unwrap_or(0),
                     Err(_) => 0,
                 };
-                if tx.send(TalEvent::Beacon { payload: payload.clone(), rssi }).await.is_err() {
-                    return;
-                }
+                let _ = tx.try_data(TalEvent::Beacon { payload: payload.clone(), rssi });
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
@@ -647,8 +653,8 @@ async fn watch_adapter(
                         false
                     }
                 };
-                if removed && tx.send(TalEvent::LinkDown { link }).await.is_err() {
-                    return;
+                if removed {
+                    let _ = try_link_down(&tx, link, generation);
                 }
             }
             _ => {}
@@ -690,10 +696,8 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_write_gate, allocate_generation, event_channel, generation_is_current, mint_link_id,
-        replacement_signals, ReplacementSignal, EVENT_QUEUE_CAPACITY,
+        acquire_write_gate, allocate_generation, generation_is_current, mint_link_id,
     };
-    use mmp_tal::TalEvent;
     use std::sync::atomic::AtomicU64;
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
@@ -718,15 +722,6 @@ mod tests {
         assert!(generation_is_current(Some(second), second));
     }
 
-    #[test]
-    fn replacement_orders_close_before_new_link_up() {
-        assert_eq!(replacement_signals(None), &[ReplacementSignal::Up]);
-        assert_eq!(
-            replacement_signals(Some(1)),
-            &[ReplacementSignal::Down, ReplacementSignal::Up]
-        );
-    }
-
     #[tokio::test]
     async fn write_gate_serializes_concurrent_senders() {
         let gate = Arc::new(AsyncMutex::new(()));
@@ -739,36 +734,6 @@ mod tests {
 
         drop(first);
         second.await.expect("second sender must acquire after the first releases");
-    }
-
-    #[tokio::test]
-    async fn event_channel_applies_bounded_fifo_backpressure() {
-        let (tx, mut rx) = event_channel();
-        for sequence in 0..EVENT_QUEUE_CAPACITY {
-            tx.send(TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] })
-                .await
-                .expect("capacity-sized event burst must fit");
-        }
-
-        assert!(tx.try_send(TalEvent::LinkData { link: 7, bytes: vec![0xff] }).is_err());
-
-        let producer = tokio::spawn(async move {
-            tx.send(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
-                .await
-                .expect("producer must resume after the receiver drains");
-        });
-        tokio::task::yield_now().await;
-        assert!(!producer.is_finished(), "full channel must apply backpressure");
-
-        for sequence in 0..EVENT_QUEUE_CAPACITY {
-            let event = rx.recv().await.expect("queued event must remain available");
-            assert_eq!(event, TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] });
-        }
-        producer.await.expect("producer task must complete");
-        assert_eq!(
-            rx.recv().await,
-            Some(TalEvent::LinkData { link: 7, bytes: vec![0xfe] })
-        );
     }
 
     #[test]
