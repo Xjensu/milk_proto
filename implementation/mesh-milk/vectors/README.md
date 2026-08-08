@@ -22,9 +22,16 @@ The consuming test (`mmp-cli`, `vectors::tests`) is the guard. It:
 2. asserts every committed file still byte-matches current codec output
    (`committed_vectors_match_current_codecs`) — CRLF-normalized, since this repo
    is developed on Windows;
-3. independently re-verifies each vector's invariant — recomputed BundleID,
-   signature verification, cross-domain rejection
-   (`positive_vector_invariants_hold`, `negative_vector_invariants_hold`).
+3. re-verifies the production invariants — recomputed BundleID, signature
+   verification, and cross-domain rejection
+   (`positive_vector_invariants_hold`, `negative_vector_invariants_hold`);
+4. runs a separate, test-only byte reader over the committed envelope and
+   bundle vectors (`vectors::conformance`) so those framing, length, and
+   lifetime-canonicalization checks do not call the production decoders.
+
+The independent reader currently covers the envelope and outer-bundle subset
+only. It is not evidence that every frame, payload, or bundle class already
+has an independent implementation; those remain E5-S4 follow-up work.
 
 If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 **review the diff before committing**. That review is the checkpoint doc 10

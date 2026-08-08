@@ -361,3 +361,10 @@ mod tests {
         assert_eq!(200u8.min(L_MAX), L_MAX);
     }
 }
+
+// Keep the independent conformance reader out of the production CLI binary.
+// It deliberately does not call any `mmp-types` decoder; see the module-level
+// tests in `conformance.rs` for the wire assertions.
+#[cfg(test)]
+#[path = "conformance.rs"]
+mod conformance;
