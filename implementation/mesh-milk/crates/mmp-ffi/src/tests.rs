@@ -148,6 +148,17 @@ fn bad_length_ids_are_rejected_at_the_ffi_boundary() {
 }
 
 #[test]
+fn bounded_store_constructor_surfaces_persist_failure() {
+    let dir = TempDir::new("bounded-store");
+    let path = dir.file("bounded.mmp");
+    let node = MmpNode::new_with_store_limit(vec![44u8; 32], FfiTier::Relay, path, 1)
+        .expect("valid bounded store constructor arguments");
+    node.tick(1);
+    assert_eq!(node.flush(), Err(FfiError::Internal));
+    assert!(node.last_persist_error().is_some(), "host must be able to surface the cap failure");
+}
+
+#[test]
 fn transport_close_feedback_is_visible_at_the_ffi_boundary() {
     let node = MmpNode::new(vec![9u8; 32], FfiTier::Leaf, None).expect("valid seed");
     node.link_up(1, true);

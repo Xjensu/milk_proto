@@ -1691,3 +1691,27 @@ The ignored clustered measurement was run explicitly with seed
 reproducible result for the toy clustered model, not a production performance
 claim. Its low delivery ratio reinforces the need for trace-calibrated contact
 parameters before using SLAW-like simulation to justify a protocol change.
+
+## 2026-08-09 continuation: FFI storage quota and beacon-window hardening
+
+The bounded snapshot policy is now reachable from the native mobile/desktop
+boundary through the additive `MmpNode::new_with_store_limit` constructor.
+Hosts pass a non-zero complete-image byte quota; the existing `MmpNode::new`
+constructor remains unchanged and unbounded for compatibility. A focused FFI
+regression constructs a one-byte-limited node, verifies that `flush()` fails
+closed, and checks that `last_persist_error()` exposes the persistence failure
+to the host. The quota covers framing and all auxiliary records, not only
+bundles, and does not alter `MMPSNAP2` or any protocol field.
+
+`fe0aee9` bounds the router's rolling resolved/ephemeral beacon-population
+windows at `CONTACT_GRAPH_CAP` with oldest-first eviction. The regression feeds
+5,000 distinct unauthenticated ephemeral IDs at one timestamp and verifies
+that the estimate remains bounded. This is receiver-local resource protection;
+it is not an authenticated beacon claim or a global spray-budget guarantee.
+
+The Kotlin `MeshDrive` source module remains a platform-neutral integration
+seam. Its source-level test must be run from the repository root and only
+proves dependency injection, monotonic ordering, MTU-minus-three
+fragmentation, back-pressure retention, and link/tier lifecycle rules. It does
+not prove Kotlin compilation, Android background execution, GATT behavior, or
+radio interoperability; those remain external gates.

@@ -26,7 +26,7 @@ use mmp_node::{
     BlobState, DeliveryState, Event, FetchError, FileFailReason, FileProgress, FileSend, Node,
     SendError, Tier,
 };
-use mmp_store::SnapshotStore;
+use mmp_store::{SnapshotLimits, SnapshotStore};
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_types::authcert::AuthCert;
 use mmp_types::claim::Claim;
@@ -680,33 +680,22 @@ impl MmpNode {
         st.last_error = result.as_ref().err().map(std::string::ToString::to_string);
         result
     }
-}
 
-#[uniffi::export]
-impl MmpNode {
-    /// Construct a node from a 32-byte identity seed (loaded by the host from
-    /// Android Keystore / iOS Keychain — doc 12 §9). The seed is consumed
-    /// here and never returned across the FFI again.
-    ///
-    /// `store_path` selects the storage backend (see the type-level doc
-    /// comment for exactly what is and is not persisted):
-    /// - `None`: in-memory [`MemStore`], nothing survives process death.
-    /// - `Some(path)`: file-backed [`SnapshotStore`] at `path`, opened (or
-    ///   created) immediately so any prior snapshot's bundles are available
-    ///   right away.
-    ///
-    /// After construction, the host must call [`MmpNode::tick`] once with
-    /// its current same-boot monotonic millisecond value before invoking any
-    /// method that can enqueue a bundle. The constructor intentionally does
-    /// not read a wall clock or infer a reboot offset for persisted deadlines.
-    #[uniffi::constructor]
-    pub fn new(seed: Vec<u8>, tier: FfiTier, store_path: Option<String>) -> Result<Arc<Self>, FfiError> {
+    fn construct(
+        seed: Vec<u8>,
+        tier: FfiTier,
+        store_path: Option<String>,
+        limits: Option<SnapshotLimits>,
+    ) -> Result<Arc<Self>, FfiError> {
         let seed: [u8; 32] = seed.try_into().map_err(|_| FfiError::BadArg)?;
         let (store, snapshot): (Box<dyn mmp_core::store::BundleStore + Send>, Option<Arc<Mutex<SnapshotStore>>>) =
             match store_path {
                 None => (Box::new(MemStore::new()), None),
                 Some(path) => {
-                    let snap = Arc::new(Mutex::new(SnapshotStore::open(path)));
+                    let snap = Arc::new(Mutex::new(match limits {
+                        None => SnapshotStore::open(path),
+                        Some(limits) => SnapshotStore::open_with_limits(path, limits),
+                    }));
                     (Box::new(SharedStore(snap.clone())), Some(snap))
                 }
             };
@@ -751,6 +740,53 @@ impl MmpNode {
             snapshot,
             persist: Mutex::new(PersistState::default()),
         }))
+    }
+}
+
+#[uniffi::export]
+impl MmpNode {
+    /// Construct a node from a 32-byte identity seed (loaded by the host from
+    /// Android Keystore / iOS Keychain — doc 12 §9). The seed is consumed
+    /// here and never returned across the FFI again.
+    ///
+    /// `store_path` selects the storage backend (see the type-level doc
+    /// comment for exactly what is and is not persisted):
+    /// - `None`: in-memory [`MemStore`], nothing survives process death.
+    /// - `Some(path)`: file-backed [`SnapshotStore`] at `path`, opened (or
+    ///   created) immediately so any prior snapshot's bundles are available
+    ///   right away.
+    ///
+    /// After construction, the host must call [`MmpNode::tick`] once with
+    /// its current same-boot monotonic millisecond value before invoking any
+    /// method that can enqueue a bundle. The constructor intentionally does
+    /// not read a wall clock or infer a reboot offset for persisted deadlines.
+    #[uniffi::constructor]
+    pub fn new(seed: Vec<u8>, tier: FfiTier, store_path: Option<String>) -> Result<Arc<Self>, FfiError> {
+        Self::construct(seed, tier, store_path, None)
+    }
+
+    /// Construct a node with a complete snapshot-image quota in bytes.
+    ///
+    /// This is an additive host-policy constructor for mobile and desktop
+    /// integrations. It does not change the snapshot format or the legacy
+    /// [`MmpNode::new`] default. The quota covers the complete image,
+    /// including auxiliary records and framing, not only bundles.
+    #[uniffi::constructor]
+    pub fn new_with_store_limit(
+        seed: Vec<u8>,
+        tier: FfiTier,
+        store_path: String,
+        max_store_bytes: u64,
+    ) -> Result<Arc<Self>, FfiError> {
+        if max_store_bytes == 0 {
+            return Err(FfiError::BadArg);
+        }
+        Self::construct(
+            seed,
+            tier,
+            Some(store_path),
+            Some(SnapshotLimits::new(max_store_bytes)),
+        )
     }
 
     /// `BLAKE3(identity_pk)[0..16]` — our own NodeID.
