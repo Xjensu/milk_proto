@@ -7,7 +7,9 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use mmp_crypto::{Identity, NoiseChannel, NoiseHandshake};
-use mmp_types::consts::{HANDSHAKE_BUDGET_MS, L_MAX, SESSION_AIRTIME_CAP_MS, SESSION_IDLE_MS};
+use mmp_types::consts::{
+    HANDSHAKE_BUDGET_MS, L_MAX, MAX_FRAME_PAYLOAD, SESSION_AIRTIME_CAP_MS, SESSION_IDLE_MS,
+};
 use mmp_types::frame::{
     errcode, read_envelope, write_envelope, Frame, Hello, Summary, FT_HS, MAX_ENVELOPE_PAYLOAD,
 };
@@ -18,6 +20,14 @@ use crate::rbsr::{IdSource, Reconciler, DOMAIN_REPLY_FLAG};
 /// Reconciliation domains driven in priority order (doc 06 §2). D4 (blob
 /// availability) is WANT-driven in the MVP rather than range-reconciled.
 const DOMAINS: [u8; 4] = [0, 1, 2, 3];
+
+const fn frame_payload_within_cap(len: usize) -> bool {
+    len <= MAX_FRAME_PAYLOAD
+}
+
+const fn envelope_payload_within_cap(len: usize) -> bool {
+    len <= MAX_ENVELOPE_PAYLOAD
+}
 
 /// Everything the engine needs from the node. All methods are synchronous and
 /// cheap; heavy lifting stays in the node/store.
@@ -526,11 +536,19 @@ impl SessionEngine {
 
     fn send_frame(&mut self, f: &Frame) {
         let payload = f.encode_payload();
+        if !frame_payload_within_cap(payload.len()) {
+            self.protocol_error(errcode::OVERSIZE);
+            return;
+        }
         let Some(chan) = self.chan.as_mut() else {
             return; // pre-channel non-HS send is a programming error; drop
         };
         if let Ok(ct) = chan.encrypt(&payload) {
-            self.out.push_back(write_envelope(f.typ(), &ct));
+            if envelope_payload_within_cap(ct.len()) {
+                self.out.push_back(write_envelope(f.typ(), &ct));
+            } else {
+                self.protocol_error(errcode::OVERSIZE);
+            }
         }
     }
 
@@ -581,5 +599,20 @@ impl SessionEngine {
         self.hs = None;
         self.recon = None;
         self.events.push_back(SessionEvent::Closed);
+    }
+}
+
+#[cfg(test)]
+mod wire_budget_tests {
+    use super::{envelope_payload_within_cap, frame_payload_within_cap};
+    use mmp_types::consts::MAX_FRAME_PAYLOAD;
+    use mmp_types::frame::MAX_ENVELOPE_PAYLOAD;
+
+    #[test]
+    fn outbound_payload_budget_rejects_release_oversize_inputs() {
+        assert!(frame_payload_within_cap(MAX_FRAME_PAYLOAD));
+        assert!(!frame_payload_within_cap(MAX_FRAME_PAYLOAD + 1));
+        assert!(envelope_payload_within_cap(MAX_ENVELOPE_PAYLOAD));
+        assert!(!envelope_payload_within_cap(MAX_ENVELOPE_PAYLOAD + 1));
     }
 }
