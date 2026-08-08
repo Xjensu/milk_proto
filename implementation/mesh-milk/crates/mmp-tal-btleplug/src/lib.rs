@@ -119,6 +119,10 @@ fn event_channel() -> (mpsc::Sender<TalEvent>, mpsc::Receiver<TalEvent>) {
     mpsc::channel(EVENT_QUEUE_CAPACITY)
 }
 
+async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMutexGuard<()> {
+    gate.clone().lock_owned().await
+}
+
 /// A scanned or dial-able peer: `btleplug`'s peripheral identity plus the
 /// most recent RSSI this crate observed for it (`None` if never seen with a
 /// resolvable RSSI, e.g. the platform didn't report one).
@@ -175,6 +179,7 @@ struct LinkState {
     peripheral: Peripheral,
     tx_characteristic: Characteristic,
     chunk_size: usize,
+    write_gate: Arc<AsyncMutex<()>>,
 }
 
 /// A live BLE central: one Bluetooth adapter, a beacon/disconnect watcher
@@ -295,7 +300,12 @@ impl BleCentral {
 
         self.links.lock().await.insert(
             link,
-            LinkState { peripheral, tx_characteristic, chunk_size: DEFAULT_CHUNK },
+            LinkState {
+                peripheral,
+                tx_characteristic,
+                chunk_size: DEFAULT_CHUNK,
+                write_gate: Arc::new(AsyncMutex::new(())),
+            },
         );
 
         let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
@@ -332,12 +342,18 @@ impl BleCentral {
     /// Chunk `bytes` into Write-Without-Response ATT payloads and send them,
     /// in order, on `link`'s TX characteristic.
     pub async fn send(&self, link: LinkId, bytes: &[u8]) -> Result<(), BleError> {
-        let (peripheral, tx_characteristic, chunk_size) = {
+        let (peripheral, tx_characteristic, chunk_size, write_gate) = {
             let links = self.links.lock().await;
             let state = links.get(&link).ok_or(BleError::UnknownLink)?;
-            (state.peripheral.clone(), state.tx_characteristic.clone(), state.chunk_size)
+            (
+                state.peripheral.clone(),
+                state.tx_characteristic.clone(),
+                state.chunk_size,
+                state.write_gate.clone(),
+            )
         };
 
+        let _write_guard = acquire_write_gate(&write_gate).await;
         if !peripheral.is_connected().await? {
             return Err(BleError::NotConnected);
         }
@@ -442,8 +458,24 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 
 #[cfg(test)]
 mod tests {
-    use super::{event_channel, mint_link_id, EVENT_QUEUE_CAPACITY};
+    use super::{acquire_write_gate, event_channel, mint_link_id, EVENT_QUEUE_CAPACITY};
     use mmp_tal::TalEvent;
+    use std::sync::Arc;
+    use tokio::sync::Mutex as AsyncMutex;
+
+    #[tokio::test]
+    async fn write_gate_serializes_concurrent_senders() {
+        let gate = Arc::new(AsyncMutex::new(()));
+        let first = acquire_write_gate(&gate).await;
+        let gate_for_second = gate.clone();
+        let second = tokio::spawn(async move { acquire_write_gate(&gate_for_second).await });
+
+        tokio::task::yield_now().await;
+        assert!(!second.is_finished(), "a second sender must wait for the whole first write");
+
+        drop(first);
+        second.await.expect("second sender must acquire after the first releases");
+    }
 
     #[tokio::test]
     async fn event_channel_applies_bounded_fifo_backpressure() {
