@@ -52,6 +52,22 @@ struct State {
     /// Bounded fallback for LinkDown when the normal lifecycle lane is full.
     emergency_down: HashMap<LinkId, u64>,
     current: HashMap<LinkId, [Option<StreamStamp>; 2]>,
+    /// Lifecycle generation currently admitted for each logical link. Stream
+    /// endpoints may be installed before their LinkUp control is published,
+    /// so this is tracked separately from `current`.
+    control_current: HashMap<LinkId, u64>,
+    /// Highest lifecycle generation admitted by this ingress. LinkLifecycle
+    /// allocates generations process-wide and monotonically, so one floor
+    /// replaces an unbounded per-link tombstone map.
+    last_generation: u64,
+    /// A physical retirement is purged before its LinkDown control is queued.
+    /// Retain that generation so the corresponding first Down remains
+    /// deliverable, while later duplicates remain fenced.
+    pending_retirement: HashMap<LinkId, u64>,
+    /// A replacement may publish its streams before the matching Down/Up
+    /// controls. Permit that exact generation to complete the ordered
+    /// Down->Up transition without permitting an old generation to return.
+    replacement_generation: HashMap<LinkId, u64>,
 }
 
 struct Inner {
@@ -119,6 +135,27 @@ impl EventSender {
     /// queued bytes from any previous direction/generation.
     pub(crate) fn set_streams(&self, link: LinkId, streams: [Option<StreamStamp>; 2]) {
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        if let Some(incoming_generation) = streams
+            .iter()
+            .flatten()
+            .map(|stamp| stamp.generation)
+            .max()
+        {
+            let current_control = state.control_current.get(&link).copied();
+            let last_generation = state.last_generation;
+            let replacement = state.replacement_generation.get(&link).copied();
+            if current_control.is_none()
+                && incoming_generation <= last_generation
+                && replacement != Some(incoming_generation)
+            {
+                // A stream callback from a retired generation must not
+                // re-admit bytes before a fresh lifecycle handshake.
+                return;
+            }
+            if current_control.is_some_and(|current| incoming_generation < current) {
+                return;
+            }
+        }
         state.current.insert(link, streams);
         state.data.retain(|record| {
             record.link != link || streams.iter().flatten().any(|stamp| *stamp == record.stamp)
@@ -131,6 +168,23 @@ impl EventSender {
     /// on overflow and teardown; control delivery remains a separate path.
     pub(crate) fn retire_link(&self, link: LinkId) {
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        let stream_generation = state
+            .current
+            .get(&link)
+            .into_iter()
+            .flat_map(|streams| streams.iter().flatten())
+            .map(|stamp| stamp.generation)
+            .max();
+        let control_generation = state.control_current.remove(&link);
+        state.replacement_generation.remove(&link);
+        if let Some(generation) = stream_generation.max(control_generation) {
+            state.last_generation = state.last_generation.max(generation);
+            state
+                .pending_retirement
+                .entry(link)
+                .and_modify(|pending| *pending = (*pending).max(generation))
+                .or_insert(generation);
+        }
         state.current.remove(&link);
         state.data.retain(|record| record.link != link);
         drop(state);
@@ -172,7 +226,29 @@ impl EventSender {
             _ => return Err(ControlEnqueueError::InvalidEvent),
         };
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
+        let expected_retirement_down = kind == ControlKind::Down
+            && state.pending_retirement.get(&link).copied() == Some(generation);
+        if expected_retirement_down {
+            state.pending_retirement.remove(&link);
+        } else if state.lifecycle_is_stale(link, generation) {
+            // Delayed callbacks from an older transport generation are
+            // idempotent no-ops and must not mutate a replacement link.
+            return Ok(());
+        }
         if let ControlKind::Down = kind {
+            let previous_control = state.control_current.get(&link).copied();
+            if state
+                .pending_retirement
+                .get(&link)
+                .is_some_and(|pending| generation >= *pending)
+            {
+                state.pending_retirement.remove(&link);
+            }
+            if previous_control.is_some_and(|current| generation > current) {
+                state.replacement_generation.insert(link, generation);
+            }
+            state.last_generation = state.last_generation.max(generation);
+            state.control_current.remove(&link);
             state.current.remove(&link);
             purge_link(&mut state, link);
             if let Some(index) = state.controls.iter().position(|pending| {
@@ -225,6 +301,14 @@ impl EventSender {
                 state.controls[index].generation = state.controls[index].generation.max(generation);
                 if kind == ControlKind::Up {
                     state.controls[index].event = event;
+                    let admitted_generation = state.controls[index].generation;
+                    state
+                        .control_current
+                        .insert(link, admitted_generation);
+                    if state.replacement_generation.get(&link).copied() == Some(admitted_generation) {
+                        state.replacement_generation.remove(&link);
+                    }
+                    state.last_generation = state.last_generation.max(generation);
                 }
                 drop(state);
                 self.0.notify.notify_one();
@@ -234,10 +318,37 @@ impl EventSender {
         if state.controls.len() >= CONTROL_CAPACITY {
             return self.control_full();
         }
+        if kind == ControlKind::Up {
+            state.control_current.insert(link, generation);
+            if state.replacement_generation.get(&link).copied() == Some(generation) {
+                state.replacement_generation.remove(&link);
+            }
+            state.last_generation = state.last_generation.max(generation);
+        }
         state.controls.push_back(ControlRecord { link, generation, kind, event });
         drop(state);
         self.0.notify.notify_one();
         Ok(())
+    }
+}
+
+impl State {
+    fn lifecycle_is_stale(&self, link: LinkId, generation: u64) -> bool {
+        if let Some(current) = self.control_current.get(&link).copied() {
+            let stream_generation = self
+                .current
+                .get(&link)
+                .into_iter()
+                .flat_map(|streams| streams.iter().flatten())
+                .map(|stamp| stamp.generation)
+                .max();
+            return generation < current
+                || stream_generation.is_some_and(|stream| stream > current && generation <= current);
+        }
+        if self.replacement_generation.get(&link).copied() == Some(generation) {
+            return false;
+        }
+        generation <= self.last_generation
     }
 }
 
@@ -317,7 +428,7 @@ mod tests {
         tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
         tx.try_stream_data(7, reader(1), data(1)).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
-        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 2).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
         assert_eq!(tx.try_stream_data(7, reader(1), data(2)), Err(DataEnqueueError::Stale));
@@ -326,6 +437,49 @@ mod tests {
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
         assert_eq!(rx.recv().await, Some(data(3)));
+    }
+
+    #[tokio::test]
+    async fn stale_lifecycle_controls_cannot_retire_new_generation() {
+        let (tx, mut rx) = event_channel();
+        tx.set_streams(7, [Some(reader(2)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality { mtu: 244, ..Default::default() } }, 1).unwrap();
+        tx.try_stream_data(7, reader(2), data(9)).expect("current generation must remain live");
+
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(data(9)));
+    }
+
+    #[tokio::test]
+    async fn stale_down_cannot_retire_preannounced_replacement() {
+        let (tx, mut rx) = event_channel();
+        tx.set_streams(7, [Some(reader(1)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        // Peripheral attach installs the replacement stream before publishing
+        // its lifecycle controls. A delayed Down from generation 1 must not
+        // purge that generation-2 stream.
+        tx.set_streams(7, [Some(reader(2)), None]);
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_stream_data(7, reader(2), data(9)).expect("replacement stream must remain live");
+
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(data(9)));
+    }
+
+    #[tokio::test]
+    async fn stale_up_cannot_reopen_retired_generation() {
+        let (tx, mut rx) = event_channel();
+        tx.set_streams(7, [Some(reader(1)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.retire_link(7);
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        assert_eq!(tx.try_stream_data(7, reader(1), data(9)), Err(DataEnqueueError::Stale));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
     }
 
     #[tokio::test]

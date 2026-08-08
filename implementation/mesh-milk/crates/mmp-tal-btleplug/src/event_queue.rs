@@ -57,6 +57,10 @@ struct State {
     /// Current generation known to the ingress.  `None` means the link is
     /// retired; queued records from an older generation are stale.
     current: HashMap<LinkId, u64>,
+    /// Highest lifecycle generation admitted by this ingress. The btleplug
+    /// lifecycle allocator is process-wide monotonic, so one floor replaces
+    /// an unbounded per-link tombstone map and still fences delayed callbacks.
+    last_generation: u64,
 }
 
 struct Inner {
@@ -177,11 +181,18 @@ impl EventSender {
         };
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
 
+        if state.lifecycle_is_stale(link, generation) {
+            // Delayed callbacks from an older transport generation are
+            // idempotent no-ops and must not mutate a replacement link.
+            return Ok(());
+        }
+
         match kind {
             ControlKind::Down => {
                 // Retire the ingress generation before checking capacity.
                 // A physical teardown must never leave stale encrypted bytes
                 // dispatchable merely because the normal control lane is full.
+                state.last_generation = state.last_generation.max(generation);
                 state.current.remove(&link);
                 purge_link(&mut state, link);
                 if let Some(index) = state.controls.iter().position(|pending| {
@@ -245,6 +256,7 @@ impl EventSender {
                     if state.controls[index].kind == ControlKind::Up {
                         state.controls[index].generation = generation;
                         state.controls[index].event = event;
+                        state.last_generation = state.last_generation.max(generation);
                         state.current.insert(link, generation);
                         purge_except_generation(&mut state, link, generation);
                         drop(state);
@@ -255,6 +267,7 @@ impl EventSender {
                 if state.controls.len() >= CONTROL_CAPACITY {
                     return self.control_full();
                 }
+                state.last_generation = state.last_generation.max(generation);
                 state.current.insert(link, generation);
                 purge_except_generation(&mut state, link, generation);
                 state.controls.push_back(ControlRecord { link, generation, kind, event });
@@ -265,6 +278,15 @@ impl EventSender {
         Ok(())
     }
 
+}
+
+impl State {
+    fn lifecycle_is_stale(&self, link: LinkId, generation: u64) -> bool {
+        if let Some(current) = self.current.get(&link).copied() {
+            return generation < current;
+        }
+        generation <= self.last_generation
+    }
 }
 
 fn purge_link(state: &mut State, link: LinkId) {
@@ -360,6 +382,29 @@ mod tests {
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
         assert_eq!(rx.recv().await, Some(data(3)));
+    }
+
+    #[tokio::test]
+    async fn stale_lifecycle_controls_cannot_retire_new_generation() {
+        let (tx, mut rx) = event_channel();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality { mtu: 244, ..Default::default() } }, 1).unwrap();
+        tx.try_link_data(7, 2, data(9)).expect("current generation must remain live");
+
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(data(9)));
+    }
+
+    #[tokio::test]
+    async fn stale_up_cannot_reopen_retired_generation() {
+        let (tx, mut rx) = event_channel();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        assert_eq!(tx.try_link_data(7, 1, data(9)), Err(DataEnqueueError::Stale));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
     }
 
     #[tokio::test]
