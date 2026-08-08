@@ -128,6 +128,15 @@ the new sealed rollback and file-side-effect regressions, 17 central TAL tests,
 28 peripheral TAL tests, 14 FFI tests, and the existing simulator/adversarial
 matrix. Workspace clippy, `layer-check`, and the CLI demo also passed.
 
+The final lifecycle pass added four additional fences. `341496f` requires an
+exchange-key claim before file encoding; `f9d588d` moves peripheral write-gate
+waits outside the event lifecycle lock and bounds them; `8ad903b` stops central
+scanning and drops the peripheral advertisement during terminal shutdown; and
+`8b9b4a8` rejects scan startup that races with shutdown. The central focused
+suite now covers 17 lifecycle cases and the peripheral suite 28 cases. These
+changes close host-side late-start and lock-order hazards, but cannot prove
+BlueZ adapter teardown or mobile OS behavior without the corresponding hosts.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files
