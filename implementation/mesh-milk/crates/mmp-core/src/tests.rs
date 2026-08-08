@@ -325,6 +325,8 @@ fn reconcile(a_ids: Vec<Id16>, b_ids: Vec<Id16>) -> (BTreeSet<Id16>, BTreeSet<Id
         to_a = next_a;
         to_b = next_b;
     }
+    assert!(a.is_done(), "initiator reconciler must resolve every outstanding range");
+    assert!(b.is_done(), "responder reconciler must resolve every outstanding range");
     (a.missing.clone(), b.missing.clone(), rounds)
 }
 
@@ -380,6 +382,24 @@ fn fingerprint_is_order_and_content_sensitive() {
     minus_one.pop();
     assert_ne!(fingerprint(&ids), fingerprint(&minus_one));
     assert_ne!(fingerprint(&[]), fingerprint(&ids));
+}
+
+#[test]
+fn rbsr_ignores_unmatched_echo_without_closing_domain() {
+    use mmp_types::frame::{Frame, Range};
+
+    let mut src = VecSource { ids: rand_ids(10, 99) };
+    let mut recon = Reconciler::new(3);
+    let init = recon.init_frame(&mut src);
+    assert_eq!(recon.open, 1);
+
+    let forged = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 };
+    assert!(recon.on_range(&forged, true, &mut src).is_empty());
+    assert_eq!(recon.open, 1, "a forged echo must not resolve a different request");
+
+    let Frame::ReconInit { range, .. } = init else { panic!("init must be a range") };
+    recon.on_range(&range, true, &mut src);
+    assert!(recon.is_done());
 }
 
 // -------------------------------------------------------- session e2e ------

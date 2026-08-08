@@ -89,6 +89,11 @@ pub struct Reconciler {
     pub domain: u8,
     /// Ranges we already sent our full ID list for.
     listed: BTreeSet<(Id16, Id16)>,
+    /// Canonical descriptors for requests emitted by this side that are
+    /// still awaiting a peer response. Keeping descriptors rather than only
+    /// a scalar count prevents partitioned responses from leaving a parent
+    /// range permanently open and rejects unrelated echoes.
+    pending: BTreeSet<(Id16, Id16, u32, u64)>,
     /// Unresolved ranges we have in flight (drives domain completion).
     pub open: usize,
     /// IDs the peer has that we lack (drained by the session into WANT).
@@ -108,17 +113,29 @@ impl Reconciler {
     /// Builds a fresh reconciler for `domain`: nothing listed, no ranges
     /// open, nothing known missing yet.
     pub fn new(domain: u8) -> Reconciler {
-        Reconciler { domain, listed: BTreeSet::new(), open: 0, missing: BTreeSet::new() }
+        Reconciler {
+            domain,
+            listed: BTreeSet::new(),
+            pending: BTreeSet::new(),
+            open: 0,
+            missing: BTreeSet::new(),
+        }
     }
 
     /// Initiator: open the domain with the full-range fingerprint.
     pub fn init_frame(&mut self, src: &mut impl IdSource) -> Frame {
         let ids = src.ids_in(self.domain, &Id16::MIN, &Id16::MAX);
-        self.open = 1;
+        let range = Range {
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            count: ids.len() as u32,
+            fp: fingerprint(&ids),
+        };
+        self.track(&range);
         Frame::ReconInit {
             domain: self.domain,
             window: 0,
-            range: Range { lo: Id16::MIN, hi: Id16::MAX, count: ids.len() as u32, fp: fingerprint(&ids) },
+            range,
         }
     }
 
@@ -135,9 +152,10 @@ impl Reconciler {
         if is_reply {
             // Echo: fp equality resolves; a differing echo shouldn't happen
             // (peers only echo matches) — treat as resolved anyway.
-            self.open = self.open.saturating_sub(1);
+            self.resolve_exact(range);
             return Vec::new();
         }
+        self.resolve_containing(&range.lo, &range.hi);
         if our_fp == range.fp && ids.len() as u32 == range.count {
             // Match → echo so the asker resolves this range.
             return alloc::vec![Frame::ReconRange {
@@ -153,7 +171,7 @@ impl Reconciler {
         for (lo, hi, sub) in split_ranges(&range.lo, &range.hi, &ids, RBSR_B_F) {
             ranges.push(Range { lo, hi, count: sub.len() as u32, fp: fingerprint(&sub) });
         }
-        self.open += ranges.len();
+        self.track_all(&ranges);
         alloc::vec![Frame::ReconRange { domain: self.domain, ranges }]
     }
 
@@ -181,7 +199,7 @@ impl Reconciler {
     /// `RBSR_T_LIST`, recursing (via the same `split_ranges`/`B_F` machinery)
     /// until every leaf is wire-safe.
     pub fn on_ids(&mut self, lo: &Id16, hi: &Id16, ids: &[Id16], src: &mut impl IdSource) -> Vec<Frame> {
-        self.open = self.open.saturating_sub(1);
+        self.resolve_bounds(lo, hi);
         for id in ids {
             if !src.has(id) {
                 self.missing.insert(*id);
@@ -196,10 +214,58 @@ impl Reconciler {
             for (rlo, rhi, sub) in split_ranges(lo, hi, &ours, RBSR_B_F) {
                 ranges.push(Range { lo: rlo, hi: rhi, count: sub.len() as u32, fp: fingerprint(&sub) });
             }
-            self.open += ranges.len();
+            self.track_all(&ranges);
             return alloc::vec![Frame::ReconRange { domain: self.domain, ranges }];
         }
         self.list_frames(lo, hi, ours)
+    }
+
+    fn key(range: &Range) -> (Id16, Id16, u32, u64) {
+        (range.lo, range.hi, range.count, range.fp)
+    }
+
+    fn refresh_open(&mut self) {
+        self.open = self.pending.len();
+    }
+
+    fn track(&mut self, range: &Range) {
+        self.pending.insert(Self::key(range));
+        self.refresh_open();
+    }
+
+    fn track_all(&mut self, ranges: &[Range]) {
+        for range in ranges {
+            self.pending.insert(Self::key(range));
+        }
+        self.refresh_open();
+    }
+
+    fn resolve_exact(&mut self, range: &Range) -> bool {
+        let removed = self.pending.remove(&Self::key(range));
+        self.refresh_open();
+        removed
+    }
+
+    fn resolve_bounds(&mut self, lo: &Id16, hi: &Id16) -> bool {
+        let key = self.pending.iter().find(|(pending_lo, pending_hi, _, _)| pending_lo == lo && pending_hi == hi).copied();
+        let removed = key.is_some_and(|key| self.pending.remove(&key));
+        self.refresh_open();
+        removed
+    }
+
+    fn resolve_containing(&mut self, lo: &Id16, hi: &Id16) -> bool {
+        let mut best: Option<(Id16, Id16, u32, u64)> = None;
+        for key in &self.pending {
+            if key.0 <= *lo && *hi <= key.1 {
+                let better = best.is_none_or(|old| key.0 > old.0 || (key.0 == old.0 && key.1 < old.1));
+                if better {
+                    best = Some(*key);
+                }
+            }
+        }
+        let removed = best.is_some_and(|key| self.pending.remove(&key));
+        self.refresh_open();
+        removed
     }
 
     fn list_frames(&mut self, lo: &Id16, hi: &Id16, ids: Vec<Id16>) -> Vec<Frame> {
