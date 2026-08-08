@@ -10,6 +10,11 @@ use mmp_types::consts::RATCHET_WINDOW;
 use mmp_types::ids::{Id16, NodeId};
 use rand_core::CryptoRngCore;
 
+/// Local cap on group state admitted from network/persistence inputs. Group
+/// bootstrap is TOFU in the current v1 implementation, so an authenticated
+/// peer can otherwise allocate one fresh `GroupState` per random group id.
+pub(crate) const MAX_GROUPS: usize = 256;
+
 pub struct GroupState {
     pub gid: Id16,
     pub epoch: u16,

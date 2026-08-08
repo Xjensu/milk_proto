@@ -76,7 +76,7 @@ use authority_bucket::AuthorityBuckets;
 use blob::{BlobAssembly, FileOfferInfo};
 use conv::{msg_context, Conv};
 use diag::{DiagLog, JourneyEvent};
-use group::GroupState;
+use group::{GroupState, MAX_GROUPS};
 use mmp_tal::{LinkId, TalEvent};
 
 /// Well-known scope for claim gossip bundles (dest is routing-opaque).
@@ -975,6 +975,9 @@ impl Node {
     /// and claims; the caller should simply skip it, not treat it as fatal.
     pub fn restore_group(&mut self, blob: &[u8]) -> bool {
         let Some(gs) = GroupState::decode(&mut self.core.rng, blob) else { return false };
+        if !self.core.groups.contains_key(&gs.gid) && self.core.groups.len() >= MAX_GROUPS {
+            return false;
+        }
         self.core.groups.insert(gs.gid, gs);
         true
     }
@@ -2126,6 +2129,9 @@ impl NodeCore {
         let me = self.node_id;
         let created = !self.groups.contains_key(&gid);
         if created {
+            if self.groups.len() >= MAX_GROUPS {
+                return;
+            }
             // Bootstrap is TOFU in the current sender-key wire format: only
             // epoch one may create a local group, and the authenticated
             // inviter becomes the initial remote member. A future protocol

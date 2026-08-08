@@ -676,6 +676,41 @@ fn sender_key_member_must_match_authenticated_origin() {
 }
 
 #[test]
+fn network_group_bootstrap_is_bounded() {
+    let mut alice = node(31);
+    let mut bob = node(32);
+    introduce(&mut alice, &mut bob);
+
+    for i in 0..crate::group::MAX_GROUPS {
+        let mut gid = [0u8; 16];
+        gid[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        let gid = Id16(gid);
+        let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1).dist().clone();
+        let mut body = Vec::with_capacity(16 + dist.encode().len());
+        body.extend_from_slice(&alice.node_id().0);
+        body.extend_from_slice(&dist.encode());
+        bob.core.handle_sender_key(&alice.node_id(), &body);
+    }
+    assert_eq!(bob.core.groups.len(), crate::group::MAX_GROUPS);
+
+    let gid = Id16([0xee; 16]);
+    let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1).dist().clone();
+    let mut body = Vec::with_capacity(16 + dist.encode().len());
+    body.extend_from_slice(&alice.node_id().0);
+    body.extend_from_slice(&dist.encode());
+    bob.core.handle_sender_key(&alice.node_id(), &body);
+    assert!(!bob.core.groups.contains_key(&gid));
+
+    let mut restored = node(33);
+    for blob in bob.all_group_blobs() {
+        assert!(restored.restore_group(&blob));
+    }
+    let alice_id = alice.node_id();
+    let extra = crate::group::GroupState::create(&mut alice.core.rng, Id16([0xdd; 16]), alice_id, true);
+    assert!(!restored.restore_group(&extra.encode()));
+}
+
+#[test]
 fn non_admin_cannot_invite_into_an_immutable_v1_group() {
     let mut alice = node(21);
     let mut bob = node(22);
