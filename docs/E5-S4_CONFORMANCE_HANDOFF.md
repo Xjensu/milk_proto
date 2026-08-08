@@ -1632,3 +1632,37 @@ an experimental measurement model, not a claim of calibrated human mobility,
 and it changes no routing or wire behavior. A future measurement pass should
 compare this model against trace-derived contact distributions before using it
 to revise performance claims.
+
+## 2026-08-09 secret-state audit: group sender-key persistence seam remains open
+
+The focused Conv/ratchet/prekey/vault audit found a persistence boundary that
+must not be papered over in implementation code. `mmp-node::secret_state::RestoredState`
+contains pairwise conversations, pending markers, delivery tracking, and the
+prekey store, but it has no `GroupState` or `sent_dists` fields. Consequently,
+`secret_state::encode` cannot carry group sender-key material, and
+`Node::restore_secret_state` / `restore_secret_state_from_vault` refuse to run
+once live `groups` or `sent_dists` exist. The ordinary non-secret snapshot path
+restores only group membership/epoch metadata; `GroupState::decode` deliberately
+generates a fresh local sender key and starts with empty remote distributions.
+
+This is not a safe invitation to add chain seeds or `SendChain` snapshots to the
+existing aggregate. The frozen crypto requirements treat sender-key chains as
+secret ratchet state (specification/08-crypto-spec.md §6.2–§6.4), while the
+Rust blueprint keeps key material behind the keystore boundary and requires an
+atomic complete-generation restore (specification/08-crypto-spec.md §10;
+specification/12-rust-blueprint.md §2 and §7). The current group persistence
+codec explicitly documents the opposite safety property: membership/epoch
+bookkeeping may be persisted, but local/remote chain seeds and signature
+secrets must not be silently regenerated as if continuity had been restored
+(`implementation/mesh-milk/crates/mmp-node/src/group.rs`, `GroupState::encode`).
+
+The exact next safe seam is a normative and provider-backed group-secret
+record: define which local/remote sender-key ratchet state, replay windows,
+distribution cache, and generation/rollback context share one atomic vault
+generation with pairwise secrets; then add authenticated vectors and crash/
+restart tests for old-epoch delivery, post-restore re-gossip, and failed
+commit rollback. Until that contract exists, leave groups outside the secret
+aggregate and retain the current fail-closed restore behavior. No
+implementation-only group-key cap, TTL, or deterministic regeneration should
+be introduced: each can either lose valid delayed group traffic or reuse a
+spent sender key.
