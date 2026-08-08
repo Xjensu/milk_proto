@@ -1343,3 +1343,54 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings  # pass
 python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 22 passed
 git diff --name-only -- specification                         # empty
 ```
+
+## 2026-08-08 fuzz, Android packaging, and reconciliation hardening
+
+`9c9dbb0` closes a stale-artifact admission gap in the Android packaging
+boundary. The AAR builder removes an existing regular output archive before
+rebuilding and fails closed on non-file collisions. The verifier now allows
+only the native-only manifest, expected ABI directories, and required
+`libmmp_ffi.so` members; arbitrary payloads, `classes.jar`, directory-valued
+manifests, traversal paths, and duplicate ZIP members are rejected. Eight
+focused Android artifact tests pass. This remains artifact validation, not an
+Android NDK build or a consuming-app/device result.
+
+`f0a0e6d` adds a deterministic fuzz-corpus recipe. It derives 43 managed seeds
+from the committed conformance vectors (positive, negative, malformed
+handshake, beacon, frame, and bundle domains), preserves developer-owned
+corpus members, and provides `check`, `write`, and `verify` operations. CI now
+validates the recipe before building fuzz targets and verifies/runs every
+managed seed. The full Python script suite contains 27 passing tests. The
+recipe is reproducible and bounded; it is not a substitute for long-running
+coverage-guided fuzzing or independent wire vectors.
+
+`304609e` bounds hostile RBSR reconciliation state. Pending range descriptors,
+listed ranges, and missing-ID material now have explicit caps; exhaustion is
+observable and causes the session to close with a protocol error instead of
+silently dropping state or growing without bound. Regression coverage includes
+pending, terminal/missing, and session-closure paths. The full `mmp-core`
+library suite has 59 passing tests, and workspace clippy is clean. The caps are
+receiver-local resource limits; they do not create Byzantine-resistant global
+copy-budget conservation and do not alter the frozen wire specification.
+
+Verification on this Windows host after these commits:
+
+```text
+cargo test --workspace --all-targets -- --test-threads=1              # pass; 4 simulator/deployment cases intentionally ignored
+cargo clippy --workspace --all-targets --all-features -- -D warnings  # pass
+python -m unittest discover -s implementation/mesh-milk/scripts/tests -p 'test_*.py'  # 27 passed
+python -m py_compile implementation/mesh-milk/scripts/verify_android_artifacts.py implementation/mesh-milk/scripts/verify_ios_artifacts.py implementation/mesh-milk/fuzz/seed_corpus.py  # pass
+python implementation/mesh-milk/fuzz/seed_corpus.py check             # 43 seeds validated
+cargo run -p layer-check                                             # pass
+cargo run -p mmp-cli -- demo                                          # receipt observed; message Delivered
+git diff --name-only -- specification                                # empty
+```
+
+The next implementation priorities remain physical Linux/BlueZ validation,
+native Android/iOS radio and background measurements, and platform secure
+keystore/crash-restart tests. The candidate `group_control` module remains
+quarantined pending a normative control-schema decision. RBSR priority
+partitioning, independent opaque-payload vectors, and any MMP/Φ research
+mechanisms remain deliberately deferred until their normative grammar,
+security model, and measurements exist. Do not stage the unrelated dirty
+handbook/API/mobile integration files or temporary audit/cache directories.
