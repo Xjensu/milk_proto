@@ -802,6 +802,20 @@ storage, crash-atomic native record, or mobile background run has been
 implemented. Those remain explicit exit gates rather than claims hidden behind
 the Rust adapter contract.
 
+The next delegated security pass closed two additional gaps:
+
+- `ab8d349` rejects authenticated secret-state snapshots whose
+  `pending_first_contact` marker has no matching, same-conversation, nonterminal
+  sent bundle. This prevents a restored `ConversationPending` deadlock with no
+  possible receipt-clearing path.
+- `1f9b9d4` applies the API-surface and secret-surface checks to the Android AAR
+  and iOS XCFramework packaging scripts, not only to the standalone binding
+  job. Nine Python checks and both shell syntax checks pass.
+
+The current focused evidence is 56 `mmp-node` tests, 35 `mmp-crypto` tests,
+and 9 mobile packaging/binding checks. Native provider, crash-journal, and
+hardware gates remain unchanged.
+
 Verification after this regression:
 
 ```text
