@@ -238,11 +238,23 @@ pub fn zero_lifetime(bytes: &mut [u8]) {
 }
 
 /// BundleID straight from wire bytes (avoids a re-encode on the ingest path).
-pub fn id_of_encoded(bytes: &[u8]) -> Id16 {
+///
+/// The caller may use this on bytes received from an untrusted peer. Reject
+/// inputs before slicing so a truncated wire value cannot panic, and cap the
+/// copy before allocating the canonical prefix. Full semantic validation still
+/// belongs to [`Bundle::decode_canonical`].
+pub fn id_of_encoded(bytes: &[u8]) -> Result<Id16, WireError> {
+    const MIN_ENCODED_LEN: usize = FIXED_HEADER_LEN + 2 + SIG_LEN;
+    if bytes.len() > MAX_BUNDLE {
+        return Err(WireError::Oversize);
+    }
+    if bytes.len() < MIN_ENCODED_LEN || bytes.len() < LIFETIME_OFFSET + 5 + SIG_LEN {
+        return Err(WireError::Truncated);
+    }
     let mut canon = bytes[..bytes.len() - SIG_LEN].to_vec();
     zero_lifetime(&mut canon);
     let hash = blake3::hash(&canon);
     let mut id = [0u8; 16];
     id.copy_from_slice(&hash.as_bytes()[..16]);
-    Id16(id)
+    Ok(Id16(id))
 }

@@ -9,8 +9,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use mmp_types::bundle::id_of_encoded;
 use mmp_types::Bundle;
 
 fuzz_target!(|data: &[u8]| {
     let _ = Bundle::decode_canonical(data);
+    let _ = id_of_encoded(data);
 });
