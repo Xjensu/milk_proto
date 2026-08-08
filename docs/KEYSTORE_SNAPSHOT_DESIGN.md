@@ -23,6 +23,24 @@ not enforce durable generation rollback, provider key wrapping, or atomic
 multi-record recovery; those remain mandatory responsibilities of the next
 layer.
 
+Commit `c2edc90` adds the next Rust-internal slice, `mmp-node::secret_state`.
+It canonically aggregates pairwise conversation state (peer identity, derived
+receipt key, send/receive ratchets, skipped-key windows, and conversation DAG),
+first-contact/pending markers, BundleID delivery tracking,
+established-conversation bookkeeping, and the current prekey secrets. The
+decoder is bounded, rejects trailing or non-canonical input, validates
+cross-record references, and constructs replacement state before `Node`
+mutates anything. Restore is refused while a live session or queued wire
+output exists. The aggregate is still plaintext by design and must be sealed
+under the envelope above before any persistence.
+
+This slice deliberately does not claim complete Node restart continuity. Group
+sender-key ratchets, one-time-prekey consumption/tombstone metadata, durable
+generation/rollback state, provider transactions, and crash recovery remain
+unimplemented gates. Group membership/epoch records may continue through the
+existing non-secret snapshot path, but group cryptographic material must not be
+silently regenerated as if it were restored secret state.
+
 ## Required secret-state inventory
 
 One atomic generation must cover all state whose mismatch can break delivery or

@@ -528,6 +528,16 @@ checks. It returns zeroizing plaintext and is still only a provider payload
 primitive. Durable monotonic generation, DEK wrapping, complete Node aggregate
 serialization, and crash-atomic recovery are intentionally not claimed.
 
+Commit `c2edc90` adds a bounded, canonical Rust-internal Node secret-state
+aggregate. It covers pairwise conversation ratchet/DAG state, the derived
+receipt key, established and first-contact markers, pending async material,
+BundleID delivery tracking, and the current prekey secret batch. Its tests
+cover byte-stable round-trip plus malformed-input atomicity and busy-restore
+rejection. This is an encoding seam only: it is not written to `MMPSNAP2`, not
+passed to UniFFI/React Native, and not yet wrapped by a platform keystore.
+Group sender-key ratchets, OTK consumption/tombstones, durable generation, and
+crash-atomic provider commit remain explicit restart-continuity gates.
+
 ## Highest-priority remaining work
 
 1. Run the manual BLE procedure on two Linux PCs. The current Windows host has
