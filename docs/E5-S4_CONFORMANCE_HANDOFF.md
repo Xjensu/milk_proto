@@ -86,6 +86,13 @@ cargo test -p mmp-sim edr_ -- --nocapture                 # pass
 git diff --name-only -- specification                    # empty
 ```
 
+The follow-up snapshot audit (`ff37a15`) also rejects the reserved
+`u64::MAX` written-at timestamp during both sealing and opening. This closes a
+freshness bypass that would otherwise exist only when a faulty provider clock
+and envelope timestamp reached the same sentinel value. The focused crypto and
+node suites remain green; the native trusted-clock implementation is still an
+external provider responsibility.
+
 ## 2026-08-08 lifecycle and mobile-surface follow-up
 
 Two delegated audits closed additional implementation gaps without touching
