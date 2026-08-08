@@ -53,9 +53,12 @@ def _normalised_member_name(name: str) -> tuple[str | None, str | None]:
     parts = PurePosixPath(normalized).parts
     if ".." in parts:
         return None, f"path traversal in ZIP member: {name}"
-    if not normalized or normalized == ".":
+    if not normalized:
         return None, f"empty ZIP member path: {name!r}"
-    return normalized, None
+    # Canonicalize harmless ``.`` and repeated-slash segments so two member
+    # spellings cannot target the same extraction path without being detected
+    # as duplicates.  A root directory entry (``./``) is retained as ``.``.
+    return ("/".join(parts) if parts else "."), None
 
 
 def _index_zip(archive_path: Path, kind: str) -> tuple[ZipFile | None, dict[str, object], list[str]]:
