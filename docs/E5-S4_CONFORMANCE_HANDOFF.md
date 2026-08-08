@@ -1548,3 +1548,31 @@ groups are capped at 256 live entries while updates to existing IDs remain
 allowed. The node suite has 71 passing tests, including a 257th-group
 regression; this is local resource policy and does not modify the frozen wire
 contract.
+
+The group-cap fix is intentionally scoped: it bounds fresh group identities,
+but an authenticated member can still submit multiple valid future sender-key
+epochs for an already-admitted group. A later hardening pass should define a
+per-group epoch-retention/window policy, prove that it does not reject valid
+reordering or recovery traffic, and add restore/ingest tests before claiming
+that all group-state growth is bounded. Do not add an arbitrary epoch limit
+without first reconciling it with the epoch-rotation and offline-delivery
+rules in the frozen specification.
+
+## 2026-08-09 final local verification
+
+The post-hardening local gate passed:
+
+* `cargo test --workspace --all-targets -- --test-threads=1`;
+* `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
+* 34 repository Python regression tests, Python byte-compilation, and 43
+  deterministic fuzz-seed checks;
+* `cargo run -p layer-check`, `cargo run -p mmp-cli -- demo`, and
+  `git diff --check`.
+
+No staged or working-tree path under `specification/` changed. The remaining
+release gates are external to this Windows host: two physical Linux/BlueZ
+peers, native Android/iOS background-radio and battery measurements, secure
+platform-keystore crash/restart tests, and a real CI run of the Android/Xcode
+packaging jobs. The tier-aware snapshot-size design and the epoch-retention
+policy above remain open; neither should be papered over by changing the wire
+specification.
