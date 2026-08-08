@@ -21,6 +21,7 @@ use mmp_types::frame::FT_BUNDLE;
 use mmp_types::ids::{Id16, NodeId};
 
 pub mod adversary;
+pub mod energy;
 
 /// Deterministic xorshift64* PRNG — good enough statistical spread for
 /// picking meeting pairs and jittering the clock; not cryptographic.
