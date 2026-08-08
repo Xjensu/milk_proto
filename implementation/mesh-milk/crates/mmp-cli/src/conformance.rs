@@ -79,6 +79,25 @@ fn json_u64(json: &str, key: &str) -> u64 {
         .unwrap_or_else(|e| panic!("invalid numeric JSON field {key:?}: {e}"))
 }
 
+fn json_bool(json: &str, key: &str) -> bool {
+    let needle = format!("\"{key}\"");
+    let key_at = json
+        .find(&needle)
+        .unwrap_or_else(|| panic!("missing JSON field {key:?}"));
+    let after_key = &json[key_at + needle.len()..];
+    let colon = after_key
+        .find(':')
+        .unwrap_or_else(|| panic!("missing colon after JSON field {key:?}"));
+    let value = after_key[colon + 1..].trim_start();
+    if value.starts_with("true") {
+        true
+    } else if value.starts_with("false") {
+        false
+    } else {
+        panic!("JSON field {key:?} is not a boolean");
+    }
+}
+
 /// Collect repeated primitive fields from the generator-owned artifact.  The
 /// frame inventory intentionally contains only unescaped names, decimal type
 /// tags, and hex strings, so this small parser stays auditable and independent
@@ -184,6 +203,223 @@ fn read_envelope_normative(wire: &[u8]) -> Result<(u8, &[u8]), &'static str> {
         return Err("payload exceeds doc 10 logical cap");
     }
     Ok((typ, payload))
+}
+
+/// A tiny fixed-size reader used only by the conformance tests below.  It is
+/// intentionally separate from `mmp_types::wire::Reader`: these checks must
+/// remain useful if the production decoder and the vector generator drift in
+/// the same way.
+struct PayloadReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> PayloadReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, offset: 0 }
+    }
+
+    fn take(&mut self, length: usize) -> Result<&'a [u8], &'static str> {
+        let end = self.offset.checked_add(length).ok_or("payload length overflow")?;
+        if end > self.bytes.len() {
+            return Err("payload truncated");
+        }
+        let value = &self.bytes[self.offset..end];
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn u8(&mut self) -> Result<u8, &'static str> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, &'static str> {
+        let bytes = self.take(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn u32(&mut self) -> Result<u32, &'static str> {
+        let bytes = self.take(4)?;
+        Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    fn u64(&mut self) -> Result<u64, &'static str> {
+        let bytes = self.take(8)?;
+        Ok(u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+    }
+
+    fn varbytes(&mut self, max: usize) -> Result<&'a [u8], &'static str> {
+        let length = self.u16()? as usize;
+        if length > max {
+            return Err("variable field exceeds bound");
+        }
+        self.take(length)
+    }
+
+    fn finish(self) -> Result<(), &'static str> {
+        if self.offset == self.bytes.len() {
+            Ok(())
+        } else {
+            Err("payload has trailing bytes")
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct BeaconView<'a> {
+    ver: u8,
+    tier: u8,
+    battery: u8,
+    ephem_id: &'a [u8],
+    busy: bool,
+    epoch: u8,
+    frag_structure: u8,
+    frag_offset: u16,
+    fragment: &'a [u8],
+}
+
+/// Parse the fixed 24-byte beacon layout from doc 10 §5 without constructing
+/// an `mmp_types::Beacon`.  Every bit in the two packed bytes is accounted for
+/// by the schema, so there is no permissive/reserved-bit path here.
+fn read_beacon_independent(bytes: &[u8]) -> Result<BeaconView<'_>, &'static str> {
+    if bytes.len() < 24 {
+        return Err("beacon truncated");
+    }
+    if bytes.len() > 24 {
+        return Err("beacon has trailing bytes");
+    }
+    let ver_role = bytes[0];
+    let ver = ver_role >> 4;
+    if ver != 1 {
+        return Err("beacon version is not 1");
+    }
+    let frag = u16::from_le_bytes([bytes[10], bytes[11]]);
+    Ok(BeaconView {
+        ver,
+        tier: (ver_role >> 2) & 0x03,
+        battery: ver_role & 0x03,
+        ephem_id: &bytes[1..9],
+        busy: bytes[9] & 0x80 != 0,
+        epoch: bytes[9] & 0x7f,
+        frag_structure: (frag >> 14) as u8,
+        frag_offset: frag & 0x3fff,
+        fragment: &bytes[12..24],
+    })
+}
+
+fn read_id_count(reader: &mut PayloadReader<'_>, count: usize) -> Result<(), &'static str> {
+    let bytes = count.checked_mul(16).ok_or("id list length overflow")?;
+    reader.take(bytes).map(|_| ())
+}
+
+fn read_range(reader: &mut PayloadReader<'_>) -> Result<(), &'static str> {
+    // Range = lo id16, hi id16, count u32, fingerprint u64.
+    reader.take(32)?;
+    reader.u32()?;
+    reader.u64()?;
+    Ok(())
+}
+
+/// Validate one registered frame payload using only doc 10 field widths and
+/// little-endian length rules.  HS is intentionally opaque (Noise owns its
+/// inner grammar); BUNDLE delegates only to this module's independent outer
+/// bundle reader.  No production frame/payload decoder is called here.
+fn read_frame_payload_independent(typ: u8, payload: &[u8]) -> Result<(), &'static str> {
+    if payload.len() > 4096 {
+        return Err("frame payload exceeds normative cap");
+    }
+    let mut reader = PayloadReader::new(payload);
+    match typ {
+        mmp_types::frame::FT_HS => {
+            // Noise handshake messages are opaque to the frame layer.  The
+            // envelope test still bounds them; their cryptographic grammar is
+            // covered by the Noise implementation, not this reader.
+            return Ok(());
+        }
+        mmp_types::frame::FT_ID_PROOF => {
+            reader.take(32)?;
+            reader.take(64)?;
+        }
+        mmp_types::frame::FT_CREDIT => {
+            reader.u8()?;
+        }
+        mmp_types::frame::FT_SUMMARY => {
+            let bucket_count = reader.u8()? as usize;
+            for _ in 0..bucket_count {
+                reader.u16()?;
+                reader.varbytes(4096)?;
+            }
+            let claim_count = reader.u8()? as usize;
+            for _ in 0..claim_count {
+                reader.take(4)?;
+                reader.u8()?;
+                reader.u32()?;
+            }
+            let group_count = reader.u8()? as usize;
+            read_id_count(&mut reader, group_count)?;
+            let heads_count = reader.u8()? as usize;
+            for _ in 0..heads_count {
+                reader.take(16)?;
+                let head_count = reader.u8()? as usize;
+                read_id_count(&mut reader, head_count)?;
+            }
+        }
+        mmp_types::frame::FT_RECON_INIT => {
+            reader.u8()?;
+            reader.u8()?;
+            read_range(&mut reader)?;
+        }
+        mmp_types::frame::FT_RECON_RANGE => {
+            reader.u8()?;
+            let range_count = reader.u8()? as usize;
+            for _ in 0..range_count {
+                read_range(&mut reader)?;
+            }
+        }
+        mmp_types::frame::FT_RECON_IDS => {
+            reader.u8()?;
+            reader.take(16)?;
+            reader.take(16)?;
+            let id_count = reader.u16()? as usize;
+            read_id_count(&mut reader, id_count)?;
+        }
+        mmp_types::frame::FT_WANT => {
+            let id_count = reader.u16()? as usize;
+            read_id_count(&mut reader, id_count)?;
+        }
+        mmp_types::frame::FT_BUNDLE => {
+            read_bundle_independent(payload)?;
+            return Ok(());
+        }
+        mmp_types::frame::FT_BUDGET => {
+            reader.take(16)?;
+            reader.u8()?;
+        }
+        mmp_types::frame::FT_BLOB_REQ | mmp_types::frame::FT_BLOB_HAVE => {
+            reader.take(16)?;
+            reader.u16()?;
+            reader.varbytes(4096)?;
+        }
+        mmp_types::frame::FT_FRIEND_OFFER => {
+            reader.u64()?;
+        }
+        mmp_types::frame::FT_FRIEND_ACK => {
+            reader.take(64)?;
+        }
+        mmp_types::frame::FT_PROXY_SUMMARY => {
+            reader.take(16)?;
+            reader.varbytes(4096)?;
+        }
+        mmp_types::frame::FT_ERROR => {
+            reader.u8()?;
+            reader.varbytes(256)?;
+        }
+        mmp_types::frame::FT_CLOSE => {}
+        _ => return Err("unknown frame type"),
+    }
+    reader.finish()
 }
 
 /// Read the fixed part of a bundle and verify its canonical layout without
@@ -389,6 +625,31 @@ fn hello_vector_is_accepted_by_independent_reader() {
         expected_psm
     );
     assert_eq!(wire.len(), tier_offset + 6, "HELLO has trailing bytes");
+}
+
+#[test]
+fn beacon_vector_is_accepted_by_independent_fixed_reader() {
+    let json = vector("beacon.json");
+    let wire = parse_hex(&json, "wire");
+    let view = read_beacon_independent(&wire).expect("valid fixed beacon");
+    assert_eq!(view.ver, json_u64(&json, "ver") as u8);
+    assert_eq!(view.tier, json_u64(&json, "tier") as u8);
+    assert_eq!(view.battery, json_u64(&json, "battery") as u8);
+    assert_eq!(view.ephem_id, decode_hex("ephem_id", json_string(&json, "ephem_id")));
+    assert_eq!(view.busy, json_bool(&json, "busy"));
+    assert_eq!(view.epoch, json_u64(&json, "epoch") as u8);
+    assert_eq!(view.frag_structure, json_u64(&json, "frag_structure") as u8);
+    assert_eq!(view.frag_offset, json_u64(&json, "frag_offset") as u16);
+    assert_eq!(view.fragment, decode_hex("fragment", json_string(&json, "fragment")));
+    assert_eq!(wire.len(), 24, "beacon must remain fixed-size");
+
+    assert_eq!(read_beacon_independent(&wire[..23]), Err("beacon truncated"));
+    let mut trailing = wire.clone();
+    trailing.push(0);
+    assert_eq!(read_beacon_independent(&trailing), Err("beacon has trailing bytes"));
+    let mut wrong_version = wire;
+    wrong_version[0] = 0x29;
+    assert_eq!(read_beacon_independent(&wrong_version), Err("beacon version is not 1"));
 }
 
 #[test]
@@ -663,5 +924,75 @@ fn frame_inventory_has_all_registered_types_and_valid_envelopes() {
         assert_eq!(wire[2], *expected_type, "frame {} envelope tag mismatch", names[index]);
         assert_eq!(&wire[3..], payload.as_slice(), "frame {} payload mismatch", names[index]);
         assert_eq!(read_envelope_independent(&wire).unwrap(), (*expected_type, payload.as_slice()));
+    }
+}
+
+#[test]
+fn frame_inventory_payloads_match_independent_registered_grammars() {
+    let json = vector("frames.json");
+    let count = json_u64(&json, "frame_count") as usize;
+    let names = json_all_strings(&json, "name");
+    let types = json_all_u64(&json, "type");
+    let payloads = json_all_strings(&json, "payload");
+    assert_eq!(count, 17);
+    assert_eq!(names.len(), count);
+    assert_eq!(types.len(), count);
+    assert_eq!(payloads.len(), count);
+
+    // The frame inventory is ordered by the registry in doc 10 §2.  Keeping
+    // this list local to the independent test makes omissions visible if the
+    // production enum gains a new tag without a corresponding grammar check.
+    let expected_types = [
+        mmp_types::frame::FT_HS,
+        mmp_types::frame::FT_ID_PROOF,
+        mmp_types::frame::FT_CREDIT,
+        mmp_types::frame::FT_SUMMARY,
+        mmp_types::frame::FT_RECON_INIT,
+        mmp_types::frame::FT_RECON_RANGE,
+        mmp_types::frame::FT_RECON_IDS,
+        mmp_types::frame::FT_WANT,
+        mmp_types::frame::FT_BUNDLE,
+        mmp_types::frame::FT_BUDGET,
+        mmp_types::frame::FT_BLOB_REQ,
+        mmp_types::frame::FT_BLOB_HAVE,
+        mmp_types::frame::FT_FRIEND_OFFER,
+        mmp_types::frame::FT_FRIEND_ACK,
+        mmp_types::frame::FT_PROXY_SUMMARY,
+        mmp_types::frame::FT_ERROR,
+        mmp_types::frame::FT_CLOSE,
+    ];
+
+    for index in 0..count {
+        let typ = types[index] as u8;
+        assert_eq!(typ, expected_types[index], "frame {} type drifted", names[index]);
+        let payload = decode_hex("payload", &payloads[index]);
+        read_frame_payload_independent(typ, &payload)
+            .unwrap_or_else(|error| panic!("frame {} payload rejected: {error}", names[index]));
+
+        // Every typed payload has a complete grammar and therefore rejects a
+        // trailing byte.  HS is deliberately opaque at this layer; its Noise
+        // message length is owned by the handshake parser, not doc 10 frame
+        // framing.
+        if typ != mmp_types::frame::FT_HS {
+            let mut trailing = payload.clone();
+            trailing.push(0);
+            assert!(
+                read_frame_payload_independent(typ, &trailing).is_err(),
+                "frame {} grammar accepted trailing bytes",
+                names[index]
+            );
+        }
+
+        // A non-empty typed payload must not become valid after truncation.
+        // CLOSE is the sole zero-byte payload and is exercised by the
+        // trailing-byte assertion above.
+        if !payload.is_empty() && typ != mmp_types::frame::FT_HS {
+            let truncated = &payload[..payload.len() - 1];
+            assert!(
+                read_frame_payload_independent(typ, truncated).is_err(),
+                "frame {} grammar accepted truncation",
+                names[index]
+            );
+        }
     }
 }

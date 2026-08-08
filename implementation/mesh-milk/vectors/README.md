@@ -25,14 +25,20 @@ The consuming test (`mmp-cli`, `vectors::tests`) is the guard. It:
 3. re-verifies the production invariants — recomputed BundleID, signature
    verification, and cross-domain rejection
    (`positive_vector_invariants_hold`, `negative_vector_invariants_hold`);
-4. runs a separate, test-only byte reader over the committed envelope, bundle,
-   and grouped class vectors (`vectors::conformance`) so those framing,
-   length, class, payload-boundary, and lifetime-canonicalization checks do
-   not call the production decoders.
+4. runs a separate, test-only byte reader over the committed beacon, HELLO,
+   envelope, frame-payload, bundle, and grouped-class vectors
+   (`vectors::conformance`) so those fixed-field, variable-length,
+   payload-boundary, class, and lifetime-canonicalization checks do not call
+   the production decoders.
 
-The independent reader still does not decrypt class-1/2 ciphertext or verify
-the class-2 sender-key chain. The grouped class artifact records those fields
-as provisional rather than presenting opaque bytes as interoperable plaintext.
+The independent frame reader checks the document-10 grammar for all 17
+registered tags: fixed key/signature and budget fields, nested SUMMARY and
+RBSR counts, ID lists, blob/proxy/error varbytes, friendship body widths,
+strict CLOSE emptiness, and the BUNDLE outer layout. HS payloads remain
+opaque by design because Noise owns their inner grammar. It also does not
+decrypt class-1/2 ciphertext or verify the class-2 sender-key chain. The
+grouped class artifact records those fields as provisional rather than
+presenting opaque bytes as interoperable plaintext.
 
 If step 2 fails, a wire-format change shifted a golden byte: regenerate, then
 **review the diff before committing**. That review is the checkpoint doc 10
