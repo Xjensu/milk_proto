@@ -908,3 +908,96 @@ WSL generation/lifecycle tests and Linux Clippy: pass
 
 This is an implementation safety invariant only; generation values and wire
 format remain unchanged.
+
+## 2026-08-08 vault TOCTOU fencing
+
+`83551b6` closes a restore-time race in `mmp-node::vault`. Restoration now
+loads the opaque record before reading the durable generation floor, then
+rejects the record if the observed floor is newer. The deterministic
+`restore_fences_record_when_floor_advances_after_load` fixture models another
+writer advancing the floor between those provider calls and proves that a
+stale secret snapshot is not accepted.
+
+Current Windows evidence:
+
+```text
+cargo test -p mmp-node --lib -- --test-threads=1       # 59 passed
+cargo clippy -p mmp-node --lib --tests -- -D warnings  # pass (agent evidence)
+```
+
+This is still not an atomic native-provider transaction. Android Keystore,
+iOS Keychain, DPAPI/secure-storage integration, crash-atomic filesystem
+replacement, and physical restart tests remain open. A production provider
+must implement the equivalent load-plus-floor check atomically or retry on a
+changed floor; the Rust ordering fix alone cannot manufacture that guarantee
+across independent platform calls.
+
+## 2026-08-08 central per-chunk lifecycle fencing
+
+`e8b4e11` adds a generation check before every ATT chunk in
+`mmp-tal-btleplug::BleCentral::send`. If a reconnect or hangup retires the
+link while a multi-chunk write is in progress, subsequent chunks are stopped
+instead of being sent through the replacement generation. The regression
+`chunk_send_guard_stops_after_replacement_generation` makes this race
+deterministic. No wire field, bundle format, or specification document was
+changed.
+
+Current Windows evidence:
+
+```text
+cargo test -p mmp-tal-btleplug --lib -- --test-threads=1  # 22 passed
+cargo clippy --workspace --all-targets -- -D warnings      # pass
+```
+
+The guard is intentionally fail-closed at the transport boundary. It does
+not claim that a physical adapter can never lose a packet, nor does it replace
+the Linux/BlueZ and Android/iOS radio tests.
+
+## 2026-08-08 mobile surface audit
+
+The mobile surface was checked without changing the user's dirty integration
+guides. Windows artifact evidence is:
+
+```text
+cargo build -p mmp-ffi --release                         # pass
+UniFFI Kotlin + Swift generation with --features cli      # pass
+check_mobile_binding.py (Kotlin and Swift)                # pass
+check_mobile_api_surface.py                               # pass
+check_mobile_secret_surface.py                            # pass
+python -m unittest discover -s scripts/tests -p 'test_*.py'  # 9 passed
+```
+
+These checks prove Rust/UniFFI packaging and secret-surface constraints only;
+they are not native Android/iOS compiler, Keystore/Keychain, background-radio,
+or physical-device evidence. On this Windows host the CLI exits gracefully
+when no usable adapter/backend is present (`connect` and `listen` both return
+status 2); this is not a successful radio test.
+
+The existing dirty mobile documents contain known examples that should be
+corrected in a separately approved documentation pass: missing `--features
+cli` in the binding command, an obsolete iOS `.dylib` path instead of the
+script-produced static library, stale constructor and `linkData` signatures,
+and event/API tables that omit newer friendship, announcement, and file
+events. They also link to the absent `other/HANDOFF_MOBILE.md`. Treat those
+guides as user-owned edits for now; do not stage them in a conformance commit.
+
+## 2026-08-08 current verification snapshot
+
+After `83551b6` and `e8b4e11`, the current Windows checks pass:
+
+```text
+cargo test -p mmp-node --lib -- --test-threads=1               # 59 passed
+cargo test -p mmp-tal-btleplug --lib -- --test-threads=1      # 22 passed
+cargo test -p mmp-tal-peripheral --lib -- --test-threads=1    # 36 passed
+cargo test -p mmp-ffi --lib -- --test-threads=1                 # 16 passed
+cargo clippy --workspace --all-targets -- -D warnings         # pass
+cargo check -p mmp-crypto --no-default-features               # pass
+cargo run -p layer-check                                      # pass
+cargo run -p mmp-cli -- demo                                  # pass; delivery receipt observed
+python -m unittest discover -s scripts/tests -p 'test_*.py'  # 9 passed
+```
+
+No specification file is modified by these fixes. The remaining release
+gates are native secure-storage and crash-atomic providers, Linux BlueZ
+adapter execution with two physical PCs, and real Android/iOS device and
+background-radio measurements.
