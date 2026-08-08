@@ -2,7 +2,7 @@
 
 ## Checkpoint
 
-This checkpoint is commit `6813a77` (`fix(mmp-tal-btleplug): serialize link teardown`). The
+This checkpoint is commit `7226f1f` (`fix(mmp-tal-btleplug): fence link generations`). The
 frozen `specification/` directory was not modified.
 
 Recent focused commits, oldest first:
@@ -76,6 +76,12 @@ Recent focused commits, oldest first:
 - `6813a77` — acquired that same write gate before central `hangup` and adapter
   disconnect removal, so teardown waits for an in-flight write sequence instead
   of disconnecting halfway through an encrypted frame.
+- `7226f1f` — added monotonic central link generations and an event-gated
+  lifecycle transition. Reconnect, hangup, adapter disconnect, and RX EOF now
+  revalidate the captured generation before removal; stale RX bytes and stale
+  teardown callbacks cannot affect a replacement with the same stable
+  `LinkId`. Replacement ordering is explicitly `LinkDown` then `LinkUp`, and
+  the bounded queue remains the backpressure boundary.
 
 The latest session-admission slice maps the public `Node` API's Leaf/Relay/
 Anchor tiers to one/two/eight concurrent sessions. Duplicate or over-quota
@@ -176,6 +182,15 @@ write-gate regression, and package clippy passed with `-D warnings`.
 After `6813a77`, the full workspace matrix passed with 228 active test items
 and 4 intentionally ignored simulator cases; workspace clippy and
 `layer-check` remained clean.
+After `7226f1f`, `mmp-tal-btleplug` passed 12 focused tests (including
+monotonic-generation and replacement-order regressions), package clippy
+passed with `-D warnings`, and the full workspace matrix again passed with
+228 active test items and 4 intentionally ignored simulator cases.
+Workspace clippy and `layer-check` remained clean. Rustfmt was not available
+because the installed toolchain lacks the rustfmt component.
+The lifecycle regressions exercise generation allocation and replacement signal
+ordering without BLE hardware; direct callback scheduling remains a real-radio
+and Linux/BlueZ validation gate.
 
 Regenerate vectors with:
 
@@ -229,11 +244,13 @@ Record evidence and obtain a protocol decision first.
    files (strict 4096-byte cap and restart persistence claims) with the shipped
    implementation. Keep that cleanup selective; do not stage the unrelated
    revocation and integration edits already present in those files.
-5. Add generation fencing for stable `LinkId` reconnects in both real BLE
-   backends. A stale reader or disconnect callback must not remove a replacement
-   session or inject old encrypted bytes. Also design reserved control
-   capacity/overflow retirement so a stalled consumer cannot delay `LinkDown`
-   indefinitely behind data.
+5. Extend generation fencing to the Linux peripheral backend. Its reader and
+   writer callbacks still need direction-specific monotonic tokens so a stale
+   BlueZ stream cannot remove a replacement or inject old encrypted bytes.
+   Separately design reserved control capacity/overflow retirement so a stalled
+   consumer cannot delay `LinkDown` indefinitely behind data; central lifecycle
+   transitions currently hold the event gate across bounded sends, so this is
+   an explicit follow-up rather than an unbounded-queue workaround.
 6. Execute the real two-Linux-PC BlueZ procedure in
    `docs/MANUAL_INTEROP_TESTING.md`. The current Windows host cannot close this
    hardware gate. Mobile remains API/artifact-only until native Android/iOS
