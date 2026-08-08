@@ -2,8 +2,8 @@
 
 ## Checkpoint
 
-This checkpoint is on commit `a73f747` (`fix(mmp-cli): persist and restore node
-state`). The frozen `specification/` directory was not modified.
+This checkpoint is on commit `7f29d7d` (`fix(mmp-core): enforce outbound frame
+caps`). The frozen `specification/` directory was not modified.
 The implementation changes are intentionally limited to deterministic test
 vectors, test-only readers, and their documentation.
 
@@ -21,6 +21,9 @@ Recent focused commits, oldest first:
 - `a73f747` — CLI snapshot restoration/staging and a restart regression test;
   the manual `connect` → `Ctrl-C` → `send --store` workflow now preserves
   claims, group blobs, replay state, and receipt suppression state.
+- `7f29d7d` — runtime outbound frame/envelope cap checks in `SessionEngine`,
+  preventing release builds from emitting locally generated oversized frames;
+  the 4096-vs-4128 wire-policy discrepancy remains deliberately unresolved.
 
 The manual desktop/mobile installation and interoperability procedure is in
 `docs/MANUAL_INTEROP_TESTING.md` (committed earlier). It accurately states
@@ -49,7 +52,8 @@ round-trips and cryptographic checks.
 
 ## Verification evidence
 
-The latest focused run passed 26 `mmp-cli` tests. Workspace clippy with
+The latest focused run passed 26 `mmp-cli` tests and 31 `mmp-core` tests.
+Workspace clippy with
 `-D warnings`, `cargo run -p layer-check`, `git diff --check`, and the serial
 workspace test matrix also passed during this checkpoint. Rustfmt could not be
 run because the rustfmt component is not installed in the environment.
