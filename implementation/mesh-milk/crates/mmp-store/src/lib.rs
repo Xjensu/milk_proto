@@ -125,21 +125,24 @@ impl SnapshotStore {
         if bytes.len() < 8 || &bytes[..8] != MAGIC {
             return;
         }
-        let mut pos = 8;
-        while pos + 4 <= bytes.len() {
+        let mut pos: usize = 8;
+        while let Some(length_end) = pos.checked_add(4) {
             // `.get()` + `?` rather than direct indexing: this is the one path
             // that reads potentially corrupted/truncated disk bytes, and the
             // handbook §0 policy is that no panic must be reachable from wire
             // or disk data, even where a bound is currently provably safe.
-            let Some(len_bytes) = bytes.get(pos..pos + 4) else { break };
-            let len = u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
-            pos += 4;
-            if pos + len + 32 > bytes.len() {
+            let Some(len_bytes) = bytes.get(pos..length_end) else { break };
+            let Ok(len_bytes) = <[u8; 4]>::try_from(len_bytes) else { break };
+            let len = u32::from_le_bytes(len_bytes) as usize;
+            pos = length_end;
+            let Some(record_end) = pos.checked_add(len) else { break };
+            let Some(checksum_end) = record_end.checked_add(32) else { break };
+            if checksum_end > bytes.len() {
                 break; // truncated tail: crash mid-write — drop it
             }
-            let record = &bytes[pos..pos + len];
-            let sum = &bytes[pos + len..pos + len + 32];
-            pos += len + 32;
+            let record = &bytes[pos..record_end];
+            let sum = &bytes[record_end..checksum_end];
+            pos = checksum_end;
             if blake3::hash(record).as_bytes() != sum {
                 continue; // corrupt record: drop-and-redownload
             }
