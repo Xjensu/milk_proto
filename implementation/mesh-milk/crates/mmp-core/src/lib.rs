@@ -25,7 +25,7 @@ pub mod store;
 
 pub use authority::{effective_class5_priority, AuthorityStore, CertReject, RootTrust};
 pub use claims::{ClaimMerge, ClaimStore};
-pub use dag::ConversationDag;
+pub use dag::{ConversationDag, DagSnapshotError};
 pub use ingest::{ingest, Disposition, DropReason};
 pub use orset::{MembershipOp, OrSet};
 pub use rbsr::{fingerprint, IdSource, Reconciler};
