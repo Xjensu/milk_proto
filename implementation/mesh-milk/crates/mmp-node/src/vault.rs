@@ -229,7 +229,7 @@ pub(crate) fn restore_from_vault(
     let generation_floor = vault.generation_floor()?;
     let dek = vault.unwrap_dek(&record.context, &record.wrapped_dek)?;
     let now_ms = vault.trusted_now_ms()?;
-    open_record(
+    let (generation, state) = open_record(
         node_public,
         node_id,
         &record,
@@ -237,7 +237,15 @@ pub(crate) fn restore_from_vault(
         now_ms,
         RATCHET_PERSIST_TTL_MS,
         generation_floor,
-    )
+    )?;
+    // The provider floor is a monotonic durability fence, not a snapshot of
+    // the record. A concurrent process may commit a newer generation after
+    // the first floor read but before decryption completes; re-read it after
+    // the expensive open so stale ratchet/prekey state cannot be accepted.
+    if generation < vault.generation_floor()? {
+        return Err(VaultError::Generation);
+    }
+    Ok((generation, state))
 }
 
 fn parse_context(context: &[u8], public: &Key32, node_id: &Id16) -> Result<HashMap<Id16, Key32>, VaultError> {
@@ -397,6 +405,41 @@ mod tests {
 
         fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
             self.inner.trusted_now_ms()
+        }
+
+        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+            self.inner.commit(expected_generation, candidate, dek)
+        }
+
+        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            self.inner.unwrap_dek(context, wrapped_dek)
+        }
+    }
+
+    /// Deterministic race fixture for the final restore fence: another
+    /// process commits a newer generation after the initial floor read but
+    /// before the snapshot is opened.
+    struct FloorAdvancingAfterClockVault {
+        inner: ReferenceSnapshotVault,
+        advance_after_clock: bool,
+    }
+
+    impl SnapshotVault for FloorAdvancingAfterClockVault {
+        fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
+            self.inner.load()
+        }
+
+        fn generation_floor(&mut self) -> Result<u64, VaultError> {
+            self.inner.generation_floor()
+        }
+
+        fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
+            let now = self.inner.trusted_now_ms()?;
+            if self.advance_after_clock {
+                self.inner.high_water = self.inner.high_water.checked_add(1).ok_or(VaultError::Generation)?;
+                self.advance_after_clock = false;
+            }
+            Ok(now)
         }
 
         fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
@@ -651,6 +694,21 @@ mod tests {
         assert_eq!(save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
 
         let mut vault = FloorAdvancingAfterLoadVault { inner, advance_after_load: true };
+        assert!(matches!(
+            restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
+            Err(VaultError::Generation)
+        ));
+        assert_eq!(vault.generation_floor().unwrap(), 2);
+    }
+
+    #[test]
+    fn restore_fences_record_when_floor_advances_during_open() {
+        let node = Node::new([108; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut inner = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(27);
+        assert_eq!(save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+
+        let mut vault = FloorAdvancingAfterClockVault { inner, advance_after_clock: true };
         assert!(matches!(
             restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
             Err(VaultError::Generation)
