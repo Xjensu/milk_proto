@@ -881,6 +881,22 @@ impl Node {
         self.core.receipts = receipts;
     }
 
+    /// Encode receiver-local authority admission state for persistence. This
+    /// contains only pinned roots, verified public certificates, subscriptions,
+    /// and sticky revocations; it never contains identity or ratchet secrets.
+    pub fn authority_snapshot(&self) -> Vec<u8> {
+        self.core.authority.encode()
+    }
+
+    /// Restore a previously validated authority snapshot before processing
+    /// traffic. Returns `false` for malformed, tampered, or cross-scope state
+    /// and leaves the current authority store unchanged in that case.
+    pub fn restore_authority(&mut self, bytes: &[u8]) -> bool {
+        let Some(authority) = AuthorityStore::decode(bytes) else { return false };
+        self.core.authority = authority;
+        true
+    }
+
     // ------------------------------------------------------------- sending --
 
     /// Send a text message to `peer`; returns the BundleID to track.

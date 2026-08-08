@@ -599,6 +599,10 @@ impl From<Event> for FfiEvent {
 ///   so persisting them has no PCS/forward-secrecy cost, only upside: it
 ///   prevents exactly the post-restart duplicate-delivery window a restart
 ///   would otherwise silently reopen (handbook §4.3 steps 1–3).
+/// - **Also survives restart:** receiver-local authority admission state
+///   (pinned roots, verified public AuthCerts, subscriptions, and sticky
+///   revocations). It is independently decoded and signature-checked on load
+///   and contains no secret key or ratchet material.
 /// - **Does NOT survive restart:** session/ratchet state (conversation keys,
 ///   X3DH state, group sender-key ratchets — including group members'
 ///   sender-key distributions). This is intentional, not an oversight:
@@ -650,9 +654,15 @@ impl MmpNode {
     /// the snapshot lock is touched, so the fixed node-then-snapshot order
     /// (`store.rs` module docs) holds even though this now touches both.
     fn persist_now(&self, snap: &Arc<Mutex<SnapshotStore>>, now_ms: u64) -> std::io::Result<()> {
-        let (claims, group_blobs, seen_index, receipt_filter) = {
+        let (claims, group_blobs, seen_index, receipt_filter, authority) = {
             let node = self.lock();
-            (node.all_claims(), node.all_group_blobs(), node.seen_index(), node.receipt_filter())
+            (
+                node.all_claims(),
+                node.all_group_blobs(),
+                node.seen_index(),
+                node.receipt_filter(),
+                node.authority_snapshot(),
+            )
         };
         let result = {
             let mut s = snap.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -660,6 +670,7 @@ impl MmpNode {
             s.set_group_blobs(group_blobs);
             s.set_seen_index(seen_index);
             s.set_receipt_filter(receipt_filter);
+            s.set_authority(authority);
             s.persist()
         };
         let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -716,6 +727,13 @@ impl MmpNode {
             }
             if let Some(rf) = guard.receipt_filter() {
                 node.restore_receipt_filter(rf.clone());
+            }
+            if let Some(authority) = guard.authority() {
+                // SnapshotStore has already validated the record; Node
+                // decodes again before replacing its live authority state so
+                // this boundary remains safe if another store implementation
+                // is introduced later.
+                node.restore_authority(authority);
             }
         }
         Ok(Arc::new(MmpNode {

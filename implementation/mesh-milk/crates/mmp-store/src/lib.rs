@@ -47,6 +47,10 @@ pub struct SnapshotStore {
     seen_index: Option<SeenIndex>,
     /// Singleton, mirrors `seen_index` (see [`SnapshotStore::set_receipt_filter`]).
     receipt_filter: Option<ReceiptFilter>,
+    /// Receiver-local authority roots/certificates/subscriptions/revocations,
+    /// encoded by `mmp_core::AuthorityStore`. This contains no private key or
+    /// ratchet material.
+    authority: Option<Vec<u8>>,
 }
 
 /// Bumped from `MMPSNAP1`: pre-existing snapshot files only ever held bundle
@@ -66,6 +70,8 @@ const RECORD_GROUP: u8 = 2;
 const RECORD_SEEN_INDEX: u8 = 3;
 /// Record-kind tag: a `ReceiptFilter::encode()` payload (E4-S4, handbook §4.3 step 3).
 const RECORD_RECEIPT_FILTER: u8 = 4;
+/// Record-kind tag: a validated `AuthorityStore::encode()` payload.
+const RECORD_AUTHORITY: u8 = 5;
 
 impl SnapshotStore {
     /// Open (or create) a snapshot at `path`. Corrupt records are skipped.
@@ -78,6 +84,7 @@ impl SnapshotStore {
             group_blobs: Vec::new(),
             seen_index: None,
             receipt_filter: None,
+            authority: None,
         };
         store.load();
         store
@@ -143,6 +150,12 @@ impl SnapshotStore {
                         self.receipt_filter = Some(rf);
                     }
                 }
+                // AuthorityStore::decode re-verifies certificates against the
+                // restored pinned roots before this state can affect
+                // admission after restart.
+                RECORD_AUTHORITY if mmp_core::AuthorityStore::decode(payload).is_some() => {
+                    self.authority = Some(payload.to_vec());
+                }
                 _ => {} // unknown kind: forward-compat, skip rather than fail closed
             }
         }
@@ -184,6 +197,11 @@ impl SnapshotStore {
             if let Some(rf) = &self.receipt_filter {
                 let mut record = vec![RECORD_RECEIPT_FILTER];
                 record.extend_from_slice(&rf.encode());
+                write_record(&mut f, &record)?;
+            }
+            if let Some(authority) = &self.authority {
+                let mut record = vec![RECORD_AUTHORITY];
+                record.extend_from_slice(authority);
                 write_record(&mut f, &record)?;
             }
             f.sync_all()?;
@@ -246,6 +264,19 @@ impl SnapshotStore {
     /// — mirrors [`SnapshotStore::set_seen_index`].
     pub fn set_receipt_filter(&mut self, rf: ReceiptFilter) {
         self.receipt_filter = Some(rf);
+    }
+
+    /// The validated authority-admission snapshot, if one was loaded or
+    /// staged.
+    pub fn authority(&self) -> Option<&[u8]> {
+        self.authority.as_deref()
+    }
+
+    /// Stage a receiver-local authority snapshot. Invalid bytes are rejected
+    /// before they can be written, and the decoder also validates every
+    /// certificate against its restored pinned root.
+    pub fn set_authority(&mut self, authority: Vec<u8>) {
+        self.authority = mmp_core::AuthorityStore::decode(&authority).map(|_| authority);
     }
 }
 
@@ -590,5 +621,48 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.receipt_filter().is_none(), "the corrupted ReceiptFilter record must not survive load");
+    }
+
+    #[test]
+    fn authority_snapshot_roundtrip_and_corruption_drop() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("authority.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let issuer = mmp_crypto::Identity::from_seed(&[21; 32]);
+        let subject = mmp_types::ids::Key32([22; 32]);
+        let scope = Id16([23; 16]);
+        let mut authority = mmp_core::AuthorityStore::new();
+        authority.pin_root(scope, issuer.public());
+        authority.subscribe(scope);
+        let mut cert = mmp_types::authcert::AuthCert {
+            suite: 1,
+            subject,
+            scope,
+            caps: mmp_types::authcert::CAP_ANNOUNCE,
+            priority_budget: 2,
+            not_after: 10_000,
+            issuer: issuer.public(),
+            sig: mmp_types::ids::Sig64::ZERO,
+        };
+        cert.sig = issuer.sign(SigDomain::AuthCert, &cert.signed_object());
+        authority.consider_cert(&cert, 0).unwrap();
+
+        let mut s = SnapshotStore::open(&path);
+        s.set_authority(authority.encode());
+        s.persist().unwrap();
+
+        let s2 = SnapshotStore::open(&path);
+        let restored = mmp_core::AuthorityStore::decode(s2.authority().unwrap()).unwrap();
+        assert!(restored.is_subscribed(&scope));
+        assert!(restored.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+
+        let mut bytes = std::fs::read(&path).unwrap();
+        let n = bytes.len();
+        bytes[n - 40] ^= 0xff;
+        std::fs::write(&path, &bytes).unwrap();
+        let s3 = SnapshotStore::open(&path);
+        assert!(s3.authority().is_none(), "the corrupted authority record must not survive load");
     }
 }

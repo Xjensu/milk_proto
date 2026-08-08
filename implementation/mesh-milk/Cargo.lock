@@ -1165,6 +1165,7 @@ name = "mmp-ffi"
 version = "0.0.0"
 dependencies = [
  "mmp-core",
+ "mmp-crypto",
  "mmp-node",
  "mmp-store",
  "mmp-tal",

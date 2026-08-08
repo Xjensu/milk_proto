@@ -10,12 +10,21 @@
 //! bucket got room."
 
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::vec::Vec;
 
 use mmp_types::authcert::{AuthCert, RevocationList, CAP_ANNOUNCE, CAP_PRIORITY_EMERGENCY};
 use mmp_types::bundle::prio;
 use mmp_types::consts::NOT_AFTER_SKEW_S;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32};
+use mmp_types::wire::{BufExt, Reader};
+
+const AUTH_SNAPSHOT_VERSION: u8 = 1;
+const MAX_AUTH_SUBSCRIPTIONS: usize = 256;
+const MAX_AUTH_ROOTS: usize = 256;
+const MAX_AUTH_CERTS: usize = 512;
+const MAX_AUTH_REVOKED: usize = 512;
+const AUTH_CERT_ENCODED_LEN: usize = 152;
 
 /// Doc 18 §2 verification failure reasons.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +73,119 @@ impl AuthorityStore {
     /// no revocations.
     pub fn new() -> AuthorityStore {
         AuthorityStore::default()
+    }
+
+    /// Encode the non-secret authority admission state for a host snapshot.
+    ///
+    /// This is deliberately a private persistence format, not a wire object:
+    /// local subscriptions, pinned roots, verified certificates, and sticky
+    /// revocations are receiver-local state. Counts and certificate lengths
+    /// are bounded so a hostile or corrupted snapshot cannot cause an
+    /// unbounded allocation on restore. The maps are `BTree*`, therefore the
+    /// output is deterministic and stable for checksummed snapshots.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.push(AUTH_SNAPSHOT_VERSION);
+        out.put_u16(self.subscribed.len() as u16);
+        for scope in &self.subscribed {
+            out.extend_from_slice(&scope.0);
+        }
+
+        out.put_u16(self.roots.len() as u16);
+        for (scope, (issuer, trust)) in &self.roots {
+            out.extend_from_slice(&scope.0);
+            out.extend_from_slice(&issuer.0);
+            out.push(match trust {
+                RootTrust::Pinned => 0,
+            });
+        }
+
+        out.put_u16(self.certs.len() as u16);
+        for cert in self.certs.values() {
+            let encoded = cert.encode();
+            out.put_u16(encoded.len() as u16);
+            out.extend_from_slice(&encoded);
+        }
+
+        out.put_u16(self.revoked.len() as u16);
+        for ((subject, scope), not_after) in &self.revoked {
+            out.extend_from_slice(&subject.0);
+            out.extend_from_slice(&scope.0);
+            out.put_u32(*not_after);
+        }
+        out
+    }
+
+    /// Decode a bounded authority snapshot. Cryptographic certificates are
+    /// verified again against the restored pinned root; malformed, unknown,
+    /// duplicate, or cross-scope records reject the complete snapshot so the
+    /// caller can fail closed to an empty authority store.
+    pub fn decode(bytes: &[u8]) -> Option<AuthorityStore> {
+        let mut r = Reader::new(bytes);
+        if r.u8().ok()? != AUTH_SNAPSHOT_VERSION {
+            return None;
+        }
+
+        let count = |r: &mut Reader<'_>, max: usize, min_bytes: usize| -> Option<usize> {
+            let n = r.u16().ok()? as usize;
+            if n > max || n.checked_mul(min_bytes)? > r.remaining() {
+                return None;
+            }
+            Some(n)
+        };
+
+        let mut store = AuthorityStore::new();
+        let subscriptions = count(&mut r, MAX_AUTH_SUBSCRIPTIONS, 16)?;
+        for _ in 0..subscriptions {
+            let scope = r.id16().ok()?;
+            if !store.subscribed.insert(scope) {
+                return None;
+            }
+        }
+
+        let roots = count(&mut r, MAX_AUTH_ROOTS, 49)?;
+        for _ in 0..roots {
+            let scope = r.id16().ok()?;
+            let issuer = r.key32().ok()?;
+            if r.u8().ok()? != 0 {
+                return None;
+            }
+            if store.roots.insert(scope, (issuer, RootTrust::Pinned)).is_some() {
+                return None;
+            }
+        }
+
+        let certs = count(&mut r, MAX_AUTH_CERTS, 2 + AUTH_CERT_ENCODED_LEN)?;
+        for _ in 0..certs {
+            let len = r.u16().ok()? as usize;
+            if len != AUTH_CERT_ENCODED_LEN {
+                return None;
+            }
+            let cert = AuthCert::decode(r.take(len).ok()?).ok()?;
+            if cert.suite != 0x01
+                || store.roots.get(&cert.scope).map(|(issuer, _)| issuer) != Some(&cert.issuer)
+                || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+            {
+                return None;
+            }
+            if store.certs.insert((cert.subject, cert.scope), cert).is_some() {
+                return None;
+            }
+        }
+
+        let revoked = count(&mut r, MAX_AUTH_REVOKED, 52)?;
+        for _ in 0..revoked {
+            let subject = r.key32().ok()?;
+            let scope = r.id16().ok()?;
+            let not_after = r.u32().ok()?;
+            if !store.roots.contains_key(&scope)
+                || store.revoked.insert((subject, scope), not_after).is_some()
+            {
+                return None;
+            }
+        }
+        r.finish().ok()?;
+        Some(store)
     }
 
     /// Doc 18 §4: a local filter only, never transmitted.
@@ -335,5 +457,59 @@ mod tests {
             sig: mmp_types::ids::Sig64::ZERO,
         };
         assert!(body.signed_object().starts_with(&[1]));
+    }
+
+    #[test]
+    fn authority_snapshot_roundtrip_preserves_subscription_cert_and_revocation() {
+        let issuer = Identity::from_seed(&[7; 32]);
+        let subject = Key32([8; 32]);
+        let scope = Id16([9; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, issuer.public());
+        store.subscribe(scope);
+        let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 10_000);
+        store.consider_cert(&cert, 0).unwrap();
+        let revoke = RevocationList {
+            suite: 1,
+            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 9_999 }],
+        };
+        store.merge_revocation_list(&issuer.public(), &revoke);
+
+        let restored = AuthorityStore::decode(&store.encode()).expect("valid authority snapshot");
+        assert!(restored.is_subscribed(&scope));
+        assert!(restored.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none());
+        assert!(!restored.official(&subject, &scope, 0));
+    }
+
+    #[test]
+    fn authority_snapshot_rejects_trailing_unknown_version_and_bad_signature() {
+        let issuer = Identity::from_seed(&[10; 32]);
+        let subject = Key32([11; 32]);
+        let scope = Id16([12; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, issuer.public());
+        store.consider_cert(&signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 10_000), 0).unwrap();
+        let encoded = store.encode();
+
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert!(AuthorityStore::decode(&trailing).is_none());
+
+        let mut unknown_version = encoded.clone();
+        unknown_version[0] = 0xff;
+        assert!(AuthorityStore::decode(&unknown_version).is_none());
+
+        let mut bad_signature = encoded;
+        *bad_signature.last_mut().unwrap() ^= 0x01;
+        assert!(AuthorityStore::decode(&bad_signature).is_none());
+    }
+
+    #[test]
+    fn authority_snapshot_rejects_hostile_counts_before_allocation() {
+        // version + four u16 counts, with the first count above the bounded
+        // snapshot limit. The decoder must fail closed without attempting a
+        // proportional allocation from untrusted disk bytes.
+        let bytes = [1u8, 0xff, 0xff, 0, 0, 0, 0, 0, 0];
+        assert!(AuthorityStore::decode(&bytes).is_none());
     }
 }

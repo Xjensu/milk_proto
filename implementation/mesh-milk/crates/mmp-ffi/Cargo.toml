@@ -20,6 +20,7 @@ crate-type = ["cdylib", "staticlib", "lib"]
 [dependencies]
 mmp-node = { path = "../mmp-node" }
 mmp-core = { path = "../mmp-core" }
+mmp-crypto = { path = "../mmp-crypto" }
 mmp-store = { path = "../mmp-store" }
 mmp-tal = { path = "../mmp-tal" }
 mmp-types = { path = "../mmp-types" }

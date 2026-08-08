@@ -314,6 +314,62 @@ fn claims_and_group_membership_survive_restart() {
 /// round-trip in isolation (already covered directly in `mmp-store::tests`
 /// and `mmp-core::tests`).
 #[test]
+fn authority_admission_survives_restart() {
+    let dir = TempDir::new("authority-survives-restart");
+    let path = dir.file("bob.mmp");
+    let alice = node(41);
+    let authority = mmp_crypto::Identity::from_seed(&[42; 32]);
+    let cert = {
+        let mut cert = mmp_types::authcert::AuthCert {
+            suite: 1,
+            subject: mmp_types::ids::Key32(alice.public_key().try_into().unwrap()),
+            scope: mmp_types::authcert::scope_id_of(b"persisted-scope"),
+            caps: mmp_types::authcert::CAP_ANNOUNCE,
+            priority_budget: 10,
+            not_after: 1_000_000,
+            issuer: mmp_types::ids::Key32(authority.public().0),
+            sig: mmp_types::ids::Sig64::ZERO,
+        };
+        cert.sig = authority.sign(mmp_types::domain::SigDomain::AuthCert, &cert.signed_object());
+        cert.encode()
+    };
+    let scope = mmp_types::authcert::scope_id_of(b"persisted-scope").0.to_vec();
+
+    let bob = MmpNode::new(vec![44; 32], FfiTier::Relay, Some(path.clone())).expect("valid seed");
+    introduce(&alice, &bob);
+    bob.subscribe_scope("persisted-scope".to_string());
+    bob.pin_authority_root(scope.clone(), authority.public().0.to_vec()).unwrap();
+    bob.set_wall_clock(100);
+
+    alice
+        .publish_announcement(scope.clone(), 1, 1, "before restart".to_string(), Some(cert.clone()))
+        .unwrap();
+    contact(&alice, &bob, 1, 10_000);
+    let before = drain(&bob);
+    assert!(before.iter().any(|event| matches!(
+        event,
+        FfiEvent::Announcement { effective_priority, official, .. }
+            if *effective_priority == 1 && *official
+    )), "the pinned authority should elevate before restart: {before:?}");
+
+    bob.flush().expect("authority snapshot flush");
+    drop(bob);
+
+    let bob2 = MmpNode::new(vec![44; 32], FfiTier::Relay, Some(path)).expect("reopen snapshot");
+    bob2.set_wall_clock(100);
+    alice
+        .publish_announcement(scope, 1, 1, "after restart".to_string(), Some(cert))
+        .unwrap();
+    contact(&alice, &bob2, 2, 20_000);
+    let after = drain(&bob2);
+    assert!(after.iter().any(|event| matches!(
+        event,
+        FfiEvent::Announcement { effective_priority, official, text, .. }
+            if *effective_priority == 1 && *official && text == b"after restart"
+    )), "authority admission should survive restart: {after:?}");
+}
+
+#[test]
 fn seen_index_survives_restart_and_dedups_a_replayed_bundle() {
     let dir = TempDir::new("seen-index-survives-restart");
     let path = dir.file("alice.mmp");
