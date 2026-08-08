@@ -178,7 +178,8 @@ No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodolog
 The supplied MMP/Φ dialogue is recorded and audited in
 `docs/PROPOSAL_AUDIT_MMP_PHI.md`. It does not change the MMP/1 wire contract.
 The next work is ordered as: (1) resolve the encrypted `ID_PROOF` wording and
-copy-budget security invariant; canonical AEAD associated data is now aligned
+copy-budget security invariant; the implementation-side ID_PROOF erratum is
+recorded in `docs/ID_PROOF_ERRATUM.md`; canonical AEAD associated data is now aligned
 in the Rust class-1/2 callers and documented in
 `docs/AEAD_AD_CONFORMANCE.md`; (2) finish transport-level admission/close
 feedback and Linux/BlueZ evidence; the Rust close-action seam is now

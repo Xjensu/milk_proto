@@ -91,7 +91,9 @@ Rust host seams propagate bounded transport-close actions. The test deliberately
 proves only receiver-local admission bounds; it does not claim global copy
 conservation. `Bundle::canonical_aead_ad()` aligns direct and group ciphertext
 with the frozen header-binding rule, with details in
-`docs/AEAD_AD_CONFORMANCE.md`.
+`docs/AEAD_AD_CONFORMANCE.md`. The remaining document contradiction is recorded
+as an implementation erratum in `docs/ID_PROOF_ERRATUM.md`; the `specification/`
+files remain untouched.
 
 ## Source register
 

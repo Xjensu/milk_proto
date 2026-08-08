@@ -86,6 +86,20 @@ fn noise_xx_handshake_agrees_and_binds() {
 }
 
 #[test]
+fn chanbind_object_pins_transcript_and_identity_order() {
+    let h = [0x11; 32];
+    let init = Key32([0x22; 32]);
+    let resp = Key32([0x33; 32]);
+    let object = crate::noise::chanbind_object(&h, &init, &resp);
+
+    assert_eq!(object.len(), 96);
+    assert_eq!(&object[..32], &h);
+    assert_eq!(&object[32..64], &init.0);
+    assert_eq!(&object[64..], &resp.0);
+    assert_ne!(object, crate::noise::chanbind_object(&h, &resp, &init));
+}
+
+#[test]
 fn noise_xx_handshake_refuses_disjoint_suite_from_initiator() {
     // E6-S2 cipher-agility exercise (doc 03 §8): a build advertising only a
     // suite id this side does not implement must be refused, not silently
