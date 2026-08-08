@@ -489,7 +489,7 @@ async fn ensure_link_up(
     let mut links = links.lock().await;
     let attach = match links.lifecycle.attach(link, side, endpoint) {
         Ok(attach) => attach,
-        Err(AttachReject::DuplicateEndpoint | AttachReject::RetiredEndpoint) => return None,
+        Err(AttachReject::DuplicateEndpoint | AttachReject::RetiredEndpoint | AttachReject::GenerationExhausted) => return None,
         Err(AttachReject::RetiredCapacity) => {
             // A live link that exhausted the stale-endpoint quarantine cannot
             // safely admit another callback. Retire it atomically rather than

@@ -58,6 +58,7 @@ pub(crate) enum AttachReject {
     DuplicateEndpoint,
     RetiredEndpoint,
     RetiredCapacity,
+    GenerationExhausted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,9 +98,9 @@ pub(crate) struct LinkLifecycle {
 }
 
 impl LinkLifecycle {
-    fn allocate_generation(&mut self) -> u64 {
-        self.next_generation = self.next_generation.checked_add(1).unwrap_or(1);
-        self.next_generation
+    fn allocate_generation(&mut self) -> Option<u64> {
+        self.next_generation = self.next_generation.checked_add(1)?;
+        Some(self.next_generation)
     }
 
     /// Attach one direction and return its current token.
@@ -110,9 +111,10 @@ impl LinkLifecycle {
         endpoint: i64,
     ) -> Result<AttachResult, AttachReject> {
         if !self.records.contains_key(&link) {
+            let generation = self.allocate_generation().ok_or(AttachReject::GenerationExhausted)?;
             let token = StreamToken {
                 link,
-                generation: self.allocate_generation(),
+                generation,
                 side,
                 endpoint,
             };
@@ -161,9 +163,10 @@ impl LinkLifecycle {
             return Err(AttachReject::RetiredCapacity);
         }
 
+        let generation = self.allocate_generation().ok_or(AttachReject::GenerationExhausted)?;
         let token = StreamToken {
             link,
-            generation: self.allocate_generation(),
+            generation,
             side,
             endpoint,
         };
@@ -382,5 +385,26 @@ mod tests {
         assert_eq!(drained, vec![(7, second.generation)]);
         let third = lifecycle.attach(7, StreamSide::Reader, 3).expect("new link accepted").token;
         assert!(third.generation > second.generation);
+    }
+
+    #[test]
+    fn generation_allocator_fails_closed_at_maximum() {
+        let mut lifecycle = LinkLifecycle { next_generation: u64::MAX, ..Default::default() };
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 1),
+            Err(super::AttachReject::GenerationExhausted)
+        ));
+        assert!(lifecycle.records.is_empty(), "overflow must not create a live endpoint");
+    }
+
+    #[test]
+    fn replacement_overflow_preserves_existing_endpoint() {
+        let mut lifecycle = LinkLifecycle { next_generation: u64::MAX - 1, ..Default::default() };
+        let current = lifecycle.attach(7, StreamSide::Reader, 1).expect("initial endpoint").token;
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 2),
+            Err(super::AttachReject::GenerationExhausted)
+        ));
+        assert!(lifecycle.is_current(current), "overflow must not retire the current endpoint");
     }
 }

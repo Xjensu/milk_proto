@@ -124,12 +124,12 @@ fn generation_is_current(current: Option<u64>, expected: u64) -> bool {
     current == Some(expected)
 }
 
-fn allocate_generation(counter: &AtomicU64) -> u64 {
+fn allocate_generation(counter: &AtomicU64) -> Option<u64> {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
-        let next = current.checked_add(1).unwrap_or(1);
+        let next = current.checked_add(1)?;
         match counter.compare_exchange(current, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return next,
+            Ok(_) => return Some(next),
             Err(observed) => current = observed,
         }
     }
@@ -170,6 +170,9 @@ pub enum BleError {
     /// This central has entered terminal shutdown and will not admit new
     /// scans or dials.
     ShuttingDown,
+    /// The lifecycle generation counter is exhausted. Reusing a wrapped
+    /// value would make delayed callbacks indistinguishable from a live link.
+    GenerationExhausted,
     /// `btleplug` itself reported an error.
     Btleplug(btleplug::Error),
 }
@@ -181,6 +184,7 @@ impl fmt::Display for BleError {
             BleError::UnknownLink => write!(f, "unknown link"),
             BleError::NotConnected => write!(f, "not connected"),
             BleError::ShuttingDown => write!(f, "BLE central is shutting down"),
+            BleError::GenerationExhausted => write!(f, "BLE lifecycle generation counter exhausted"),
             BleError::Btleplug(e) => write!(f, "btleplug error: {e}"),
         }
     }
@@ -190,7 +194,11 @@ impl std::error::Error for BleError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             BleError::Btleplug(e) => Some(e),
-            BleError::NoAdapter | BleError::UnknownLink | BleError::NotConnected | BleError::ShuttingDown => None,
+            BleError::NoAdapter
+            | BleError::UnknownLink
+            | BleError::NotConnected
+            | BleError::ShuttingDown
+            | BleError::GenerationExhausted => None,
         }
     }
 }
@@ -433,6 +441,7 @@ impl BleCentral {
         if self.shutting_down.load(Ordering::Acquire) {
             return Err(BleError::ShuttingDown);
         }
+        let generation = allocate_generation(&self.next_generation).ok_or(BleError::GenerationExhausted)?;
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
         if let Err(e) = peripheral.connect().await {
@@ -501,7 +510,6 @@ impl BleCentral {
             let _ = acquire_write_gate_bounded(&previous_state.write_gate).await;
             disconnect_bounded(&previous_state.peripheral).await;
         }
-        let generation = allocate_generation(&self.next_generation);
         let write_gate = Arc::new(AsyncMutex::new(()));
         let shutting_down = {
             let _event_guard = self.event_gate.lock().await;
@@ -830,14 +838,21 @@ mod tests {
     #[test]
     fn generations_are_monotonic_across_reconnects() {
         let counter = AtomicU64::new(0);
-        let first = allocate_generation(&counter);
-        let second = allocate_generation(&counter);
+        let first = allocate_generation(&counter).expect("first generation must fit");
+        let second = allocate_generation(&counter).expect("second generation must fit");
         assert_eq!((first, second), (1, 2));
 
         // A stale callback from generation one cannot match the replacement;
         // the replacement remains the only current generation.
         assert!(!generation_is_current(Some(second), first));
         assert!(generation_is_current(Some(second), second));
+    }
+
+    #[test]
+    fn generation_allocator_fails_closed_at_maximum() {
+        let counter = AtomicU64::new(u64::MAX);
+        assert_eq!(allocate_generation(&counter), None);
+        assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), u64::MAX);
     }
 
     #[tokio::test]
