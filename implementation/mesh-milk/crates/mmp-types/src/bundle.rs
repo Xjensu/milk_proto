@@ -137,6 +137,25 @@ impl Bundle {
         bytes
     }
 
+    /// Canonical associated data for encrypted class-1 and class-2 payloads.
+    ///
+    /// The AD is the bundle header through `payload_len` (fixed header +
+    /// extensions + the two-byte payload length), with the relay-mutable
+    /// lifetime normalized exactly like the signature/BundleID preimage. The
+    /// payload and trailing signature are intentionally excluded. Keeping this
+    /// byte construction here gives senders and receivers one executable
+    /// boundary for the normative “bundle header bytes” rule (doc 10 §4.1).
+    pub fn canonical_aead_ad(&self) -> Vec<u8> {
+        let mut bytes = self.encode_unsigned();
+        let payload_start = bytes
+            .len()
+            .checked_sub(self.payload.len() + 2)
+            .expect("bundle encoding always contains payload length");
+        bytes.truncate(payload_start);
+        zero_lifetime(&mut bytes);
+        bytes
+    }
+
     /// The exact Ed25519 message for this bundle's signature.
     pub fn signing_message(&self) -> Vec<u8> {
         signed_preimage(SigDomain::Bundle, &self.canonical_zeroed())

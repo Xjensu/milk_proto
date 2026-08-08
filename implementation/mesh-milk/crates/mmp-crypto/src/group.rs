@@ -98,17 +98,30 @@ impl LocalSenderKey {
     /// Encrypt + sign one group message body. `ad` binds the routing header
     /// (doc 10 §4.1 discipline applied to class 2).
     pub fn encrypt(&mut self, member: NodeId, ad: &[u8], body: &[u8]) -> GroupPayload {
+        self.encrypt_with_ad(member, body, |_| ad.to_vec())
+    }
+
+    /// Encrypt + sign a group body after the caller has constructed the exact
+    /// outer bundle header that will be used as AEAD associated data. The
+    /// placeholder payload passed to `make_ad` has the final ciphertext length
+    /// and all routing fields, so the resulting AD includes `payload_len`
+    /// without consuming a second sender-key index.
+    pub fn encrypt_with_ad<F>(&mut self, member: NodeId, body: &[u8], make_ad: F) -> GroupPayload
+    where
+        F: FnOnce(&GroupPayload) -> Vec<u8>,
+    {
         let (key, epoch, index) = self.chain.next();
-        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
-        let ct = aead::seal(&bound, ad, body);
         let mut p = GroupPayload {
             gid: self.dist.gid,
             epoch,
             member,
             chain_index: index,
-            ct,
+            ct: vec![0u8; body.len() + 16],
             member_sig: Sig64::ZERO,
         };
+        let ad = make_ad(&p);
+        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
+        p.ct = aead::seal(&bound, &ad, body);
         let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
         p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
         p

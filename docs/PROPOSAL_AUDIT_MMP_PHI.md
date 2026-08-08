@@ -28,7 +28,7 @@ The proposed energy, mobility-voucher, deadline-routing, and fountain-coding mec
 |---|---|---|---|
 | P0 | `ID_PROOF` is both encrypted and pre-channel. | **Confirmed contradiction.** | `specification/08-crypto-spec.md §3.2` and the Rust `SessionEngine` send/verify it as a Noise transport frame. `specification/10-message-format.md §2` and §2.2 still describe it as a pre-channel parser. Noise itself distinguishes handshake messages from post-handshake AEAD transport messages [F1]. File an erratum: HS1/HS2/HS3 are the only pre-transport frames; `ID_PROOF` is the first encrypted transport frame and gates all application frames. Add an independent vector. |
 | P0 | Per-origin buckets restore global copy-budget conservation. | **Not valid as stated.** | `mmp-router` conserves budget only in an honest local spray tree. `OriginBuckets` are receiver-local and keyed by origin; they do not create a globally spend-once capability. A Byzantine relay can present the same inflated grant to multiple honest receivers. Keep the clamp and local quotas, but narrow the security invariant to: “each conforming receiver locally bounds admitted origin bytes; global Byzantine copy conservation is not guaranteed.” This is an erratum candidate, not a router rewrite. |
-| P0 | AEAD AD must normalize mutable lifetime. | **Partly confirmed; implementation mismatch is real.** | `specification/10 §4.1` says AD is the bundle header, while `specification/03` defines lifetime-zeroed canonical bytes. The current direct-message implementation uses a context commitment plus `conv_id` AD (`mmp-node/src/lib.rs`), not a full serialized header. Define one normative `canonical_aead_ad` function and a byte vector before completing opaque class-1/2 crypto. Do not silently change either side. |
+| P0 | AEAD AD must normalize mutable lifetime. | **Confirmed and implemented in Rust; spec unchanged.** | `specification/10 §4.1` says AD is the bundle header, while `specification/03` defines lifetime-zeroed canonical bytes. `Bundle::canonical_aead_ad()` now binds the header prefix through `payload_len`, zeroes lifetime, and is used by direct/async and group seal/open paths. The exact boundary and residual vector work are recorded in `docs/AEAD_AD_CONFORMANCE.md`. |
 | P1 | The time model is contradictory. | **Mostly a terminology problem, with a real boundary.** | Bundle aging and diagnostics use monotonic elapsed time. Authority/announcement `not_after` is intentionally receiver-local wall-clock validity (`mmp-types/src/authcert.rs`, doc 18). “No global clock” does not mean “no wall clock”; it means wall time must not be load-bearing for bundle aging or causal order. Add an explicit clock-trust table and rollback/forward-jump tests. |
 | P1 | Missing `ROADMAP.md`, `AUDIT.md`, and council artifacts make the suite unreproducible. | **Branch/publication issue, not current-local absence.** | The current checkout contains tracked root `ROADMAP.md`, `CHANGELOG.md`, and `COUNCIL-REVIEW.md`; the public GitHub `master` URLs for those three files currently return 404. Release publication/branch parity is therefore a real gate. Add a release check that all cited artifacts exist in the published ref; do not duplicate them inside `specification/`. |
 | P1 | “FINAL” conflicts with phase-draft headers. | **Confirmed status ambiguity.** | `specification/01` says FINAL while docs 03–14 retain “Phase N draft” and many constants remain ⚠ provisional. Use a manifest/status table to distinguish frozen wire rules, provisional constants, historical phase labels, and extension documents. This is documentation governance, not a wire change. |
@@ -83,12 +83,15 @@ The current production plan is amended in this order:
 
 ### Implemented from the amended plan
 
-The first conformance/security slice is now executable without changing the
-wire contract: `mmp-core` rejects plaintext/pre-proof application records and
-accepts the encrypted `ID_PROOF` transport record, while `mmp-sim` exercises a
-Byzantine relay reusing one inflated grant across two honest receivers. The
-test deliberately proves only receiver-local admission bounds; it does not
-claim global copy conservation.
+The conformance/security work is now executable without changing the wire
+contract: `mmp-core` rejects plaintext/pre-proof application records and
+accepts the encrypted `ID_PROOF` transport record; `mmp-sim` exercises a
+Byzantine relay reusing one inflated grant across two honest receivers; and the
+Rust host seams propagate bounded transport-close actions. The test deliberately
+proves only receiver-local admission bounds; it does not claim global copy
+conservation. `Bundle::canonical_aead_ad()` aligns direct and group ciphertext
+with the frozen header-binding rule, with details in
+`docs/AEAD_AD_CONFORMANCE.md`.
 
 ## Source register
 

@@ -1524,25 +1524,22 @@ impl NodeCore {
             self.pending_async.insert(conv_id, (agreement.eph_pub, agreement.prekey_id));
         }
 
-        let conv = self.convs.get_mut(&conv_id).expect("just ensured");
-        let (msg_key, epoch, index) = conv.send.next();
-        let parents = conv.dag.heads();
+        let (msg_key, epoch, index, parents) = {
+            let conv = self.convs.get_mut(&conv_id).expect("just ensured");
+            let (msg_key, epoch, index) = conv.send.next();
+            (msg_key, epoch, index, conv.dag.heads())
+        };
 
         let mut body = Vec::with_capacity(1 + payload.len());
         body.push(app);
         body.extend_from_slice(payload);
 
         let dest = Id16(peer.0);
-        let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
-        let ct = aead::seal(&key, &conv_id.0, &body);
-
+        let pending = self.pending_async.get(&conv_id).copied();
         let mut flags = FLAG_WANTS_RECEIPT;
-        let wire_payload = if let Some((eph, prekey_id)) = self.pending_async.remove(&conv_id) {
+        if pending.is_some() {
             flags |= FLAG_ASYNC_KEYS;
-            AsyncPayload::Prekey { prekey_id, sender_xpk: self.exchange, eph, ct }.encode()
-        } else {
-            DirectPayload { conv: conv_id, epoch, index, ct }.encode()
-        };
+        }
 
         let mut exts = Vec::new();
         if !parents.is_empty() {
@@ -1550,6 +1547,22 @@ impl NodeCore {
             exts.push(Ext::Parents(parents));
         }
 
+        // ChaCha20-Poly1305 appends a fixed 16-byte tag. The placeholder
+        // lets us construct the exact bundle header (including payload_len)
+        // before sealing, while the live lifetime is normalized by
+        // `canonical_aead_ad` so relays may decrement it safely.
+        let placeholder_ct = vec![0u8; body.len() + 16];
+        let placeholder_payload = if let Some((eph, prekey_id)) = pending {
+            AsyncPayload::Prekey {
+                prekey_id,
+                sender_xpk: self.exchange,
+                eph,
+                ct: placeholder_ct,
+            }
+            .encode()
+        } else {
+            DirectPayload { conv: conv_id, epoch, index, ct: placeholder_ct }.encode()
+        };
         let mut bundle = Bundle {
             class: class::DIRECT,
             flags,
@@ -1558,12 +1571,22 @@ impl NodeCore {
             lifetime_ms: LIFETIME_MESSAGE_MS,
             priority: 1,
             exts,
-            payload: wire_payload,
+            payload: placeholder_payload,
             signature: Sig64::ZERO,
+        };
+        let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
+        let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
+        bundle.payload = if let Some((eph, prekey_id)) = pending {
+            AsyncPayload::Prekey { prekey_id, sender_xpk: self.exchange, eph, ct }.encode()
+        } else {
+            DirectPayload { conv: conv_id, epoch, index, ct }.encode()
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle.encode().len() > MAX_BUNDLE {
             return Err(SendError::TooLarge);
+        }
+        if pending.is_some() {
+            self.pending_async.remove(&conv_id);
         }
         let parents_copy: Vec<Id16> = bundle.parents().to_vec();
         let budget = origin_budget(self.utility.n_hat(self.now));
@@ -1590,17 +1613,35 @@ impl NodeCore {
 
     fn send_group(&mut self, gid: &Id16, text: &[u8]) -> Result<Id16, SendError> {
         let me = self.node_id;
-        let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
-        let epoch = gs.epoch;
+        let origin = self.public;
+        let dest = *gid;
         let mut body = Vec::with_capacity(1 + text.len());
         body.push(apptype::TEXT);
         body.extend_from_slice(text);
-        let gp = gs.local.encrypt(me, &gid.0, &body);
+        let (epoch, gp) = {
+            let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+            let epoch = gs.epoch;
+            let gp = gs.local.encrypt_with_ad(me, &body, |placeholder| {
+                Bundle {
+                    class: class::GROUP,
+                    flags: 0,
+                    origin,
+                    dest,
+                    lifetime_ms: LIFETIME_MESSAGE_MS,
+                    priority: 1,
+                    exts: vec![Ext::GroupEpoch(epoch)],
+                    payload: placeholder.encode(),
+                    signature: Sig64::ZERO,
+                }
+                .canonical_aead_ad()
+            });
+            (epoch, gp)
+        };
         let mut bundle = Bundle {
             class: class::GROUP,
             flags: 0,
-            origin: self.public,
-            dest: *gid,
+            origin,
+            dest,
             lifetime_ms: LIFETIME_MESSAGE_MS,
             priority: 1,
             exts: vec![Ext::GroupEpoch(epoch)],
@@ -1696,7 +1737,7 @@ impl NodeCore {
         let conv = self.convs.get_mut(conv_id)?;
         let key = conv.recv.key_for(0, 0).ok()?;
         let bound = aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
-        aead::open(&bound, &conv_id.0, &ct).ok()
+        aead::open(&bound, &bundle.canonical_aead_ad(), &ct).ok()
     }
 
     fn open_direct(&mut self, bundle: &Bundle, conv_id: &Id16) -> Option<Vec<u8>> {
@@ -1705,7 +1746,7 @@ impl NodeCore {
         let key = conv.recv.key_for(dp.epoch, dp.index).ok()?;
         let bound =
             aead::committed_key(&key, &msg_context(&bundle.origin, &self.node_id, conv_id, dp.epoch, dp.index));
-        aead::open(&bound, &conv_id.0, &dp.ct).ok()
+        aead::open(&bound, &bundle.canonical_aead_ad(), &dp.ct).ok()
     }
 
     /// apptype 0x02: `member NodeID(16) ‖ SenderKeyDist`.
@@ -1761,7 +1802,7 @@ impl NodeCore {
         let Ok(gp) = GroupPayload::decode(&bundle.payload) else { return };
         let Some(gs) = self.groups.get_mut(&gp.gid) else { return };
         let Some(remote) = gs.remotes.get_mut(&(gp.member, gp.epoch)) else { return };
-        let Ok(body) = remote.decrypt(&gp, &gp.gid.0) else { return };
+        let Ok(body) = remote.decrypt(&gp, &bundle.canonical_aead_ad()) else { return };
         let (_, msg) =
             body.split_first().map(|(a, r)| (*a, r.to_vec())).unwrap_or((apptype::TEXT, Vec::new()));
         self.events.push_back(Event::GroupMessage {

@@ -325,6 +325,13 @@ has a saturation counter (`close_actions_dropped`) and is documented in
 wire that method to their platform disconnect APIs and feed the resulting
 `link_down` callback.
 
+The canonical AEAD associated-data continuation is also implemented without a
+wire-spec edit: `Bundle::canonical_aead_ad()` binds the header prefix through
+`payload_len` with lifetime zeroed, and class-1/2 callers use it for seal/open.
+The exact boundary and residual vector work are recorded in
+`docs/AEAD_AD_CONFORMANCE.md`; the remaining P0 wording decision is the
+encrypted `ID_PROOF` contradiction and the copy-budget security claim.
+
 ## Transport-hardening continuation notes
 
 The public API intentionally remains `events() -> tokio::sync::mpsc::Receiver<TalEvent>`.

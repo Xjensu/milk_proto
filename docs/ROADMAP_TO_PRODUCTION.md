@@ -177,11 +177,12 @@ No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodolog
 
 The supplied MMP/Φ dialogue is recorded and audited in
 `docs/PROPOSAL_AUDIT_MMP_PHI.md`. It does not change the MMP/1 wire contract.
-The next work is ordered as: (1) resolve the encrypted `ID_PROOF` wording,
-canonical AEAD associated data, and copy-budget security invariant; (2) finish
-transport-level admission/close feedback and Linux/BlueZ evidence; the Rust
-close-action seam is now implemented and hardware/mobile wiring remains open;
-(3) measure
+The next work is ordered as: (1) resolve the encrypted `ID_PROOF` wording and
+copy-budget security invariant; canonical AEAD associated data is now aligned
+in the Rust class-1/2 callers and documented in
+`docs/AEAD_AD_CONFORMANCE.md`; (2) finish transport-level admission/close
+feedback and Linux/BlueZ evidence; the Rust close-action seam is now
+implemented and hardware/mobile wiring remains open; (3) measure
 EDR duty-cycle points, deadline scheduling, and evidence-weighted routing in
 `mmp-sim` against the current binary-spray baseline; (4) prototype mobility
 vouchers and fountain/DoF coding only behind research feature flags. Any claim
