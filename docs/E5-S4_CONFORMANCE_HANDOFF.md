@@ -2437,3 +2437,29 @@ and accept documented direct, Cargo, quoted-Windows, and PowerShell forms. The
 validator and release/manual suites pass. This validates evidence structure,
 not physical radio execution; the Windows host still lacks a runnable
 Linux/BlueZ and Android/iOS end-to-end environment.
+
+## 2026-08-09 continuation: persistence, session clocks, and iOS artifact boundaries
+
+The persistence audit found that duplicate valid `RECORD_BUNDLE` entries were
+last-valid-wins. A stale appended record could therefore roll back stored
+expiry, spray budget, or handoff metadata while retaining the same BundleID.
+Commit `ff970c2` keeps the first complete record and adds a regression for the
+rollback case; malformed first records still permit a later valid record.
+
+The session audit found that the public sans-IO `SessionEngine::on_wire` seam
+accepted a stale timestamp and rewound `last_activity`, causing premature
+idle-session expiry for hosts that deliver callbacks out of order. Commit
+`0f53844` preserves the maximum observed activity timestamp and covers the
+stale-callback transcript without changing frames or timeout constants.
+
+The monotonic-clock audit found unchecked `u64` deadline arithmetic in seen,
+receipt, claims, and ingest state. At `u64::MAX` this could panic in debug or
+wrap to an immediately-expired deadline in release. Commit `85cb63e` uses
+saturating arithmetic, including bucket rotation, and adds four terminal-clock
+regressions. Saturation is conservative and wire-neutral.
+
+The mobile artifact audit found that the iOS verifier followed symlinked Swift
+binding roots or descendants, allowing source outside the artifact boundary to
+be scanned. Commit `d19e734` rejects both forms before reading source, matching
+the Android artifact policy. Python and iOS verifier tests cover real and
+deterministic symlink cases; physical Xcode/device validation remains external.
