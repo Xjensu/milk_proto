@@ -869,6 +869,46 @@ mod tests {
     }
 
     #[test]
+    fn hostile_provider_record_lengths_fail_closed_without_mutation() {
+        let original = Node::new([116; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(32);
+        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+
+        let mut restored = Node::new([116; 32], Box::new(MemStore::new()), Tier::Relay);
+        let before = restored.secret_state_snapshot().unwrap();
+
+        // The provider boundary is allowed to return opaque bytes, so a
+        // hostile or corrupted record must be rejected by the Rust restore
+        // path before any state is adopted.  This deliberately exceeds the
+        // authenticated envelope plaintext cap without attempting to decrypt
+        // or parse the extra bytes.
+        let mut oversized_envelope = vault.record.clone().expect("sealed fixture");
+        oversized_envelope.envelope.resize(snapshot::MAX_PLAINTEXT_BYTES + 1, 0);
+        vault.record = Some(oversized_envelope);
+        assert_eq!(
+            restored.restore_secret_state_from_vault(&mut vault),
+            Err(VaultError::Invalid)
+        );
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+
+        // A context is also provider-supplied metadata.  Keep the envelope
+        // valid and make only the context exceed the bounded parser surface;
+        // restore must fail closed and preserve the target again.
+        let mut oversized_context = vault.record.take().expect("oversized fixture");
+        let valid = seal_core(&original.core, 1, 100_000, &[7; 32], &mut rng).unwrap();
+        oversized_context.context = valid.context;
+        oversized_context.envelope = valid.envelope;
+        oversized_context.context.resize(MAX_CONTEXT_BYTES + 1, 0);
+        vault.record = Some(oversized_context);
+        assert_eq!(
+            restored.restore_secret_state_from_vault(&mut vault),
+            Err(VaultError::Invalid)
+        );
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+    }
+
+    #[test]
     fn expired_secret_restore_is_rejected_without_mutating_target() {
         let mut original = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([111; 32], Box::new(MemStore::new()), Tier::Relay);
