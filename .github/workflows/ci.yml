@@ -192,9 +192,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build -p mmp-ffi --release
-      - run: cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- generate --library --language kotlin --out-dir bindings/kotlin target/release/libmmp_ffi.so
-      - run: cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- generate --library --language swift --out-dir bindings/swift target/release/libmmp_ffi.so
+      - run: cargo build -p mmp-ffi --release --locked
+      - run: cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- generate --library --language kotlin --out-dir bindings/kotlin target/release/libmmp_ffi.so
+      - run: cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- generate --library --language swift --out-dir bindings/swift target/release/libmmp_ffi.so
       # Rust-internal ratchet/prekey snapshots must never enter UniFFI output.
       - run: python scripts/check_mobile_secret_surface.py bindings/kotlin bindings/swift
       # Keep the generated Android/iOS call surface aligned with #[uniffi::export]

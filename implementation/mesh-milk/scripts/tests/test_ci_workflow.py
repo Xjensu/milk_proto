@@ -116,6 +116,19 @@ class CIWorkflowTests(unittest.TestCase):
             else:
                 self.assertEqual(path, requirement["path"])
 
+    def test_mobile_bindings_build_uses_locked_dependency_graph(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["mobile-bindings"]["steps"]
+        cargo_steps = [
+            step["run"]
+            for step in steps
+            if step.get("run", "").startswith("cargo build -p mmp-ffi")
+            or step.get("run", "").startswith("cargo run -p mmp-ffi")
+        ]
+        self.assertEqual(len(cargo_steps), 3)
+        for command in cargo_steps:
+            self.assertIn("--locked", command)
+
     def test_release_job_records_source_and_digest_manifest(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["release"]["steps"]
