@@ -141,6 +141,28 @@ must poll promptly and treat the counter as an operational failure signal.
 fail-closed aggregate-input regression. `26938a0` keeps the generated Kotlin/
 Swift API manifest aligned with the new FFI observability method.
 
+The continuation resource audit adds two further wire-neutral bounds in
+`4b0c8eb`: advisory `proxy_hints` are capped at 256 dependents per peer and
+256 peer entries, while `blob_served` keeps at most 256 distinct peer counters
+and fails closed for a new peer after saturation. These policies affect only
+optional spray suppression or local blob service; they do not change bundle
+validity or delivery semantics. The same audit deliberately did **not** add
+arbitrary limits to `known_identities` or group `remotes`/`dists`: delayed
+friendship acknowledgements and sender-key replay semantics need a normative
+lifetime/retention rule first. `pending_offers`, `offered_since`, and
+`patrons` are already bounded by `MAX_PATRONS`; `friends` is allowlist-gated
+and TTL-pruned. The residual map-growth issue is now an explicit release
+backlog rather than an unreviewed denial-of-service claim.
+
+The EDR research seam is also now executable as an aggregate-only input in
+`e0cee7c`. `RendezvousMeasurement` and its paired comparison validate trace
+identity, counts, finite/non-negative energy and latency values, and produce
+deterministic rates, deltas, energy channels, and optional latency means.
+This is deliberately not a production scheduler, not a wire field, and not
+evidence for the dialogue's claimed 2× gain; host/controller harnesses must
+provide the measurements and report whole-device energy separately from radio
+and host channels.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
