@@ -61,6 +61,38 @@ class MobileApiSurfaceTests(unittest.TestCase):
         self.assertEqual(len(CHECK.EXPECTED_MMP_NODE_METHODS), len(manifest_methods))
         self.assertEqual(manifest_methods, rust_methods)
 
+    def test_throwing_manifest_matches_rust_result_exports(self) -> None:
+        rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
+        source = rust_source.read_text(encoding="utf-8")
+        marker = "#[uniffi::export]"
+        start = source.index(marker)
+        end = source.index("#[cfg(test)]", start)
+        block = source[start:end]
+
+        # A small signature scanner is enough here: each exported method's
+        # opening brace follows its complete declaration, and no parameter
+        # type in this FFI surface contains a brace.  Keeping this assertion
+        # source-derived prevents a future Result-returning method from being
+        # added to the name manifest without also gaining the host-language
+        # throws contract.
+        result_exports: set[str] = set()
+        for match in re.finditer(r"(?m)^\s*pub fn\s+([A-Za-z_]\w*)\s*\(", block):
+            brace = block.find("{", match.end())
+            self.assertNotEqual(brace, -1, match.group(1))
+            signature = block[match.start() : brace]
+            if (
+                match.group(1) not in {"new", "new_with_store_limit"}
+                and "-> Result<" in signature
+                and "FfiError" in signature
+            ):
+                snake = match.group(1)
+                camel = snake.split("_")[0] + "".join(
+                    part[:1].upper() + part[1:] for part in snake.split("_")[1:]
+                )
+                result_exports.add(camel)
+
+        self.assertEqual(set(CHECK.EXPECTED_MMP_NODE_THROWING_METHODS), result_exports)
+
     def test_accepts_complete_generated_surface(self) -> None:
         methods = CHECK.EXPECTED_MMP_NODE_METHODS
         with tempfile.TemporaryDirectory() as root:
