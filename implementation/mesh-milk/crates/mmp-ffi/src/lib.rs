@@ -101,6 +101,10 @@ fn map_send_error(e: SendError) -> FfiError {
         // error surface deliberately coarse; hosts should re-establish the
         // conversation/group after observing this internal failure.
         SendError::RatchetExhausted => FfiError::Internal,
+        // Local bounded-state admission is likewise an internal lifecycle
+        // condition; the generated FFI error surface remains deliberately
+        // coarse and does not expose Rust collection capacities.
+        SendError::ResourceLimit => FfiError::Internal,
     }
 }
 

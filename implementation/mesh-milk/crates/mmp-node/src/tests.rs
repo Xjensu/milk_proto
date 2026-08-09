@@ -11,13 +11,14 @@ use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOA
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
-    FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE, OFFER_MIN_LIFETIME_MS,
+    FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE, OFFER_MIN_LIFETIME_MS,
 };
 use mmp_types::domain::SigDomain;
-use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::{apptype, AsyncPayload, GroupPayload};
+use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
+use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload};
+use mmp_types::tlv::Ext;
 
-use crate::{DeliveryState, Event, Node, SendError, Tier};
+use crate::{DeliveryState, Event, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
@@ -228,6 +229,70 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
 }
 
 #[test]
+fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
+    let mut n = node(236);
+    n.core.store = Box::new(MemStore::new());
+    let root = Id16([0x41; 16]);
+    let old_id = Id16([0x42; 16]);
+    let new_id = Id16([0x43; 16]);
+    let destination_key = Key32([0x44; 32]);
+    let destination = node_id_of(&destination_key);
+    let symbol_ext = Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 };
+    let old_bundle = Bundle {
+        class: class::SYMBOL,
+        flags: 0,
+        origin: Key32([0x45; 32]),
+        dest: destination,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::BULK,
+        exts: vec![symbol_ext],
+        payload: Vec::new(),
+        signature: Sig64::ZERO,
+    };
+    let new_bundle = Bundle { origin: Key32([0x46; 32]), ..old_bundle.clone() };
+    let meta = |id, origin| BundleMeta {
+        id,
+        class: class::SYMBOL,
+        origin: node_id_of(&origin),
+        dest: destination,
+        priority: prio::BULK,
+        effective_priority: prio::BULK,
+        size: 0,
+        stored_at: 0,
+        expires_at: LIFETIME_MESSAGE_MS,
+        budget: 1,
+        own_origin: false,
+        slot: SlotState::Stored,
+    };
+
+    n.core.store.put(meta(old_id, old_bundle.origin), &[]);
+    n.core.index_symbol_bundle(&old_bundle, old_id);
+    n.core.store.put(meta(new_id, new_bundle.origin), &[]);
+    n.core.index_symbol_bundle(&new_bundle, new_id);
+    assert!(!n.core.symbol_of.contains_key(&old_id));
+    assert_eq!(n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)), Some(&new_id));
+
+    n.core.deindex_symbol(&old_id);
+    assert_eq!(n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)), Some(&new_id));
+
+    let receipt = Bundle {
+        class: class::CONTROL,
+        flags: 0,
+        origin: destination_key,
+        dest: n.core.node_id,
+        lifetime_ms: LIFETIME_CONTROL_MS,
+        priority: prio::EMERGENCY,
+        exts: Vec::new(),
+        payload: ReceiptPayload { delivered: new_id, mac: [0; 16] }.encode(),
+        signature: Sig64::ZERO,
+    };
+    n.core.handle_receipt(&receipt, false);
+    assert!(n.core.store.meta(&new_id).is_none());
+    assert!(!n.core.symbol_of.contains_key(&new_id));
+    assert!(!n.core.blob_index.contains_key(&root));
+}
+
+#[test]
 fn known_identity_cache_releases_after_contact_teardown() {
     let mut a = node(254);
     for (link, seed) in (0u64..16).zip(0u8..16) {
@@ -255,6 +320,57 @@ fn known_identity_cache_survives_another_live_link() {
 
     a.on_tal_event(TalEvent::LinkDown { link: 2 });
     assert!(a.core.known_identities.is_empty());
+}
+
+#[test]
+fn new_conversation_contacts_are_rejected_at_local_state_cap() {
+    let mut n = node(238);
+    let identity = Key32([0xd1; 32]);
+    let peer = Id16([0xe2; 16]);
+    let conv_id = conversation_id(&n.core.public, &identity);
+
+    for value in 0..super::MAX_CONVERSATION_STATE {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.established_convs.insert(Id16(id));
+    }
+    // Make the assertion deterministic even if the generated conversation ID
+    // happens to overlap one of the synthetic marker IDs above.
+    n.core.established_convs.remove(&conv_id);
+    while n.core.established_convs.len() < super::MAX_CONVERSATION_STATE {
+        let mut id = [0xff; 16];
+        id[..8].copy_from_slice(&(n.core.established_convs.len() as u64).to_le_bytes());
+        n.core.established_convs.insert(Id16(id));
+    }
+
+    assert!(!n.core.accept_peer(&identity, &peer));
+    assert!(!n.core.known_identities.contains_key(&peer));
+    assert_eq!(n.core.established_convs.len(), super::MAX_CONVERSATION_STATE);
+}
+
+#[test]
+fn outbound_conversation_cap_is_side_effect_free_for_text_and_file() {
+    let mut n = node(235);
+    let mut peer = node(234);
+    introduce(&mut n, &mut peer);
+    for value in 0..super::MAX_CONVERSATION_STATE {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.established_convs.insert(Id16(id));
+    }
+    let before_total = n.store_len();
+    let before_symbols = n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count();
+
+    assert_eq!(n.send_text(&peer.node_id(), "at capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(n.store_len(), before_total);
+    assert_eq!(n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count(), before_symbols);
+
+    assert_eq!(
+        n.send_file(&peer.node_id(), "at-capacity.bin", "application/octet-stream", b"payload"),
+        Err(SendError::ResourceLimit)
+    );
+    assert_eq!(n.store_len(), before_total);
+    assert_eq!(n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count(), before_symbols);
 }
 
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).
@@ -561,6 +677,48 @@ fn direct_message_delivery_and_receipt() {
         "alice got the delivery receipt: {alice_events:?}"
     );
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Delivered));
+}
+
+#[test]
+fn sent_history_evicts_terminal_entries_but_rejects_when_all_active() {
+    let mut n = node(239);
+    let conv = Id16([0x71; 16]);
+    for value in 0..super::MAX_SENT_RUNTIME {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::Delivered });
+    }
+    assert!(n.core.sent_capacity_available());
+    n.core.record_sent(Id16([0xf1; 16]), conv).unwrap();
+    assert_eq!(n.core.sent.len(), super::MAX_SENT_RUNTIME);
+    assert_eq!(n.core.sent.get(&Id16([0xf1; 16])).map(|m| m.state), Some(DeliveryState::Queued));
+
+    n.core.sent.clear();
+    for value in 0..super::MAX_SENT_RUNTIME {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+    }
+    assert!(!n.core.sent_capacity_available());
+    assert_eq!(n.core.record_sent(Id16([0xf2; 16]), conv), Err(SendError::ResourceLimit));
+    assert!(!n.core.sent.contains_key(&Id16([0xf2; 16])));
+}
+
+#[test]
+fn saturated_active_sent_history_rejects_before_bundle_creation() {
+    let mut a = node(240);
+    let mut b = node(241);
+    introduce(&mut a, &mut b);
+    let conv = conversation_id(&a.core.public, &b.core.public);
+    for value in 0..super::MAX_SENT_RUNTIME {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        a.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+    }
+    let before_store = a.store_len();
+    assert_eq!(a.send_text(&b.node_id(), "blocked"), Err(SendError::ResourceLimit));
+    assert_eq!(a.store_len(), before_store);
+    assert!(!a.core.convs.contains_key(&conv));
 }
 
 #[test]

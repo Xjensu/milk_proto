@@ -116,6 +116,16 @@ const MAX_BLOB_SERVE_PEERS: usize = 256;
 /// policy bound, not a wire limit.
 const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
 const MAX_BLOCKLIST_ENTRIES: usize = 1024;
+/// Bound receiver-side pairwise conversation state admitted from authenticated
+/// contacts. A Sybil can otherwise send one valid async first-contact bundle
+/// per identity and leave a permanent `Conv` plus ratchet material in RAM;
+/// there is no protocol TTL for a conversation. This is a local admission
+/// policy only and does not alter any wire object or ratchet format.
+const MAX_CONVERSATION_STATE: usize = 256;
+/// Runtime bound for local delivery-history entries. This matches the
+/// secret-state snapshot limit; terminal history is evictable, while queued
+/// and in-mesh messages remain protected until they expire or are delivered.
+const MAX_SENT_RUNTIME: usize = 4096;
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -413,6 +423,10 @@ pub enum SendError {
     /// further. No bundle is emitted; the caller must re-establish or
     /// re-key the conversation/group before retrying.
     RatchetExhausted,
+    /// A new conversation would exceed the receiver-local RAM admission cap.
+    /// Existing conversations remain usable; callers should retry after local
+    /// state recovery rather than changing any wire parameters.
+    ResourceLimit,
 }
 
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
@@ -1411,7 +1425,19 @@ impl Node {
                     {
                         let conv_id = conversation_id(&self.core.public, &identity);
                         let met_before = self.core.established_convs.contains(&conv_id);
-                        self.core.established_convs.insert(conv_id);
+                        if !met_before && self.core.established_convs.len() >= MAX_CONVERSATION_STATE {
+                            // Multiple links may have been admitted while the
+                            // marker table still had room and tear down after
+                            // another link fills it. Do not let that race
+                            // exceed the bound; retire the unmarked Conv so a
+                            // later contact is denied rather than reusing an
+                            // untracked ratchet without an epoch bump.
+                            self.core.convs.remove(&conv_id);
+                            self.core.pending_async.remove(&conv_id);
+                            self.core.pending_first_contact.remove(&conv_id);
+                        } else {
+                            self.core.established_convs.insert(conv_id);
+                        }
                         if met_before {
                             // Epoch rollover is intentionally fail-closed.  A
                             // u16 epoch cannot be incremented at its terminal
@@ -1578,6 +1604,42 @@ impl Node {
 // ------------------------------------------------------------- NodeCore -----
 
 impl NodeCore {
+    /// Whether a pairwise conversation may be created without exceeding the
+    /// receiver-local state bound. Existing conversations are always allowed
+    /// to continue; callers receive the explicit `ResourceLimit` error for a
+    /// new conversation rejected solely by this local resource policy.
+    fn conversation_capacity_available(&self, conv_id: &Id16) -> bool {
+        self.convs.contains_key(conv_id)
+            || (self.convs.len() < MAX_CONVERSATION_STATE
+                && self.established_convs.len() < MAX_CONVERSATION_STATE)
+    }
+
+    /// Whether one more locally-originated delivery record can be admitted.
+    /// Terminal history is reclaimable; active messages are never evicted just
+    /// to satisfy a later send.
+    fn sent_capacity_available(&self) -> bool {
+        self.sent.len() < MAX_SENT_RUNTIME
+            || self
+                .sent
+                .values()
+                .any(|message| matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired))
+    }
+
+    /// Insert one delivery record, evicting only terminal history if the
+    /// bounded table is full. The caller must preflight with
+    /// `sent_capacity_available` before creating a bundle.
+    fn record_sent(&mut self, id: Id16, conv: Id16) -> Result<(), SendError> {
+        if self.sent.len() >= MAX_SENT_RUNTIME {
+            let terminal = self.sent.iter().find_map(|(id, message)| {
+                matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired).then_some(*id)
+            });
+            let Some(terminal) = terminal else { return Err(SendError::ResourceLimit) };
+            self.sent.remove(&terminal);
+        }
+        self.sent.insert(id, SentMessage { conv, state: DeliveryState::Queued });
+        Ok(())
+    }
+
     /// Enqueue one ciphertext-free application callback without allowing the
     /// host-facing queue to grow with authenticated peer traffic.  Keep the
     /// existing FIFO when saturated (drop newest) so already queued lifecycle
@@ -1866,6 +1928,9 @@ impl NodeCore {
         payload: &[u8],
     ) -> Result<Id16, SendError> {
         let peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        if !self.conversation_capacity_available(&conv_id) {
+            return Err(SendError::ResourceLimit);
+        }
         let mut body = Vec::with_capacity(1 + payload.len());
         body.push(app);
         body.extend_from_slice(payload);
@@ -1910,11 +1975,23 @@ impl NodeCore {
 
     /// Build, sign and store a direct message; the mesh does the rest.
     fn send_direct(&mut self, peer: &NodeId, body: &[u8]) -> Result<Id16, SendError> {
+        if !self.sent_capacity_available() {
+            // Preserve the same cheap admission precedence as `send_app`, but
+            // fail before any first-contact X3DH/prekey or ratchet work can
+            // emit a bundle while the local delivery table is saturated.
+            if self.claims.revocation(peer).is_some() {
+                return Err(SendError::PeerRevoked);
+            }
+            let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
+            let conv_id = conversation_id(&self.public, &peer_pub);
+            if self.pending_first_contact.contains_key(&conv_id) {
+                return Err(SendError::ConversationPending);
+            }
+            return Err(SendError::ResourceLimit);
+        }
         let id = self.send_app(peer, body[0], &body[1..])?;
-        self.sent.insert(
-            id,
-            SentMessage { conv: conversation_id(&self.public, &self.resolve_peer_key(peer).expect("resolved in send_app")), state: DeliveryState::Queued },
-        );
+        let peer_pub = self.resolve_peer_key(peer).expect("resolved in send_app");
+        self.record_sent(id, conversation_id(&self.public, &peer_pub))?;
         self.enqueue_event(Event::DeliveryProgress { id, state: DeliveryState::Queued });
         Ok(id)
     }
@@ -1931,6 +2008,9 @@ impl NodeCore {
         let conv_id = conversation_id(&self.public, &peer_pub);
         if self.pending_first_contact.contains_key(&conv_id) {
             return Err(SendError::ConversationPending);
+        }
+        if !self.conversation_capacity_available(&conv_id) {
+            return Err(SendError::ResourceLimit);
         }
         let mut body = Vec::with_capacity(1 + payload.len());
         body.push(app);
@@ -2211,6 +2291,13 @@ impl NodeCore {
     }
 
     fn open_async(&mut self, bundle: &Bundle, conv_id: &Id16, origin: &Key32) -> Option<Vec<u8>> {
+        // A valid signature and ciphertext are necessary but not sufficient
+        // to allocate another permanent conversation. Check the local bound
+        // before doing X3DH/sealed-box work or consuming a one-time prekey;
+        // an over-cap first contact is rejected without mutating state.
+        if !self.conversation_capacity_available(conv_id) {
+            return None;
+        }
         let payload = AsyncPayload::decode(&bundle.payload).ok()?;
         match payload {
             AsyncPayload::Sealed { eph, ct } => {
@@ -2361,7 +2448,9 @@ impl NodeCore {
         // origin IS the delivered bundle's destination (forgery gate).
         if let Some(m) = self.store.meta(&rp.delivered) {
             if m.dest == bundle.origin_node() {
-                self.store.remove(&rp.delivered);
+                if self.store.remove(&rp.delivered) {
+                    self.deindex_symbol(&rp.delivered);
+                }
                 // Handbook §4.5 unpin/GC: end-to-end receipt purge is the
                 // normal way a friend's buffered copy stops being pinned.
                 self.unpin_friend_buffer(&m.dest, &rp.delivered, m.size as u64);
@@ -2533,6 +2622,11 @@ impl NodeCore {
             return None;
         }
         let sym_no = block * RS_TOTAL_N as u16 + sym;
+        if let Some(previous) = self.blob_index.get(&root).and_then(|idx| idx.get(&sym_no)).copied() {
+            if previous != id && self.symbol_of.get(&previous) == Some(&(root, sym_no)) {
+                self.symbol_of.remove(&previous);
+            }
+        }
         self.blob_index.entry(root).or_default().insert(sym_no, id);
         self.symbol_of.insert(id, (root, sym_no));
         Some((root, sym_no))
@@ -2543,7 +2637,9 @@ impl NodeCore {
     fn deindex_symbol(&mut self, id: &Id16) {
         if let Some((root, sym_no)) = self.symbol_of.remove(id) {
             if let Some(idx) = self.blob_index.get_mut(&root) {
-                idx.remove(&sym_no);
+                if idx.get(&sym_no) == Some(id) {
+                    idx.remove(&sym_no);
+                }
                 if idx.is_empty() {
                     self.blob_index.remove(&root);
                     // Decision D3 residual 2 GC rule: once an ABANDONED
@@ -2610,6 +2706,12 @@ impl NodeCore {
         if self.pending_first_contact.contains_key(&conv_id) {
             return Err(SendError::ConversationPending);
         }
+        if !self.conversation_capacity_available(&conv_id) {
+            // Do this before RS/Merkle expansion or minting any symbol
+            // bundles: local admission pressure must leave the send fully
+            // side-effect-free, just like ConversationPending.
+            return Err(SendError::ResourceLimit);
+        }
         let stripes = blob::stripes_for_size(data.len() as u32);
         let mut padded = data.to_vec();
         padded.resize(stripes as usize * STRIPE_DATA_BYTES, 0);
@@ -2660,9 +2762,9 @@ impl NodeCore {
                 bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
                 debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
                 let budget = origin_budget(self.utility.n_hat(self.now));
-                let id = self.store_own(bundle, budget);
-                self.blob_index.entry(file_root).or_default().insert(sym_no as u16, id);
-                self.symbol_of.insert(id, (file_root, sym_no as u16));
+                let id = bundle.id();
+                self.index_symbol_bundle(&bundle, id);
+                self.store_own(bundle, budget);
             }
         }
 
@@ -3228,6 +3330,19 @@ impl SessionHost for NodeCore {
         // so the friendship handshake (keyed on NodeId at the SessionHost
         // seam) can resolve the peer's Ed25519 key when it needs to sign or
         // verify a countersig.
+        let conv_id = conversation_id(&self.public, identity);
+        // Conversation and "met before" marker state has no wire lifetime.
+        // Refuse a new authenticated contact once either local table is full;
+        // this keeps a Sybil stream from creating one permanent entry per
+        // identity. Existing conversation state remains usable, while the
+        // host can recover capacity through its normal state/restart policy.
+        if !self.convs.contains_key(&conv_id)
+            && (!self.established_convs.contains(&conv_id)
+                && (self.convs.len() >= MAX_CONVERSATION_STATE
+                    || self.established_convs.len() >= MAX_CONVERSATION_STATE))
+        {
+            return false;
+        }
         self.known_identities.insert(*node, *identity);
         // Decision D4/D5: per-contact blob serve budget resets on every new
         // contact with this peer.

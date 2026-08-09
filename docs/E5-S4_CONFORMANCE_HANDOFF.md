@@ -2092,3 +2092,35 @@ finish seam reports failure without creating the path. `mmp-cli` now passes 34
 focused tests. This is host-process reliability evidence only; it does not
 prove filesystem crash consistency, mobile storage semantics, or physical BLE
 interoperability.
+
+## 2026-08-09 continuation: bounded conversation, delivery history, and blob indexes
+
+The node-state implementation now closes three runtime lifecycle gaps without
+changing any frozen wire object. Receiver-side pairwise conversation state is
+bounded at `MAX_CONVERSATION_STATE = 256`. The bound covers both the permanent
+conversation map and the prior-contact marker table, and is checked before
+first-contact X3DH/sealed work, one-time-prekey consumption, file coding, or
+symbol minting. Existing conversations remain serviceable. New contacts and
+outbound first-contact sends fail with the local `ResourceLimit` condition when
+the state is saturated. Link-down handling also retires provisional state that
+would otherwise race the marker-table cap.
+
+The runtime delivery-history map now shares the 4096-entry limit used by the
+secret-state snapshot. Only `Delivered` and `Expired` entries may be reclaimed;
+`Queued` and `InMesh` records are never evicted to make room. If all entries are
+active, the send is rejected before bundle creation or ratchet advancement.
+This keeps secret-state snapshots admissible during long-lived operation while
+preserving active delivery tracking.
+
+Holder-side symbol indexes are now lifecycle-consistent: receipt purge removes
+the reverse index, duplicate `(root, symbol)` replacement removes only the old
+reverse owner, and stale reverse cleanup cannot erase a newer forward mapping.
+Locally minted file symbols use the same indexing helper as received symbols.
+
+Focused verification: 93 `mmp-node` tests and strict Clippy for `mmp-node` and
+`mmp-ffi` pass. The post-change full gates are green: workspace tests and
+Clippy, 124 Python tests (8 skipped), 46 deterministic fuzz seeds, the
+embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
+demo, and six transactional-store tests. Native
+keystore/Keychain/DPAPI providers, physical BLE exchange, Android/iOS build and
+lifecycle evidence, and the group retention-anchor design remain open gates.

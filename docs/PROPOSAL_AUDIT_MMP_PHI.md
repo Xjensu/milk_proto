@@ -1200,6 +1200,42 @@ demo, and six transactional-store tests. No file under `specification/` was
 modified, no AI-specific artifact was added, and all pre-existing dirty paths
 remain outside the commit.
 
+### Orchestration continuation XXX (2026-08-09)
+
+The delegated node-state audit found two concrete runtime lifecycle defects and
+closed them without changing the frozen wire. First, authenticated async
+first-contact traffic could create one permanent `Conv`, `established_convs`
+marker, and ratchet allocation per pseudonymous identity. `MAX_CONVERSATION_STATE`
+now bounds admission at the receiver and at every outbound first-contact path;
+the check runs before X3DH/sealed work, one-time-prekey consumption, Reed-Solomon
+expansion, or symbol minting. Existing conversations remain usable, while a
+new over-cap contact fails with `SendError::ResourceLimit`. A link-down race
+also retires untracked provisional state instead of allowing the marker table to
+exceed the bound. The FFI adapter keeps its deliberately coarse error surface
+and maps this local condition to `Internal`.
+
+Second, the runtime `sent` delivery-history map was previously bounded only by
+secret-state serialization. It now has the same 4096-entry runtime ceiling:
+only `Delivered`/`Expired` terminal history is evictable, and a full table of
+`Queued`/`InMesh` messages rejects a new send before bundle construction or
+ratchet mutation. This preserves active delivery semantics while ensuring a
+long-lived node cannot grow past the snapshot admissibility limit.
+
+The same audit repaired the holder-side blob indexes. Receipt purge now
+deindexes removed symbols; replacing a duplicate `(root, symbol)` removes only
+the old reverse mapping; and stale reverse cleanup cannot delete a newer forward
+mapping. `send_file` uses the single indexing helper for locally minted symbols,
+so insertion and replacement follow one invariant.
+
+Focused evidence is 93 `mmp-node` tests and targeted `mmp-node`/`mmp-ffi`
+Clippy with `-D warnings`. The post-change full gates are green: workspace
+tests and Clippy, 124 Python tests (8 skipped), 46 deterministic fuzz seeds,
+the embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
+demo, and six transactional-store tests. Rustfmt could not be invoked because
+the current toolchain lacks the `rustfmt` component. No file under
+`specification/`, no AI-specific artifact, and no pre-existing dirty path was
+modified by this continuation.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
