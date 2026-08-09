@@ -275,6 +275,27 @@ impl SnapshotStore {
                 "snapshot exceeded configured file limit and was not loaded",
             ));
         }
+        // `decode_record` rejects a metadata/body length mismatch on restart.
+        // Validate the in-memory working set before creating a replacement
+        // image so `persist` never reports success for a snapshot that would
+        // silently discard a bundle at the next load. This can happen through
+        // the legacy infallible `BundleStore::put` or `update_meta` seam,
+        // which intentionally remains available during the E7 transaction
+        // migration. The existing primary image is untouched on rejection.
+        for meta in self.mem.all_meta() {
+            let Some((stored_meta, body)) = self.mem.get(&meta.id) else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "snapshot working set changed while validating a bundle",
+                ));
+            };
+            if stored_meta.size as usize != body.len() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "bundle metadata size does not match stored bytes",
+                ));
+            }
+        }
         let tmp = self.path.with_extension("tmp");
         {
             let mut f = std::fs::File::create(&tmp)?;
@@ -772,6 +793,53 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.get(&Id16([1; 16])).is_none());
+    }
+
+    #[test]
+    fn persist_rejects_metadata_body_mismatch_without_replacing_primary() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mismatched-meta.mmp");
+        let tmp = path.with_extension("tmp");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tmp);
+
+        let mut store = SnapshotStore::open(&path);
+        let valid = BundleMeta {
+            id: Id16([9; 16]),
+            class: class::DIRECT,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 5,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        };
+        store.put(valid, b"hello");
+        store.persist().unwrap();
+        let primary = std::fs::read(&path).unwrap();
+
+        // The compatibility `put` seam is infallible and can receive a
+        // caller-supplied size that disagrees with the bytes. Such a record
+        // would be dropped by `decode_record` after restart, so persistence
+        // must fail before replacing the last known-good image.
+        let mut invalid = valid;
+        invalid.size = 4;
+        store.put(invalid, b"hello");
+        let error = store.persist().expect_err("invalid metadata must not be persisted");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), primary);
+        assert!(!tmp.exists(), "validation must happen before creating a replacement image");
+
+        let restored = SnapshotStore::open(&path);
+        assert!(restored.get(&valid.id).is_some(), "the previous complete image remains recoverable");
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(tmp);
     }
 
     #[test]
