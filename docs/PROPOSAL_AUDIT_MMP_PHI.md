@@ -1096,6 +1096,31 @@ file under `specification/` or any pre-existing protected dirty path was
 modified. The next implementation step remains a real native-platform/HIL
 gate, not a new wire or cryptographic claim.
 
+### Orchestration continuation XXVI (2026-08-09)
+
+Two delegated readiness reviews found concrete local resource/lifecycle gaps.
+Commit `e3262ec` bounds `mmp-core::ReceiptFilter`'s exact purge map to the
+existing 8,192-entry Standard-tier budget, rejects persisted exact counts above
+that cap before allocation, and evicts the earliest-expiring entry
+deterministically when the authenticated map is full. The Bloom bit remains a
+hint, so eviction can only delay an optional purge; it cannot authorize unsafe
+deletion. This is a local-memory safeguard and does not alter receipt encoding,
+RBSR, quotas, or the frozen wire.
+
+Commit `02dc789` shares the btleplug central's terminal shutdown fence with its
+adapter-event watcher. If the watcher cannot be opened or its stream ends,
+future `start_scan` and `dial` admission fails closed before the link teardown
+sweep. This closes a race in which a physical link could otherwise be admitted
+after lifecycle observation had already failed. The change is host-side only;
+Linux/BlueZ execution and real adapter exchange remain external evidence.
+
+Focused evidence: five ReceiptFilter tests, 23 btleplug tests, and targeted
+Clippy pass. Full workspace tests, workspace Clippy, 124 Python tests (8
+platform-dependent skips), 46 deterministic fuzz seeds, the embedded
+`thumbv7em-none-eabihf` closure, layer-check, release CLI delivery demo, and
+six transactional-store tests all pass. No file under `specification/` or any
+pre-existing protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
