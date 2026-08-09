@@ -1047,6 +1047,24 @@ protected dirty path was modified. The next plan revision adds a research-only
 EDR/PCM/contact-survival/DoF evaluation track after the frozen-wire
 conformance gates, not before them.
 
+### Orchestration continuation XXIV (2026-08-09)
+
+Three bounded readiness tracks advanced the implementation without changing
+the frozen wire. Commit `3d52a87` makes Android artifact validation reject ZIP
+members that differ only by case, preventing host-dependent Kotlin source
+collisions during extraction. Commit `367aec8` adds an identity-to-conversation
+binding fence to the raw Rust secret-state restore seam and preserves atomic
+failure behavior. Commit `cc5dcc0` makes `mmp-cli` return a non-success status
+when exit-time `SnapshotStore` persistence fails, including successful-delivery
+and normal-shutdown paths that previously logged the error but could exit 0.
+
+The changes are intentionally narrower than native platform integration: they
+do not claim Android Keystore, iOS Keychain, filesystem crash consistency,
+Android/Xcode artifact builds, or real BLE exchange. Focused evidence is 34
+`mmp-cli` tests, 87 `mmp-node` tests, and 12 mobile-artifact tests; the full
+Python suite and workspace matrix remain the next verification gate. Existing
+dirty paths and the entire `specification/` tree remain untouched.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
