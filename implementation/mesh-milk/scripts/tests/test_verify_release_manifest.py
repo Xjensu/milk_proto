@@ -98,6 +98,16 @@ class VerifyReleaseManifestTests(unittest.TestCase):
             errors = VERIFY.verify_manifest(manifest, directory=root)
             self.assertTrue(any("manifest root has invalid members" in error for error in errors))
 
+    def test_zero_length_file_record_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._package(root)
+            document = self._document(manifest)
+            document["files"]["artifact"]["size"] = 0
+            self._write_document(manifest, document)
+            errors = VERIFY.verify_manifest(manifest, directory=root)
+            self.assertEqual(errors, ["files.artifact.size must be a positive integer"])
+
     def test_oversized_manifest_is_rejected_before_json_parse(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -37,6 +37,8 @@ def _record(path: Path, *, kind: str) -> dict[str, Any]:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
             size += len(chunk)
+    if size == 0:
+        raise ValueError(f"{kind} must not be empty: {path}")
     return {"name": path.name, "size": size, "sha256": digest.hexdigest()}
 
 

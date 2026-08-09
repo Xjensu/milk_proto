@@ -146,8 +146,8 @@ def _validate_file_record(record_value: Any, label: str) -> dict[str, Any]:
     _require_exact_keys(record, _FILE_KEYS, label)
     name = _safe_basename(record["name"], label)
     size = record["size"]
-    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-        raise ValueError(f"{label}.size must be a non-negative integer")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ValueError(f"{label}.size must be a positive integer")
     digest = record["sha256"]
     if not isinstance(digest, str) or not _HEX64.fullmatch(digest):
         raise ValueError(f"{label}.sha256 must be 64 lowercase hexadecimal characters")

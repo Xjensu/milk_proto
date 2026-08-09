@@ -66,6 +66,31 @@ class ReleaseManifestTests(unittest.TestCase):
                     ref="ref",
                 )
 
+    def test_manifest_rejects_empty_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                "artifact": root / "artifact",
+                "signature": root / "artifact.sig",
+                "certificate": root / "artifact.pem",
+            }
+            for path in paths.values():
+                path.write_bytes(b"non-empty")
+
+            for kind, path in paths.items():
+                path.write_bytes(b"")
+                with self.subTest(kind=kind):
+                    with self.assertRaisesRegex(ValueError, rf"{kind} must not be empty"):
+                        MANIFEST.build_manifest(
+                            paths["artifact"],
+                            paths["signature"],
+                            paths["certificate"],
+                            repository="repo",
+                            commit="a" * 40,
+                            ref="refs/tags/v1.2.3",
+                        )
+                path.write_bytes(b"non-empty")
+
     def test_manifest_requires_source_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
