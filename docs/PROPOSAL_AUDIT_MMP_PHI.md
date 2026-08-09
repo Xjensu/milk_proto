@@ -644,6 +644,40 @@ all pre-existing dirty paths remain unstaged. Real Linux/BlueZ exchange, native
 mobile radio/keystore validation, fixed-capacity own-origin storage, external
 cryptographic review, and the RBSR/D3 normative decision remain open.
 
+### Orchestration continuation XI (2026-08-09)
+
+The delegated RBSR/D3 audit produced `b89a54c`, a wire-neutral regression that
+locks the currently executable mapping: control/claim inventory remains D0,
+direct traffic remains D1, group traffic remains D2, and relay/class-5 traffic
+remains D3. It also proves that receiver-local class-5 effective-priority
+clamping cannot silently become a reconciliation partition key. The test is
+coverage of the present safe subset, not a claim that the frozen priority-class
+partition or D3 admission weighting has been resolved. The normative blocker
+therefore remains the missing partition encoding/legacy behavior and weighting
+rule.
+
+The delegated storage audit found no safe implementation-only fix for the
+fixed-capacity own-origin gap. `BundleStore::put` is still infallible, while
+`try_put` only protects receive-side admission; making local producers reject
+atomically requires a provider reservation/commit contract that can roll back
+producer-specific ratchet, conversation, group, and file-index state. The
+existing E7 and own-storage handoffs remain the authoritative next-step design;
+no advisory preflight was added.
+
+The requested manual test artifact is now committed as
+`772582b` ([INTEROPERABILITY_TEST_GUIDE.md](./INTEROPERABILITY_TEST_GUIDE.md)).
+It separates deterministic loopback, real Linux/BlueZ two-PC evidence, and
+Android/iOS artifact/API-bridge checks; records exact commands, logs, MTU/RSSI,
+reconnect, store-carry-forward, and callback-overload observations; and states
+the hardware and consuming-app limits explicitly. It does not turn a build or
+manifest-validation pass into radio or mobile evidence.
+
+The current cycle therefore advances implementation-side conformance and
+operator reproducibility without changing the frozen specification. The next
+meaningful gates remain real Linux/BlueZ exchange, native Android/iOS runtime
+and keystore validation, a fixed-capacity transaction API, external crypto
+review, and an approved RBSR/D3 normative decision.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
