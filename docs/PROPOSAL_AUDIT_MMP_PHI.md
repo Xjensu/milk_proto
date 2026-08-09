@@ -919,6 +919,32 @@ not mobile-interoperability-complete.
 
 No file under `specification/` or any protected dirty path was modified.
 
+### Orchestration continuation XX (2026-08-09)
+
+The fuzz-workflow audit produced `ba980a5`. The backlog, roadmap, and security
+dossier now distinguish the tracked deterministic `seed_corpus.py` recipe and
+its CI check/write/verify gates from the intentionally ignored libFuzzer
+discovered corpus. The recipe currently validates 46 seeds; the measured
+CPU-hour hardening run and sanitizer-linked Linux/CI execution remain open.
+
+The mobile lifecycle audit produced `5fcad7f`. `MeshDrive.start()` now rolls
+back partially started advertiser/scanner state and clears `isRunning` when
+clock, radio, or initial drain setup fails. `stop()` now releases protocol
+sessions and explicitly requests native GATT teardown for every owned link,
+preventing physical links from remaining open after coordinator shutdown.
+Source-level lifecycle tests pass; Android SDK, CoreBluetooth, and device
+behavior remain external.
+
+The cryptographic audit produced `edc18cf`. `NoiseChannel::make_id_proof`
+derives initiator/responder identity ordering from the completed Noise channel
+instead of accepting a caller-controlled role flag. Correct wire output is
+unchanged, while an integration mistake can no longer create a deterministic
+identity-proof ordering failure. The remaining composition risks—Noise channel
+binding, serverless prekey suppression/replay, opportunistic PCS, and group
+sender-key epochs—still require external cryptographic review.
+
+No file under `specification/` or any protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
