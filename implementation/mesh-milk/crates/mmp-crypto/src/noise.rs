@@ -57,6 +57,9 @@ pub struct PeerIntro {
 pub struct NoiseHandshake {
     hs: Option<snow::HandshakeState>,
     initiator: bool,
+    /// Number of inbound Noise handshake messages successfully consumed.
+    /// Used to enforce the v1 XX first-message grammar on the responder side.
+    read_messages: u8,
     local_payload: Vec<u8>,
     /// Reused fixed-size output for `snow::HandshakeState::read_message`.
     /// This must not be resized from the received message length: handshake
@@ -112,6 +115,7 @@ impl NoiseHandshake {
             NoiseHandshake {
                 hs: Some(hs),
                 initiator: true,
+                read_messages: 0,
                 local_payload: payload_of(identity, hello),
                 read_buf: alloc::vec![0u8; MAX_HANDSHAKE_MESSAGE],
                 remote_intro: None,
@@ -129,6 +133,7 @@ impl NoiseHandshake {
         Ok(NoiseHandshake {
             hs: Some(hs),
             initiator: false,
+            read_messages: 0,
             local_payload: payload_of(identity, hello),
             read_buf: alloc::vec![0u8; MAX_HANDSHAKE_MESSAGE],
             remote_intro: None,
@@ -145,11 +150,22 @@ impl NoiseHandshake {
         if incoming.len() > MAX_HANDSHAKE_MESSAGE {
             return Err(CryptoError::Noise);
         }
+        // XX message 1 is `-> e` with an empty payload in MMP/1.  Snow quite
+        // correctly permits an arbitrary Noise payload here, but accepting it
+        // would let an unauthenticated initiator inject a provisional HELLO
+        // into `remote_intro` before the encrypted payloads arrive.  Reject
+        // the non-conforming shape before touching the Noise state.  Only the
+        // responder receives message 1; the initiator's first inbound message
+        // is encrypted message 2 and is parsed below as usual.
+        if !self.initiator && self.read_messages == 0 && incoming.len() != 32 {
+            return Err(CryptoError::Noise);
+        }
         let mut hs = self.hs.take().ok_or(CryptoError::Noise)?;
 
         let n = hs
             .read_message(incoming, &mut self.read_buf)
             .map_err(|_| CryptoError::Noise)?;
+        self.read_messages = self.read_messages.saturating_add(1);
         if n > 0 {
             let (peer_pk, hello) = parse_payload(&self.read_buf[..n])?;
             // Cipher-agility gate (doc 03 §8): refuse rather than silently

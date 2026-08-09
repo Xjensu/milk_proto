@@ -104,6 +104,27 @@ fn noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state() {
 }
 
 #[test]
+fn noise_xx_rejects_nonempty_msg1_payload_before_provisional_intro() {
+    let alice = id(1);
+    let bob = id(2);
+    let (msg1, _a) = NoiseHandshake::initiator(&alice, &hello()).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
+
+    // Snow permits payload on XX message 1, but MMP/1 deliberately places
+    // identity+HELLO only in encrypted messages 2 and 3.  Appending a valid
+    // looking intro must therefore be rejected before the responder records a
+    // provisional peer state.
+    let mut malformed = msg1.clone();
+    malformed.extend_from_slice(&alice.public().0);
+    malformed.extend_from_slice(&hello().encode());
+    assert!(matches!(b.advance(&malformed), Err(CryptoError::Noise)));
+
+    // The early grammar check must not consume the responder's state.
+    let out_b = b.advance(&msg1).unwrap();
+    assert!(out_b.reply.is_some());
+}
+
+#[test]
 fn chanbind_object_pins_transcript_and_identity_order() {
     let h = [0x11; 32];
     let init = Key32([0x22; 32]);

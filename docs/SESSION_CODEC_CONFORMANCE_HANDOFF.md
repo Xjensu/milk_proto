@@ -63,6 +63,16 @@ repository-wide security certification or an external cryptographic review.
    early rejection and confirms that a subsequent valid first message still
    progresses the handshake.
 
+7. **Noise XX first-message grammar.** The responder now requires the first
+   inbound XX message to be exactly the 32-byte ephemeral-key message (`-> e`)
+   with no payload. `snow` permits a payload at this position, but MMP/1 puts
+   identity+HELLO only in encrypted messages 2 and 3; accepting a cleartext
+   payload would let an unauthenticated initiator seed a provisional
+   `remote_intro`. `noise_xx_rejects_nonempty_msg1_payload_before_provisional_intro`
+   proves the malformed shape is rejected before state consumption and that a
+   subsequent valid msg1 still progresses the responder. This is a grammar
+   check over existing v1 bytes; no new field or frame allocation is added.
+
 ## Residual gaps requiring a reviewed follow-up
 
 ### Clear envelope type is not authenticated by Noise
@@ -106,6 +116,9 @@ bounded suite vector (maximum 16 bytes), and outbound reply buffers are
 allocated from the locally supplied HELLO. `Hello::encode` remains an
 infallible local API, so callers should validate their own HELLO before
 construction; non-conforming oversized suite lists are rejected by the peer.
+The responder's cleartext XX message-1 payload is now rejected separately;
+identity+HELLO is accepted only from the encrypted message-2/message-3
+payloads prescribed by the current handshake construction.
 
 The cap is enforced in the standard-library `snow` implementation only. The
 planned embedded/no-std Noise fallback has a separate allocation and parser
