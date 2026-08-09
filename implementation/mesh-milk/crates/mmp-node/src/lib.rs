@@ -409,6 +409,10 @@ pub enum SendError {
     /// refuse to open a new conversation or use their prekey batch, even if
     /// one is still on file from before the revocation.
     PeerRevoked,
+    /// The conversation or group sender-key ratchet cannot advance any
+    /// further. No bundle is emitted; the caller must re-establish or
+    /// re-key the conversation/group before retrying.
+    RatchetExhausted,
 }
 
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
@@ -1396,9 +1400,30 @@ impl Node {
                         let met_before = self.core.established_convs.contains(&conv_id);
                         self.core.established_convs.insert(conv_id);
                         if met_before {
-                            if let Some(conv) = self.core.convs.get_mut(&conv_id) {
-                                conv.send.bump_epoch(&material);
-                                conv.recv.bump_epoch(&material);
+                            // Epoch rollover is intentionally fail-closed.  A
+                            // u16 epoch cannot be incremented at its terminal
+                            // value; retaining a conversation whose two
+                            // chains cannot move together would permit an
+                            // accidental nonce/key reuse or a permanent
+                            // send/receive desynchronization.  Remove the
+                            // local state so a later send must establish a
+                            // fresh conversation instead of panicking.
+                            let retire = if let Some(conv) = self.core.convs.get_mut(&conv_id) {
+                                if conv.send.epoch == u16::MAX || conv.recv.epoch() == u16::MAX {
+                                    true
+                                } else {
+                                    let send_ok = conv.send.try_bump_epoch(&material).is_ok();
+                                    let recv_ok = conv.recv.try_bump_epoch(&material).is_ok();
+                                    !send_ok || !recv_ok
+                                }
+                            } else {
+                                false
+                            };
+                            if retire {
+                                self.core.convs.remove(&conv_id);
+                                self.core.established_convs.remove(&conv_id);
+                                self.core.pending_async.remove(&conv_id);
+                                self.core.pending_first_contact.remove(&conv_id);
                             }
                         }
                     }
@@ -1994,7 +2019,7 @@ impl NodeCore {
 
         let (msg_key, epoch, index) = {
             let conv = self.convs.get_mut(&conv_id).expect("just ensured");
-            conv.send.next()
+            conv.send.try_next().map_err(|_| SendError::RatchetExhausted)?
         };
         let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
         let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
@@ -2086,20 +2111,23 @@ impl NodeCore {
         let epoch = self.groups.get(gid).ok_or(SendError::UnknownPeer)?.epoch;
         let (epoch, gp) = {
             let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
-            let gp = gs.local.encrypt_with_ad(me, &body, |placeholder| {
-                Bundle {
-                    class: class::GROUP,
-                    flags: 0,
-                    origin,
-                    dest,
-                    lifetime_ms: LIFETIME_MESSAGE_MS,
-                    priority: 1,
-                    exts: vec![Ext::GroupEpoch(epoch)],
-                    payload: placeholder.encode(),
-                    signature: Sig64::ZERO,
-                }
-                .canonical_aead_ad()
-            });
+            let gp = gs
+                .local
+                .try_encrypt_with_ad(me, &body, |placeholder| {
+                    Bundle {
+                        class: class::GROUP,
+                        flags: 0,
+                        origin,
+                        dest,
+                        lifetime_ms: LIFETIME_MESSAGE_MS,
+                        priority: 1,
+                        exts: vec![Ext::GroupEpoch(epoch)],
+                        payload: placeholder.encode(),
+                        signature: Sig64::ZERO,
+                    }
+                    .canonical_aead_ad()
+                })
+                .map_err(|_| SendError::RatchetExhausted)?;
             (epoch, gp)
         };
         let mut bundle = Bundle {

@@ -97,6 +97,10 @@ fn map_send_error(e: SendError) -> FfiError {
         // surfaced separately and with more detail (successor, if any) than
         // an error variant could carry.
         SendError::PeerRevoked => FfiError::UnknownPeer,
+        // Ratchet exhaustion is a local lifecycle condition. Keep the FFI
+        // error surface deliberately coarse; hosts should re-establish the
+        // conversation/group after observing this internal failure.
+        SendError::RatchetExhausted => FfiError::Internal,
     }
 }
 

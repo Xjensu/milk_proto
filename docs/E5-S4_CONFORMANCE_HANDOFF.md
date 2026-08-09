@@ -216,6 +216,32 @@ The post-change workspace matrix passes with 43 `mmp-node`, 16 `mmp-ffi`, and
 deployment/scale drills; workspace Clippy, `layer-check`, and the CLI demo are
 clean.
 
+### 2026-08-09 ratchet caller migration
+
+Production node paths no longer call the panic-compatible ratchet wrappers.
+Direct pairwise sends use `SendChain::try_next`; group sender-key encryption
+uses `LocalSenderKey::try_encrypt_with_ad`. Both paths map exhaustion to the
+new public `mmp_node::SendError::RatchetExhausted` and emit no bundle after the
+failure. The old `next`/`bump_epoch` and `encrypt`/`encrypt_with_ad` methods
+remain as additive compatibility wrappers for existing Rust consumers and
+unit tests; they retain their fail-closed panic behavior if called after a
+terminal counter or epoch.
+
+At `LinkDown`, epoch rollover is also fallible. If either directional chain is
+already at the terminal `u16` epoch (or an unexpected asymmetric rollover
+failure occurs), the node retires the conversation, clears its established and
+pending markers, and requires a fresh conversation rather than risking chain
+desynchronization. This is a local availability policy and does not alter the
+wire format or specification.
+
+The FFI error enum remains deliberately coarse: `SendError::RatchetExhausted`
+maps to `FfiError::Internal`, so generated mobile bindings do not gain a new
+wire/API enum value. Native/Rust callers that need remediation detail should
+match the new `SendError` arm and re-establish or re-key the conversation/group.
+Focused regression coverage now includes direct-send no-side-effect behavior,
+LinkDown retirement at epoch exhaustion, and fallible group encryption; the
+crypto/node suites pass 50 and 87 tests respectively.
+
 The delegated documentation audit identified stale examples in the API,
 Android/iOS, React Native, and handbook files (missing `poll_close`, sticky
 saturation handling, and `ConversationPending` retry semantics). Those files

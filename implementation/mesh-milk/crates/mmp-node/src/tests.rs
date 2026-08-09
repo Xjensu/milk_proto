@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_core::{IdSource, MemStore, SessionHost};
+use mmp_crypto::conversation_id;
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
@@ -559,6 +560,66 @@ fn direct_message_delivery_and_receipt() {
         "alice got the delivery receipt: {alice_events:?}"
     );
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Delivered));
+}
+
+#[test]
+fn direct_send_reports_ratchet_exhaustion_without_emitting_bundle() {
+    let mut alice = node(1);
+    let mut bob = node(2);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    // Establish the conversation and clear first-contact receipt gating.
+    alice.send_text(&bob.node_id(), "bootstrap").unwrap();
+    contact(&mut alice, &mut bob, 1, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    contact(&mut alice, &mut bob, 2, 20_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let conv_id = conversation_id(&alice.core.public, &bob.core.public);
+    alice.core.convs.get_mut(&conv_id).unwrap().send.next_index = u32::MAX;
+
+    // The terminal index is still valid once; the following attempt must
+    // return the explicit public error and leave the durable store unchanged.
+    alice.send_text(&bob.node_id(), "terminal index").unwrap();
+    let stored_after_terminal = alice.store_len();
+    assert_eq!(
+        alice.send_text(&bob.node_id(), "after exhaustion"),
+        Err(SendError::RatchetExhausted)
+    );
+    assert_eq!(alice.store_len(), stored_after_terminal);
+}
+
+#[test]
+fn link_down_retires_conversation_at_epoch_exhaustion() {
+    let mut alice = node(3);
+    let mut bob = node(4);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    alice.send_text(&bob.node_id(), "bootstrap").unwrap();
+    contact(&mut alice, &mut bob, 1, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    contact(&mut alice, &mut bob, 2, 20_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let conv_id = conversation_id(&alice.core.public, &bob.core.public);
+    alice.core.convs.get_mut(&conv_id).unwrap().send.epoch = u16::MAX;
+    bob.core.convs.get_mut(&conv_id).unwrap().send.epoch = u16::MAX;
+
+    // Link teardown must not call the panic-compatible epoch wrapper. Both
+    // peers fail closed by retiring the unusable conversation state.
+    contact(&mut alice, &mut bob, 3, 30_000);
+    assert!(!alice.core.convs.contains_key(&conv_id));
+    assert!(!bob.core.convs.contains_key(&conv_id));
+    assert!(!alice.core.established_convs.contains(&conv_id));
+    assert!(!bob.core.established_convs.contains(&conv_id));
 }
 
 #[test]

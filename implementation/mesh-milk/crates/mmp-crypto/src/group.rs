@@ -102,6 +102,19 @@ impl LocalSenderKey {
         self.encrypt_with_ad(member, body, |_| ad.to_vec())
     }
 
+    /// Fallible counterpart to [`Self::encrypt`].  The wrapper is retained
+    /// for source compatibility, while production callers should prefer
+    /// this method so ratchet exhaustion is an explicit error instead of a
+    /// panic.
+    pub fn try_encrypt(
+        &mut self,
+        member: NodeId,
+        ad: &[u8],
+        body: &[u8],
+    ) -> Result<GroupPayload, CryptoError> {
+        self.try_encrypt_with_ad(member, body, |_| ad.to_vec())
+    }
+
     /// Encrypt + sign a group body after the caller has constructed the exact
     /// outer bundle header that will be used as AEAD associated data. The
     /// placeholder payload passed to `make_ad` has the final ciphertext length
@@ -111,7 +124,24 @@ impl LocalSenderKey {
     where
         F: FnOnce(&GroupPayload) -> Vec<u8>,
     {
-        let (key, epoch, index) = self.chain.next();
+        self.try_encrypt_with_ad(member, body, make_ad)
+            .expect("group sender-key ratchet exhausted")
+    }
+
+    /// Fallible variant of [`Self::encrypt_with_ad`].  The sender chain is
+    /// advanced only after the caller's payload has passed its own size
+    /// checks; exhaustion therefore leaves the group state unchanged and
+    /// lets the node retire or re-key the group explicitly.
+    pub fn try_encrypt_with_ad<F>(
+        &mut self,
+        member: NodeId,
+        body: &[u8],
+        make_ad: F,
+    ) -> Result<GroupPayload, CryptoError>
+    where
+        F: FnOnce(&GroupPayload) -> Vec<u8>,
+    {
+        let (key, epoch, index) = self.chain.try_next()?;
         let mut p = GroupPayload {
             gid: self.dist.gid,
             epoch,
@@ -125,7 +155,7 @@ impl LocalSenderKey {
         p.ct = aead::seal(&bound, &ad, body);
         let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
         p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
-        p
+        Ok(p)
     }
 }
 
@@ -165,4 +195,29 @@ fn group_context(gid: &Id16, epoch: u16, member: &NodeId, index: u32) -> Vec<u8>
     c.extend_from_slice(&member.0);
     c.put_u32(index);
     c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LocalSenderKey;
+    use crate::CryptoError;
+    use mmp_types::ids::Id16;
+    use rand::{rngs::StdRng, SeedableRng};
+
+    #[test]
+    fn fallible_group_encrypt_reports_ratchet_exhaustion() {
+        let gid = Id16([0x42; 16]);
+        let member = Id16([0x24; 16]);
+        let mut rng = StdRng::seed_from_u64(7);
+        let mut local = LocalSenderKey::generate(&mut rng, gid, 1);
+        local.chain.next_index = u32::MAX;
+
+        local
+            .try_encrypt(member, b"ad", b"terminal")
+            .expect("terminal index is valid once");
+        assert_eq!(
+            local.try_encrypt(member, b"ad", b"after"),
+            Err(CryptoError::Ratchet)
+        );
+    }
 }
