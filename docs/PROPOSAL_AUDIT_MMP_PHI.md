@@ -889,6 +889,36 @@ producer rollback, and file batch transactions remain open.
 
 No file under `specification/` or any protected dirty path was modified.
 
+### Orchestration continuation XIX (2026-08-09)
+
+The BLE evidence audit produced `4d8c0ea`. Evidence manifests now reject
+symlinked log/store leaves and symlinked intermediate path components, even
+when the resolved target stays inside the package. This prevents an evidence
+archive from changing meaning through mutable links between validation and
+review. The validator remains structural: it cannot authenticate text logs or
+prove that a physical adapter produced them. The focused and complete Python
+test suites pass.
+
+The research-simulation audit produced `380bc3b`. Paired EDR measurements now
+expose Wilson 95% intervals for discovery and delivery proportions, while
+zero-sample traces are represented as unknown (`None`) rather than as evidence
+of a zero rate. The interval documentation explicitly limits the result to
+binomial sampling uncertainty within one trace; correlated contacts,
+between-trace variance, and whole-device energy still require repeated field
+measurements. No production routing, scheduler, wire, or specification code
+was changed.
+
+The production-compliance audit produced `a296494` and
+`docs/E8-S3_STORE_COMPLIANCE.md`. The dossier records official Android, Google
+Play, and Apple sources accessed on 2026-08-09, separates platform facts from
+engineering inference and store/legal approval, and defines evidence needed
+from a real consuming application. It highlights the iOS 26
+AccessorySetupKit/state-restoration condition and Android API-34 foreground
+service declaration/Doze gates. E8-S3 is therefore documentation-complete,
+not mobile-interoperability-complete.
+
+No file under `specification/` or any protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
