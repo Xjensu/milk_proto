@@ -756,6 +756,13 @@ impl SessionEngine {
         if self.phase == Phase::Closed {
             return;
         }
+        if !frame_wire_widths_valid(f) {
+            // The public encoder is infallible for API compatibility, so
+            // reject values whose collection lengths would truncate before
+            // they can enter either pending or immediate output queues.
+            self.protocol_error(errcode::PROTOCOL);
+            return;
+        }
         let control = matches!(f, Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close);
         if self.out.len() >= MAX_OUT_FRAMES {
             self.output_overflow();
@@ -789,13 +796,6 @@ impl SessionEngine {
             return;
         }
         if !control && self.out.len().saturating_add(OUT_CONTROL_RESERVE) >= MAX_OUT_FRAMES {
-            self.protocol_error(errcode::PROTOCOL);
-            return;
-        }
-        if !frame_wire_widths_valid(f) {
-            // The public encoder is infallible for API compatibility, so
-            // reject values whose collection lengths would truncate before
-            // any bytes are encrypted or queued.
             self.protocol_error(errcode::PROTOCOL);
             return;
         }
