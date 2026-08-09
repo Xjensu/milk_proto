@@ -10,7 +10,7 @@ of a real radio exchange.
 | Path | Manual status | What is required |
 | --- | --- | --- |
 | PC ↔ PC, in-memory | Available on any Rust host | One checkout; no Bluetooth hardware |
-| PC ↔ PC, real BLE | Available on Linux with BlueZ | Two Linux machines, Bluetooth adapters, one `listen` peripheral and one `connect`/`send` central |
+| PC ↔ PC, real BLE | Linux/BlueZ peripheral + Linux/Windows/macOS central | One Linux machine running `listen`, plus a second PC with a supported central adapter |
 | Windows/macOS PC as peripheral | Not available in the current implementation | `mmp-tal-peripheral` is a compile-time stub on these platforms; use a Linux peripheral |
 | Android/iOS ↔ PC | Integration-ready but not a turnkey app test | A consuming Android/iOS app must provide the platform BLE callbacks and compile the produced bindings; this repository does not contain a reference mobile app |
 | Mobile artifact build | CI/toolchain gated | Android NDK + `cargo-ndk` for AAR; macOS + Xcode for XCFramework |
@@ -67,24 +67,65 @@ machine. Keep seed files private; the node ID is safe to copy to the sending
 machine. For the commands below, machine A owns `alice.seed` and machine B
 owns `bob.seed`:
 
+On Windows PowerShell:
+
 ```powershell
 cargo build -p mmp-cli --release
-target\release\mmp-cli.exe keygen alice.seed
+.\target\release\mmp-cli.exe keygen alice.seed
 ```
 
-On machine B, run the same build command followed by
-`target\release\mmp-cli.exe keygen bob.seed`. Do not copy either seed to the
-other machine.
+On Linux or macOS, use the native executable path instead:
+
+```bash
+cargo build -p mmp-cli --release
+./target/release/mmp-cli keygen alice.seed
+```
+
+On machine B, run the corresponding command for that host followed by
+`bob.seed`. Do not copy either seed to the other machine.
 
 Record the printed node IDs. They are 32 hexadecimal characters (16 bytes).
 Do not reuse a seed between machines or delete a seed after a test unless the
 identity is intentionally being revoked.
 
-## 3. PC ↔ PC over real BLE (Linux peripheral + central)
+## 3. PC ↔ PC over real BLE (Linux peripheral + Linux/Windows/macOS central)
 
-The current peripheral backend is Linux/BlueZ only. Select two machines on the
-same test bench, grant the process Bluetooth permissions, and make sure no
-other application is holding the adapter exclusively.
+The current peripheral backend is Linux/BlueZ only. The central backend uses
+`btleplug` on Linux, Windows, and macOS, so the second machine may be any of
+those three platforms; it does not need to run `listen`. Select two machines
+on the same test bench, grant the process Bluetooth permissions, and make sure
+no other application is holding the adapter exclusively.
+
+Install the host prerequisites before collecting evidence:
+
+* **Linux peripheral:** install BlueZ, `pkg-config`, and the D-Bus development
+  headers (for Debian/Ubuntu: `sudo apt-get update && sudo apt-get install
+  bluez pkg-config libdbus-1-dev`), then ensure the daemon is running with
+  `sudo systemctl enable --now bluetooth`.
+* **Linux central:** use the same packages when the central is built locally;
+  the adapter must be visible to BlueZ (`bluetoothctl list`).
+* **Windows central:** install the MSVC Rust toolchain and Windows Bluetooth
+  support, then grant Bluetooth access to the terminal/application if the OS
+  prompts. No Windows peripheral path is claimed by this repository.
+* **macOS central:** install Xcode Command Line Tools (`xcode-select
+  --install`), enable Bluetooth for the terminal/application in System
+  Settings, and use a macOS runner with a supported adapter. No macOS
+  peripheral path is claimed by this repository.
+
+Build the CLI on each host before the radio run and record the versions and
+exact command lines:
+
+```text
+cargo build -p mmp-cli --release
+rustc --version
+cargo --version
+```
+
+The central host runs `connect`/`send`; the Linux host runs `listen` as shown
+below. A Windows or macOS central connecting to a Linux peripheral is the
+supported cross-OS PC path. If the central cannot see the Linux advertisement,
+record that as an adapter/OS gate failure rather than substituting an
+unsupported peripheral implementation.
 
 On machine A (peripheral):
 
@@ -96,10 +137,18 @@ Leave this process running. It should advertise the development MMP service
 and report incoming connections/events. Do not treat an advertisement alone as
 success; a session must become established and the drive loop must continue.
 
-On machine B (central), first discover A with `connect`:
+On machine B (central), first discover A with `connect`.
+
+On Linux or macOS:
 
 ```bash
 cargo run --release -p mmp-cli -- connect /path/to/bob.seed --store /tmp/mmp-bob.store
+```
+
+On Windows PowerShell:
+
+```powershell
+cargo run --release -p mmp-cli -- connect .\bob.seed --store .\mmp-bob.store
 ```
 
 Leave it running until the log shows an established link and the peer's
@@ -120,8 +169,16 @@ operator notes alongside the two raw logs.
 For a message test, obtain machine A's node ID from its `keygen` output and
 run on B:
 
+On Linux or macOS:
+
 ```bash
 cargo run --release -p mmp-cli -- send /path/to/bob.seed <alice-node-id> "ble smoke test" --store /tmp/mmp-bob.store
+```
+
+On Windows PowerShell, use paths valid on that machine:
+
+```powershell
+cargo run --release -p mmp-cli -- send .\bob.seed <alice-node-id> "ble smoke test" --store .\mmp-bob.store
 ```
 
 `send` waits up to the CLI's configured delivery timeout. A successful test
