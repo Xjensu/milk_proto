@@ -2388,3 +2388,26 @@ all future epochs breaks legitimate group delivery; accepting them without an
 anchor is not Byzantine-resistant. The candidate control codec remains
 quarantined pending a normative schema, replay state, aggregate limits, and
 anchor semantics. No specification or pre-existing dirty path was modified.
+
+## 2026-08-09 continuation: D3 transcript coverage and evidence binding
+
+The RBSR audit added test-only coverage for every executable D3 transcript
+branch (`e172223`). Terminal `RECON_IDS`, split `RECON_RANGE`, and matching
+echo `RECON_RANGE` paths now assert that the base domain remains `3` and only
+the existing reply bit varies. This strengthens the wire-preserving subset;
+it does not implement the specification's undefined per-priority partition.
+
+The same audit confirmed a normative blocker: `RECON_INIT.window` is described
+as a D3/last-24-hour-window flag, but the frozen documents do not define its
+value, peer classification, or filtering policy. `Reconciler` therefore keeps
+emitting the current `window=0` behavior. Do not infer a 24-hour filter or add
+a new wire value until an approved erratum supplies those semantics and
+legacy-peer vectors.
+
+The release preflight now binds an evidence manifest to the exact checked-out
+revision (`a70d166`). It resolves abbreviated or full commit IDs and rejects a
+package whose recorded commit differs from `HEAD`, while continuing to ignore
+unrelated worktree changes and to enforce a clean frozen `specification/`
+tree. Documentation and regression tests cover the new gate. This protects
+evidence integrity but remains separate from physical BLE/mobile validation,
+which is unavailable on the current Windows host.
