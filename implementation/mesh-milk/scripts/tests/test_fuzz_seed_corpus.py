@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import sys
 import tempfile
 import unittest
@@ -48,6 +49,56 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             CORPUS.write_corpus(output, seeds)
             self.assertEqual(user_file.read_bytes(), b"developer corpus")
             CORPUS.verify_corpus(output, seeds)
+
+    def test_write_rejects_target_path_traversal(self) -> None:
+        seed = CORPUS.Seed(target="../escape", name="owned", data=b"seed", source="test")
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "corpus"
+            with self.assertRaisesRegex(ValueError, "invalid corpus target path"):
+                CORPUS.write_corpus(output, {"../escape": (seed,)})
+            self.assertFalse((Path(root) / "escape").exists())
+
+    def test_verify_rejects_seed_path_traversal(self) -> None:
+        seed = CORPUS.Seed(target="../escape", name="owned", data=b"seed", source="test")
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, "invalid corpus target path"):
+                CORPUS.verify_corpus(Path(root) / "corpus", {"fuzz_bundle": (seed,)})
+
+    def test_write_rejects_seed_filename_path_traversal(self) -> None:
+        seed = CORPUS.Seed(target="fuzz_bundle", name="../escape", data=b"seed", source="test")
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, "invalid corpus seed filename"):
+                CORPUS.write_corpus(Path(root) / "corpus", {"fuzz_bundle": (seed,)})
+
+    def test_write_validates_all_paths_before_refreshing_members(self) -> None:
+        seeds = CORPUS.build_seed_sets()
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "corpus"
+            CORPUS.write_corpus(output, seeds)
+            generated = next((output / "fuzz_bundle").glob("mmp-seed-*.bin"))
+            original = generated.read_bytes()
+            bad = CORPUS.Seed(target="fuzz_bundle", name="../escape", data=b"bad", source="test")
+            with self.assertRaisesRegex(ValueError, "invalid corpus seed filename"):
+                CORPUS.write_corpus(output, {"fuzz_bundle": (seeds["fuzz_bundle"][0], bad)})
+            self.assertEqual(generated.read_bytes(), original)
+
+    def test_write_rejects_symlinked_target_when_supported(self) -> None:
+        if not hasattr(os, "symlink"):
+            self.skipTest("symlink support is unavailable")
+        seeds = CORPUS.build_seed_sets()
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            output = root_path / "corpus"
+            output.mkdir()
+            outside = root_path / "outside"
+            outside.mkdir()
+            target = output / "fuzz_bundle"
+            try:
+                target.symlink_to(outside, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            with self.assertRaisesRegex(ValueError, "corpus target must not be a symlink"):
+                CORPUS.write_corpus(output, seeds)
 
     def test_invalid_hex_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

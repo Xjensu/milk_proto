@@ -213,32 +213,76 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
 
 def iter_seeds(seed_sets: dict[str, tuple[Seed, ...]]) -> Iterable[Seed]:
     for target in sorted(seed_sets):
+        _validate_target_name(target)
         yield from seed_sets[target]
+
+
+def _corpus_root(output: Path) -> Path:
+    """Resolve a corpus root without following a caller-provided symlink."""
+
+    output = Path(output)
+    if output.is_symlink():
+        raise ValueError(f"corpus output must not be a symlink: {output}")
+    return output.resolve()
+
+
+def _validate_target_name(target: str) -> None:
+    if not isinstance(target, str) or not target or target in {".", ".."} or "/" in target or "\\" in target:
+        raise ValueError(f"invalid corpus target path: {target!r}")
+
+
+def _target_dir(output: Path, target: str) -> Path:
+    """Return one safe target directory below ``output``."""
+
+    _validate_target_name(target)
+    target_dir = output / target
+    if target_dir.is_symlink():
+        raise ValueError(f"corpus target must not be a symlink: {target_dir}")
+    return target_dir
+
+
+def _seed_path(target_dir: Path, seed: Seed) -> Path:
+    """Return one safe generated filename below a validated target directory."""
+
+    filename = seed.filename
+    if not filename or filename in {".", ".."} or Path(filename).name != filename or "/" in filename or "\\" in filename:
+        raise ValueError(f"invalid corpus seed filename: {filename!r}")
+    return target_dir / filename
 
 
 def write_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
     """Write generated members, preserving any user-owned corpus files."""
 
-    output = Path(output).resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    output = _corpus_root(output)
+    # Validate every caller-provided path before deleting or replacing one
+    # generated member.  A malformed later target must fail closed without
+    # leaving a partially refreshed corpus behind.
+    validated: list[tuple[str, tuple[Seed, ...], Path]] = []
     for target, seeds in seed_sets.items():
-        target_dir = output / target
+        target_dir = _target_dir(output, target)
+        for seed in seeds:
+            if seed.target != target:
+                raise ValueError(f"seed target mismatch: {seed.target!r} != {target!r}")
+            _seed_path(target_dir, seed)
+        validated.append((target, seeds, target_dir))
+    output.mkdir(parents=True, exist_ok=True)
+    for _target, seeds, target_dir in validated:
         target_dir.mkdir(parents=True, exist_ok=True)
         # Only remove members created by this recipe; never wipe a corpus that
         # a developer is using for an ongoing local fuzzing campaign.
         for old in target_dir.glob(f"{GENERATED_PREFIX}*.bin"):
             old.unlink()
         for seed in seeds:
-            (target_dir / seed.filename).write_bytes(seed.data)
+            _seed_path(target_dir, seed).write_bytes(seed.data)
 
 
 def verify_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
     """Require every generated member to match the current vector recipe."""
 
-    output = Path(output).resolve()
+    output = _corpus_root(output)
     errors: list[str] = []
     for seed in iter_seeds(seed_sets):
-        path = output / seed.target / seed.filename
+        path = _seed_path(_target_dir(output, seed.target), seed)
         try:
             actual = path.read_bytes()
         except OSError as exc:
