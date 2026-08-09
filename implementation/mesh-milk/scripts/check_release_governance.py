@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""Check that release-publication governance files exist in a checkout.
+
+The specification and implementation docs use three root-level documents as
+publication anchors: ``ROADMAP.md``, ``CHANGELOG.md``, and
+``COUNCIL-REVIEW.md``.  A release must check both the checkout it is about to
+publish and the tree for the recorded commit.  This is deliberately a local
+Git/tree check; it does not claim that a remote hosting service published the
+same tree and it does not replace network or hardware validation.
+
+The historical ``AUDIT.md`` wording in older specification banners is
+provenance for the reconstructed ``CHANGELOG.md``; this check does not invent
+or silently create a missing audit transcript.
+
+Usage (from ``implementation/mesh-milk``)::
+
+    python scripts/check_release_governance.py \
+        --repo ../.. \
+        --commit <release-commit-sha>
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Callable, Sequence
+
+
+REQUIRED_PUBLICATION_FILES = ("ROADMAP.md", "CHANGELOG.md", "COUNCIL-REVIEW.md")
+GitRunner = Callable[[Path, Sequence[str]], tuple[int, str, str]]
+
+
+def _run_git(repo: Path, args: Sequence[str]) -> tuple[int, str, str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        return 127, "", str(exc)
+    return result.returncode, result.stdout, result.stderr
+
+
+def _working_tree_errors(repo: Path) -> list[str]:
+    errors: list[str] = []
+    for relative in REQUIRED_PUBLICATION_FILES:
+        path = repo / relative
+        if path.is_symlink():
+            errors.append(f"publication artifact must not be a symbolic link: {relative}")
+        elif not path.is_file():
+            errors.append(f"publication artifact is missing or not a regular file: {relative}")
+        elif path.stat().st_size == 0:
+            errors.append(f"publication artifact must not be empty: {relative}")
+    return errors
+
+
+def validate_publication_artifacts(
+    repo: Path,
+    commit: str = "",
+    runner: GitRunner = _run_git,
+) -> list[str]:
+    """Return deterministic errors for the local and recorded publication tree."""
+
+    errors: list[str] = []
+    if not repo.is_dir():
+        return [f"repository directory does not exist: {repo}"]
+    errors.extend(_working_tree_errors(repo))
+
+    if not commit:
+        return errors
+    code, output, detail = runner(
+        repo,
+        ("ls-tree", "-r", "--name-only", commit, "--", *REQUIRED_PUBLICATION_FILES),
+    )
+    if code != 0:
+        errors.append(f"could not inspect publication tree at {commit}: {detail.strip() or output.strip()}")
+        return errors
+    present = {line.strip() for line in output.splitlines() if line.strip()}
+    for relative in REQUIRED_PUBLICATION_FILES:
+        if relative not in present:
+            errors.append(f"recorded commit {commit} is missing publication artifact: {relative}")
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository root (default: current directory)")
+    parser.add_argument("--commit", default=os.environ.get("GITHUB_SHA", ""))
+    args = parser.parse_args(argv)
+    errors = validate_publication_artifacts(args.repo.resolve(), args.commit)
+    if errors:
+        for error in errors:
+            print(f"Release governance: {error}", file=sys.stderr)
+        return 1
+    print(f"Release governance: passed ({args.repo})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

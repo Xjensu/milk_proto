@@ -350,6 +350,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: validate publication governance artifacts
+        run: >
+          python scripts/check_release_governance.py
+          --repo ../..
+          --commit "${{ github.sha }}"
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build -p mmp-cli --release
       - run: cp target/release/${{ matrix.bin }} ${{ matrix.artifact_name }}

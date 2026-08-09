@@ -124,6 +124,20 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn('--commit "${{ github.sha }}"', run)
         self.assertIn('--ref "${{ github.ref }}"', run)
 
+    def test_release_job_checks_publication_governance_artifacts(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["release"]["steps"]
+        checks = [
+            step
+            for step in steps
+            if step.get("name") == "validate publication governance artifacts"
+        ]
+        self.assertEqual(len(checks), 1)
+        run = checks[0]["run"]
+        self.assertIn("scripts/check_release_governance.py", run)
+        self.assertIn("--repo ../..", run)
+        self.assertIn('--commit "${{ github.sha }}"', run)
+
     def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
         """Keep fuzz commands relative to the workflow's default directory."""
 
