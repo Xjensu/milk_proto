@@ -289,11 +289,25 @@ cannot link because the MSVC sanitizer runtime
 sanitizer job remains the authoritative fuzz-build/run gate. No specification,
 `mmp-types`, or pre-existing dirty path was modified.
 
+The latest focused security/mobile/embedded cycle added three further bounded
+gates. `3190a54` proves that authenticated snapshot generation metadata cannot
+be forged backwards: a lower-generation header fails both the durable floor
+check and the AEAD/context binding, without changing the wire contract.
+`5bd10be` records the mobile host backpressure handoff: native adapters still
+need explicit `pollClose`, `closeActionsDropped`, and `eventQueueDropped`
+handling, with drain-before-send, exactly-once link-down, and fail-closed
+overload acceptance tests. `5ff2032` adds a CI regression for the complete
+`thumbv7em-none-eabihf` dependency closure of `mmp-node-embassy` and
+`mmp-tal-embedded`; the check now passes with `default-features = false`, but
+this remains only a no-std compile-closure proof. It does not claim an Embassy
+executor, flash store, radio backend, linked image, or hardware-in-the-loop
+result. No specification, `mmp-types`, or pre-existing dirty path was touched.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
 workspace test matrix passes, including 30 CLI/conformance tests, 63 core unit
-tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
+tests plus 5 decoder-limit integration tests, 37 crypto tests, 19 FFI tests,
 79 node tests, 24 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
 bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 38
@@ -312,8 +326,8 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 402 tests (396 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 61 tests (three platform-specific skips), while the
+listed 403 tests (397 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 62 tests (three platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
