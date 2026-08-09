@@ -1826,6 +1826,8 @@ Two advisory/resource maps received local bounds:
   make a bundle undeliverable.
 * `blob_served` now retains counters for at most 256 distinct peers. An unseen
   peer after the cap is served no blob candidates and is not inserted. An
+  empty or mismatched request also does not consume a peer slot; only a
+  request that returns at least one candidate creates/updates its counter. An
   existing entry is removed on the next authenticated contact with that peer,
   preserving the per-contact reset rule. There is intentionally no arbitrary
   TTL or eviction yet: evicting a counter would let a peer reset its local

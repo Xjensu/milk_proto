@@ -2829,7 +2829,13 @@ impl NodeCore {
                 }
             }
         }
-        self.blob_served.insert(*peer, served + out.len() as u32);
+        // A request that yields no symbols consumes no per-contact serving
+        // budget and must not reserve one of the bounded peer-counter slots.
+        // Otherwise a Sybil stream can fill the table with zero-valued entries
+        // and deny later peers service even though no blob work was done.
+        if !out.is_empty() {
+            self.blob_served.insert(*peer, served + out.len() as u32);
+        }
         out
     }
 }

@@ -1,7 +1,7 @@
 //! Node integration tests (HANDOFF M3): two in-memory nodes exchange direct +
 //! group messages, receipts purge; a 3-node chain relays store-carry-forward.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use mmp_core::store::{BundleMeta, SlotState};
 use mmp_core::{MemStore, SessionHost};
@@ -77,7 +77,16 @@ fn proxy_summary_hints_are_bounded_per_peer() {
 #[test]
 fn blob_serve_counters_are_bounded_for_unseen_peers() {
     let mut n = node(253);
+    let empty_root = Id16([0x33; 16]);
+    for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
+        let mut peer = [0u8; 16];
+        peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.blob_serve_candidates(&Id16(peer), &empty_root, 0, &[0u8; 5], false);
+    }
+    assert!(n.core.blob_served.is_empty(), "empty requests must not consume peer slots");
+
     let root = Id16([0x44; 16]);
+    n.core.blob_index.insert(root, BTreeMap::from([(0, Id16([0x66; 16]))]));
     for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
         let mut peer = [0u8; 16];
         peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
