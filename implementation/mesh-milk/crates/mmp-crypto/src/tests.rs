@@ -392,6 +392,17 @@ fn ratchet_counter_and_epoch_exhaustion_fail_closed_without_mutation() {
 }
 
 #[test]
+fn ratchet_epoch_bump_reopens_an_exhausted_index_space() {
+    let material = [0x42; 32];
+    let mut send = SendChain::new([0x12; 32], 3);
+    send.next_index = u32::MAX;
+    send.try_next().unwrap();
+    assert_eq!(send.try_next(), Err(CryptoError::Ratchet));
+    send.try_bump_epoch(&material).unwrap();
+    assert_eq!(send.try_next().unwrap().1, 4);
+}
+
+#[test]
 fn ratchet_terminal_index_is_not_emitted_or_accepted() {
     let mut send = SendChain::new([0x55; 32], 0);
     send.next_index = u32::MAX - 1;
