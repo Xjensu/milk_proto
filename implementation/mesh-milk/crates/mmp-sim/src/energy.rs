@@ -133,6 +133,14 @@ impl PairedRendezvousMeasurement {
         let candidate_discovery_rate = rate(self.candidate.discoveries, self.candidate.contact_attempts);
         let baseline_delivery_rate = rate(self.baseline.delivered_bundles, self.baseline.offered_bundles);
         let candidate_delivery_rate = rate(self.candidate.delivered_bundles, self.candidate.offered_bundles);
+        let baseline_discovery_rate_ci95 =
+            rate_confidence95(self.baseline.discoveries, self.baseline.contact_attempts)?;
+        let candidate_discovery_rate_ci95 =
+            rate_confidence95(self.candidate.discoveries, self.candidate.contact_attempts)?;
+        let baseline_delivery_rate_ci95 =
+            rate_confidence95(self.baseline.delivered_bundles, self.baseline.offered_bundles)?;
+        let candidate_delivery_rate_ci95 =
+            rate_confidence95(self.candidate.delivered_bundles, self.candidate.offered_bundles)?;
         let whole_device_energy_ratio = ratio(
             self.candidate.whole_device_energy_mwh,
             self.baseline.whole_device_energy_mwh,
@@ -142,9 +150,13 @@ impl PairedRendezvousMeasurement {
             baseline_discovery_rate,
             candidate_discovery_rate,
             discovery_rate_delta: candidate_discovery_rate - baseline_discovery_rate,
+            baseline_discovery_rate_ci95,
+            candidate_discovery_rate_ci95,
             baseline_delivery_rate,
             candidate_delivery_rate,
             delivery_rate_delta: candidate_delivery_rate - baseline_delivery_rate,
+            baseline_delivery_rate_ci95,
+            candidate_delivery_rate_ci95,
             baseline_radio_energy_mwh: self.baseline.radio_energy_mwh,
             candidate_radio_energy_mwh: self.candidate.radio_energy_mwh,
             baseline_host_energy_mwh: self.baseline.host_energy_mwh,
@@ -179,9 +191,21 @@ pub struct RendezvousComparison {
     pub baseline_discovery_rate: f64,
     pub candidate_discovery_rate: f64,
     pub discovery_rate_delta: f64,
+    /// Wilson 95% interval for the baseline discovery proportion. `None`
+    /// means the trace contained no contact attempts.
+    pub baseline_discovery_rate_ci95: Option<RateConfidenceInterval>,
+    /// Wilson 95% interval for the candidate discovery proportion. `None`
+    /// means the trace contained no contact attempts.
+    pub candidate_discovery_rate_ci95: Option<RateConfidenceInterval>,
     pub baseline_delivery_rate: f64,
     pub candidate_delivery_rate: f64,
     pub delivery_rate_delta: f64,
+    /// Wilson 95% interval for the baseline delivery proportion. `None`
+    /// means the trace offered no bundles.
+    pub baseline_delivery_rate_ci95: Option<RateConfidenceInterval>,
+    /// Wilson 95% interval for the candidate delivery proportion. `None`
+    /// means the trace offered no bundles.
+    pub candidate_delivery_rate_ci95: Option<RateConfidenceInterval>,
     pub baseline_radio_energy_mwh: f64,
     pub candidate_radio_energy_mwh: f64,
     pub baseline_host_energy_mwh: f64,
@@ -196,11 +220,48 @@ pub struct RendezvousComparison {
     pub candidate_delivery_latency_ms: Option<f64>,
 }
 
+/// A Wilson-score 95% confidence interval for a binomial proportion.
+///
+/// This is a measurement annotation, not a protocol claim. It describes
+/// sampling uncertainty in one replayed trace; it does not account for
+/// dependence between contacts or for variation between independent traces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RateConfidenceInterval {
+    pub successes: u64,
+    pub trials: u64,
+    pub estimate: f64,
+    pub lower: f64,
+    pub upper: f64,
+}
+
 fn rate(successes: u64, total: u64) -> f64 {
     if total == 0 {
         0.0
     } else {
         successes as f64 / total as f64
+    }
+}
+
+/// Return a Wilson-score 95% interval without relying on a normal
+/// approximation at the boundaries. `None` is explicit for a zero-sample
+/// trace, where a rate estimate has no evidentiary basis.
+fn rate_confidence95(successes: u64, total: u64) -> Result<Option<RateConfidenceInterval>, MeasurementError> {
+    if total == 0 {
+        return Ok(None);
+    }
+    let n = total as f64;
+    let p = successes as f64 / n;
+    let z = 1.959_963_984_540_054_f64;
+    let z_squared = z * z;
+    let denominator = 1.0 + z_squared / n;
+    let center = (p + z_squared / (2.0 * n)) / denominator;
+    let margin = z * (p.mul_add(1.0 - p, z_squared / (4.0 * n)) / n).sqrt() / denominator;
+    let lower = (center - margin).max(0.0);
+    let upper = (center + margin).min(1.0);
+    if [p, center, margin, lower, upper].iter().all(|value| value.is_finite()) {
+        Ok(Some(RateConfidenceInterval { successes, trials: total, estimate: p, lower, upper }))
+    } else {
+        Err(MeasurementError::SummaryOverflow)
     }
 }
 
@@ -508,6 +569,14 @@ mod tests {
         assert_eq!(summary.baseline_delivery_rate, 0.5);
         assert_eq!(summary.candidate_delivery_rate, 0.75);
         assert_eq!(summary.delivery_rate_delta, 0.25);
+        let baseline_discovery_ci = summary.baseline_discovery_rate_ci95.unwrap();
+        assert_eq!(baseline_discovery_ci.estimate, summary.baseline_discovery_rate);
+        assert!(baseline_discovery_ci.lower < baseline_discovery_ci.estimate);
+        assert!(baseline_discovery_ci.estimate < baseline_discovery_ci.upper);
+        let candidate_delivery_ci = summary.candidate_delivery_rate_ci95.unwrap();
+        assert_eq!(candidate_delivery_ci.estimate, summary.candidate_delivery_rate);
+        assert!(candidate_delivery_ci.lower < candidate_delivery_ci.estimate);
+        assert!(candidate_delivery_ci.estimate < candidate_delivery_ci.upper);
         assert_eq!(summary.whole_device_energy_ratio, Some(0.75));
         assert_eq!(summary.baseline_discovery_latency_ms, Some(4.0));
         assert_eq!(summary.candidate_delivery_latency_ms, Some(4.0));
@@ -538,6 +607,24 @@ mod tests {
             PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
             Err(MeasurementError::NonFiniteValue)
         );
+    }
+
+    #[test]
+    fn paired_edr_measurement_marks_zero_sample_intervals_unknown() {
+        let mut baseline = measurement(7, 0, 0, 100.0);
+        let mut candidate = measurement(7, 0, 0, 75.0);
+        baseline.contact_attempts = 0;
+        candidate.contact_attempts = 0;
+        baseline.offered_bundles = 0;
+        candidate.offered_bundles = 0;
+        let summary = PairedRendezvousMeasurement::new(baseline, candidate)
+            .unwrap()
+            .summary()
+            .unwrap();
+        assert_eq!(summary.baseline_discovery_rate_ci95, None);
+        assert_eq!(summary.candidate_discovery_rate_ci95, None);
+        assert_eq!(summary.baseline_delivery_rate_ci95, None);
+        assert_eq!(summary.candidate_delivery_rate_ci95, None);
     }
 
     #[test]
