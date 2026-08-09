@@ -120,6 +120,20 @@ impl OrSet {
         self.tombstones.len() + self.adds.values().map(|s| s.len()).sum::<usize>()
     }
 
+    /// Highest tag present in either live adds or tombstones.
+    ///
+    /// Group snapshots persist the next local tag cursor separately from the
+    /// OR-Set.  The group layer uses this metadata-only view to reject a
+    /// restored cursor that could reuse a tag already observed in membership
+    /// history.  It does not alter the wire or persistence encoding.
+    pub fn max_tag(&self) -> Option<Tag> {
+        self.adds
+            .values()
+            .flat_map(|tags| tags.iter().copied())
+            .chain(self.tombstones.iter().copied())
+            .max()
+    }
+
     /// Persistence encoding (mmp-store snapshot, handbook §4.3 step 2): a
     /// minimal hand-written codec, no serde (handbook §0 rule 1). Layout:
     /// `member-count u32 ‖ { member NodeId[16] ‖ tag-count u32 ‖ tag u64× }…

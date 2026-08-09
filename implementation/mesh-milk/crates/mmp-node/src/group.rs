@@ -52,11 +52,19 @@ impl GroupState {
         }
     }
 
-    pub fn add_member(&mut self, member: NodeId) -> u64 {
+    /// Reserve a fresh OR-Set tag for a member addition.  Once the finite
+    /// local cursor reaches `u64::MAX`, fail closed instead of wrapping and
+    /// reusing an old tag.
+    pub fn add_member(&mut self, member: NodeId) -> Option<u64> {
         let tag = self.next_tag;
-        self.next_tag += 1;
+        self.next_tag = self.next_tag.checked_add(1)?;
         self.members.apply(&MembershipOp::Add { member, tag });
-        tag
+        Some(tag)
+    }
+
+    /// Whether a fresh membership tag can still be allocated.
+    pub fn can_add_member(&self) -> bool {
+        self.next_tag < u64::MAX
     }
 
     /// REMOVE + epoch bump + fresh local sender key (future secrecy vs the
@@ -141,6 +149,11 @@ impl GroupState {
             _ => return None,
         };
         let next_tag = u64::from_le_bytes(bytes[19..27].try_into().ok()?);
+        // Tag 1 is reserved for the creator's bootstrap membership. A
+        // cursor below 2 cannot represent a valid GroupState.
+        if next_tag < 2 {
+            return None;
+        }
         let orset_len = u32::from_le_bytes(bytes[27..31].try_into().ok()?) as usize;
         let end = 31usize.checked_add(orset_len)?;
         let orset_bytes = bytes.get(31..end)?;
@@ -148,6 +161,12 @@ impl GroupState {
             return None; // trailing garbage: treat as corrupt
         }
         let members = OrSet::decode(orset_bytes)?;
+        // The cursor must be strictly greater than every tag in live
+        // membership or tombstone history, otherwise a restored node could
+        // issue a duplicate tag and make later REMOVE operations ambiguous.
+        if members.max_tag().is_some_and(|tag| next_tag <= tag) {
+            return None;
+        }
         Some(GroupState {
             gid,
             epoch,
@@ -243,7 +262,7 @@ mod tests {
         let me = mmp_types::ids::Id16([11; 16]);
         let member = mmp_types::ids::Id16([12; 16]);
         let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([13; 16]), me, true);
-        group.add_member(member);
+        group.add_member(member).expect("fresh group has tag capacity");
         group.epoch = u16::MAX;
         let before = group.members.encode();
         assert!(group.remove_member(&mut rng, &member).is_none());
@@ -265,5 +284,32 @@ mod tests {
         assert_eq!(group.epoch, before_epoch);
         assert_eq!(group.local.dist(), &before_dist);
         assert_eq!(group.members.encode(), before_members);
+    }
+
+    #[test]
+    fn decode_rejects_reused_next_tag_cursor() {
+        let mut rng = StdRng::seed_from_u64(6);
+        let me = mmp_types::ids::Id16([31; 16]);
+        let member = mmp_types::ids::Id16([32; 16]);
+        let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([33; 16]), me, true);
+        group.add_member(member).expect("fresh group has tag capacity");
+        let mut encoded = group.encode();
+        // Bootstrap uses tag 1 and the added member uses tag 2; next_tag is
+        // normally 3. Rewinding it to 2 would reuse an existing tag.
+        encoded[19..27].copy_from_slice(&2u64.to_le_bytes());
+        assert!(GroupState::decode(&mut rng, &encoded).is_none());
+    }
+
+    #[test]
+    fn add_member_fails_closed_at_tag_limit() {
+        let mut rng = StdRng::seed_from_u64(7);
+        let me = mmp_types::ids::Id16([41; 16]);
+        let member = mmp_types::ids::Id16([42; 16]);
+        let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([43; 16]), me, true);
+        group.next_tag = u64::MAX;
+        let before = group.members.encode();
+        assert!(!group.can_add_member());
+        assert!(group.add_member(member).is_none());
+        assert_eq!(group.members.encode(), before, "failed allocation must not mutate membership");
     }
 }

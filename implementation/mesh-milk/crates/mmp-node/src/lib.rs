@@ -50,7 +50,9 @@ use mmp_router::{
     eviction_order, handoff_decision, origin_budget, transfer_order, Handoff, OriginBuckets,
     UtilityState,
 };
-use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, RevocationList};
+use mmp_types::authcert::{
+    scope_id_of, AnnouncementBody, AuthCert, RevocationList, CAP_ANNOUNCE, CAP_PRIORITY_EMERGENCY,
+};
 use mmp_types::bundle::{
     class, prio, Bundle, FLAG_ASYNC_KEYS, FLAG_HAS_PARENTS, FLAG_WANTS_RECEIPT, LIFETIME_OFFSET,
     SIG_LEN,
@@ -1162,6 +1164,48 @@ impl Node {
 
     // --------------------------------------------------------- announcements
 
+    /// Mint a v1 issuer-signed [`AuthCert`] without changing local trust
+    /// state. The local identity is the issuer; receivers still need an
+    /// explicit authority-root pin before they will trust the certificate.
+    ///
+    /// Returns `None` for an unsupported suite, reserved/inconsistent
+    /// capability bits, zero expiry, or an expiry that is already reached by
+    /// this node's configured wall clock. The `u16` budget is the complete
+    /// wire-defined range; zero is valid for an announce-only certificate that
+    /// should render as official but never elevate priority.
+    pub fn mint_auth_cert(
+        &self,
+        suite: u8,
+        subject: Key32,
+        scope: Id16,
+        caps: u8,
+        priority_budget: u16,
+        not_after: u32,
+    ) -> Option<AuthCert> {
+        const V1_SUITE: u8 = 1;
+        const KNOWN_CAPS: u8 = CAP_ANNOUNCE | CAP_PRIORITY_EMERGENCY;
+        if suite != V1_SUITE
+            || caps & !KNOWN_CAPS != 0
+            || caps & CAP_PRIORITY_EMERGENCY != 0 && caps & CAP_ANNOUNCE == 0
+            || not_after == 0
+            || self.core.wall_unix_s.is_some_and(|now| not_after <= now)
+        {
+            return None;
+        }
+        let mut cert = AuthCert {
+            suite: V1_SUITE,
+            subject,
+            scope,
+            caps,
+            priority_budget,
+            not_after,
+            issuer: self.core.public,
+            sig: Sig64::ZERO,
+        };
+        cert.sig = self.core.identity.sign(SigDomain::AuthCert, &cert.signed_object());
+        Some(cert)
+    }
+
     /// Publish a class-5 announcement to `scope` (doc 18 §3): plaintext,
     /// inner-signed by this node's identity as the authority SUBJECT key.
     /// When `cert` is given it's attached as TLV `0x81 AUTHCERT_ATTACH`
@@ -1197,12 +1241,19 @@ impl Node {
     /// Only the immutable v1 group administrator may mutate membership;
     /// non-admin members fail closed just like [`Self::group_remove`].
     pub fn group_invite(&mut self, gid: &Id16, peer: &NodeId) -> Result<(), SendError> {
-        {
-            let gs = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+        let needs_member_tag = {
+            let gs = self.core.groups.get(gid).ok_or(SendError::UnknownPeer)?;
             if !gs.is_admin {
                 return Err(SendError::UnknownPeer);
             }
-        }
+            if gs.members.contains(peer) {
+                false
+            } else if gs.can_add_member() {
+                true
+            } else {
+                return Err(SendError::RatchetExhausted);
+            }
+        };
         // Ship the authenticated sender-key distribution before mutating the
         // OR-Set. Unknown peers and a pending first-contact conversation must
         // leave local membership untouched when the application send is
@@ -1215,8 +1266,10 @@ impl Node {
         // would grow tombstone/tag state forever and make later REMOVE ops
         // carry every redundant tag.  A removed member is absent here and
         // still receives a fresh tag, preserving re-invite semantics.
-        if !group.members.contains(peer) {
-            group.add_member(*peer);
+        if needs_member_tag {
+            group
+                .add_member(*peer)
+                .ok_or(SendError::RatchetExhausted)?;
         }
         Ok(())
     }
@@ -2446,7 +2499,9 @@ impl NodeCore {
                 return;
             }
             let mut gs = GroupState::create(&mut self.rng, gid, me, false);
-            gs.add_member(*from);
+            if gs.add_member(*from).is_none() {
+                return;
+            }
             if !gs.learn_remote(*from, &dist) {
                 return;
             }
