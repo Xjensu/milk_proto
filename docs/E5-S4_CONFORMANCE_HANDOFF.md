@@ -1950,3 +1950,16 @@ commit and toolchain metadata, host logs and markers, store paths, delivery,
 receipt, reconnect, MTU/RSSI availability, and explicit gate flags. It is
 path-safe and fail-closed for missing fields, but it does not authenticate
 logs or assert that a physical two-host exchange succeeded.
+
+## 2026-08-09 continuation: high-level vault unavailable guard
+
+The Rust-internal vault acceptance matrix now has a regression at the
+production-facing high-level seam: when the snapshot provider reports
+`Unavailable`, `save_core_from_vault` fails before committing a record and
+`Node::restore_secret_state_from_vault` returns the same error without mutating
+the target aggregate. The focused `mmp-node` library suite passes 77 tests and
+`cargo clippy -p mmp-node --all-targets --all-features -- -D warnings` passes.
+This is provider-capability behavior only; it does not implement or claim
+Android Keystore, iOS Keychain, native lock/invalidation, crash-injection, or
+platform lifecycle behavior. Those remain external gates before a production
+keystore provider can be enabled.

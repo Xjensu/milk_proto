@@ -849,6 +849,26 @@ mod tests {
     }
 
     #[test]
+    fn high_level_vault_unavailable_fails_closed_without_mutation() {
+        let original = Node::new([115; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut save_vault = ReferenceSnapshotVault::new();
+        save_vault.set_available(false);
+        let mut rng = StdRng::seed_from_u64(31);
+        assert_eq!(
+            save_core_from_vault(&mut save_vault, &original.core, &mut rng),
+            Err(VaultError::Unavailable)
+        );
+
+        let mut restored = Node::new([115; 32], Box::new(MemStore::new()), Tier::Relay);
+        let before = restored.secret_state_snapshot().unwrap();
+        assert_eq!(
+            restored.restore_secret_state_from_vault(&mut save_vault),
+            Err(VaultError::Unavailable)
+        );
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+    }
+
+    #[test]
     fn expired_secret_restore_is_rejected_without_mutating_target() {
         let mut original = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([111; 32], Box::new(MemStore::new()), Tier::Relay);
