@@ -1395,6 +1395,31 @@ Focused evidence: 99 `mmp-node` tests, 22 FFI tests, and 16 + 3 + 1 + 6
 store tests pass; strict Clippy is green. No specification file or protected
 pre-existing dirty path was modified.
 
+### Orchestration continuation XXXVI (2026-08-09)
+
+The delegated snapshot/crypto audit found one narrow hygiene issue in the
+Rust-internal restore decoder. A decoded 32-byte conversation receipt key was
+temporarily held in a plain stack array while parsing the remaining components.
+It is now held in `Zeroizing<[u8; 32]>` until ownership moves into the live
+conversation object. This does not change the wire format, key derivation, or
+restore semantics; it removes a non-zeroizing transient copy on rejected or
+malformed restores. The snapshot envelope, AEAD associated-data binding,
+generation/freshness fences, component limits, and prekey bounds were otherwise
+confirmed strict and fail closed.
+
+The vault preflight review found no evidence-based envelope or wrapped-key cap
+that can be added safely at the provider seam without duplicating the snapshot
+format contract. `snapshot::open` already rejects malformed sizes before
+decrypting, while a native provider must still enforce its own opaque-handle
+policy. Native keystore/Keychain/DPAPI adapters and their provider-specific
+resource limits remain integration gates.
+
+Focused evidence: the three `mmp-node` secret-state tests pass after the
+zeroization change; the existing snapshot/vault tests cover malformed lengths,
+context binding, freshness, generation rollback, and atomic restore. No
+specification file, AI-specific artifact, or pre-existing dirty path was
+modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

@@ -175,14 +175,18 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
             return Err(SecretStateError::Invalid);
         }
         let peer = Key32(read_array(bytes, &mut pos)?);
-        let receipt_key = read_array(bytes, &mut pos)?;
+        // Keep the decoded receipt key zeroizing until ownership has moved
+        // into `Conv`.  This plaintext is normally held inside the vault's
+        // zeroizing envelope, but a plain stack `[u8; 32]` here would leave a
+        // second non-zeroized copy behind on malformed or rejected restores.
+        let receipt_key = Zeroizing::new(read_array(bytes, &mut pos)?);
         let send_bytes = read_component(bytes, &mut pos)?;
         let recv_bytes = read_component(bytes, &mut pos)?;
         let dag_bytes = read_component(bytes, &mut pos)?;
         let send = SendChain::restore(send_bytes).map_err(|_| SecretStateError::Invalid)?;
         let recv = RecvChain::restore(recv_bytes).map_err(|_| SecretStateError::Invalid)?;
         let dag = ConversationDag::restore(dag_bytes).map_err(|_| SecretStateError::Invalid)?;
-        if convs.insert(id, Conv::from_parts(id, peer, receipt_key, send, recv, dag)).is_some() {
+        if convs.insert(id, Conv::from_parts(id, peer, *receipt_key, send, recv, dag)).is_some() {
             return Err(SecretStateError::Invalid);
         }
         previous_conv = Some(id);

@@ -2266,3 +2266,26 @@ included.
 Verification: `mmp-node` 99 tests, `mmp-ffi` 22 tests, and the store suites
 (16 unit, 3 bounded, 1 hostile, 6 transactional) pass; strict Clippy passes
 for touched crates. Specification and unrelated dirty files remain untouched.
+
+## 2026-08-09 continuation: snapshot secret-copy hygiene
+
+The delegated snapshot/crypto audit found one narrow hygiene issue in the
+Rust-internal restore decoder. A decoded 32-byte conversation receipt key was
+temporarily held in a plain stack array while parsing the remaining components.
+It is now held in `Zeroizing<[u8; 32]>` until ownership moves into the live
+conversation object. This is wire-neutral and leaves key derivation, snapshot
+format, and restore semantics unchanged; it removes a non-zeroizing transient
+copy on rejected or malformed restores.
+
+The same audit found no additional safe change: snapshot envelopes enforce
+exact lengths, AEAD context binding, freshness and generation fences, while
+secret-state components and prekey tails are bounded. The vault preflight found
+no evidence-based envelope or wrapped-key cap that can be duplicated safely at
+the generic provider seam; `snapshot::open` already rejects malformed envelope
+sizes before decrypting. Native keystore/Keychain/DPAPI implementations must
+still enforce provider-specific opaque-handle limits.
+
+Focused verification: the three `mmp-node` secret-state tests pass after the
+zeroization change, and existing snapshot/vault tests cover malformed lengths,
+context binding, freshness, rollback, and atomic restore. No specification or
+pre-existing dirty path was modified.
