@@ -153,3 +153,36 @@ The remaining E7 decision is unchanged: a board-specific fixed-capacity
 provider must still define allocator/flash policy, producer reservation and
 rollback semantics, and linked-image/HIL acceptance before the embedded gate
 can be closed.
+
+## Authority-state runtime bounds (2026-08-09)
+
+The same audit checked `mmp_core::AuthorityStore` against its snapshot limits.
+Those limits were already enforced by `decode`, but live mutation paths could
+otherwise exceed them between snapshots. The implementation now:
+
+- bounds local subscriptions and pinned roots at 256 entries, ignoring a new
+  entry at capacity (an intentionally fail-closed local policy); and
+- rejects a new `(subject, scope)` certificate once the 512-entry map is full
+  with `CertReject::Capacity`, while allowing an existing entry to refresh.
+
+`AuthorityStore::expire` now also prunes sticky revocations after each entry's
+`not_after + skew` horizon, matching its existing documentation and allowing
+expired state to release capacity. No wire object or snapshot version changed.
+
+The revocation union remains an explicit design blocker: silently dropping a
+new revocation at the 512-entry limit could fail open, while evicting an older
+revocation is also unsafe. The current method therefore remains unbounded until
+an API-compatible, fail-closed overflow policy (for example an authority-disable
+state with producer-visible error) is designed. This is not papered over by the
+runtime bounds above.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-core --lib authority -- --test-threads=1
+14 passed
+
+cargo check -p mmp-core -p mmp-node-embassy \
+  --target thumbv7em-none-eabihf --no-default-features
+Finished `dev` profile
+```
