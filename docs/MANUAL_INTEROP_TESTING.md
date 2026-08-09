@@ -254,3 +254,25 @@ Attach the following to a test report:
 This checklist is the Phase A hardware exit-gate evidence. It does not replace
 the deterministic vectors, fuzzing, or adversarial simulation required by the
 later production phases.
+
+### Machine-checking a two-host evidence package
+
+When the Linux/BlueZ run is complete, place the two CLI logs and the two
+`inspect` outputs beside a JSON manifest and validate the package from
+`implementation/mesh-milk`:
+
+```bash
+python scripts/validate_ble_evidence.py /path/to/evidence.json
+```
+
+The manifest format is `mmp-ble-evidence-v1`. It requires one peripheral and
+one central host, a clean commit/toolchain record, message delivery and receipt
+flags, reconnect evidence, and explicit MTU/RSSI measurements. If an adapter
+does not expose MTU or RSSI, the manifest must record `available: false` and a
+reason; an omitted measurement is not silently treated as a pass. Each host's
+declared log markers and each store-inspection path are checked, and paths may
+not escape the manifest directory.
+
+The validator checks evidence completeness and internal consistency only. It
+cannot establish that a claimed log came from a real adapter, authenticate a
+seed fingerprint, or close the separate RBSR/D3 conformance gate.
