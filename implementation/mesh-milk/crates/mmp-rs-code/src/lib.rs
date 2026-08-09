@@ -97,7 +97,9 @@ pub fn encode(data: &[Vec<u8>], n: usize) -> Vec<Vec<u8>> {
 }
 
 /// Reconstruct the k data symbols from any k received `(index, symbol)` pairs.
-/// Returns `None` on duplicate indices or length mismatch.
+/// Returns `None` on out-of-range/duplicate indices or length mismatch. Symbol
+/// indices are the zero-based positions in an encoded block, so the largest
+/// valid index is `MAX_N - 1` (with `n <= MAX_N` in [`encode`]).
 pub fn decode(received: &[(u8, Vec<u8>)], k: usize) -> Option<Vec<Vec<u8>>> {
     if received.len() < k || k == 0 || k > MAX_K {
         return None;
@@ -106,7 +108,7 @@ pub fn decode(received: &[(u8, Vec<u8>)], k: usize) -> Option<Vec<Vec<u8>>> {
     let sym_len = take[0].1.len();
     let xs: Vec<u8> = take.iter().map(|(i, _)| *i).collect();
     for (i, x) in xs.iter().enumerate() {
-        if take[i].1.len() != sym_len || xs[..i].contains(x) {
+        if (*x as usize) >= MAX_N || take[i].1.len() != sym_len || xs[..i].contains(x) {
             return None;
         }
     }
@@ -173,5 +175,23 @@ mod tests {
             [4u8, 5, 6, 7].iter().map(|&i| (i, symbols[i as usize].clone())).collect();
         let recovered = decode(&received, 4).unwrap();
         assert_ne!(recovered, data);
+    }
+
+    #[test]
+    fn max_k_recovers_from_parity_only() {
+        let data: Vec<Vec<u8>> = (0..MAX_K as u8).map(|i| vec![i; 8]).collect();
+        let symbols = encode(&data, MAX_K * 2);
+        let received: Vec<(u8, Vec<u8>)> = (MAX_K..MAX_K * 2)
+            .map(|i| (i as u8, symbols[i].clone()))
+            .collect();
+        assert_eq!(decode(&received, MAX_K), Some(data));
+    }
+
+    #[test]
+    fn index_at_max_n_is_rejected() {
+        let data = vec![vec![1u8; 4], vec![2u8; 4]];
+        let symbols = encode(&data, 3);
+        let received = vec![(0u8, symbols[0].clone()), (MAX_N as u8, symbols[1].clone())];
+        assert!(decode(&received, 2).is_none());
     }
 }
