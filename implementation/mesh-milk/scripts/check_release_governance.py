@@ -75,12 +75,28 @@ def validate_publication_artifacts(
         return errors
     code, output, detail = runner(
         repo,
-        ("ls-tree", "-r", "--name-only", commit, "--", *REQUIRED_PUBLICATION_FILES),
+        ("ls-tree", "-r", commit, "--", *REQUIRED_PUBLICATION_FILES),
     )
     if code != 0:
         errors.append(f"could not inspect publication tree at {commit}: {detail.strip() or output.strip()}")
         return errors
-    present = {line.strip() for line in output.splitlines() if line.strip()}
+    present: set[str] = set()
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        metadata, separator, relative = line.partition("\t")
+        fields = metadata.split()
+        if separator != "\t" or len(fields) != 3:
+            errors.append(f"recorded commit {commit} has malformed publication tree output")
+            continue
+        mode, object_type, _object_id = fields
+        if relative in REQUIRED_PUBLICATION_FILES:
+            if mode != "100644" or object_type != "blob":
+                errors.append(
+                    f"recorded commit {commit} publication artifact is not a regular blob: {relative}"
+                )
+            else:
+                present.add(relative)
     for relative in REQUIRED_PUBLICATION_FILES:
         if relative not in present:
             errors.append(f"recorded commit {commit} is missing publication artifact: {relative}")

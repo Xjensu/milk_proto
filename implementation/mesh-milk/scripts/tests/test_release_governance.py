@@ -19,7 +19,6 @@ class ReleaseGovernanceTests(unittest.TestCase):
                 (
                     "ls-tree",
                     "-r",
-                    "--name-only",
                     "abc123",
                     "--",
                     "ROADMAP.md",
@@ -39,7 +38,10 @@ class ReleaseGovernanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repo(root)
-            output = "\n".join(GOVERNANCE.REQUIRED_PUBLICATION_FILES) + "\n"
+            output = "\n".join(
+                f"100644 blob {'a' * 40}\t{name}"
+                for name in GOVERNANCE.REQUIRED_PUBLICATION_FILES
+            ) + "\n"
             self.assertEqual(
                 GOVERNANCE.validate_publication_artifacts(root, "abc123", self._runner(output)),
                 [],
@@ -68,7 +70,10 @@ class ReleaseGovernanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repo(root)
-            output = "ROADMAP.md\nCOUNCIL-REVIEW.md\n"
+            output = "\n".join(
+                f"100644 blob {'a' * 40}\t{name}"
+                for name in ("ROADMAP.md", "COUNCIL-REVIEW.md")
+            ) + "\n"
             errors = GOVERNANCE.validate_publication_artifacts(
                 root, "abc123", self._runner(output)
             )
@@ -87,6 +92,25 @@ class ReleaseGovernanceTests(unittest.TestCase):
             self.assertEqual(
                 errors,
                 ["could not inspect publication tree at abc123: tree unavailable"],
+            )
+
+    def test_recorded_symlink_artifact_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._repo(root)
+            output = "\n".join(
+                f"{'120000' if name == 'ROADMAP.md' else '100644'} blob {'a' * 40}\t{name}"
+                for name in GOVERNANCE.REQUIRED_PUBLICATION_FILES
+            ) + "\n"
+            errors = GOVERNANCE.validate_publication_artifacts(
+                root, "abc123", self._runner(output)
+            )
+            self.assertEqual(
+                errors,
+                [
+                    "recorded commit abc123 publication artifact is not a regular blob: ROADMAP.md",
+                    "recorded commit abc123 is missing publication artifact: ROADMAP.md",
+                ],
             )
 
     def test_symlinked_working_tree_artifact_is_rejected(self) -> None:
