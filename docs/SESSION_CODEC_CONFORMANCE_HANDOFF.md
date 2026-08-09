@@ -146,7 +146,7 @@ bound and rerun the handshake vectors before changing it.
 
 ```text
 cargo test -p mmp-core --lib -- --test-threads=1
-  64 passed
+  66 passed
 cargo test -p mmp-core --lib noise_tag_is_counted_at_envelope_boundary -- --test-threads=1
   1 passed
 cargo test -p mmp-crypto --lib noise_xx -- --test-threads=1
