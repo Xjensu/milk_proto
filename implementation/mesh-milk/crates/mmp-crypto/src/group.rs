@@ -180,10 +180,19 @@ impl RemoteSenderKey {
     /// Verify the member signature, then decrypt.
     pub fn decrypt(&mut self, p: &GroupPayload, ad: &[u8]) -> Result<Vec<u8>, CryptoError> {
         verify(SigDomain::GroupMsg, &self.sig_pub, &p.signed_object(), &p.member_sig)?;
-        let key = self.recv.key_for(p.epoch, p.chain_index)?;
+        // Do not consume the receive-chain index until the AEAD has opened.
+        // A member can produce a valid group signature over a ciphertext that
+        // fails under the receiver's outer-header AD; committing first would
+        // turn that authenticated-but-invalid packet into a replay-state DoS.
+        let key = self.recv.peek_key_for(p.epoch, p.chain_index)?;
         let bound =
             aead::committed_key(&key, &group_context(&self.gid, p.epoch, &p.member, p.chain_index));
-        aead::open(&bound, ad, &p.ct)
+        let plaintext = aead::open(&bound, ad, &p.ct)?;
+        // `peek_key_for` performed the same checks against an unchanged chain;
+        // this commit therefore cannot fail unless the object is concurrently
+        // mutated, which the owner API does not permit.
+        self.recv.key_for(p.epoch, p.chain_index)?;
+        Ok(plaintext)
     }
 }
 

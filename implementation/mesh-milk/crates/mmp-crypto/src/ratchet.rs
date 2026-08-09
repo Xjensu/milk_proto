@@ -221,6 +221,41 @@ impl RecvChain {
         Ok(key)
     }
 
+    /// Derive a message key without advancing this receive chain.
+    ///
+    /// This is used by authenticated encryption consumers that must validate
+    /// the ciphertext before committing replay-window state.  The checks and
+    /// derived key are identical to [`RecvChain::key_for`], but skipped keys
+    /// and the forward chain remain untouched until the caller subsequently
+    /// commits the same `(epoch, index)` with [`RecvChain::key_for`].
+    pub fn peek_key_for(&self, epoch: u16, index: u32) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+        if epoch < self.epoch || (epoch == self.epoch && index < self.next_index) {
+            return self
+                .skipped
+                .get(&(epoch, index))
+                .copied()
+                .map(Zeroizing::new)
+                .ok_or(CryptoError::Ratchet);
+        }
+        if self.exhausted {
+            return Err(CryptoError::Ratchet);
+        }
+        if epoch > self.epoch {
+            return Err(CryptoError::Ratchet);
+        }
+        if index - self.next_index >= self.window {
+            return Err(CryptoError::Ratchet);
+        }
+
+        let mut ck = Zeroizing::new(self.ck);
+        let mut cursor = self.next_index;
+        while cursor < index {
+            ck = Zeroizing::new(next_ck(&ck));
+            cursor = cursor.checked_add(1).ok_or(CryptoError::Ratchet)?;
+        }
+        Ok(Zeroizing::new(msg_key(&ck)))
+    }
+
     /// Bump the epoch at live contact (doc 08 §5.2), mirroring
     /// [`SendChain::bump_epoch`] on the receive side.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {

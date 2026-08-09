@@ -647,6 +647,24 @@ fn sender_keys_group_roundtrip() {
 }
 
 #[test]
+fn group_aead_failure_does_not_consume_sender_key_index() {
+    let gid = Id16([0x47; 16]);
+    let member = Id16([0x19; 16]);
+    let mut rng = rng();
+    let mut local = LocalSenderKey::generate(&mut rng, gid, 1);
+    let dist = local.dist().clone();
+    let mut remote = RemoteSenderKey::from_dist(&dist, 32);
+
+    // The member signature is valid, but the receiver is given the wrong
+    // outer-header AD.  A failed AEAD open must not burn the ratchet index:
+    // the same authenticated payload remains deliverable once the caller
+    // supplies the correct AD.
+    let payload = local.encrypt(member, b"correct-header", b"group body");
+    assert!(remote.decrypt(&payload, b"wrong-header").is_err());
+    assert_eq!(remote.decrypt(&payload, b"correct-header").unwrap(), b"group body");
+}
+
+#[test]
 fn receipt_mac_roundtrip() {
     let root = [5u8; 32];
     let key = receipt_key(&root);
