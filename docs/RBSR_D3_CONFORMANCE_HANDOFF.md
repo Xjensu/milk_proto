@@ -166,3 +166,70 @@ use effective priority, and no unapproved wire interpretation is introduced.
 - No existing dirty file was staged or edited.
 - No Rust behavior was changed because the missing semantics are normative,
   not an implementation bug that can be fixed without guessing.
+
+## Re-audit evidence (2026-08-09)
+
+This gate was rechecked against the current tree rather than relying on the
+earlier review. The ambiguity remains, and the following observations make the
+boundary executable for the next implementer:
+
+* `mmp-core/src/session.rs` keeps a private `DOMAINS: [u8; 4] = [0, 1, 2, 3]`
+  (lines 20–23). `valid_recon_domain` accepts only those four values plus the
+  reply flag (lines 45–47), and `start_domain`/`maybe_advance_domain` advance a
+  single cursor through that array (lines 621–647). There is no priority byte
+  in `ReconInit`, `ReconRange`, or `ReconIds` state. This is a faithful
+  implementation of the currently executable D0–D3 subset, not evidence that
+  a hidden priority partition already exists.
+* `mmp-core/src/rbsr.rs` passes only `self.domain` to `IdSource::ids_in` (the
+  trait at lines 173–180 and calls at lines 206, 232, and 316). The RBSR
+  fingerprint itself is over the selected IDs and count; it has no place to
+  carry declared priority. Adding a second reconciler without defining a
+  range/partition identifier would therefore make two implementations emit
+  different transcripts for the same wire bytes.
+* `mmp-node/src/lib.rs` builds `SyncView` entries as `(BundleID, domain)` and
+  maps class 0/3 to D0, direct class 1 to D1, class 2 to D2, and all remaining
+  classes (including class 5) to D3 (the `SessionHost::ids` implementation,
+  around lines 2808–2821). Declared priority is intentionally not part of this
+  key. This is the only safe mapping while doc 18 §4 mandates D3 reuse.
+* Class-5 authority handling is present, but it is not the missing D3 weight:
+  `on_bundle` charges the ordinary origin bucket before storage (around lines
+  2898–2970), while `handle_announcement` performs a post-store, receiver-local
+  AuthCert token-bucket decision and updates `effective_priority` (around lines
+  1628–1690). No reserved D3 quota, multiplier, or deterministic scope-weight
+  formula is applied. Treating this existing local elevation as RBSR
+  partitioning would violate doc 18 §5.2's declared-priority rule.
+* `mmp-router/src/lib.rs::transfer_order` sorts by declared `priority`, while
+  `eviction_order` sorts by receiver-local `effective_priority` (around lines
+  99–145). The existing regression test
+  `transfer_order_uses_declared_priority_eviction_order_uses_effective` locks
+  this asymmetry. It is valuable evidence, but it does not resolve how RBSR
+  sets are partitioned.
+
+### Reopening checklist (must be answered by an approved protocol decision)
+
+The gate may be reopened only after the decision records all of the following
+in one normative source (or an approved erratum), with byte-level examples:
+
+1. A canonical partition identifier for `(base domain, declared priority)` or
+   an explicit statement that priority partitions are advisory and not an RBSR
+   key. If the existing D3 byte is reused, define how a peer distinguishes the
+   partitions without adding an unnegotiated value.
+2. The exact legacy-peer behavior: transcript and phase order when the peer
+   implements only D0–D4 and does not know the new partition rule. Include the
+   downgrade/ignore behavior, not just the upgraded path.
+3. A deterministic D3 admission rule, including whether “weight” changes
+   ordering, admission probability, a bounded reserve, or a bucket charge;
+   specify units, duplicate accounting, refill, scope matching, certificate
+   failure/expiry, and the maximum state per subject/scope.
+4. A starvation invariant for D0/D1/D2 and a per-receiver abuse bound that
+   remains true when peers lie about declared priority or relay the same
+   BundleID through many paths. The invariant must not depend on
+   `effective_priority` being equal on two receivers.
+5. Golden vectors for every base domain and declared priority 0–3, including
+   exact `RECON_*` bytes, order, fingerprint inputs, and a legacy/upgraded
+   interop transcript. Add property tests for duplicate, expired, revoked, and
+   unsubscribed announcements before enabling a new default.
+
+Until these answers exist, no production Rust change is justified. A test-only
+assertion of current D0–D3 behavior or another resource bound is safe; a new
+partition cursor, domain value, or D3 quota policy is not.
