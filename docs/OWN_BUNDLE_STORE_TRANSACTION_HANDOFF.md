@@ -96,13 +96,17 @@ Until one of those contracts is approved, keep `store_own` on the legacy
 provider limitation. Do not claim that `BundleStore::try_put` protects local
 send APIs.
 
-The audit also identified a separate crash-consistency residual in the current
-host implementation: `SnapshotStore::persist` fsyncs the temporary image, then
-removes the destination before renaming it. A process kill between those calls
-can leave no primary; recovery handles a complete `.tmp` image, but not a
-missing temporary file. A Unix-specific atomic-replace plus parent-directory
-fsync design and a Windows-compatible replacement strategy require a separate
-platform review; they are intentionally not approximated here.
+The platform audit then split that crash-consistency residual by operating
+system. `0f2f433` uses same-directory atomic `rename` plus parent-directory
+`fsync` on Unix, eliminating the remove-before-rename window there. Windows
+still uses the standard-library remove-then-rename fallback because this
+workspace denies unsafe code and the standard library exposes no
+`ReplaceFile`-equivalent primitive; a Windows crash in that narrow interval is
+recoverable only when the complete `.tmp` image survives. Unix runtime crash
+injection and Windows kernel-level replacement testing remain external. If the
+Unix parent-directory sync fails after the rename, `persist` reports an error
+even though the new image is installed; this deliberately fails closed on
+durability evidence and permits a later retry.
 
 ## Transaction-readiness follow-up
 
@@ -123,10 +127,12 @@ producer-specific staged state, rather than an unreviewed preflight boolean.
 ## Verification performed
 
 ```text
-cargo test -p mmp-node --lib -- --test-threads=1  # 82 passed
+cargo test -p mmp-node --lib -- --test-threads=1  # 84 passed
 cargo test -p mmp-crypto --all-targets -- --test-threads=1  # 41 passed
-cargo test --workspace --all-targets -- --test-threads=1  # 426 listed, 420 active, 6 ignored
+cargo test -p mmp-store --all-targets -- --test-threads=1  # 14 unit + 2 integration + 1 hostile-length passed
+cargo test --workspace --all-targets -- --test-threads=1  # 432 listed, 426 active, 6 ignored
 cargo clippy -p mmp-crypto -p mmp-node --all-targets --all-features -- -D warnings  # passed
+cargo check -p mmp-store --no-default-features  # passed
 ```
 
 The audit made no protocol, specification, routing, or FFI wire changes.

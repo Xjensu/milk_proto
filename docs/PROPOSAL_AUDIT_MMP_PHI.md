@@ -616,6 +616,34 @@ remove-before-rename crash window remains documented in
 atomic-replace design. No file under `specification/` was modified, and all
 pre-existing dirty paths remain protected.
 
+### Orchestration continuation X (2026-08-09)
+
+The platform-atomicity audit produced `0f2f433`. On Unix,
+`SnapshotStore::persist` now replaces the same-filesystem destination with an
+atomic `rename` and synchronizes the parent directory after the temporary image
+has been fsynced. This removes the prior remove-before-rename crash window.
+Windows retains the standard-library fallback because unsafe platform FFI is
+forbidden and no portable `ReplaceFile` primitive exists; that residual and
+its recovery boundary are explicit in the storage handoff. The Unix path was
+cross-compiled and the replacement regression passed, but runtime crash
+injection on a real Unix filesystem and Windows kernel-level replacement
+testing remain external.
+
+The release/CI audit produced `bba5da2`, adding `--locked` to all three
+`mobile-bindings` Cargo invocations and asserting that invariant in the
+workflow tests. The peripheral evidence audit produced `1f41735`, bounding the
+secondary manifest-commit extraction in `validate_release_preflight` so an
+oversized evidence package cannot trigger a second unbounded read after the
+primary validator rejects it. The script suite passes with 97 tests and 6
+expected symlink skips.
+
+After these changes the full workspace remains green at 432 Rust tests listed
+(426 active, 6 intentionally ignored), with the embedded no-default target and
+focused Clippy checks passing. No file under `specification/` was modified and
+all pre-existing dirty paths remain unstaged. Real Linux/BlueZ exchange, native
+mobile radio/keystore validation, fixed-capacity own-origin storage, external
+cryptographic review, and the RBSR/D3 normative decision remain open.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
