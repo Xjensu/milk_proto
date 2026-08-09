@@ -71,6 +71,35 @@ EXPECTED_MMP_NODE_METHODS = (
     "unsubscribeScope",
 )
 
+# UniFFI maps Rust ``Result<_, FfiError>`` methods to throwing operations in
+# the generated host bindings.  Keep this list explicit: a name-only surface
+# check would accept a stale binding after a Rust method changes from a
+# fallible call to an infallible one (or vice versa), which is a source-level
+# compatibility break for Kotlin/Swift callers.
+EXPECTED_MMP_NODE_THROWING_METHODS = (
+    "allowFriendshipFrom",
+    "block",
+    "cancelFetch",
+    "fetchFile",
+    "fileProgress",
+    "flush",
+    "groupInvite",
+    "groupMembers",
+    "groupRemove",
+    "groupSend",
+    "ingestClaim",
+    "messageState",
+    "mintAuthCert",
+    "pinAuthorityRoot",
+    "publishAnnouncement",
+    "requestFriendship",
+    "revokeIdentityWithSuccessor",
+    "sendFile",
+    "sendText",
+    "setNickname",
+    "unsubscribeScope",
+)
+
 SOURCE_SUFFIXES = {".kt", ".kts", ".swift"}
 
 
@@ -119,12 +148,42 @@ def scan_bindings(kotlin_dir: Path, swift_dir: Path) -> list[str]:
 
     for method in EXPECTED_MMP_NODE_METHODS:
         kotlin_pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("
-        if not re.search(kotlin_pattern, kotlin_text):
+        kotlin_has_method = re.search(kotlin_pattern, kotlin_text) is not None
+        if not kotlin_has_method:
             violations.append(f"generated Kotlin output is missing MmpNode.{method}")
 
         swift_pattern = rf"\bfunc\s+{re.escape(method)}\s*\("
-        if not re.search(swift_pattern, swift_text):
+        swift_has_method = re.search(swift_pattern, swift_text) is not None
+        if not swift_has_method:
             violations.append(f"generated Swift output is missing MmpNode.{method}")
+
+    # Check the error-bearing part of the ABI separately from method names.
+    # The Kotlin annotation is emitted on the concrete implementation (not
+    # the interface declaration), while Swift puts ``throws`` on both the
+    # protocol requirement and implementation.  Search the whole generated
+    # tree so either layout remains supported.
+    for method in EXPECTED_MMP_NODE_THROWING_METHODS:
+        kotlin_method_pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("
+        swift_method_pattern = rf"\bfunc\s+{re.escape(method)}\s*\("
+        kotlin_throwing_pattern = (
+            rf"@Throws\s*\(\s*FfiException\s*::\s*class\s*\)\s*"
+            rf"override\s+fun\s+`{re.escape(method)}`\s*\("
+        )
+        if re.search(kotlin_method_pattern, kotlin_text) and not re.search(
+            kotlin_throwing_pattern, kotlin_text
+        ):
+            violations.append(
+                "generated Kotlin output is missing FfiError throwing annotation "
+                f"for MmpNode.{method}"
+            )
+
+        swift_throwing_pattern = rf"\bfunc\s+{re.escape(method)}\s*\([^)]*\)\s*throws\b"
+        if re.search(swift_method_pattern, swift_text) and not re.search(
+            swift_throwing_pattern, swift_text
+        ):
+            violations.append(
+                f"generated Swift output is missing throws for MmpNode.{method}"
+            )
 
     return violations
 

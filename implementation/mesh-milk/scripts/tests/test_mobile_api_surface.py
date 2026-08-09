@@ -13,12 +13,23 @@ SPEC.loader.exec_module(CHECK)
 
 
 def _kotlin(methods: tuple[str, ...]) -> str:
-    body = "\n".join(f"    override fun `{method}`() {{}}" for method in methods)
+    body = "\n".join(
+        (
+            f"    @Throws(FfiException::class)\n"
+            if method in CHECK.EXPECTED_MMP_NODE_THROWING_METHODS
+            else ""
+        )
+        + f"    override fun `{method}`() {{}}"
+        for method in methods
+    )
     return f"interface MmpNodeInterface {{\n{body}\n}}\n"
 
 
 def _swift(methods: tuple[str, ...]) -> str:
-    body = "\n".join(f"    func {method}()" for method in methods)
+    body = "\n".join(
+        f"    func {method}(){' throws' if method in CHECK.EXPECTED_MMP_NODE_THROWING_METHODS else ''}"
+        for method in methods
+    )
     return f"protocol MmpNodeProtocol {{\n{body}\n}}\n"
 
 
@@ -76,6 +87,29 @@ class MobileApiSurfaceTests(unittest.TestCase):
             self.assertEqual(len(violations), 2)
             self.assertIn("unsubscribeScope", violations[0])
             self.assertIn("unsubscribeScope", violations[1])
+
+    def test_reports_missing_throwing_contract_per_language(self) -> None:
+        methods = CHECK.EXPECTED_MMP_NODE_METHODS
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            kotlin = root_path / "kotlin"
+            swift = root_path / "swift"
+            kotlin.mkdir()
+            swift.mkdir()
+            kotlin_source = _kotlin(methods).replace(
+                "    @Throws(FfiException::class)\n    override fun `setNickname`",
+                "    override fun `setNickname`",
+            )
+            swift_source = _swift(methods).replace(
+                "    func setNickname() throws",
+                "    func setNickname()",
+            )
+            (kotlin / "mmp_ffi.kt").write_text(kotlin_source, encoding="utf-8")
+            (swift / "mmp_ffi.swift").write_text(swift_source, encoding="utf-8")
+            violations = CHECK.scan_bindings(kotlin, swift)
+            self.assertEqual(len(violations), 2)
+            self.assertIn("throwing annotation for MmpNode.setNickname", violations[0])
+            self.assertIn("throws for MmpNode.setNickname", violations[1])
 
     def test_requires_language_specific_generated_sources(self) -> None:
         with tempfile.TemporaryDirectory() as root:
