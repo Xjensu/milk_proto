@@ -10,6 +10,10 @@ recalled from memory.
 
 **Compiled:** 2026-07-22, against commit `ee12373` (`master`) and `Cargo.lock` as of that commit.
 
+**Current-state refresh:** 2026-08-09. The original commit/date above remains the provenance of
+the review package; the vector and release-gate status in §§5–6 below was rechecked against the
+current workspace so that a reviewer is not handed superseded gap claims.
+
 ---
 
 ## 1. Scope: what this review is specifically being asked to confirm or refute
@@ -159,23 +163,27 @@ artifact to a specification section and evidence string.
 The artifact inventory and its stable IDs are authoritative in `vectors/coverage.json`. Secret
 MAC keys are intentionally omitted from public vectors; secrets never appear in a vector.
 
-**Deferred, not faked** (`vectors/README.md`'s own list): an X3DH-agreement vector (needs
-deterministic-RNG plumbing for the ephemeral key — the property is covered today by
-`mmp-crypto::prekey_agreement_matches_both_sides`) and an overlarge-S/non-canonical Ed25519
-negative vector (needs a crafted malleable signature — covered today by
-`mmp-crypto::sign_verify_and_cross_domain_rejects`).
+**Deferred, not faked** (`vectors/README.md`'s own list): an X3DH-agreement vector still needs
+deterministic-RNG plumbing for the ephemeral key (the property is covered today by
+`mmp-crypto::prekey_agreement_matches_both_sides`). The overlarge-S/non-canonical Ed25519
+negative is no longer deferred: `noncanonical_s_negative.json` is committed and independently
+checked, with strict verification covered by `mmp-crypto::sign_verify_and_cross_domain_rejects`.
 
 ## 6. Known gaps a reviewer should not be surprised by
 
 Stated here so the review isn't spent rediscovering already-tracked items:
 
-- **Clippy is not yet CI-gated** (`docs/AGILE_BACKLOG.md` E2-S1, still open) — `cargo clippy
-  --workspace --all-targets -- -D warnings` is run manually before every commit in this project's
-  own practice (see recent commit messages), but nothing in CI enforces it yet.
-- **No MSRV pin, no per-crate metadata/READMEs** (E2-S3, still open).
-- **`AuthorityStore` (doc 18) has no durable persistence** (E5-S5's own tracked gap) — pins,
-  subscriptions, and sticky-revocation-union state are lost on restart; acceptable for sim/CLI, not
-  yet shippable on mobile without this.
+- **Clippy is wired into CI, but remote-run evidence remains external:** the root workflow's
+  `host` matrix runs `cargo clippy --workspace --all-targets --all-features -- -D warnings`.
+  A local pass does not substitute for a completed GitHub Actions run.
+- **The MSRV floor is declared, but the exact compiler release is not pinned:** the workspace
+  sets `rust-version = "1.96"` while `rust-toolchain.toml` intentionally follows rolling
+  `stable`. Consumers requiring bit-for-bit toolchain reproducibility must pin that toolchain
+  outside this repository. Per-crate metadata/README coverage is complete for the current crates;
+  `missing_docs` remains a separate, open documentation-hardening effort.
+- **`AuthorityStore` non-secret state is durably validated and persisted** by `mmp-store`, FFI, and
+  CLI snapshots. Ratchet/prekey secrets and platform-keystore integration remain intentionally
+  open; those secrets must not be inferred from the checksum-only authority record.
 - **`mmp-sim` has no clustered-mobility (SLAW) contact model** (E6-S1 finding, 2026-07-22) — the
   doc 13 §5 same-district latency band cannot yet be validated at all, only its cost/quota-side
   claims (which do hold, measured, at N=1,000).

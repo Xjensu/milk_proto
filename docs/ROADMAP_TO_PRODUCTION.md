@@ -111,7 +111,7 @@ and the implementation handoffs for the precise boundaries.
 - Background scan/advertise duty cycles vs. battery budget: doc 09 §7 (Coexistence and airtime fairness) and doc 13 §1 (phone energy budget, <5%/day target) specify the model; no platform-side duty-cycle implementation exists yet (that work is inherently platform-shell code, per `MOBILE_INTEGRATION.md` §1's "the platform owns the radio and the clock" rule).
 
 **(c) Packaging**
-- UniFFI bindgen artifacts (Kotlin/Swift) are not produced in CI — `MOBILE_INTEGRATION.md` §3 documents the manual commands but no pipeline runs them.
+- UniFFI bindgen artifacts (Kotlin/Swift) are produced by the `mobile-bindings` CI job and uploaded together; a downstream Kotlin/Swift consumer compile and a successful remote Actions run remain unverified. `MOBILE_INTEGRATION.md` §3 documents the local reproduction.
 - Android AAR / iOS XCFramework build mechanisms and CI jobs exist (`MOBILE_INTEGRATION.md` §3), but no successful remote Actions run or downstream consumer smoke compile is evidenced on the current unpushed branch.
 - RN npm package (`REACT_NATIVE_INTEGRATION.md` specifies the TypeScript API and native module shape) is not published.
 - `mmp-cli` radio wiring is implemented (`connect`, `listen`, and `send`), but
