@@ -331,9 +331,7 @@ impl SnapshotStore {
                 }
             }
         }
-        // Windows rename-over requires the destination to be replaceable.
-        let _ = std::fs::remove_file(&self.path);
-        std::fs::rename(&tmp, &self.path)
+        replace_snapshot(&tmp, &self.path)
     }
 
     pub fn path(&self) -> &Path {
@@ -544,6 +542,40 @@ fn write_record(f: &mut std::fs::File, record: &[u8]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Replace the published image after the complete temporary image has been
+/// synced. Unix `rename` replaces an existing destination atomically when both
+/// paths are on the same filesystem (the temp path is derived from the
+/// destination, so that condition holds), and syncing the parent directory
+/// makes the rename durable across a metadata-only crash.
+///
+/// The standard library does not expose an atomic replace primitive for
+/// Windows. Keep the existing remove-then-rename fallback there rather than
+/// introducing unreviewed platform FFI; callers must treat a Windows crash in
+/// this narrow interval as recoverable only when the complete `.tmp` image is
+/// still present.
+fn replace_snapshot(tmp: &Path, path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::rename(tmp, path)?;
+        return sync_parent_directory(path);
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::remove_file(path);
+        std::fs::rename(tmp, path)
+    }
+}
+
+#[cfg(unix)]
+fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|candidate| !candidate.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    std::fs::File::open(parent)?.sync_all()
+}
+
 fn encode_record(m: &BundleMeta, body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(80 + body.len());
     out.extend_from_slice(&m.id.0);
@@ -677,6 +709,28 @@ mod tests {
         };
         let encoded = encode_record(&meta, b"hello");
         assert!(decode_record(&encoded).is_none());
+    }
+
+    #[test]
+    fn replacement_swaps_complete_image() {
+        let dir = std::env::temp_dir().join(format!(
+            "mmp-store-atomic-replace-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("snapshot.mmp");
+        let tmp = path.with_extension("tmp");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&path, b"old").unwrap();
+        std::fs::write(&tmp, b"new").unwrap();
+
+        replace_snapshot(&tmp, &path).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert!(!tmp.exists());
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_dir(dir);
     }
 
     #[test]
