@@ -2632,3 +2632,22 @@ cost limits, records marginal gain/cost decisions, and explicitly states that
 the result is a local planning heuristic rather than a global copy-budget
 security primitive. Three focused tests and strict Clippy pass. It does not
 change `mmp-router`, wire frames, admission, or default behavior.
+
+## 2026-08-09 continuation: integrated verification record
+
+After integrating `0637a67`, `49b9a41`, and this handoff update, the
+orchestrator reran the affected gates from a shared worktree:
+
+- `cargo test -p mmp-node -p mmp-ffi --all-targets -- --test-threads=1`:
+  108 node tests and 25 FFI tests passed.
+- `cargo test -p mmp-sim --all-targets -- --test-threads=1`: 36 passed and
+  6 intentionally ignored, including the new three EWS tests.
+- Strict Clippy with `-D warnings` passed for `mmp-node`, `mmp-ffi`, and
+  `mmp-sim` with all targets/features.
+- Python script suite: 144 passed, 10 expected skips.
+- `check_spec_status.py --repo ../..`: passed.
+- `git diff --check`: clean; no path under `specification/` changed.
+
+The worktree still contains the previously identified user-owned dirty docs,
+the quarantined `mmp-types` candidate files, and audit temporary directories;
+none were staged by this cycle.
