@@ -505,6 +505,20 @@ target check passes, and layer-check remains clean. No file under
 
 ### Orchestration continuation VI (2026-08-09)
 
+The roadmap was reconciled against the current implementation evidence. Its
+protocol-completeness section now distinguishes shipped class-4 symbol
+transfer, receive-side `BLOB_REQ`/`BLOB_HAVE` serving, friendship buffering,
+advisory proxy summaries, and generalized identity revocation from their still
+deferred origin-targeted request scheduling, offline patron reconciliation,
+and native keystore persistence. The 1k-node entry now records the existing
+measurement scenario and the remaining clustered-mobility qualification. This
+is a documentation correction only; no wire or specification file changed.
+
+The own-origin storage transaction handoff remains the authoritative blocker:
+capacity rejection cannot safely be threaded through `store_own` until
+reserve/commit or ratchet snapshot/restore semantics are approved and tested
+for pairwise, group, receipt, claim, announcement, and file-symbol producers.
+
 The follow-up gate-preparation pass closed two reproducibility mismatches and
 one deliberately preserved transactional blocker. `0514fed` extends the
 embedded CI dependency-closure check to include `mmp-store` under
