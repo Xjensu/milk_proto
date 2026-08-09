@@ -62,8 +62,8 @@ use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS,
     FILE_MAX, FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA,
     LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE, MAX_PATRONS, MIME_MAX,
-    NAME_MAX, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD, RS_DATA_K,
-    RS_TOTAL_N, STRIPE_DATA_BYTES,
+    NAME_MAX, NICKNAME_MAX, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD,
+    RS_DATA_K, RS_TOTAL_N, STRIPE_DATA_BYTES,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
@@ -424,7 +424,8 @@ pub enum SendError {
     /// receipt; emitting a direct bundle now could arrive before the peer has
     /// established its conversation root under DTN reordering.
     ConversationPending,
-    /// Body exceeds MAX_BUNDLE after framing.
+    /// A payload or field-specific value exceeds its applicable wire-size cap
+    /// (including `MAX_BUNDLE` after framing).
     TooLarge,
     /// Announcement priority is outside the wire-defined range `0..=3`.
     InvalidPriority,
@@ -949,8 +950,28 @@ impl Node {
 
     /// Publish our nickname as a profile claim (doc 06 §4) — `seq` must
     /// increase on each call for the LWW claim-merge rule to adopt it.
+    ///
+    /// This legacy unit-returning API is retained for source compatibility.
+    /// Invalid names are rejected before signing or gossiping; callers that
+    /// need to distinguish rejection from success should use
+    /// [`Node::try_set_nickname`].
     pub fn set_nickname(&mut self, name: &str, seq: u32) {
+        let _ = self.try_set_nickname(name, seq);
+    }
+
+    /// Fallible nickname setter using the existing node send-error model.
+    ///
+    /// The nickname cap is measured in UTF-8 bytes, as required by the claim
+    /// wire format. Validation happens before claim construction, signing,
+    /// local adoption, or gossip storage, so rejected input has no side
+    /// effects. The legacy [`Node::set_nickname`] method delegates here and
+    /// preserves its unit-returning signature.
+    pub fn try_set_nickname(&mut self, name: &str, seq: u32) -> Result<(), SendError> {
+        if name.len() > NICKNAME_MAX {
+            return Err(SendError::TooLarge);
+        }
         self.publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec());
+        Ok(())
     }
 
     /// Publish a self-revocation claim (field `0x09`, handbook §4.6) —

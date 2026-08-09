@@ -12,7 +12,7 @@ use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
-    OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
+    NICKNAME_MAX, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
@@ -23,6 +23,46 @@ use crate::{DeliveryState, Event, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
+}
+
+#[test]
+fn nickname_length_is_checked_before_claim_or_gossip_side_effects() {
+    let mut n = node(246);
+    let before_claims = n.own_claims();
+    let before_store_len = n.store_len();
+    let oversized = "x".repeat(NICKNAME_MAX + 1);
+
+    assert_eq!(n.try_set_nickname(&oversized, 2), Err(SendError::TooLarge));
+    assert_eq!(n.own_claims(), before_claims);
+    assert_eq!(n.store_len(), before_store_len);
+
+    // The pre-existing unit-returning API remains source-compatible and is
+    // equally fail-closed when a caller cannot consume a Result.
+    n.set_nickname(&oversized, 2);
+    assert_eq!(n.own_claims(), before_claims);
+    assert_eq!(n.store_len(), before_store_len);
+}
+
+#[test]
+fn nickname_at_byte_cap_is_signed_and_adopted() {
+    let mut n = node(247);
+    let name = "é".repeat(NICKNAME_MAX / "é".len());
+    assert_eq!(name.len(), NICKNAME_MAX);
+
+    assert_eq!(n.try_set_nickname(&name, 2), Ok(()));
+    assert_eq!(n.nickname_of(&n.node_id()).as_deref(), Some(name.as_str()));
+    assert_eq!(
+        n.own_claims()
+            .into_iter()
+            .find(|claim| claim.field == mmp_types::claim::field::NICKNAME)
+            .map(|claim| claim.body),
+        Some(name.into_bytes())
+    );
+
+    // The legacy API still publishes valid input after the additive checked
+    // method has been used.
+    n.set_nickname("legacy", 3);
+    assert_eq!(n.nickname_of(&n.node_id()).as_deref(), Some("legacy"));
 }
 
 #[test]
