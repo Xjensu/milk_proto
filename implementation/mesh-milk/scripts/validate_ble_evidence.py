@@ -33,7 +33,7 @@ Manifest shape (``mmp-ble-evidence-v1``)::
          "log": "alice.log", "markers": ["advertising", "MessageReceived"]},
         {"name": "bob", "role": "central", "os": "...",
          "kernel": "...", "adapter": "...", "seed_fingerprint": "...",
-         "command": "cargo run --release -p mmp-cli -- connect ...",
+         "command": "cargo run --release -p mmp-cli -- send ...",
          "log": "bob.log", "markers": ["Established", "Delivered"]}
       ],
       "stores": {"peripheral_inspect": "alice.inspect",
@@ -92,6 +92,8 @@ REQUIRED_LOG_MARKERS = {
     "peripheral": ("advertising", "Established", "MessageReceived"),
     "central": ("dialed", "Established", "Delivered"),
 }
+REQUIRED_COMMAND_SUBCOMMAND = {"peripheral": "listen", "central": "send"}
+CLI_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_-])mmp-cli(?:\.exe)?(?![A-Za-z0-9_-])", re.IGNORECASE)
 
 
 def _is_mapping(value: object) -> bool:
@@ -100,6 +102,30 @@ def _is_mapping(value: object) -> bool:
 
 def _text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
+
+
+def _command_matches_role(command: str, role: str) -> bool:
+    """Require the reference CLI and the role's evidence-producing command.
+
+    Unix paths, ``mmp-cli.exe``, and ``cargo run -p mmp-cli -- ...`` are all
+    accepted. The central bootstrap ``connect`` command is intentionally not
+    accepted: the manifest command must describe the later ``send`` process
+    whose log contains the delivery marker.
+    """
+
+    if not CLI_TOKEN_RE.search(command):
+        return False
+    subcommand = REQUIRED_COMMAND_SUBCOMMAND.get(role)
+    if subcommand is None:
+        return False
+    escaped = re.escape(subcommand)
+    # Accept either a directly invoked binary or the repository's documented
+    # ``cargo run -p mmp-cli -- <subcommand>`` form. Requiring the subcommand
+    # immediately after the executable/``--`` avoids a free-form message or
+    # store path containing the word ``send`` from satisfying the gate.
+    direct = rf"(?<![A-Za-z0-9_-])mmp-cli(?:\.exe)?\s+{escaped}(?=\s|$)"
+    cargo = rf"(?<![A-Za-z0-9_-])-p\s+mmp-cli\s+--\s+{escaped}(?=\s|$)"
+    return re.search(f"(?:{direct})|(?:{cargo})", command, re.IGNORECASE) is not None
 
 
 def _read_utf8_bounded(path: Path, label: str, limit: int, errors: list[str]) -> str | None:
@@ -250,6 +276,16 @@ def validate_manifest(path: Path) -> list[str]:
         for key in ("os", "kernel", "adapter", "seed_fingerprint", "command"):
             if not _text(host.get(key)):
                 errors.append(f"{label}.{key} must be recorded")
+        command = host.get("command")
+        if (
+            _text(command)
+            and role in REQUIRED_COMMAND_SUBCOMMAND
+            and not _command_matches_role(command, role)
+        ):
+            errors.append(
+                f"{label}.command must invoke mmp-cli {REQUIRED_COMMAND_SUBCOMMAND[role]} "
+                f"for the {role} role"
+            )
         fingerprint = host.get("seed_fingerprint")
         if _text(fingerprint):
             normalized_fingerprint = fingerprint.strip().casefold()

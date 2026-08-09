@@ -44,7 +44,7 @@ class BleEvidenceTests(unittest.TestCase):
                     "kernel": "6.8.0",
                     "adapter": "adapter-b",
                     "seed_fingerprint": "sha256:bbbbbbbb",
-                    "command": "cargo run --release -p mmp-cli -- connect /tmp/bob.seed --store /tmp/mmp-bob.store",
+                    "command": "cargo run --release -p mmp-cli -- send /tmp/bob.seed 0123456789abcdef0123456789abcdef --store /tmp/mmp-bob.store",
                     "log": "central.log",
                     "markers": ["dialed", "Established", "Delivered"],
                 },
@@ -108,6 +108,41 @@ class BleEvidenceTests(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             errors = validate_manifest(path)
             self.assertIn("hosts[1].command must be recorded", errors)
+
+    def test_host_command_must_match_the_recorded_role(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][0]["command"] = "cargo run --release -p mmp-cli -- connect /tmp/alice.seed"
+            data["hosts"][1]["command"] = "cargo run --release -p mmp-cli -- listen /tmp/bob.seed"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[0].command must invoke mmp-cli listen for the peripheral role",
+                errors,
+            )
+            self.assertIn(
+                "hosts[1].command must invoke mmp-cli send for the central role",
+                errors,
+            )
+
+            # A bootstrap command must not pass merely because a free-form
+            # argument contains the delivery subcommand word.
+            data["hosts"][1]["command"] = (
+                "cargo run --release -p mmp-cli -- connect /tmp/bob.seed "
+                "--store /tmp/mmp-bob.store 'send'"
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[1].command must invoke mmp-cli send for the central role",
+                errors,
+            )
 
     def test_unavailable_radio_value_requires_reason(self) -> None:
         import sys
