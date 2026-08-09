@@ -386,6 +386,15 @@ mod tests {
         assert_eq!(restored.restore_secret_state(&malformed), Err(SecretStateError::Invalid));
         assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
 
+        // A structurally valid aggregate must still bind every conversation
+        // map key to the local identity and its peer.  The raw aggregate seam
+        // is authenticated by its caller, but this local consistency fence
+        // prevents a misbound ratchet from entering live state.
+        let mut misbound = snapshot.to_vec();
+        misbound[HEADER_LEN] ^= 1;
+        assert_eq!(restored.restore_secret_state(&misbound), Err(SecretStateError::Invalid));
+        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+
         restored.on_tal_event(mmp_tal::TalEvent::LinkUp {
             link: 7,
             initiator: true,

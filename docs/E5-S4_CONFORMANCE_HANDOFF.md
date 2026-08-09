@@ -2056,3 +2056,22 @@ should still define graceful application recovery and provider migration.
 if the final index arrives before an earlier message from the bounded reorder
 window, that already-derived skipped key remains decryptable. The regression
 drives `MAX-1`, then `MAX`, then releases the stored `MAX-2` key.
+
+## 2026-08-09 continuation: raw secret-state identity binding
+
+The Rust-internal aggregate restore seam now applies the same identity-to-
+conversation binding already enforced by the provider-backed vault. Before
+moving decoded ratchets, prekeys, or delivery state into a live `Node`,
+`restore_secret_state` recomputes `conversation_id(local_identity, peer_key)`
+for every decoded conversation and rejects any mismatched map key. The
+restore remains atomic: a structurally valid but misbound aggregate leaves the
+target node unchanged. This is a local consistency fence, not a keystore
+implementation and not a new wire rule.
+
+The regression mutates only the first encoded conversation key while retaining
+valid aggregate framing and asserts `SecretStateError::Invalid` plus byte-for-
+byte preservation of the pre-restore snapshot. The focused `mmp-node` suite
+passes 87 tests and the provider-backed `open_record` path continues to retain
+its independent context and identity checks. Native Android Keystore, iOS
+Keychain, DPAPI, crash injection, and platform lifecycle evidence remain
+external gates.

@@ -799,6 +799,19 @@ impl Node {
             return Err(secret_state::SecretStateError::Busy);
         }
         let state = secret_state::decode(bytes)?;
+        // The unsealed aggregate seam is Rust-internal, but keep the same
+        // identity-to-conversation binding enforced by the provider vault.
+        // Without this check, an authenticated-but-misbound state could place
+        // a different peer's ratchet under a valid map key and cause later
+        // sends or receives to fail closed in confusing ways. Reject before
+        // moving any decoded secrets into the live node.
+        if state
+            .convs
+            .iter()
+            .any(|(id, conv)| conversation_id(&self.core.public, &conv.peer) != *id)
+        {
+            return Err(secret_state::SecretStateError::Invalid);
+        }
         self.core.convs = state.convs;
         self.core.established_convs = state.established_convs;
         self.core.prekeys = state.prekeys;
