@@ -513,4 +513,36 @@ mod tests {
         assert!(recon.resource_exhausted());
         assert!(recon.missing.len() <= MAX_MISSING_IDS);
     }
+
+    #[test]
+    fn d3_transcript_keeps_one_wire_domain_without_priority_partition() {
+        // The frozen rev-A executable behavior carries every relay-spray item
+        // (including class-5 announcements) under D3.  Declared priority is
+        // intentionally not a second wire key until the protocol erratum
+        // defines one.  This test locks the safe boundary: every RBSR frame
+        // produced by a D3 reconciler keeps base domain 3, with only the
+        // existing reply flag allowed to vary.
+        let mut source = FixedIds { ids: (0..40).map(id_with_tail).collect() };
+        let mut recon = Reconciler::new(3);
+        let init = recon.init_frame(&mut source);
+        assert_eq!(recon_frame_domain(&init), Some(3));
+
+        // Force the split path so the assertion covers generated RECON_RANGE
+        // children rather than only the initial full-range frame.
+        let mismatched = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 };
+        let replies = recon.on_range(&mismatched, false, &mut source);
+        assert!(!replies.is_empty());
+        assert!(replies.iter().all(|frame| {
+            recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)
+        }));
+    }
+
+    fn recon_frame_domain(frame: &Frame) -> Option<u8> {
+        match frame {
+            Frame::ReconInit { domain, .. }
+            | Frame::ReconRange { domain, .. }
+            | Frame::ReconIds { domain, .. } => Some(*domain),
+            _ => None,
+        }
+    }
 }
