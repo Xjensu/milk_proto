@@ -261,6 +261,20 @@ RustSec database (HTTP 403), and cargo-deny is not installed; those checks
 remain remote-CI evidence rather than local claims. No specification,
 `mmp-types`, or pre-existing dirty path was modified.
 
+The latest orchestration cycle added three more bounded implementation gates.
+`750c807` fences `mmp-node-embassy` behind `default-features = false`, removes
+the filesystem-backed std-only store from the empty Embassy shell, and makes
+the `thumbv7em-none-eabihf` dependency closure genuinely no-std while clearly
+leaving executor, TAL, flash-store, and Noise/session wiring as future work.
+`d6e81f8` adds a host-side mobile-drive regression for callback injection and
+drain ordering; the audit also records that `pollClose`, `closeActionsDropped`,
+and `eventQueueDropped` are not yet modeled by the Kotlin/Swift host adapters.
+`92f0ec8` independently recomputes the committed RBSR fingerprint vector from
+raw IDs, XOR fold, count encoding, and BLAKE3 without calling production
+helpers. It improves transcript evidence but does not define priority
+partitioning or D3 admission weighting. No specification, `mmp-types`, or
+pre-existing dirty path was modified.
+
 The following gate cycle added three more scoped safeguards. `567e719` proves
 that a valid sealed secret snapshot from one node cannot be replayed into a
 different identity/node, and that the failed restore leaves the target state
@@ -278,14 +292,14 @@ sanitizer job remains the authoritative fuzz-build/run gate. No specification,
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
-workspace test matrix passes, including 29 CLI/conformance tests, 63 core unit
+workspace test matrix passes, including 30 CLI/conformance tests, 63 core unit
 tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
 79 node tests, 24 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
 bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 38
 BLE adapter tests, 43 type/codec tests, and three additional 3-test conformance
 integration suites. Workspace Clippy with all targets, features, and
-`-D warnings` also passes. The Python harness reports 60 tests,
+`-D warnings` also passes. The Python harness reports 61 tests,
 compileall is clean, the deterministic fuzz recipe validates 44 seeds,
 layer-check passes, and the CLI demo observes both receiver delivery and
 sender receipt completion.
@@ -298,8 +312,8 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 401 tests (395 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 60 tests (three platform-specific skips), while the
+listed 402 tests (396 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 61 tests (three platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
