@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -117,6 +118,40 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             CORPUS._hex("abc", source="test")
         with self.assertRaises(ValueError):
             CORPUS._hex("zz", source="test")
+
+    def test_hostile_vector_file_is_bounded_before_json_parse(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            vectors = Path(root)
+            oversized = vectors / "beacon.json"
+            oversized.write_bytes(b"{" + b"x" * CORPUS.MAX_VECTOR_FILE_BYTES + b"}")
+            with self.assertRaisesRegex(ValueError, "exceeds maximum size"):
+                CORPUS._load_json(vectors, "beacon.json")
+
+    def test_hostile_wire_and_entry_counts_are_bounded(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exceeds maximum seed size"):
+            CORPUS._hex("00" * (CORPUS.MAX_SEED_BYTES + 1), source="test")
+
+        with tempfile.TemporaryDirectory() as root:
+            vectors = Path(root)
+            vectors.joinpath("beacon.json").write_text(
+                json.dumps({"wire": "00"}), encoding="utf-8"
+            )
+            vectors.joinpath("envelope.json").write_text(
+                json.dumps({"wire": "00"}), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "too many entries"):
+                # The remaining required vector files are intentionally absent:
+                # this check must reject the oversized frame list first.
+                vectors.joinpath("frames.json").write_text(
+                    json.dumps({
+                        "frames": [
+                            {"name": str(index), "wire": "00"}
+                            for index in range(CORPUS.MAX_VECTOR_ENTRIES + 1)
+                        ]
+                    }),
+                    encoding="utf-8",
+                )
+                CORPUS.build_seed_sets(vectors)
 
 
 if __name__ == "__main__":

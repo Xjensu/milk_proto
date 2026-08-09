@@ -20,6 +20,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_VECTORS = SCRIPT_DIR.parent / "vectors"
 DEFAULT_OUTPUT = SCRIPT_DIR / "corpus"
 GENERATED_PREFIX = "mmp-seed-"
+# The vectors are repository inputs, but ``--vectors`` also permits a caller
+# supplied directory.  Keep malformed or hostile inputs from turning the
+# deterministic recipe into an unbounded JSON/hex allocator.  The current
+# largest vector file is about 23 KiB and the largest generated wire is 4,132
+# bytes, so these limits leave ample room for legitimate future fixtures while
+# matching the CI fuzz run's ``-max_len=8192`` bound.
+MAX_VECTOR_FILE_BYTES = 1 << 20
+MAX_VECTOR_ENTRIES = 512
+MAX_SEED_BYTES = 8192
 
 
 @dataclass(frozen=True)
@@ -36,9 +45,19 @@ class Seed:
 
 def _load_json(vectors: Path, filename: str) -> dict[str, Any]:
     path = vectors / filename
+    if path.is_symlink():
+        raise ValueError(f"vector {path} must not be a symlink")
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ValueError(f"cannot inspect vector {path}: {exc}") from exc
+    if size > MAX_VECTOR_FILE_BYTES:
+        raise ValueError(
+            f"vector {path} exceeds maximum size of {MAX_VECTOR_FILE_BYTES} bytes"
+        )
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot load vector {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ValueError(f"vector {path} must contain a JSON object")
@@ -48,6 +67,8 @@ def _load_json(vectors: Path, filename: str) -> dict[str, Any]:
 def _hex(value: Any, *, source: str) -> bytes:
     if not isinstance(value, str) or len(value) % 2:
         raise ValueError(f"{source} must be an even-length hexadecimal string")
+    if len(value) // 2 > MAX_SEED_BYTES:
+        raise ValueError(f"{source} exceeds maximum seed size of {MAX_SEED_BYTES} bytes")
     try:
         return bytes.fromhex(value)
     except ValueError as exc:
@@ -79,21 +100,35 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
     frames = frames_obj.get("frames")
     if not isinstance(frames, list) or not frames:
         raise ValueError("frames.json.frames must be a non-empty array")
+    if len(frames) > MAX_VECTOR_ENTRIES:
+        raise ValueError(f"frames.json.frames has too many entries (maximum {MAX_VECTOR_ENTRIES})")
 
     oversize_obj = _load_json(vectors, "envelope_oversize_negative.json")
     oversize = oversize_obj.get("cases")
     if not isinstance(oversize, list) or not oversize:
         raise ValueError("envelope_oversize_negative.json.cases must be a non-empty array")
+    if len(oversize) > MAX_VECTOR_ENTRIES:
+        raise ValueError(
+            "envelope_oversize_negative.json.cases has too many entries "
+            f"(maximum {MAX_VECTOR_ENTRIES})"
+        )
 
     bundle_obj = _load_json(vectors, "bundles.json")
     bundles = bundle_obj.get("bundles")
     if not isinstance(bundles, list) or not bundles:
         raise ValueError("bundles.json.bundles must be a non-empty array")
+    if len(bundles) > MAX_VECTOR_ENTRIES:
+        raise ValueError(f"bundles.json.bundles has too many entries (maximum {MAX_VECTOR_ENTRIES})")
 
     malformed_obj = _load_json(vectors, "bundle_tlv_negative.json")
     malformed = malformed_obj.get("cases")
     if not isinstance(malformed, list) or not malformed:
         raise ValueError("bundle_tlv_negative.json.cases must be a non-empty array")
+    if len(malformed) > MAX_VECTOR_ENTRIES:
+        raise ValueError(
+            "bundle_tlv_negative.json.cases has too many entries "
+            f"(maximum {MAX_VECTOR_ENTRIES})"
+        )
 
     result: dict[str, list[Seed]] = {
         "fuzz_beacon": [],
