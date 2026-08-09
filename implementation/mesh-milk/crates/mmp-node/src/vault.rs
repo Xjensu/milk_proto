@@ -227,6 +227,12 @@ pub(crate) fn restore_from_vault(
     // a newer generation between provider calls; checking the latest floor
     // fences the stale record instead of accepting it under an older floor.
     let generation_floor = vault.generation_floor()?;
+    // Validate the bounded identity/node/conversation context before asking a
+    // provider to unwrap any key material.  The provider receives this context
+    // as an authenticated lookup input; malformed or cross-node records must
+    // not reach a native keystore boundary even if the provider would return a
+    // key for the opaque handle.
+    parse_context(&record.context, node_public, node_id)?;
     let dek = vault.unwrap_dek(&record.context, &record.wrapped_dek)?;
     let now_ms = vault.trusted_now_ms()?;
     let (generation, state) = open_record(
@@ -300,13 +306,14 @@ mod tests {
         high_water: u64,
         trusted_now_ms: u64,
         record: Option<SealedRecord>,
+        unwrap_calls: usize,
     }
 
     impl ReferenceSnapshotVault {
         /// This is a test-only provider. Its wrapped DEK is deliberately raw
         /// test material; no production or FFI path may use this type.
         fn new() -> Self {
-            Self { available: true, high_water: 0, trusted_now_ms: 100_000, record: None }
+            Self { available: true, high_water: 0, trusted_now_ms: 100_000, record: None, unwrap_calls: 0 }
         }
 
         fn set_available(&mut self, available: bool) {
@@ -375,6 +382,7 @@ mod tests {
             if !self.available {
                 return Err(VaultError::Unavailable);
             }
+            self.unwrap_calls += 1;
             let key: [u8; 32] = wrapped_dek.try_into().map_err(|_| VaultError::Invalid)?;
             Ok(Zeroizing::new(key))
         }
@@ -714,6 +722,24 @@ mod tests {
             Err(VaultError::Generation)
         ));
         assert_eq!(vault.generation_floor().unwrap(), 2);
+    }
+
+    #[test]
+    fn restore_rejects_invalid_context_before_provider_unwrap() {
+        let node = Node::new([117; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(28);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+
+        let mut record = vault.record.clone().expect("sealed fixture");
+        record.context[0] ^= 1;
+        vault.record = Some(record);
+
+        assert!(matches!(
+            restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
+            Err(VaultError::Invalid)
+        ));
+        assert_eq!(vault.unwrap_calls, 0, "invalid context must not reach provider key unwrap");
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
