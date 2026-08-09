@@ -205,6 +205,10 @@ jobs:
       # Keep the generated Android/iOS call surface aligned with #[uniffi::export]
       # MmpNode methods; this is a source-level smoke check, not a hardware test.
       - run: python scripts/check_mobile_api_surface.py bindings/kotlin bindings/swift
+      # Keep the native iOS restoration, timing, queue, and back-pressure contract
+      # aligned across both integration guides. This is source-level only; it does
+      # not replace Swift/CoreBluetooth compilation or physical-device evidence.
+      - run: python scripts/check_ios_lifecycle_contract.py
       - run: python -m unittest discover -s scripts/tests -p 'test_*.py'
       # A single artifact covering both language outputs; download once,
       # both `bindings/kotlin/` and `bindings/swift/` subtrees included.

@@ -165,6 +165,44 @@ class IOSArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("duplicate slice: ios-arm64" in item for item in violations))
 
+    def test_case_insensitive_slice_identifier_collision_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            plist_path = xcframework / "Info.plist"
+            with plist_path.open("rb") as stream:
+                plist = plistlib.load(stream)
+            collision = dict(plist["AvailableLibraries"][0])
+            collision["LibraryIdentifier"] = "IOS-ARM64"
+            plist["AvailableLibraries"].append(collision)
+            with plist_path.open("wb") as stream:
+                plistlib.dump(plist, stream)
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(
+                any("case-insensitive slice identifier collision" in item for item in violations)
+            )
+
+    def test_noncanonical_library_path_casing_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            plist_path = xcframework / "Info.plist"
+            with plist_path.open("rb") as stream:
+                plist = plistlib.load(stream)
+            plist["AvailableLibraries"][0]["LibraryPath"] = "LIBMMP_FFI.A"
+            with plist_path.open("wb") as stream:
+                plistlib.dump(plist, stream)
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            # On a case-sensitive host the path is simply absent; on a
+            # case-insensitive host the canonical-casing fence is the proof.
+            self.assertTrue(
+                any(
+                    "static library is missing" in item
+                    or "non-canonical path casing" in item
+                    for item in violations
+                )
+            )
+
     def test_unexpected_slice_identifier_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             xcframework, bindings = _write_fixture(Path(root))

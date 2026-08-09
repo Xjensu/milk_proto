@@ -68,6 +68,15 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("if (!accepted) return", self.source)
         self.assertIn("notifyFragment", self.source)
 
+    def test_mtu_failure_cannot_drop_a_polled_frame(self) -> None:
+        """A transient adapter MTU failure must leave the envelope retryable."""
+
+        self.assertIn("var fragmentSize: Int? = null", self.source)
+        retained = self.source.index("pending.addLast(pendingFrame)")
+        lookup = self.source.index("gatt.mtu(frame.link)")
+        self.assertLess(retained, lookup)
+        self.assertIn("if (frame.fragmentSize == null)", self.source)
+
     def test_transport_close_actions_are_drained_before_send(self) -> None:
         self.assertIn("fun pollClose(): Long?", self.source)
         self.assertIn("fun close(link: Long)", self.source)

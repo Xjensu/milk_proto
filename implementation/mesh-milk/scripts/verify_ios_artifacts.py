@@ -78,6 +78,28 @@ def _safe_slice_path(
             if current.is_symlink():
                 violations.append(f"{field} must not traverse a symbolic link: {relative}")
                 return None
+            # XCFrameworks are consumed on both case-sensitive and
+            # case-insensitive filesystems.  A metadata path whose spelling
+            # differs from the packaged entry can pass on macOS/Windows and
+            # then select a different file (or fail) on Linux.  Reject it at
+            # the artifact boundary instead of relying on host filesystem
+            # semantics.
+            if current.exists():
+                try:
+                    matching_entries = [
+                        entry
+                        for entry in current.parent.iterdir()
+                        if entry.name.casefold() == component.casefold()
+                    ]
+                except OSError as exc:
+                    violations.append(f"{field} cannot inspect path casing: {relative} ({exc})")
+                    return None
+                if len(matching_entries) == 1 and matching_entries[0].name != component:
+                    violations.append(
+                        f"{field} has non-canonical path casing: {relative} "
+                        f"(filesystem entry is {matching_entries[0].name!r})"
+                    )
+                    return None
 
         root_resolved = slice_root.resolve(strict=True)
         candidate_resolved = candidate.resolve(strict=False)
@@ -236,6 +258,7 @@ def verify_artifacts(xcframework: Path, swift_bindings: Path) -> list[str]:
     else:
         libraries = _verify_plist(xcframework, violations)
         by_id: dict[str, dict[str, Any]] = {}
+        by_id_casefold: dict[str, str] = {}
         for item in libraries:
             identifier = item.get("LibraryIdentifier")
             if not isinstance(identifier, str):
@@ -243,6 +266,15 @@ def verify_artifacts(xcframework: Path, swift_bindings: Path) -> list[str]:
             if identifier in by_id:
                 violations.append(f"Info.plist contains duplicate slice: {identifier}")
                 continue
+            folded = identifier.casefold()
+            prior = by_id_casefold.get(folded)
+            if prior is not None:
+                violations.append(
+                    "Info.plist contains case-insensitive slice identifier collision: "
+                    f"{prior} vs {identifier}"
+                )
+                continue
+            by_id_casefold[folded] = identifier
             by_id[identifier] = item
         for identifier in sorted(set(by_id) - set(EXPECTED_SLICES)):
             violations.append(f"Info.plist contains unexpected slice: {identifier}")

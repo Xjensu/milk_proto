@@ -93,7 +93,10 @@ public class MeshDrive(
     private data class PendingFrame(
         val link: Long,
         val bytes: ByteArray,
-        val fragmentSize: Int,
+        // MTU lookup is a platform callback and may fail transiently while
+        // the link is still negotiating.  Retain the frame before asking for
+        // the MTU so a retry cannot lose a protocol envelope.
+        var fragmentSize: Int? = null,
         var offset: Int = 0,
     )
 
@@ -260,19 +263,26 @@ public class MeshDrive(
         while (true) {
             if (pending.isEmpty()) {
                 val next = node.pollSend() ?: return
-                val mtu = gatt.mtu(next.link)
-                require(mtu >= MIN_ATT_MTU) { "invalid ATT MTU $mtu for link ${next.link}" }
                 val pendingFrame = PendingFrame(
                     link = next.link,
                     bytes = next.bytes.copyOf(),
-                    fragmentSize = mtu - ATT_HEADER_BYTES,
                 )
                 if (pendingFrame.bytes.isEmpty()) continue
                 pending.addLast(pendingFrame)
             }
             val frame = pending.peekFirst() ?: return
 
-            val end = minOf(frame.offset + frame.fragmentSize, frame.bytes.size)
+            if (frame.fragmentSize == null) {
+                // Keep the frame at the head of the queue while the adapter
+                // reports a transient MTU error.  A later pump can retry the
+                // lookup without asking the Rust node for the envelope again.
+                val mtu = gatt.mtu(frame.link)
+                require(mtu >= MIN_ATT_MTU) { "invalid ATT MTU $mtu for link ${frame.link}" }
+                frame.fragmentSize = mtu - ATT_HEADER_BYTES
+            }
+            val fragmentSize = frame.fragmentSize ?: return
+
+            val end = minOf(frame.offset + fragmentSize, frame.bytes.size)
             val accepted = gatt.notifyFragment(
                 frame.link,
                 frame.bytes.copyOfRange(frame.offset, end),
