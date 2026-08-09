@@ -243,6 +243,22 @@ impl Reconciler {
             self.resolve_exact(range);
             return Vec::new();
         }
+        // A terminal ID-list response is a distinct obligation: the peer
+        // must answer the list with its own list or a split range.  A
+        // non-reply RECON_RANGE carrying the exact terminal descriptor is
+        // therefore malformed.  Treating it as an ordinary matching range
+        // would let an authenticated peer retire the terminal obligation via
+        // `note_range_response`, advancing the domain without ever proving
+        // the peer's set.  Fail closed; this is state validation only and
+        // does not add a wire field or alter valid transcripts.
+        if self
+            .pending
+            .get(&Self::key(range))
+            .is_some_and(|state| state.await_terminal)
+        {
+            self.exhausted = true;
+            return Vec::new();
+        }
         let has_obligation = self.containing_key(&range.lo, &range.hi).is_some();
         if our_fp == range.fp && ids.len() as u32 == range.count {
             self.note_range_response(&range.lo, &range.hi);
@@ -543,6 +559,28 @@ mod tests {
         let terminal = Range { lo: id, hi: id, count: 1, fp: fingerprint(&[id]) };
         assert!(recon.on_range(&terminal, true, &mut source).is_empty());
         assert_eq!(recon.open, 2, "a range echo must not shortcut RECON_IDS completion");
+    }
+
+    #[test]
+    fn terminal_list_obligation_rejects_matching_non_reply_range() {
+        let id = id_with_tail(8);
+        let mut source = FixedIds { ids: vec![id] };
+        let mut recon = Reconciler::new(3);
+        let _ = recon.init_frame(&mut source);
+
+        // This creates the terminal-list child obligation for [id, id].
+        let child = Range { lo: id, hi: id, count: 0, fp: 0 };
+        let frames = recon.on_range(&child, false, &mut source);
+        assert!(matches!(frames.first(), Some(Frame::ReconIds { .. })));
+        assert_eq!(recon.open, 2);
+
+        // A non-reply range with the exact terminal descriptor is not the
+        // required peer ID-list/split response.  It must fail closed rather
+        // than retiring the obligation and allowing domain advancement.
+        let matching = Range { lo: id, hi: id, count: 1, fp: fingerprint(&[id]) };
+        assert!(recon.on_range(&matching, false, &mut source).is_empty());
+        assert!(recon.resource_exhausted());
+        assert_eq!(recon.open, 2, "malformed range must not retire terminal state");
     }
 
     #[test]
