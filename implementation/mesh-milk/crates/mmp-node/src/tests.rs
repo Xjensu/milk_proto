@@ -1451,6 +1451,25 @@ fn network_group_bootstrap_is_bounded() {
 }
 
 #[test]
+fn duplicate_group_snapshot_does_not_replace_existing_state() {
+    let mut source = node(34);
+    let gid = source.create_group();
+    let original = source
+        .all_group_blobs()
+        .into_iter()
+        .find(|blob| blob[..16] == gid.0)
+        .expect("group snapshot");
+
+    let mut duplicate = original.clone();
+    duplicate[16..18].copy_from_slice(&2u16.to_le_bytes());
+
+    let mut restored = node(35);
+    assert!(restored.restore_group(&original));
+    assert!(!restored.restore_group(&duplicate), "duplicate group IDs must fail closed");
+    assert_eq!(restored.all_group_blobs(), vec![original]);
+}
+
+#[test]
 fn non_admin_cannot_invite_into_an_immutable_v1_group() {
     let mut alice = node(21);
     let mut bob = node(22);
@@ -1581,6 +1600,26 @@ fn rejected_group_invite_does_not_mutate_membership() {
         Err(SendError::ConversationPending)
     );
     assert_eq!(alice.group_members(&gid), vec![me]);
+}
+
+#[test]
+fn duplicate_live_group_invite_does_not_accumulate_orset_tags() {
+    let mut alice = node(66);
+    let mut bob = node(67);
+    introduce(&mut alice, &mut bob);
+
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).expect("first invite");
+    let before = alice.core.groups.get(&gid).unwrap().members.state_size();
+
+    alice.group_invite(&gid, &bob.node_id()).expect("duplicate invite is idempotent");
+
+    let group = alice.core.groups.get(&gid).unwrap();
+    assert_eq!(group.members.state_size(), before, "repeated live invites must not grow OR-Set state");
+    let members = group.members.members();
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&alice.node_id()));
+    assert!(members.contains(&bob.node_id()));
 }
 
 #[test]

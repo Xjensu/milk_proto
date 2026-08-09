@@ -1028,7 +1028,14 @@ impl Node {
     /// and claims; the caller should simply skip it, not treat it as fatal.
     pub fn restore_group(&mut self, blob: &[u8]) -> bool {
         let Some(gs) = GroupState::decode(&mut self.core.rng, blob) else { return false };
-        if !self.core.groups.contains_key(&gs.gid) && self.core.groups.len() >= MAX_GROUPS {
+        // The snapshot format carries one record per group.  Do not let a
+        // duplicate GroupID replace an already-restored membership/epoch or
+        // mint another fresh local sender key: an append-only or stale host
+        // record must fail closed rather than roll back live group state.
+        if self.core.groups.contains_key(&gs.gid) {
+            return false;
+        }
+        if self.core.groups.len() >= MAX_GROUPS {
             return false;
         }
         self.core.groups.insert(gs.gid, gs);
@@ -1189,7 +1196,15 @@ impl Node {
         // rejected; the key distribution itself does not require membership
         // to have been added yet.
         self.core.send_own_dist(gid, peer)?;
-        self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?.add_member(*peer);
+        let group = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+        // Re-inviting a live member is an idempotent application operation.
+        // Adding another OR-Set tag without an effective membership change
+        // would grow tombstone/tag state forever and make later REMOVE ops
+        // carry every redundant tag.  A removed member is absent here and
+        // still receives a fresh tag, preserving re-invite semantics.
+        if !group.members.contains(peer) {
+            group.add_member(*peer);
+        }
         Ok(())
     }
 
