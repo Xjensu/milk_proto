@@ -98,6 +98,11 @@ The current production plan is amended in this order:
     it must remain an explicitly documented overload condition, not a claim of
     lossless user-event delivery. A future lossless design requires a reviewed
     admission/close contract rather than an arbitrary queue enlargement.
+11. **Sans-IO output backpressure P0:** cap immediate `SessionEngine` wire
+    output as well as node transport queues, including handshake/error paths,
+    and fail closed before a single aggregate input can retain unbounded
+    responses. Preserve the existing pending-frame cap and add an aggregate
+    regression; this is a resource policy, not a wire change.
 
 ### Implemented from the amended plan
 
@@ -131,6 +136,10 @@ FIFO with a sticky Rust/FFI saturation counter. These changes deliberately
 preserve the distinction between protocol delivery state and host callback
 delivery: a saturated callback queue can lose a user-visible event, so hosts
 must poll promptly and treat the counter as an operational failure signal.
+`e8ffcac` closes the corresponding sans-IO `SessionEngine::out` backlog with a
+256-frame bound, handshake coverage, reserved `ERROR+CLOSE` capacity, and a
+fail-closed aggregate-input regression. `26938a0` keeps the generated Kotlin/
+Swift API manifest aligned with the new FFI observability method.
 
 ## Source register
 
