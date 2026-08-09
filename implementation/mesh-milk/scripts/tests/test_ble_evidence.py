@@ -33,6 +33,7 @@ class BleEvidenceTests(unittest.TestCase):
                     "kernel": "6.8.0",
                     "adapter": "adapter-a",
                     "seed_fingerprint": "sha256:aaaaaaaa",
+                    "command": "cargo run --release -p mmp-cli -- listen /tmp/alice.seed --store /tmp/mmp-alice.store",
                     "log": "peripheral.log",
                     "markers": ["advertising", "Established", "MessageReceived"],
                 },
@@ -43,6 +44,7 @@ class BleEvidenceTests(unittest.TestCase):
                     "kernel": "6.8.0",
                     "adapter": "adapter-b",
                     "seed_fingerprint": "sha256:bbbbbbbb",
+                    "command": "cargo run --release -p mmp-cli -- connect /tmp/bob.seed --store /tmp/mmp-bob.store",
                     "log": "central.log",
                     "markers": ["dialed", "Established", "Delivered"],
                 },
@@ -92,6 +94,20 @@ class BleEvidenceTests(unittest.TestCase):
             errors = validate_manifest(path)
             self.assertIn("receipt.returned must be true", errors)
             self.assertIn("reconnect.stable must be true", errors)
+
+    def test_exact_host_command_is_required(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            del data["hosts"][1]["command"]
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn("hosts[1].command must be recorded", errors)
 
     def test_unavailable_radio_value_requires_reason(self) -> None:
         import sys

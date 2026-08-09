@@ -29,9 +29,11 @@ Manifest shape (``mmp-ble-evidence-v1``)::
       "hosts": [
         {"name": "alice", "role": "peripheral", "os": "...",
          "kernel": "...", "adapter": "...", "seed_fingerprint": "...",
+         "command": "cargo run --release -p mmp-cli -- listen ...",
          "log": "alice.log", "markers": ["advertising", "MessageReceived"]},
         {"name": "bob", "role": "central", "os": "...",
          "kernel": "...", "adapter": "...", "seed_fingerprint": "...",
+         "command": "cargo run --release -p mmp-cli -- connect ...",
          "log": "bob.log", "markers": ["Established", "Delivered"]}
       ],
       "stores": {"peripheral_inspect": "alice.inspect",
@@ -211,7 +213,7 @@ def validate_manifest(path: Path) -> list[str]:
             errors.append(f"{label}.role must be peripheral or central")
         else:
             roles.add(role)
-        for key in ("os", "kernel", "adapter", "seed_fingerprint"):
+        for key in ("os", "kernel", "adapter", "seed_fingerprint", "command"):
             if not _text(host.get(key)):
                 errors.append(f"{label}.{key} must be recorded")
         fingerprint = host.get("seed_fingerprint")

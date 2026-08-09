@@ -262,7 +262,8 @@ Attach the following to a test report:
 
 * commit ID and Rust/toolchain versions;
 * platform, kernel/OS, adapter and phone models;
-* exact commands and seed-file fingerprints (never the seeds themselves);
+* exact command lines for each host (record them as `hosts[].command` in the
+  evidence manifest) and seed-file fingerprints (never the seeds themselves);
 * CLI/app logs with timestamps;
 * `inspect` output for both stores;
 * whether the result was in-memory, PC BLE, Android, or iOS;
@@ -285,8 +286,9 @@ python scripts/validate_ble_evidence.py /path/to/evidence.json
 
 The manifest format is `mmp-ble-evidence-v1`. It requires one peripheral and
 one central host with distinct seed fingerprints, a clean commit/toolchain
-record, message delivery and receipt flags, reconnect evidence, and explicit
-MTU/RSSI measurements. If an adapter does not expose MTU or RSSI, the manifest
+record, the exact command line used by each host in `hosts[].command`, message
+delivery and receipt flags, reconnect evidence, and explicit MTU/RSSI
+measurements. If an adapter does not expose MTU or RSSI, the manifest
 must record `available: false` and a reason; an omitted measurement is not
 silently treated as a pass. Each host's declared log markers and each
 store-inspection path are checked, and paths may not escape the manifest
