@@ -42,7 +42,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(
             checks,
             [
-                "cargo check -p mmp-node-embassy -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features"
+                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store --target thumbv7em-none-eabihf --no-default-features"
             ],
         )
 

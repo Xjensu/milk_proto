@@ -104,11 +104,14 @@ jobs:
           targets: thumbv7em-none-eabihf
       # E7-S1 dependency-closure regression: the Embassy shell is intentionally
       # only a no_std compile surface today, but its path dependencies must not
-      # silently re-enable the host-only `std`/filesystem graph.  This check
-      # proves the feature fence; it does not claim an executor, TAL backend,
-      # linked image, or hardware exchange.
+      # silently re-enable the host-only `std`/filesystem graph.  Include
+      # mmp-store's no-default-features fence in the same target check: its
+      # filesystem backend is deliberately absent in this profile, so this
+      # proves only dependency closure, not an embedded persistence backend.
+      # This check does not claim an executor, TAL backend, linked image, or
+      # hardware exchange.
       - name: check embedded shell dependency closure (E7-S1)
-        run: cargo check -p mmp-node-embassy -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features
+        run: cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store --target thumbv7em-none-eabihf --no-default-features
       - run: >
           cargo build --release --target thumbv7em-none-eabihf --no-default-features
           -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
