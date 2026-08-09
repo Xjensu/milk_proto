@@ -272,10 +272,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - run: cargo install cargo-fuzz --locked
       - name: validate deterministic seed recipe
-        run: python implementation/mesh-milk/fuzz/seed_corpus.py check
+        run: python fuzz/seed_corpus.py check
       - name: build every target (cheap correctness gate, every push)
         run: |
-          cd implementation/mesh-milk/fuzz
+          cd fuzz
           for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
             cargo fuzz build "$t"
           done
@@ -294,7 +294,7 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: run each target for 2 minutes
         run: |
-          cd implementation/mesh-milk/fuzz
+          cd fuzz
           python seed_corpus.py check
           python seed_corpus.py write
           python seed_corpus.py verify

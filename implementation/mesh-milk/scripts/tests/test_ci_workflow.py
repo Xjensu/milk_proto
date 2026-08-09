@@ -67,6 +67,34 @@ class CIWorkflowTests(unittest.TestCase):
             else:
                 self.assertEqual(path, requirement["path"])
 
+    def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
+        """Keep fuzz commands relative to the workflow's default directory."""
+
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(
+            workflow["defaults"]["run"]["working-directory"],
+            "implementation/mesh-milk",
+        )
+
+        fuzz_build_runs = [
+            step.get("run", "")
+            for step in workflow["jobs"]["fuzz-build"]["steps"]
+            if "run" in step
+        ]
+        self.assertIn("python fuzz/seed_corpus.py check", fuzz_build_runs)
+        build_script = next(run for run in fuzz_build_runs if "cargo fuzz build" in run)
+        self.assertIn("cd fuzz", build_script)
+        self.assertNotIn("cd implementation/mesh-milk/fuzz", build_script)
+
+        fuzz_run_runs = [
+            step.get("run", "")
+            for step in workflow["jobs"]["fuzz-run"]["steps"]
+            if "run" in step
+        ]
+        run_script = next(run for run in fuzz_run_runs if "cargo fuzz run" in run)
+        self.assertIn("cd fuzz", run_script)
+        self.assertNotIn("cd implementation/mesh-milk/fuzz", run_script)
+
 
 if __name__ == "__main__":
     unittest.main()
