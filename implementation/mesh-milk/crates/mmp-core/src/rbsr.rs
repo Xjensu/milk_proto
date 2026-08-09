@@ -232,8 +232,14 @@ impl Reconciler {
         let ids = src.ids_in(self.domain, &range.lo, &range.hi);
         let our_fp = fingerprint(&ids);
         if is_reply {
-            // Echo: fp equality resolves; a differing echo shouldn't happen
-            // (peers only echo matches) — treat as resolved anyway.
+            // Echo: a matching descriptor resolves the non-terminal range we
+            // issued; a differing echo shouldn't happen (peers only echo
+            // matches), and is ignored by the exact-key lookup.
+            // A terminal-list obligation is not a range we emitted: it was
+            // created after we sent RECON_IDS and must be completed by the
+            // peer's corresponding list/split response.  Do not let a
+            // forged RECON_RANGE echo shortcut that obligation and make the
+            // session advance with an unresolved set difference.
             self.resolve_exact(range);
             return Vec::new();
         }
@@ -372,7 +378,11 @@ impl Reconciler {
     }
 
     fn resolve_exact(&mut self, range: &Range) -> bool {
-        let removed = self.pending.remove(&Self::key(range)).is_some();
+        let key = Self::key(range);
+        // `await_terminal` means this descriptor was emitted as RECON_IDS,
+        // not as a range.  A reply-flagged RECON_RANGE cannot satisfy it.
+        let removable = self.pending.get(&key).is_some_and(|state| !state.await_terminal);
+        let removed = removable && self.pending.remove(&key).is_some();
         self.refresh_open();
         removed
     }
@@ -512,6 +522,27 @@ mod tests {
         recon.on_ids(&range.lo, &range.hi, &ids, &mut source);
         assert!(recon.resource_exhausted());
         assert!(recon.missing.len() <= MAX_MISSING_IDS);
+    }
+
+    #[test]
+    fn terminal_list_obligation_cannot_be_resolved_by_range_echo() {
+        let id = id_with_tail(7);
+        let mut source = FixedIds { ids: vec![id] };
+        let mut recon = Reconciler::new(3);
+        let _ = recon.init_frame(&mut source);
+
+        // A mismatched child with a small local set emits RECON_IDS and
+        // records a terminal-list obligation in addition to the parent
+        // coverage.  A RECON_RANGE echo is not a valid response to that
+        // terminal-list exchange and must not retire the obligation.
+        let child = Range { lo: id, hi: id, count: 0, fp: 0 };
+        let frames = recon.on_range(&child, false, &mut source);
+        assert!(matches!(frames.first(), Some(Frame::ReconIds { .. })));
+        assert_eq!(recon.open, 2, "parent and terminal-list obligations are pending");
+
+        let terminal = Range { lo: id, hi: id, count: 1, fp: fingerprint(&[id]) };
+        assert!(recon.on_range(&terminal, true, &mut source).is_empty());
+        assert_eq!(recon.open, 2, "a range echo must not shortcut RECON_IDS completion");
     }
 
     #[test]

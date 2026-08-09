@@ -62,6 +62,7 @@ import argparse
 import json
 import math
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -93,7 +94,8 @@ REQUIRED_LOG_MARKERS = {
     "central": ("dialed", "Established", "Delivered"),
 }
 REQUIRED_COMMAND_SUBCOMMAND = {"peripheral": "listen", "central": "send"}
-CLI_TOKEN_RE = re.compile(r"(?<![A-Za-z0-9_-])mmp-cli(?:\.exe)?(?![A-Za-z0-9_-])", re.IGNORECASE)
+CLI_BINARIES = {"mmp-cli", "mmp-cli.exe"}
+CARGO_BINARIES = {"cargo", "cargo.exe"}
 
 
 def _is_mapping(value: object) -> bool:
@@ -110,22 +112,57 @@ def _command_matches_role(command: str, role: str) -> bool:
     Unix paths, ``mmp-cli.exe``, and ``cargo run -p mmp-cli -- ...`` are all
     accepted. The central bootstrap ``connect`` command is intentionally not
     accepted: the manifest command must describe the later ``send`` process
-    whose log contains the delivery marker.
+    whose log contains the delivery marker. Tokenize before matching so text
+    printed by an unrelated command (for example ``echo 'mmp-cli send ...'``)
+    cannot satisfy the invocation check.
     """
 
-    if not CLI_TOKEN_RE.search(command):
-        return False
     subcommand = REQUIRED_COMMAND_SUBCOMMAND.get(role)
     if subcommand is None:
         return False
-    escaped = re.escape(subcommand)
-    # Accept either a directly invoked binary or the repository's documented
-    # ``cargo run -p mmp-cli -- <subcommand>`` form. Requiring the subcommand
-    # immediately after the executable/``--`` avoids a free-form message or
-    # store path containing the word ``send`` from satisfying the gate.
-    direct = rf"(?<![A-Za-z0-9_-])mmp-cli(?:\.exe)?\s+{escaped}(?=\s|$)"
-    cargo = rf"(?<![A-Za-z0-9_-])-p\s+mmp-cli\s+--\s+{escaped}(?=\s|$)"
-    return re.search(f"(?:{direct})|(?:{cargo})", command, re.IGNORECASE) is not None
+
+    try:
+        # ``posix=False`` preserves quoted PowerShell/Windows path tokens and
+        # keeps a quoted payload such as ``'mmp-cli send'`` as one token. This
+        # parser is only a structural gate; it never executes the command.
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        return False
+
+    def unquote(token: str) -> str:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+            return token[1:-1]
+        return token
+
+    def basename(token: str) -> str:
+        # ``Path`` uses the host separator, while evidence may be checked on a
+        # different OS from the one that produced it. Handle both separators.
+        return re.split(r"[\\/]", unquote(token))[-1].casefold()
+
+    if not tokens:
+        return False
+
+    command_index = 1 if unquote(tokens[0]) == "&" else 0
+    if command_index >= len(tokens):
+        return False
+    first = basename(tokens[command_index])
+    wanted = subcommand.casefold()
+
+    # Direct invocation: the executable must be the first command token. A
+    # quoted argument to ``echo`` therefore cannot be mistaken for mmp-cli.
+    if first in CLI_BINARIES and len(tokens) > command_index + 1:
+        return unquote(tokens[command_index + 1]).casefold() == wanted
+
+    # Cargo invocation: require the documented ``-p mmp-cli -- <role>``
+    # sequence and a cargo executable at the command position. Other tokens
+    # (release flags, manifest options) remain intentionally unconstrained.
+    if first not in CARGO_BINARIES:
+        return False
+    normalized = [unquote(token).casefold() for token in tokens[command_index:]]
+    for index in range(len(normalized) - 3):
+        if normalized[index:index + 4] == ["-p", "mmp-cli", "--", wanted]:
+            return True
+    return False
 
 
 def _read_utf8_bounded(path: Path, label: str, limit: int, errors: list[str]) -> str | None:

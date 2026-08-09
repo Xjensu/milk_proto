@@ -144,6 +144,39 @@ class BleEvidenceTests(unittest.TestCase):
                 errors,
             )
 
+    def test_host_command_marker_inside_echo_does_not_count_as_invocation(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][1]["command"] = "echo 'mmp-cli send /tmp/bob.seed destination'"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[1].command must invoke mmp-cli send for the central role",
+                errors,
+            )
+
+    def test_quoted_windows_cli_path_is_accepted(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][1]["command"] = (
+                r'& "C:\Program Files\mmp-cli.exe" send C:\bob.seed destination '
+                r'--store C:\mmp-bob.snapshot'
+            )
+            path.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(validate_manifest(path), [])
+
     def test_unavailable_radio_value_requires_reason(self) -> None:
         import sys
 
