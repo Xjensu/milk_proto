@@ -4,12 +4,14 @@
 use std::collections::{BTreeMap, HashSet};
 
 use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
-use mmp_core::{MemStore, SessionHost};
+use mmp_core::{IdSource, MemStore, SessionHost};
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
-use mmp_types::consts::{FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE};
+use mmp_types::consts::{
+    FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE, OFFER_MIN_LIFETIME_MS,
+};
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, GroupPayload};
@@ -85,6 +87,60 @@ fn tick_compacts_idle_admission_bucket_maps() {
 
     assert!(n.core.buckets.is_empty());
     assert!(n.core.auth_buckets.is_empty());
+}
+
+#[test]
+fn sync_view_keeps_current_base_domains_without_priority_partition() {
+    let mut n = node(249);
+    // Node::new publishes its own identity/prekey claims; replace the store
+    // so this mapping assertion contains only the deliberately seeded records.
+    n.core.store = Box::new(MemStore::new());
+    let peer = Id16([0xF0; 16]);
+    let other = Id16([0xF1; 16]);
+    let origin = n.node_id();
+    let entries = [
+        (Id16([0x10; 16]), class::CONTROL, peer, 0, 0),
+        (Id16([0x20; 16]), class::CLAIM, peer, 3, 3),
+        (Id16([0x30; 16]), class::DIRECT, peer, 1, 1),
+        (Id16([0x40; 16]), class::GROUP, other, 2, 2),
+        (Id16([0x50; 16]), class::DIRECT, other, 0, 0),
+        (Id16([0x60; 16]), class::SYMBOL, other, 3, 3),
+        // A class-5 announcement may have a receiver-local effective priority
+        // different from its signed byte, but remains in the existing D3
+        // relay-spray domain until a partition decision is approved.
+        (Id16([0x70; 16]), class::ANNOUNCEMENT, other, 0, 2),
+    ];
+    for (id, bundle_class, dest, priority, effective_priority) in entries {
+        n.core.store.put(
+            BundleMeta {
+                id,
+                class: bundle_class,
+                origin,
+                dest,
+                priority,
+                effective_priority,
+                size: 0,
+                stored_at: 0,
+                expires_at: OFFER_MIN_LIFETIME_MS + 1,
+                budget: 1,
+                own_origin: false,
+                slot: SlotState::Stored,
+            },
+            &[],
+        );
+    }
+
+    let view = SessionHost::ids(&mut n.core, &peer);
+    assert_eq!(
+        view.ids_in(0, &Id16::MIN, &Id16::MAX),
+        vec![Id16([0x10; 16]), Id16([0x20; 16])],
+    );
+    assert_eq!(view.ids_in(1, &Id16::MIN, &Id16::MAX), vec![Id16([0x30; 16])]);
+    assert_eq!(view.ids_in(2, &Id16::MIN, &Id16::MAX), vec![Id16([0x40; 16])]);
+    assert_eq!(
+        view.ids_in(3, &Id16::MIN, &Id16::MAX),
+        vec![Id16([0x50; 16]), Id16([0x60; 16]), Id16([0x70; 16])],
+    );
 }
 
 #[test]
