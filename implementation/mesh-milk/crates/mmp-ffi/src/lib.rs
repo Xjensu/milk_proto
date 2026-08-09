@@ -906,6 +906,29 @@ impl MmpNode {
         Ok(())
     }
 
+    /// Mint a v1 issuer-signed [`AuthCert`] with this node's identity as the
+    /// issuer. This only returns signed bytes: it does not pin the local key,
+    /// adopt the certificate, or make any receiver trust it. A receiver must
+    /// explicitly call [`Self::pin_authority_root`] for the issuer and scope.
+    /// `not_after` is a nonzero Unix-seconds expiry; when `set_wall_clock` has
+    /// been called, an expiry at or before that local time is rejected.
+    pub fn mint_auth_cert(
+        &self,
+        suite: u8,
+        subject: Vec<u8>,
+        scope: Vec<u8>,
+        caps: u8,
+        priority_budget: u16,
+        not_after: u32,
+    ) -> Result<Vec<u8>, FfiError> {
+        let subject = key32_from(&subject)?;
+        let scope = id16_from(&scope)?;
+        self.lock()
+            .mint_auth_cert(suite, subject, scope, caps, priority_budget, not_after)
+            .map(|cert| cert.encode())
+            .ok_or(FfiError::BadArg)
+    }
+
     /// Publish a class-5 announcement to `scope` (doc 18 §3). `cert`, when
     /// given, is an encoded [`AuthCert`] attached as TLV `0x81` (RECOMMENDED
     /// for `priority` ≤ 1/OPERATIONAL, doc 18 §5.2.1) so stranger receivers

@@ -47,6 +47,7 @@ EXPECTED_MMP_NODE_METHODS = (
     "linkDown",
     "linkUp",
     "messageState",
+    "mintAuthCert",
     "nodeId",
     "onBeacon",
     "ownClaims",

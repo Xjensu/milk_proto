@@ -516,6 +516,92 @@ fn authority_admission_survives_restart() {
 }
 
 #[test]
+fn mint_auth_cert_signs_locally_without_auto_trusting_the_issuer() {
+    let issuer = node(45);
+    let recipient = node(46);
+    introduce(&issuer, &recipient);
+    drain(&issuer);
+    drain(&recipient);
+
+    let scope = mmp_types::authcert::scope_id_of(b"minted-scope");
+    issuer.set_wall_clock(1_000);
+    let cert_bytes = issuer
+        .mint_auth_cert(
+            1,
+            issuer.public_key(),
+            scope.0.to_vec(),
+            mmp_types::authcert::CAP_ANNOUNCE | mmp_types::authcert::CAP_PRIORITY_EMERGENCY,
+            u16::MAX,
+            2_000,
+        )
+        .expect("valid v1 certificate parameters");
+    let cert = mmp_types::authcert::AuthCert::decode(&cert_bytes).expect("canonical AuthCert");
+    assert_eq!(cert.suite, 1);
+    assert_eq!(cert.subject.0.to_vec(), issuer.public_key());
+    assert_eq!(cert.scope, scope);
+    assert_eq!(cert.priority_budget, u16::MAX);
+    assert_eq!(cert.not_after, 2_000);
+    assert_eq!(cert.issuer.0.to_vec(), issuer.public_key());
+    mmp_crypto::verify(
+        mmp_types::domain::SigDomain::AuthCert,
+        &cert.issuer,
+        &cert.signed_object(),
+        &cert.sig,
+    )
+    .expect("local identity signed the AuthCert");
+
+    // Minting signs only; it does not pin the local identity as an authority
+    // root. The recipient therefore keeps this validly signed announcement at
+    // NORMAL and non-official until an explicit pinning ceremony occurs.
+    recipient.subscribe_scope("minted-scope".to_string());
+    recipient.set_wall_clock(1_000);
+    issuer
+        .publish_announcement(scope.0.to_vec(), 1, 1, "untrusted issuer".to_string(), Some(cert_bytes))
+        .expect("announcement with attached cert");
+    contact(&issuer, &recipient, 45, 45_000);
+    let events = drain(&recipient);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        FfiEvent::Announcement { effective_priority, official, text, .. }
+            if *effective_priority == 2 && !*official && text == b"untrusted issuer"
+    )), "local minting must not auto-trust its issuer: {events:?}");
+}
+
+#[test]
+fn mint_auth_cert_rejects_unknown_caps_and_expired_parameters() {
+    let node = node(47);
+    let scope = mmp_types::authcert::scope_id_of(b"mint-validation").0.to_vec();
+    let subject = node.public_key();
+    node.set_wall_clock(1_000);
+
+    assert_eq!(
+        node.mint_auth_cert(2, subject.clone(), scope.clone(), mmp_types::authcert::CAP_ANNOUNCE, 1, 2_000),
+        Err(FfiError::BadArg),
+        "only the frozen v1 AuthCert suite is mintable"
+    );
+    assert_eq!(
+        node.mint_auth_cert(1, subject.clone(), scope.clone(), 0b100, 1, 2_000),
+        Err(FfiError::BadArg),
+        "reserved capability bits must not be minted"
+    );
+    assert_eq!(
+        node.mint_auth_cert(1, subject.clone(), scope.clone(), mmp_types::authcert::CAP_PRIORITY_EMERGENCY, 1, 2_000),
+        Err(FfiError::BadArg),
+        "emergency capability requires announce capability"
+    );
+    assert_eq!(
+        node.mint_auth_cert(1, subject.clone(), scope.clone(), mmp_types::authcert::CAP_ANNOUNCE, 1, 1_000),
+        Err(FfiError::BadArg),
+        "expiry at the issuer's current wall clock is invalid"
+    );
+    assert_eq!(
+        node.mint_auth_cert(1, subject, scope, mmp_types::authcert::CAP_ANNOUNCE, 1, 0),
+        Err(FfiError::BadArg),
+        "zero expiry is not a usable certificate"
+    );
+}
+
+#[test]
 fn blocklist_survives_restart_and_denies_reintroduced_peer() {
     let dir = TempDir::new("blocklist-survives-restart");
     let path = dir.file("alice.mmp");
