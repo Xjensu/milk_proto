@@ -1122,12 +1122,13 @@ impl MmpNode {
         // at once from this method.
         self.lock().tick(now_ms);
 
-        let Some(snap) = self.snapshot.clone() else { return };
+        let snapshot = self.snapshot.clone();
         let due = {
             let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
             st.last_seen_now_ms = now_ms;
-            now_ms.saturating_sub(st.last_persist_ms) >= PERSIST_INTERVAL_MS
+            snapshot.is_some() && now_ms.saturating_sub(st.last_persist_ms) >= PERSIST_INTERVAL_MS
         };
+        let Some(snap) = snapshot else { return };
         if due {
             let _ = self.persist_now(&snap, now_ms);
         }

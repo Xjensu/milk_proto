@@ -140,6 +140,21 @@ fn backward_tick_is_ignored_at_ffi_boundary() {
 }
 
 #[test]
+fn in_memory_tick_still_advances_ffi_monotonic_guard() {
+    let node = node(72);
+
+    node.tick(10_000);
+    node.tick(9_999);
+
+    let observed = node
+        .persist
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .last_seen_now_ms;
+    assert_eq!(observed, 10_000, "in-memory hosts must retain the latest monotonic sample");
+}
+
+#[test]
 fn concurrent_ticks_keep_the_largest_monotonic_sample() {
     let dir = TempDir::new("concurrent-ticks");
     let node = MmpNode::new(vec![72u8; 32], FfiTier::Leaf, Some(dir.file("node.mmp")))
