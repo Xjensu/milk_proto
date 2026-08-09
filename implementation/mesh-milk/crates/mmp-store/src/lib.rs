@@ -292,6 +292,7 @@ impl SnapshotStore {
             };
             if !valid_persisted_metadata(
                 stored_meta.class,
+                stored_meta.priority,
                 stored_meta.budget,
                 stored_meta.own_origin as u8,
                 stored_meta.stored_at,
@@ -557,11 +558,18 @@ fn temporary_path(path: &Path) -> PathBuf {
 /// an authenticity check: a local attacker who can rewrite the file can also
 /// recompute BLAKE3.  These fields therefore need their own canonical-domain
 /// checks before they influence routing, eviction, or lifetime decisions.
-fn valid_persisted_metadata(class_byte: u8, budget: u8, own_origin: u8, stored_at: u64, expires_at: u64) -> bool {
+fn valid_persisted_metadata(
+    class_byte: u8,
+    priority: u8,
+    budget: u8,
+    own_origin: u8,
+    stored_at: u64,
+    expires_at: u64,
+) -> bool {
     // The low nibble is the complete wire class domain.  Classes 6..=15 are
     // intentionally reserved for forward-compatible store-and-forward: a v1
     // node must retain and relay a signed class it does not interpret.
-    if class_byte > 0x0f || budget > L_MAX
+    if class_byte > 0x0f || priority > prio::BULK || budget > L_MAX
         || own_origin > 1
     {
         return false;
@@ -759,7 +767,7 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
     let expires_at = u64le(62)?;
     let budget = *r.get(70)?;
     let own_origin = *r.get(71)?;
-    if !valid_persisted_metadata(class_byte, budget, own_origin, stored_at, expires_at) {
+    if !valid_persisted_metadata(class_byte, priority, budget, own_origin, stored_at, expires_at) {
         return None;
     }
     // Snapshot bytes are local input, not an authenticated wire bundle. Keep
@@ -1048,6 +1056,14 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), primary);
         assert!(!tmp.exists(), "validation must happen before creating a replacement image");
+
+        let mut invalid_priority = valid;
+        invalid_priority.priority = prio::BULK.saturating_add(1);
+        store.update_meta(invalid_priority);
+        let error = store.persist().expect_err("out-of-domain priority must not be persisted");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), primary);
+        assert!(!tmp.exists(), "priority validation must happen before creating a replacement image");
 
         let restored = SnapshotStore::open(&path);
         assert!(restored.get(&valid.id).is_some(), "the previous complete image remains recoverable");
