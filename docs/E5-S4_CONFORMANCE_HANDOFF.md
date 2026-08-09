@@ -2553,3 +2553,31 @@ historical `AUDIT.md` symlink as present rather than silently converting it to a
 absent file. The checker passes from the repository root, and the focused
 status/CI tests pass 18 tests. This is publication metadata only and does not
 alter specification bytes.
+
+## 2026-08-09 continuation: admission results, evidence fingerprints, and paired replay
+
+The follow-up session audit completed the remaining host-admission refinement
+in `71ff2ad`. `SessionHost::bundle_admitted` has a permissive default for
+backward compatibility; NodeCore and conformance hosts report whether the
+canonical bundle is actually held. A matching `BUNDLE` followed by `BUDGET`
+for a locally dropped or duplicate bundle is consumed but ignored, preserving
+friend-buffer retransmission and SeenIndex behavior. Orphan, mismatched, and
+intervening budgets still close the session. This remains wire-neutral. The
+remaining host contract is intentionally explicit: custom hosts that need strict
+admission semantics must override the new method.
+
+The interoperability audit added `156f095`, an evidence-only seed fingerprint
+helper and runbook instructions. It hashes a decoded 32-byte keygen seed,
+rejects malformed or symlinked files, and never prints seed material. The helper
+standardizes evidence correlation for the future two-host run; it does not claim
+that the Windows host has executed Linux/BlueZ or physical BLE validation.
+
+The measurement audit added `0d534c2`, a bounded `ContactSchedule`/`ContactEvent`
+replay seam in `mmp-sim`. A schedule preflights node count, seed, endpoint
+validity, self-contact, and a 100,000-event cap before mutating a simulator. Its
+configuration and full 16-byte trace IDs bind the seed, node count, undirected
+contact pairs, gaps, and event order. Baseline and candidate simulators can now
+consume the identical schedule without changing routing, copy budgets, or wire
+behavior. The simulator suite passes 33 tests with 6 intentionally ignored and
+strict clippy passes. EDR/EWS/contact-survival performance claims remain
+unmeasured until this seam is driven by calibrated device traces.
