@@ -1217,6 +1217,7 @@ version = "0.0.0"
 name = "mmp-sim"
 version = "0.0.0"
 dependencies = [
+ "blake3",
  "mmp-core",
  "mmp-crypto",
  "mmp-node",
