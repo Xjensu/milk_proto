@@ -12,6 +12,7 @@ keywords = ["simulation", "ble", "mesh", "dtn"]
 categories = ["simulation"]
 
 [dependencies]
+blake3 = { workspace = true }
 mmp-types = { path = "../mmp-types" }
 mmp-core = { path = "../mmp-core" }
 mmp-node = { path = "../mmp-node" }

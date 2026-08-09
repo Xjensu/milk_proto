@@ -219,6 +219,10 @@ pub enum ContactGeneratorKind {
 /// that expose bridge transitions.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ContactScenarioMetrics {
+    /// BLAKE3-derived identifier of the simulator seed and ordered meeting
+    /// schedule. This is a reproducibility label only, not a protocol or
+    /// security credential; callers must still retain the full seed/config.
+    pub trace_id: [u8; 16],
     pub generator: ContactGeneratorKind,
     pub meetings: u64,
     pub bridge_meetings: Option<usize>,
@@ -238,6 +242,12 @@ pub struct Sim {
     nodes: Vec<Node>,
     now_ms: u64,
     rng: Rng,
+    /// Incremental digest of the deterministic simulator input trace. The
+    /// digest covers node count, seed, and every ordered meeting pair plus
+    /// its virtual time advance. It lets paired reports prove that they used
+    /// the same generated contact trace without treating metrics equality as
+    /// evidence of identical input.
+    trace_hasher: blake3::Hasher,
     next_link: u64,
     counters: Counters,
     /// BundleIDs of our own outgoing sends, to detect their `MessageReceived`
@@ -270,6 +280,9 @@ impl Sim {
     /// reproducible end to end).
     pub fn new(n: usize, seed: u64) -> Sim {
         let mut rng = Rng::new(seed);
+        let mut trace_hasher = blake3::Hasher::new_derive_key("mmp1 sim trace-v1");
+        trace_hasher.update(&(n as u64).to_le_bytes());
+        trace_hasher.update(&seed.to_le_bytes());
         let mut nodes = Vec::with_capacity(n);
         for i in 0..n {
             let mut node_seed = [0u8; 32];
@@ -285,6 +298,7 @@ impl Sim {
             nodes,
             now_ms: 0,
             rng,
+            trace_hasher,
             next_link: 1,
             counters: Counters::default(),
             tracked: HashSet::new(),
@@ -306,6 +320,16 @@ impl Sim {
 
     pub fn now_ms(&self) -> u64 {
         self.now_ms
+    }
+
+    /// Return the reproducibility identifier for the seed and meeting trace
+    /// emitted so far. This is intentionally not a cryptographic protocol
+    /// value; retain the seed and generator configuration for reproduction.
+    pub fn trace_id(&self) -> [u8; 16] {
+        let digest = self.trace_hasher.finalize();
+        let mut id = [0u8; 16];
+        id.copy_from_slice(&digest.as_bytes()[..16]);
+        id
     }
 
     pub fn node_id(&self, i: usize) -> NodeId {
@@ -388,6 +412,11 @@ impl Sim {
     /// scenario tests can inspect anything beyond the built-in counters.
     pub fn meet(&mut self, i: usize, j: usize, dt_ms: u64) -> Vec<(usize, Event)> {
         assert_ne!(i, j, "a node cannot meet itself");
+        let (trace_i, trace_j) = if i < j { (i, j) } else { (j, i) };
+        self.trace_hasher.update(b"meet-v1");
+        self.trace_hasher.update(&(trace_i as u64).to_le_bytes());
+        self.trace_hasher.update(&(trace_j as u64).to_le_bytes());
+        self.trace_hasher.update(&dt_ms.to_le_bytes());
         let link = self.next_link;
         self.next_link += 1;
         let now = self.now_ms;
@@ -667,6 +696,7 @@ impl Sim {
         bridge_meetings: Option<usize>,
     ) -> ContactScenarioMetrics {
         ContactScenarioMetrics {
+            trace_id: self.trace_id(),
             generator,
             meetings: self.counters.meetings_run,
             bridge_meetings,

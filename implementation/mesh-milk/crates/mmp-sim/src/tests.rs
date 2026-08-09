@@ -131,6 +131,25 @@ fn contact_model_matrix_is_reproducible_and_reports_comparable_metrics() {
 }
 
 #[test]
+fn contact_trace_id_distinguishes_schedules_with_equal_empty_metrics() {
+    let mut first = Sim::new(4, 0x7ACE_0001);
+    let mut second = Sim::new(4, 0x7ACE_0001);
+
+    // No workload means the outcome counters remain equal. The trace label
+    // must still distinguish the contact schedule so a report cannot pair
+    // measurements solely because their aggregate metrics happen to match.
+    first.meet(0, 1, 1_000);
+    second.meet(0, 1, 2_000);
+
+    let first_metrics = first.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    let second_metrics = second.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    assert_ne!(first_metrics, second_metrics);
+    assert_ne!(first_metrics.trace_id, second_metrics.trace_id);
+    assert_eq!(first_metrics.meetings, second_metrics.meetings);
+    assert_eq!(first_metrics.messages_sent, second_metrics.messages_sent);
+}
+
+#[test]
 fn ten_node_random_mesh_delivers_and_receipts() {
     const N: usize = 10;
     const SENDER: usize = 0;
