@@ -139,7 +139,7 @@ cargo test -p mmp-core --lib -- --test-threads=1
 cargo test -p mmp-core --lib noise_tag_is_counted_at_envelope_boundary -- --test-threads=1
   1 passed
 cargo test -p mmp-crypto --lib noise_xx -- --test-threads=1
-  5 passed
+  6 passed
 ```
 
 The full workspace matrix and release gates remain the orchestrator's
