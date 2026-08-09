@@ -186,7 +186,8 @@ def _validate_publication(repo: Path, value: Any) -> None:
         seen.add(normalized)
         if not isinstance(raw_record["reason"], str) or not raw_record["reason"].strip():
             raise ValueError(f"historical_references_not_shipped[{index}].reason must be non-empty")
-        if (repo / relative).exists():
+        historical_path = repo / relative
+        if historical_path.exists() or historical_path.is_symlink():
             raise ValueError(f"historical publication reference is unexpectedly present: {normalized}")
 
 
