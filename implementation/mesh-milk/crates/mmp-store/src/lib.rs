@@ -171,7 +171,7 @@ impl SnapshotStore {
                 // Only a fully framed, semantically validated image may be
                 // considered; a primary (even one containing corrupt records)
                 // always wins and never falls back to `.tmp`.
-                let temp = self.path.with_extension("tmp");
+                let temp = temporary_path(&self.path);
                 let temp_bytes = match read_snapshot(&temp, self.limits) {
                     Ok(Some(bytes)) => bytes,
                     Ok(None) => {
@@ -309,7 +309,7 @@ impl SnapshotStore {
                 ));
             }
         }
-        let tmp = self.path.with_extension("tmp");
+        let tmp = temporary_path(&self.path);
         {
             let mut f = std::fs::File::create(&tmp)?;
             f.write_all(MAGIC)?;
@@ -523,6 +523,24 @@ fn valid_blocklist(bytes: &[u8]) -> bool {
             }
         })
         .is_some()
+}
+
+/// Derive the crash-recovery sibling used for atomic snapshot replacement.
+///
+/// Keep the historical `<stem>.tmp` name for ordinary snapshot paths so
+/// existing recovery candidates remain usable.  A caller may nevertheless
+/// choose a primary path that already ends in `.tmp`; `Path::with_extension`
+/// would then return the primary itself, allowing a failed persist to truncate
+/// or remove the last complete image.  Use a distinct suffix in that one case.
+fn temporary_path(path: &Path) -> PathBuf {
+    let candidate = path.with_extension("tmp");
+    if candidate.as_path() != path {
+        return candidate;
+    }
+
+    let mut fallback = path.as_os_str().to_os_string();
+    fallback.push(".part");
+    PathBuf::from(fallback)
 }
 
 /// Validate metadata fields that are persisted outside the signed bundle.
@@ -1071,6 +1089,52 @@ mod tests {
 
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn tmp_suffix_primary_uses_distinct_recovery_path_on_failed_persist() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("snapshot.tmp");
+        let temp = temporary_path(&path);
+        assert_ne!(temp, path, "a .tmp primary must never alias its recovery path");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&temp);
+
+        let meta = BundleMeta {
+            id: Id16([11; 16]),
+            class: class::DIRECT,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 5,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+
+        let mut writer = SnapshotStore::open(&path);
+        writer.put(meta, b"hello");
+        writer.persist().unwrap();
+        let primary = std::fs::read(&path).unwrap();
+
+        // Load the complete image at its exact limit, then add a second bundle
+        // so the replacement image is rejected after the temporary file has
+        // been written.  A colliding temp path would delete the primary here.
+        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(primary.len() as u64));
+        let mut second = meta;
+        second.id = Id16([12; 16]);
+        bounded.put(second, b"world");
+        let error = bounded.persist().expect_err("the expanded image must exceed its complete-file limit");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), primary, "failed replacement must preserve the primary");
+        assert!(!temp.exists(), "the failed temporary candidate must be removed");
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(temp);
     }
 
     #[test]
