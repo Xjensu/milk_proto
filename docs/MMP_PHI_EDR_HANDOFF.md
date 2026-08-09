@@ -220,3 +220,21 @@ point, then populate `RendezvousMeasurement` records. The multipliers are a
 bounded sweep for measurement planning, not evidence that any point is
 schedulable or superior; collision probability, controller behavior, host
 wakeups, and whole-device energy remain external measurements.
+
+## 2026-08-09 checked gain boundary
+
+`RendezvousEnergyModel::checked_idealized_gain()` is the safe reporting path
+for callers that accept a wide floating-point input range. The constructor
+rejects non-finite intermediate model terms, but a finite baseline energy and a
+finite optimum energy can still have an unrepresentable quotient. The checked
+method returns `None` for that case. The original `idealized_gain() -> f64`
+method remains available for compatibility with the existing research API;
+its result must be checked with `is_finite()` (or replaced by the checked
+method) before it is serialized into an experiment report.
+
+This guard does not add a measurement parser. A parser still requires an
+agreed raw-log format, provenance/calibration metadata, and confidence
+interval policy; inventing those fields in `mmp-sim` would make aggregate
+records look like platform evidence. Until that external contract exists, the
+crate accepts only caller-constructed `RendezvousMeasurement` values and
+performs validation/comparison without inventing readings.

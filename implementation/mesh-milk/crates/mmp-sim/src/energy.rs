@@ -399,8 +399,24 @@ impl RendezvousEnergyModel {
     }
 
     /// Baseline energy divided by the idealized optimum energy.
+    ///
+    /// This compatibility method retains the original scalar API. Callers
+    /// that ingest untrusted or very wide floating-point ranges should prefer
+    /// [`Self::checked_idealized_gain`], because a finite baseline and finite
+    /// optimum can still have a quotient that overflows to `+infinity`.
     pub fn idealized_gain(&self) -> f64 {
         self.baseline_energy() / self.optimum().energy
+    }
+
+    /// Return the idealized gain only when the quotient is representable.
+    ///
+    /// The gain is a property of the research model, not a measured battery
+    /// result. `None` means that the finite model inputs produce an
+    /// unrepresentable ratio; callers must not turn that case into a claimed
+    /// performance multiplier.
+    pub fn checked_idealized_gain(&self) -> Option<f64> {
+        let result = self.idealized_gain();
+        result.is_finite().then_some(result)
     }
 }
 
@@ -424,6 +440,21 @@ mod tests {
         let gain = model.idealized_gain();
 
         assert!(gain > 3.0 && gain < 3.3);
+        assert_eq!(model.checked_idealized_gain(), Some(gain));
+    }
+
+    #[test]
+    fn checked_idealized_gain_rejects_overflowing_ratio() {
+        // Every constructor term remains finite and positive, but the
+        // baseline/optimum quotient is larger than the f64 range. The
+        // compatibility method necessarily returns +infinity; the checked
+        // path prevents that value from being treated as an experiment
+        // result.
+        let model = RendezvousEnergyModel::from_baseline(1e308, 1e-308, 1.0, 1e-12).unwrap();
+        assert!(model.baseline_energy().is_finite());
+        assert!(model.optimum().energy.is_finite());
+        assert!(model.idealized_gain().is_infinite());
+        assert_eq!(model.checked_idealized_gain(), None);
     }
 
     #[test]
