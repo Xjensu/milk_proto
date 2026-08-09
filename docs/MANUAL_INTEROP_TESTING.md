@@ -107,6 +107,16 @@ claims have exchanged. Then press `Ctrl-C` and wait for `store persisted to
 disk`. `connect` is a foreground bootstrap process; it is not intended to run
 concurrently with the later `send` command using the same store file.
 
+Keep the bootstrap output as a separate log (for example,
+`bob-connect.log`). It is not, by itself, the central-side delivery evidence:
+the machine-checkable package requires one central log containing all three
+reference-CLI markers `dialed`, `Established`, and `Delivered`. The later
+`send` invocation starts a new central process, so capture its output as well
+and concatenate the two files (in chronological order) into the single
+`bob.log` used by `hosts[1].log` in the evidence manifest. Record the `send`
+command as `hosts[1].command`; retain the bootstrap `connect` command in the
+operator notes alongside the two raw logs.
+
 For a message test, obtain machine A's node ID from its `keygen` output and
 run on B:
 
@@ -263,7 +273,9 @@ Attach the following to a test report:
 * commit ID and Rust/toolchain versions;
 * platform, kernel/OS, adapter and phone models;
 * exact command lines for each host (record them as `hosts[].command` in the
-  evidence manifest) and seed-file fingerprints (never the seeds themselves);
+  evidence manifest; for the central role this is the delivery-producing
+  `send` command, while any earlier `connect` bootstrap command belongs in
+  the operator notes) and seed-file fingerprints (never the seeds themselves);
 * CLI/app logs with timestamps;
 * `inspect` output for both stores;
 * whether the result was in-memory, PC BLE, Android, or iOS;
