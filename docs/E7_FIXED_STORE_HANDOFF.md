@@ -83,3 +83,23 @@ The HIL matrix must include authenticated phone-to-sensor exchange, full-store
 rejection, packet loss, reset, power-cycle recovery, and Reed–Solomon decode
 measurements. Until those artifacts exist, the target check above is only a
 dependency-closure proof, not evidence of a functioning embedded store.
+
+## Host acceptance-double evidence (2026-08-09)
+
+Commit `0ab41c8` adds an integration-test-only fixed-capacity acceptance
+double at
+`implementation/mesh-milk/crates/mmp-store/tests/transactional_prototype.rs`.
+It exercises exact-fill and replacement-delta accounting, outstanding
+reservation/abort behavior, stale or mismatched commit tokens, failed-commit
+state preservation, and recovery of the last durable generation. The
+reproducible command is:
+
+```text
+cargo test -p mmp-store --test transactional_prototype --all-features
+```
+
+The six tests pass locally and the command is now a named CI step
+(`test embedded transactional store acceptance double (E7-S1)`). This is a
+provider-design preflight only: the test double is not exposed as a public
+store implementation, does not choose board capacities, and does not close
+the fixed-capacity backend, linked-image, or hardware-in-the-loop gates above.

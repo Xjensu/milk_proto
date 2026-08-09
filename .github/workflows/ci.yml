@@ -48,6 +48,11 @@ jobs:
       # local practice, not CI. Proven locally to catch a real violation
       # (needless_bool/bool_comparison) before being wired in here.
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      # E7-S1 acceptance double: keep the reservation/commit invariants
+      # visible as a named CI gate while the real fixed-capacity provider and
+      # board image remain outstanding.
+      - name: test embedded transactional store acceptance double (E7-S1)
+        run: cargo test -p mmp-store --test transactional_prototype --all-features
 
   android-check:
     runs-on: ubuntu-latest

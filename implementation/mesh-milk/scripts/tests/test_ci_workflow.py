@@ -31,6 +31,19 @@ class CIWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(test_steps), 1)
 
+    def test_embedded_transactional_acceptance_double_is_a_named_ci_gate(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["host"]["steps"]
+        checks = [
+            step.get("run", "")
+            for step in steps
+            if step.get("name") == "test embedded transactional store acceptance double (E7-S1)"
+        ]
+        self.assertEqual(
+            checks,
+            ["cargo test -p mmp-store --test transactional_prototype --all-features"],
+        )
+
     def test_no_std_gate_checks_embedded_shell_dependency_closure(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["no-std-size-gate"]["steps"]
