@@ -216,3 +216,42 @@ fn utility_ephem_window_is_bounded_under_beacon_flood() {
     let n = u.n_hat(1);
     assert!(n <= 0.75 * CONTACT_GRAPH_CAP as f32, "n_hat grew beyond bounded window: {n}");
 }
+
+#[test]
+fn verified_contact_graph_stays_bounded_when_all_slots_are_trusted() {
+    let mut u = UtilityState::new();
+    for i in 0..CONTACT_GRAPH_CAP {
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&(i as u64).to_le_bytes());
+        u.mark_verified(&Id16(bytes));
+    }
+    let retained = (0..CONTACT_GRAPH_CAP)
+        .filter(|i| {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&(*i as u64).to_le_bytes());
+            u.contact(&Id16(bytes)).is_some()
+        })
+        .count();
+    assert_eq!(retained, CONTACT_GRAPH_CAP);
+
+    let overflow = Id16([0xf3; 16]);
+    u.mark_verified(&overflow);
+    let retained_after_overflow = (0..CONTACT_GRAPH_CAP)
+        .filter(|i| {
+            let mut bytes = [0u8; 16];
+            bytes[..8].copy_from_slice(&(*i as u64).to_le_bytes());
+            u.contact(&Id16(bytes)).is_some()
+        })
+        .count();
+    assert_eq!(retained_after_overflow, CONTACT_GRAPH_CAP);
+    assert!(u.contact(&overflow).is_none());
+}
+
+#[test]
+fn contact_duration_accumulation_saturates() {
+    let mut u = UtilityState::new();
+    let peer = Id16([0x71; 16]);
+    u.note_contact(&peer, u64::MAX, 0);
+    u.note_contact(&peer, u64::MAX, 1);
+    assert_eq!(u.contact(&peer).unwrap().total_duration_ms, u64::MAX);
+}

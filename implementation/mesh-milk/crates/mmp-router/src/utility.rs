@@ -93,21 +93,11 @@ impl UtilityState {
         self.p_table.insert(*peer, entry);
         self.lru_evict_p();
 
-        let stats = self.contacts.entry(*peer).or_default();
-        stats.encounters += 1;
-        stats.total_duration_ms += duration_ms;
-        stats.last_seen = now_ms;
-        if self.contacts.len() > CONTACT_GRAPH_CAP {
-            // Evict the longest-unseen unverified stranger.
-            if let Some(victim) = self
-                .contacts
-                .iter()
-                .filter(|(_, s)| !s.verified)
-                .min_by_key(|(_, s)| s.last_seen)
-                .map(|(n, _)| *n)
-            {
-                self.contacts.remove(&victim);
-            }
+        if self.admit_contact_slot(peer) {
+            let stats = self.contacts.entry(*peer).or_default();
+            stats.encounters = stats.encounters.saturating_add(1);
+            stats.total_duration_ms = stats.total_duration_ms.saturating_add(duration_ms);
+            stats.last_seen = now_ms;
         }
         self.resolved_seen.push_back((now_ms, *peer));
         self.trim_windows(now_ms);
@@ -123,7 +113,39 @@ impl UtilityState {
     /// Flag `peer` as out-of-band verified (e.g. QR bootstrap), creating a
     /// ContactGraph entry if none exists yet.
     pub fn mark_verified(&mut self, peer: &NodeId) {
+        if !self.admit_contact_slot(peer) {
+            // Every retained entry is already verified and the fixed
+            // ContactGraph budget is full.  Verification is still accepted
+            // by ClaimStore, but there is no safe local tie record to evict;
+            // dropping this advisory routing state keeps memory bounded.
+            return;
+        }
         self.contacts.entry(*peer).or_default().verified = true;
+    }
+
+    /// Admit a new ContactGraph entry without ever exceeding its hard cap.
+    ///
+    /// Verified entries are retained preferentially because they carry an
+    /// explicit trust ceremony.  When the graph is full, only the oldest
+    /// unverified stranger may be evicted; if every entry is verified, a new
+    /// local tie record is dropped rather than growing attacker-influenced
+    /// state without bound.
+    fn admit_contact_slot(&mut self, peer: &NodeId) -> bool {
+        if self.contacts.contains_key(peer) || self.contacts.len() < CONTACT_GRAPH_CAP {
+            return true;
+        }
+        let victim = self
+            .contacts
+            .iter()
+            .filter(|(_, stats)| !stats.verified)
+            .min_by_key(|(_, stats)| stats.last_seen)
+            .map(|(node, _)| *node);
+        if let Some(victim) = victim {
+            self.contacts.remove(&victim);
+            true
+        } else {
+            false
+        }
     }
 
     /// Look up the raw ContactGraph stats recorded for `peer`, if any.
