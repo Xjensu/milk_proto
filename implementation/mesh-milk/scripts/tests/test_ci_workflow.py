@@ -70,6 +70,7 @@ class CIWorkflowTests(unittest.TestCase):
                     "implementation/mesh-milk/${{ matrix.artifact_name }}",
                     "implementation/mesh-milk/${{ matrix.artifact_name }}.sig",
                     "implementation/mesh-milk/${{ matrix.artifact_name }}.pem",
+                    "implementation/mesh-milk/${{ matrix.artifact_name }}.manifest.json",
                 },
             },
         }
@@ -89,6 +90,22 @@ class CIWorkflowTests(unittest.TestCase):
                 self.assertEqual(set(path.splitlines()), requirement["path"])
             else:
                 self.assertEqual(path, requirement["path"])
+
+    def test_release_job_records_source_and_digest_manifest(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["release"]["steps"]
+        manifest = [
+            step
+            for step in steps
+            if step.get("name") == "record signed artifact digest manifest"
+        ]
+        self.assertEqual(len(manifest), 1)
+        step = manifest[0]
+        run = step["run"]
+        self.assertIn("scripts/create_release_manifest.py", run)
+        self.assertIn("--signature ${{ matrix.artifact_name }}.sig", run)
+        self.assertIn("--certificate ${{ matrix.artifact_name }}.pem", run)
+        self.assertIn("--output ${{ matrix.artifact_name }}.manifest.json", run)
 
     def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
         """Keep fuzz commands relative to the workflow's default directory."""

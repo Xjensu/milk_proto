@@ -358,6 +358,13 @@ jobs:
           cosign sign-blob --yes ${{ matrix.artifact_name }}
           --output-signature ${{ matrix.artifact_name }}.sig
           --output-certificate ${{ matrix.artifact_name }}.pem
+      - name: record signed artifact digest manifest
+        run: >
+          python scripts/create_release_manifest.py
+          --artifact ${{ matrix.artifact_name }}
+          --signature ${{ matrix.artifact_name }}.sig
+          --certificate ${{ matrix.artifact_name }}.pem
+          --output ${{ matrix.artifact_name }}.manifest.json
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-signed
@@ -366,3 +373,4 @@ jobs:
             implementation/mesh-milk/${{ matrix.artifact_name }}
             implementation/mesh-milk/${{ matrix.artifact_name }}.sig
             implementation/mesh-milk/${{ matrix.artifact_name }}.pem
+            implementation/mesh-milk/${{ matrix.artifact_name }}.manifest.json
