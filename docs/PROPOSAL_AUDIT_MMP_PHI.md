@@ -1016,6 +1016,37 @@ closure, layer-check, the six-test transactional acceptance double, and the
 release CLI delivery demo all pass. No file under `specification/` or any
 protected dirty path was modified.
 
+### Orchestration continuation XXIII (2026-08-09)
+
+The delegated RBSR review produced `484e392` and the new
+[`RBSR_D3_CONFORMANCE_HANDOFF.md`](./RBSR_D3_CONFORMANCE_HANDOFF.md). The
+review confirms that the supplied MMP/Φ dialogue correctly identified a real
+conformance concern, but it does not justify silently implementing priority
+partitions. The frozen documents require RBSR per declared priority class while
+also requiring class-5 traffic to reuse D3; the wire carries only the base
+domain byte, and no partition encoding, negotiation, legacy downgrade, or D3
+admission-weight formula is defined. The implementation therefore keeps the
+executable D0–D3 mapping. A new regression proves that class-5 bundles with
+declared priorities 0 and 1 remain in D3 and that receiver-local effective
+priority is not treated as a wire key.
+
+The dialogue review also separates validated building blocks from research
+hypotheses. PRoPHET and fountain coding are established experimental/standard
+references, and Bluetooth Core 6.0 specifies decision-based advertising
+filtering, advertiser monitoring, and channel-sounding primitives. None of
+those sources proves the proposed EDR 3.14x battery gain, signed mobility
+vouchers, Fourier encounter forecasts, contact-survival hazard model, or a
+2x end-to-end MMP improvement. Those proposals remain simulation and hardware
+measurement work, with privacy, collision, controller/OS support, and
+adversarial cost treated as first-class acceptance criteria.
+
+Focused verification for this continuation: `mmp-core` and `mmp-node` library
+tests pass (68 and 87 respectively), with the RBSR priority-boundary and
+session-order regressions green. No file under `specification/` or any
+protected dirty path was modified. The next plan revision adds a research-only
+EDR/PCM/contact-survival/DoF evaluation track after the frozen-wire
+conformance gates, not before them.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
