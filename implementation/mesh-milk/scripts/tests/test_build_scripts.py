@@ -29,6 +29,14 @@ class BuildScriptTests(unittest.TestCase):
             text=True,
             check=False,
         )
+        # Windows ships a `bash.exe` launcher that emits WSL installation
+        # guidance instead of parsing shell scripts when WSL is absent. That
+        # is an environment prerequisite, not evidence that this script has a
+        # syntax error. Keep the real syntax gate strict on Linux/macOS and
+        # skip only this unmistakable launcher response on Windows.
+        launcher_output = result.stdout.replace("\x00", "").casefold()
+        if result.returncode != 0 and "wsl.exe --install" in launcher_output:
+            self.skipTest("Windows bash launcher found; WSL is not installed")
         self.assertEqual(result.returncode, 0, result.stderr)
 
 
