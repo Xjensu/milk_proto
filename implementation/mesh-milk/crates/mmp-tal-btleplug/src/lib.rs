@@ -148,6 +148,24 @@ fn allocate_generation(counter: &AtomicU64) -> Option<u64> {
     }
 }
 
+/// Fence all future admission when the adapter's event stream terminates.
+///
+/// A closed watcher is a terminal transport failure, not an ordinary
+/// disconnect: without this fence, a caller could still invoke `dial` or
+/// `start_scan` against an adapter whose lifecycle callbacks can no longer
+/// be observed, leaving protocol links without reliable teardown feedback.
+fn fence_adapter_failure(shutting_down: &AtomicBool) {
+    shutting_down.store(true, Ordering::Release);
+}
+
+fn ensure_admission(shutting_down: &AtomicBool) -> Result<(), BleError> {
+    if shutting_down.load(Ordering::Acquire) {
+        Err(BleError::ShuttingDown)
+    } else {
+        Ok(())
+    }
+}
+
 async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMutexGuard<()> {
     gate.clone().lock_owned().await
 }
@@ -348,7 +366,7 @@ pub struct BleCentral {
     /// Terminal lifecycle flag set before shutdown drains the link table. The
     /// insertion check under `event_gate` closes the race with an in-flight
     /// dial that has not yet installed its physical link.
-    shutting_down: AtomicBool,
+    shutting_down: Arc<AtomicBool>,
     next_generation: AtomicU64,
 }
 
@@ -369,12 +387,14 @@ impl BleCentral {
             Arc::new(AsyncMutex::new(HashMap::new()));
         let event_gate = Arc::new(AsyncMutex::new(()));
         let dial_gate = Arc::new(AsyncMutex::new(()));
+        let shutting_down = Arc::new(AtomicBool::new(false));
 
         tokio::spawn(watch_adapter(
             adapter.clone(),
             tx.clone(),
             links.clone(),
             event_gate.clone(),
+            shutting_down.clone(),
         ));
 
         Ok(BleCentral {
@@ -384,7 +404,7 @@ impl BleCentral {
             links,
             event_gate,
             dial_gate,
-            shutting_down: AtomicBool::new(false),
+            shutting_down,
             next_generation: AtomicU64::new(0),
         })
     }
@@ -407,13 +427,11 @@ impl BleCentral {
     /// Start scanning, filtered to [`DEV_SERVICE_UUID`]. Sightings surface as
     /// `TalEvent::Beacon` on the [`Self::events`] stream.
     pub async fn start_scan(&self) -> Result<(), BleError> {
-        if self.shutting_down.load(Ordering::Acquire) {
-            return Err(BleError::ShuttingDown);
-        }
+        ensure_admission(&self.shutting_down)?;
         self.adapter
             .start_scan(ScanFilter { services: vec![service_uuid()] })
             .await?;
-        if self.shutting_down.load(Ordering::Acquire) {
+        if ensure_admission(&self.shutting_down).is_err() {
             let _ = self.adapter.stop_scan().await;
             return Err(BleError::ShuttingDown);
         }
@@ -451,9 +469,7 @@ impl BleCentral {
     /// [`Self::events`] while the central is active.
     pub async fn dial(&self, peer: PeerHandle) -> Result<LinkId, BleError> {
         let _dial_guard = self.dial_gate.lock().await;
-        if self.shutting_down.load(Ordering::Acquire) {
-            return Err(BleError::ShuttingDown);
-        }
+        ensure_admission(&self.shutting_down)?;
         let generation = allocate_generation(&self.next_generation).ok_or(BleError::GenerationExhausted)?;
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
@@ -526,7 +542,7 @@ impl BleCentral {
         let write_gate = Arc::new(AsyncMutex::new(()));
         let shutting_down = {
             let _event_guard = self.event_gate.lock().await;
-            if self.shutting_down.load(Ordering::Acquire) {
+            if ensure_admission(&self.shutting_down).is_err() {
                 true
             } else {
                 self.links.lock().await.insert(
@@ -700,11 +716,13 @@ async fn watch_adapter(
     tx: EventSender,
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
+    shutting_down: Arc<AtomicBool>,
 ) {
     let uuid = service_uuid();
     let mut events = match adapter.events().await {
         Ok(stream) => stream,
         Err(_) => {
+            fence_adapter_failure(&shutting_down);
             shutdown_links(&links, &event_gate, &tx).await;
             return;
         }
@@ -765,6 +783,10 @@ async fn watch_adapter(
             _ => {}
         }
     }
+    // An adapter event stream ending is terminal for this central.  Fence
+    // admission before retiring the links so a racing dial cannot install a
+    // new link after lifecycle observation has already failed.
+    fence_adapter_failure(&shutting_down);
     shutdown_links(&links, &event_gate, &tx).await;
 }
 
@@ -839,9 +861,10 @@ fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
 mod tests {
     use super::{
         acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
-        mint_link_id, permit_chunk, wait_for_disconnected_write_gate,
+        ensure_admission, fence_adapter_failure, mint_link_id, permit_chunk,
+        wait_for_disconnected_write_gate,
     };
-    use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
     use tokio::sync::Mutex as AsyncMutex;
     use tokio::time::Duration;
@@ -884,6 +907,14 @@ mod tests {
         let counter = AtomicU64::new(u64::MAX);
         assert_eq!(allocate_generation(&counter), None);
         assert_eq!(counter.load(std::sync::atomic::Ordering::Relaxed), u64::MAX);
+    }
+
+    #[test]
+    fn adapter_failure_fences_future_admission() {
+        let shutting_down = AtomicBool::new(false);
+        fence_adapter_failure(&shutting_down);
+        assert!(shutting_down.load(Ordering::Acquire));
+        assert!(matches!(ensure_admission(&shutting_down), Err(super::BleError::ShuttingDown)));
     }
 
     #[tokio::test]
