@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use crate::consts::PREKEY_BATCH;
+use crate::consts::{NICKNAME_MAX, PREKEY_BATCH};
 use crate::err::WireError;
 use crate::ids::{Key32, Sig64};
 use crate::wire::{BufExt, Reader};
@@ -71,7 +71,26 @@ impl Claim {
             sig: r.sig64()?,
         };
         r.finish()?;
+        claim.validate_known_body()?;
         Ok(claim)
+    }
+
+    /// Validate the semantics that are part of the v1 claim-field registry.
+    ///
+    /// Unknown fields intentionally remain opaque (doc 06 §4.1): their outer
+    /// claim signature is enough to relay/store them.  Recognized fields,
+    /// however, have normative body constraints.  Keeping this check on the
+    /// value type lets wire decoding and stateful claim merges share the same
+    /// fail-closed rule, including callers that construct a [`Claim`] without
+    /// going through [`Claim::decode`].
+    pub fn validate_known_body(&self) -> Result<(), WireError> {
+        if self.field == field::NICKNAME {
+            if self.body.len() > NICKNAME_MAX {
+                return Err(WireError::Oversize);
+            }
+            core::str::from_utf8(&self.body).map_err(|_| WireError::BadValue("claim.nickname.utf8"))?;
+        }
+        Ok(())
     }
 
     /// The `object_bytes` under the `mmp1/claim` domain tag.
@@ -309,6 +328,8 @@ pub fn succession_signed_object(revoked_key: &Key32, successor: &Key32) -> Vec<u
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     #[test]
@@ -318,6 +339,33 @@ mod tests {
         let mut bytes = [0u8; 32 + 64 + 1];
         bytes[96] = PREKEY_BATCH as u8;
         assert_eq!(PrekeyBatch::decode(&bytes), Err(WireError::Truncated));
+    }
+
+    #[test]
+    fn claim_decode_rejects_oversized_or_non_utf8_nickname() {
+        let oversized = Claim {
+            owner: Key32([1; 32]),
+            field: field::NICKNAME,
+            seq: 1,
+            body: vec![b'n'; NICKNAME_MAX + 1],
+            sig: Sig64::ZERO,
+        };
+        assert_eq!(Claim::decode(&oversized.encode()), Err(WireError::Oversize));
+
+        let non_utf8 = Claim { body: vec![0xff], ..oversized };
+        assert_eq!(Claim::decode(&non_utf8.encode()), Err(WireError::BadValue("claim.nickname.utf8")));
+    }
+
+    #[test]
+    fn claim_decode_keeps_unknown_fields_opaque() {
+        let claim = Claim {
+            owner: Key32([2; 32]),
+            field: 0xf0,
+            seq: 1,
+            body: vec![0xff; NICKNAME_MAX + 1],
+            sig: Sig64::ZERO,
+        };
+        assert_eq!(Claim::decode(&claim.encode()).unwrap(), claim);
     }
 
     fn revocation_no_successor() -> Revocation {

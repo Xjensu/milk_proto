@@ -27,8 +27,8 @@ pub enum ClaimMerge {
         /// Whether the incoming claim (rather than the one already stored) won the tie-break.
         adopted: bool,
     },
-    /// A structurally invalid `REVOCATION` body — `revoked_key` doesn't match
-    /// the claim's own `owner` (doc 06 §4.6 / handbook §4.6). Never stored;
+    /// A structurally invalid recognized claim body (for example a malformed
+    /// `REVOCATION` or an over-cap/non-UTF-8 nickname). Never stored;
     /// distinct from `Stale` because nothing was already on file to keep.
     Rejected,
 }
@@ -64,6 +64,14 @@ impl ClaimStore {
 
         if self.map.contains_key(&(node, field::REVOCATION)) {
             return ClaimMerge::Stale;
+        }
+
+        // `Claim::decode` applies the same check to wire input.  Repeat it at
+        // the state boundary because callers may construct a Claim directly
+        // (out-of-band bootstrap, tests, or persistence adapters). Unknown
+        // fields remain opaque and are intentionally accepted here.
+        if claim.validate_known_body().is_err() {
+            return ClaimMerge::Rejected;
         }
 
         if claim.field == field::REVOCATION {
@@ -355,5 +363,38 @@ mod tests {
 
         let n = node_id_of(&alice.public());
         assert!(store.revocation(&n).is_none());
+    }
+
+    #[test]
+    fn known_nickname_body_bounds_are_enforced_at_merge() {
+        let alice = identity(5);
+        let mut store = ClaimStore::new();
+
+        let oversized = signed_claim(
+            &alice,
+            field::NICKNAME,
+            1,
+            vec![b'x'; mmp_types::consts::NICKNAME_MAX + 1],
+        );
+        assert_eq!(store.merge(oversized, 0, false), ClaimMerge::Rejected);
+
+        let non_utf8 = signed_claim(&alice, field::NICKNAME, 2, vec![0xff]);
+        assert_eq!(store.merge(non_utf8, 0, false), ClaimMerge::Rejected);
+
+        let node = node_id_of(&alice.public());
+        assert!(store.get(&node, field::NICKNAME).is_none());
+    }
+
+    #[test]
+    fn unknown_claim_fields_remain_opaque_at_merge() {
+        let alice = identity(6);
+        let mut store = ClaimStore::new();
+        let claim = signed_claim(
+            &alice,
+            0xf0,
+            1,
+            vec![0xff; mmp_types::consts::NICKNAME_MAX + 1],
+        );
+        assert_eq!(store.merge(claim, 0, false), ClaimMerge::Adopted);
     }
 }

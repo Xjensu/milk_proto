@@ -66,6 +66,21 @@ fn nickname_at_byte_cap_is_signed_and_adopted() {
 }
 
 #[test]
+fn generic_nickname_publication_rejects_invalid_body_before_gossip() {
+    let mut n = node(248);
+    let before_claims = n.own_claims();
+    let before_store_len = n.store_len();
+    let oversized = vec![b'n'; NICKNAME_MAX + 1];
+
+    // The generic infallible publication API remains source-compatible, but
+    // now returns an empty result and performs no side effects for a known
+    // field whose body violates its normative bound.
+    assert!(n.publish_claim(mmp_types::claim::field::NICKNAME, 2, oversized).is_empty());
+    assert_eq!(n.own_claims(), before_claims);
+    assert_eq!(n.store_len(), before_store_len);
+}
+
+#[test]
 fn persisted_handoff_revalidates_raw_bundle_before_mutation() {
     let signer = Identity::from_seed(&[241; 32]);
     let peer = Id16([242; 16]);

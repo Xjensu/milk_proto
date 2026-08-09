@@ -944,6 +944,13 @@ impl Node {
     /// Publish a signed profile claim about ourselves (doc 06 §4) and gossip
     /// it as a class-3 bundle. Returns the claim's encoded bytes (e.g. for
     /// [`Node::revoke_identity`], which needs them to hand back to the caller).
+    ///
+    /// Known-field bodies are validated before signing, local adoption, or
+    /// gossip.  This legacy infallible API returns an empty vector for an
+    /// invalid recognized body; callers that need an explicit error should use
+    /// the typed fallible helpers (for example [`Node::try_set_nickname`]).
+    /// Unknown fields remain opaque and retain the forward-compatible
+    /// store-and-forward behavior from doc 06 §4.1.
     pub fn publish_claim(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
         self.core.publish_claim_now(field_id, seq, body)
     }
@@ -1835,6 +1842,13 @@ impl NodeCore {
     /// the outer `Node`.
     fn publish_claim_now(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
         let mut claim = Claim { owner: self.public, field: field_id, seq, body, sig: Sig64::ZERO };
+        // Keep the local publication path subject to the same field-specific
+        // semantic checks as wire decoding and ClaimStore::merge.  Without
+        // this guard a manually supplied nickname could be signed and
+        // gossiped even though receivers correctly reject it.
+        if claim.validate_known_body().is_err() {
+            return Vec::new();
+        }
         claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
         let encoded = claim.encode();
         self.learn_claim(claim.clone(), true);
