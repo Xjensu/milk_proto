@@ -525,8 +525,22 @@ fn validate_tlvs_independent(bytes: &[u8]) -> Result<(), &'static str> {
         let len_bytes = bytes.get(cursor..cursor + 2).ok_or("truncated TLV length")?;
         let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]) as usize;
         cursor += 2;
-        let _value = bytes.get(cursor..cursor + len).ok_or("truncated TLV value")?;
+        let value = bytes.get(cursor..cursor + len).ok_or("truncated TLV value")?;
         cursor += len;
+        // The critical registry has fixed (or bounded, for PARENTS) value
+        // widths.  Checking only the type/order here would leave a malformed
+        // known TLV looking valid to the independent reader even though the
+        // production codec rejects it.  Keep these checks specification-
+        // derived and byte-level so the conformance reader remains useful if
+        // both production generation and decoding drift together.
+        match typ {
+            0x01 if value.is_empty() || !value.len().is_multiple_of(16) || value.len() > 64 => {
+                return Err("known TLV has invalid length");
+            }
+            0x02 if value.len() != 2 => return Err("known TLV has invalid length"),
+            0x03 if value.len() != 22 => return Err("known TLV has invalid length"),
+            _ => {}
+        }
         // The frozen registry currently occupies critical types 0x01–0x03;
         // any other type below 0x80 is unknown-critical and rejects the run.
         if typ < 0x80 && !(1..=3).contains(&typ) {
@@ -789,6 +803,32 @@ fn malformed_tlv_vectors_are_rejected_by_independent_rules() {
 }
 
 #[test]
+fn independent_tlv_reader_rejects_known_type_length_mismatches() {
+    fn tlv(typ: u8, value: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(3 + value.len());
+        bytes.push(typ);
+        bytes.extend_from_slice(&(value.len() as u16).to_le_bytes());
+        bytes.extend_from_slice(value);
+        bytes
+    }
+
+    // PARENTS is 1–4 BundleIDs; GROUP_EPOCH and SYMBOL_INFO are fixed-width
+    // critical types.  These malformed streams retain valid TLV framing so a
+    // length-only implementation cannot accidentally accept them.
+    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 15])), Err("known TLV has invalid length"));
+    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 80])), Err("known TLV has invalid length"));
+    assert_eq!(validate_tlvs_independent(&tlv(0x02, &[0])), Err("known TLV has invalid length"));
+    assert_eq!(validate_tlvs_independent(&tlv(0x03, &[0; 21])), Err("known TLV has invalid length"));
+
+    // Boundary-positive checks ensure the new guard does not reject valid
+    // encodings: one parent and the largest four-parent list.
+    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 16])), Ok(()));
+    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 64])), Ok(()));
+    assert_eq!(validate_tlvs_independent(&tlv(0x02, &[0; 2])), Ok(()));
+    assert_eq!(validate_tlvs_independent(&tlv(0x03, &[0; 22])), Ok(()));
+}
+
+#[test]
 fn noncanonical_s_vector_pins_little_endian_s_plus_l() {
     let json = vector("noncanonical_s_negative.json");
     let valid_signature = parse_hex(&json, "valid_signature");
@@ -864,6 +904,8 @@ fn grouped_bundle_vector_covers_classes_zero_through_five() {
         let expected_signature = decode_hex("signature", &signatures[index]);
         assert_eq!(payload.len(), payload_lengths[index] as usize, "{} payload length", names[index]);
         let view = read_bundle_independent(&wire).expect("grouped bundle must satisfy independent layout reader");
+        validate_tlvs_independent(view.extensions)
+            .unwrap_or_else(|error| panic!("{} extensions rejected: {error}", names[index]));
         assert_eq!(u64::from(view.class), classes[index], "{} class", names[index]);
         assert_eq!(view.payload, payload, "{} payload bytes", names[index]);
         assert_eq!(view.canonical, expected_canonical, "{} canonical bytes", names[index]);
