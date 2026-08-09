@@ -728,6 +728,30 @@ from the still-external native Android/iOS adapter and hardware gates. The
 frozen specification remains untouched, and no MMP-Φ research hypothesis was
 promoted into v1 behavior.
 
+### Orchestration continuation XIV (2026-08-09)
+
+The simulation audit produced `402dbee`. The existing deterministic social
+cluster control now reports realized intra-community contacts, maximum
+consecutive intra-community streak, and realized bridge probability, including
+an explicit zero-meeting case. These are reproducibility metrics for comparing
+contact traces; they are not SLAW calibration, human-mobility evidence, or
+production routing inputs. The focused simulator tests and Clippy pass, while
+external trace calibration remains open.
+
+The transactional-store review produced `63f791e` and
+[`E7_TRANSACTIONAL_API_DECISION.md`](./E7_TRANSACTIONAL_API_DECISION.md).
+The proposed public trait is intentionally not exposed yet: current storage is
+held as `Box<dyn BundleStore + Send>`, opaque reservation ownership has no safe
+provider construction path, and no implementation proves batch/unknown-commit
+recovery. The existing fixed-store design remains the target, while legacy
+receive and own-origin behavior stays unchanged.
+
+The release-security audit produced `c9cc6d8`. Release-manifest parsing now
+limits the input to 1 MiB plus one-byte overflow detection before JSON parsing,
+closing an attacker-controlled memory-amplification path. The host-selected
+bounded `SnapshotStore` policy and vault generation fences were retained; no
+global persistence cap was guessed.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
