@@ -4,6 +4,7 @@ import plistlib
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).parents[1] / "verify_ios_artifacts.py"
@@ -152,6 +153,33 @@ class IOSArtifactTests(unittest.TestCase):
 
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("headers directory contains a symbolic link" in item for item in violations))
+
+    def test_symlinked_swift_binding_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            xcframework, bindings = _write_fixture(directory)
+            target = directory / "outside.swift"
+            target.write_text((bindings / "mmp_ffi.swift").read_text(encoding="utf-8"), encoding="utf-8")
+            source = bindings / "mmp_ffi.swift"
+            source.unlink()
+            try:
+                os.symlink(target, source)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(
+                any("Swift bindings directory contains a symbolic link" in item for item in violations)
+            )
+
+    def test_swift_binding_link_scan_is_enforced_before_source_read(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            with patch.object(VERIFY, "_first_symlink", return_value=bindings / "alias.swift"):
+                violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(
+                any("Swift bindings directory contains a symbolic link" in item for item in violations)
+            )
 
     def test_duplicate_slice_identifier_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:

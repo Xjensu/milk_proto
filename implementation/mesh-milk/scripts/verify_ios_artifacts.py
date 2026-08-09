@@ -223,6 +223,13 @@ def _verify_swift_bindings(bindings: Path, violations: list[str]) -> None:
     if not bindings.is_dir():
         violations.append(f"Swift bindings directory does not exist: {bindings}")
         return
+    if bindings.is_symlink():
+        violations.append("Swift bindings directory must not be a symbolic link")
+        return
+    symlink = _first_symlink(bindings)
+    if symlink is not None:
+        violations.append(f"Swift bindings directory contains a symbolic link: {symlink}")
+        return
     swift_files = sorted(path for path in bindings.rglob("*") if path.is_file() and path.suffix == ".swift")
     if not swift_files:
         violations.append(f"Swift bindings directory contains no .swift source: {bindings}")
