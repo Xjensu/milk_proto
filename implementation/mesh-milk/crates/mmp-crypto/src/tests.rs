@@ -307,9 +307,19 @@ fn prekey_agreement_binds_all_identity_and_dh_context() {
         agreement.prekey_id,
     )
     .unwrap();
+    let wrong_recipient = recipient_agree(
+        &store,
+        &mallory,
+        &alice.public(),
+        &alice.exchange_public(),
+        &agreement.eph_pub,
+        agreement.prekey_id,
+    )
+    .unwrap();
     let signed_only = sender_agree(&mut r, &alice, &bob.public(), &batch, None).unwrap();
     assert_ne!(expected, *wrong_sender);
     assert_ne!(expected, *wrong_sender_exchange);
+    assert_ne!(expected, *wrong_recipient);
     assert_ne!(expected, *signed_only.ck0);
 }
 
