@@ -7,6 +7,23 @@ ROOT = Path(__file__).parents[1]
 
 
 class BuildScriptTests(unittest.TestCase):
+    def test_mobile_build_scripts_require_locked_dependencies(self) -> None:
+        for name in ("build-android-aar.sh", "build-ios-xcframework.sh"):
+            text = (ROOT / name).read_text(encoding="utf-8")
+            cargo_lines = [
+                line.strip()
+                for line in text.splitlines()
+                if line.strip().startswith("cargo ")
+                and (
+                    line.strip().startswith("cargo build")
+                    or line.strip().startswith("cargo run")
+                    or (line.strip().startswith("cargo ndk") and " build " in line)
+                )
+            ]
+            self.assertTrue(cargo_lines, name)
+            for line in cargo_lines:
+                self.assertIn("--locked", line, f"{name}: {line}")
+
     def test_ios_build_script_has_safe_stale_binding_cleanup(self) -> None:
         script = ROOT / "build-ios-xcframework.sh"
         text = script.read_text(encoding="utf-8")

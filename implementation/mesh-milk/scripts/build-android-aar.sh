@@ -47,7 +47,7 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE/jni/arm64-v8a" "$STAGE/jni/armeabi-v7a" "$STAGE/jni/x86_64"
 
 echo "==> Building mmp-ffi cdylib for arm64-v8a / armeabi-v7a / x86_64 (cargo-ndk)"
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o "$STAGE/jni-raw" build -p mmp-ffi --release
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o "$STAGE/jni-raw" build -p mmp-ffi --release --locked
 
 # cargo-ndk lays out $STAGE/jni-raw/<abi>/libmmp_ffi.so; move into the AAR's
 # expected jni/<abi>/ layout (AAR ABI dir names match cargo-ndk's already).
@@ -65,8 +65,8 @@ cat > "$STAGE/AndroidManifest.xml" <<'EOF'
 EOF
 
 echo "==> Generating Kotlin bindings (UniFFI, same pipeline as CI's mobile-bindings job)"
-cargo build -p mmp-ffi --release
-cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- \
+cargo build -p mmp-ffi --release --locked
+cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- \
     generate --library target/release/libmmp_ffi.so --language kotlin --out-dir "$STAGE/kotlin-bindings"
 echo "==> Checking generated Kotlin binding API and secret boundary"
 python scripts/check_mobile_binding.py kotlin "$STAGE/kotlin-bindings"

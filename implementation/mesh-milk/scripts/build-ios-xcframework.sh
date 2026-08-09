@@ -41,11 +41,11 @@ rm -rf "$STAGE" "$OUT_DIR/MmpCore.xcframework" "$OUT_DIR/swift-bindings"
 mkdir -p "$STAGE/headers"
 
 echo "==> Building mmp-ffi staticlib for aarch64-apple-ios (device) and aarch64-apple-ios-sim (simulator)"
-cargo build -p mmp-ffi --release --target aarch64-apple-ios
-cargo build -p mmp-ffi --release --target aarch64-apple-ios-sim
+cargo build -p mmp-ffi --release --target aarch64-apple-ios --locked
+cargo build -p mmp-ffi --release --target aarch64-apple-ios-sim --locked
 
 echo "==> Generating Swift bindings (UniFFI) for the header + module map"
-cargo run -p mmp-ffi --features cli --release --bin uniffi-bindgen -- \
+cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- \
     generate --library target/aarch64-apple-ios/release/libmmp_ffi.a \
     --language swift --out-dir "$STAGE/swift-bindings"
 echo "==> Checking generated Swift binding API and secret boundary"
