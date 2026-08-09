@@ -121,6 +121,22 @@ class IOSArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("must not traverse a symbolic link" in item for item in violations))
 
+    def test_symlinked_info_plist_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            xcframework, bindings = _write_fixture(directory)
+            target = directory / "outside.plist"
+            target.write_bytes((xcframework / "Info.plist").read_bytes())
+            plist_path = xcframework / "Info.plist"
+            plist_path.unlink()
+            try:
+                os.symlink(target, plist_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("Info.plist must not be a symbolic link" in item for item in violations))
+
     def test_symlinked_header_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)

@@ -99,6 +99,9 @@ def _first_symlink(path: Path) -> Path | None:
 
 def _verify_plist(xcframework: Path, violations: list[str]) -> list[dict[str, Any]]:
     plist_path = xcframework / "Info.plist"
+    if plist_path.is_symlink():
+        violations.append("XCFramework Info.plist must not be a symbolic link")
+        return []
     if not plist_path.is_file():
         violations.append("XCFramework is missing Info.plist")
         return []
