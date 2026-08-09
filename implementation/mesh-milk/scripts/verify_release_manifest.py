@@ -216,12 +216,21 @@ def verify_manifest(
         files = _require_object(root_object["files"], "files")
         _require_exact_keys(files, frozenset(_FILE_KINDS), "files")
         seen: set[str] = set()
+        seen_casefold: dict[str, str] = {}
         for kind in _FILE_KINDS:
             record = _validate_file_record(files[kind], f"files.{kind}")
             name = record["name"]
             if name in seen:
                 raise ValueError(f"files contains duplicate file name: {name}")
+            folded = name.casefold()
+            previous = seen_casefold.get(folded)
+            if previous is not None:
+                raise ValueError(
+                    "files contains case-insensitive duplicate file name: "
+                    f"{name} conflicts with {previous}"
+                )
             seen.add(name)
+            seen_casefold[folded] = name
             actual = _resolve_child(root_resolved, name, f"files.{kind}")
             size, digest = _digest(actual)
             if size != record["size"]:

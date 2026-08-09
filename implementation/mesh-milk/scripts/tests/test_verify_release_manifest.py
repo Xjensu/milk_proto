@@ -111,6 +111,22 @@ class VerifyReleaseManifestTests(unittest.TestCase):
                 ["files.artifact.name must be a relative regular-file basename"],
             )
 
+    def test_case_insensitive_file_name_collision_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._package(root)
+            document = self._document(manifest)
+            document["files"]["certificate"]["name"] = "ARTIFACT"
+            self._write_document(manifest, document)
+            errors = VERIFY.verify_manifest(manifest, directory=root)
+            self.assertEqual(
+                errors,
+                [
+                    "files contains case-insensitive duplicate file name: "
+                    "ARTIFACT conflicts with artifact"
+                ],
+            )
+
     def test_manifest_symlink_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
