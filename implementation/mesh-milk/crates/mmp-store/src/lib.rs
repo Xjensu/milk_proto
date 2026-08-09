@@ -180,7 +180,16 @@ impl SnapshotStore {
                         self.load_rejected = true;
                         return;
                     }
-                    Err(_) => return,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                    Err(_) => {
+                        // A primary missing together with an unreadable
+                        // candidate is not equivalent to an empty store: the
+                        // candidate may contain the only recoverable image.
+                        // Refuse replacement until the host repairs/removes
+                        // that candidate explicitly.
+                        self.load_rejected = true;
+                        return;
+                    }
                 };
                 if !validate_complete_snapshot(&temp_bytes) {
                     return;
@@ -1222,6 +1231,27 @@ mod tests {
         assert!(path.is_dir(), "the original primary path remains intact");
 
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn unreadable_temp_candidate_fails_closed_when_primary_is_missing() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("missing-primary.mmp");
+        let temp = temporary_path(&path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&temp);
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir(&temp).unwrap();
+
+        let store = SnapshotStore::open(&path);
+        assert!(store.load_rejected(), "an unreadable recovery candidate must block replacement");
+        let error = store.persist().expect_err("the missing primary must not mask an unreadable candidate");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(temp.is_dir(), "the recovery candidate remains available for host repair");
+        assert!(!path.exists(), "no new primary is created while recovery is ambiguous");
+
+        let _ = std::fs::remove_dir_all(temp);
     }
 
     #[test]
