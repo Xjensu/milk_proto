@@ -1851,16 +1851,19 @@ The friendship maps do not currently justify an implementation-only cap:
   outside the remote-adversary resource model and should be bounded by the
   host API/persistence policy rather than silently evicted by the protocol.
 
-`known_identities` remains an explicit residual. Every authenticated session
-  can refresh one `NodeId → Ed25519 key` entry, and a remote can generate an
-  unbounded sequence of valid pseudonymous identities over the node lifetime.
-  The map is needed to resolve the peer key at the friendship offer/ack seam;
-  arbitrary eviction or a short TTL can make a valid delayed `FRIEND_ACK` fail
-  closed, while a hard admission cap would deny otherwise valid sessions. A
-  safe fix requires a reviewed lifetime rule (for example, binding the key to
-  the live session and retaining a bounded pending-handshake record) plus
-  conformance vectors for delayed ACKs. Do not add an arbitrary cap or TTL in
-  the implementation-only layer.
+`known_identities` now has a safe implementation-only lifetime rule. The cache
+is released when a link is removed, and an entry is retained while another
+established link for the same peer remains. This bounds the cache by the
+existing per-tier live-session admission limit rather than by an arbitrary
+identity count or wall-clock TTL. FRIEND_OFFER/FRIEND_ACK callbacks still run
+while their established `SessionEngine` is live, so interleaved or delayed
+frames cannot lose the key merely because another peer was admitted. The
+regressions `known_identity_cache_releases_after_contact_teardown` and
+`known_identity_cache_survives_another_live_link` cover sequential contacts,
+last-link cleanup, and the multi-link retention case. A host that never drives
+`LinkDown` or `tick` can still retain an active session (and its identity), but
+that is already bounded by the session admission cap and is an operational
+drive-contract violation, not a process-lifetime map leak.
 
 Group state is partially bounded but has a similar normative gap. The top-level
 `groups` table is capped at `MAX_GROUPS = 256`, including network bootstrap.
@@ -1874,6 +1877,35 @@ administrative anchor rule that would permit dropping these records without
 changing delayed-message/replay semantics. Leave these maps unchanged and
 track the required normative decision before adding a cap.
 
+Concrete next design (research/implementation gate, not a v1 wire change):
+define an authenticated epoch-retention anchor that names `(gid, floor_epoch)`
+and an issuance/validity context, and require the group authority/membership
+rules to state when traffic below that floor is no longer valid. The receiver
+may then retain all distributions needed by unexpired local bundles and the
+anchored epoch floor, while pruning older unreferenced `(member, epoch)`
+entries. `sent_dists` should be rebuilt from the same acknowledged epoch
+watermark (or treated as a bounded retransmission cache); clearing it may cause
+duplicate distribution bundles but must never reset a sender/receiver chain.
+Until that anchor and its partition-merge rule exist, do not infer a floor from
+receive time, the current `gs.epoch`, or a fixed number of epochs.
+
+Required conformance tests before enabling such a policy:
+
+1. A delayed but still-unexpired group bundle from an older epoch decrypts when
+   its distribution is retained; no local eviction occurs merely because a
+   newer epoch arrived.
+2. After an authenticated floor is accepted and all local references below it
+   have expired, pruning removes the old `remotes`/`dists` entries and a replay
+   of the removed distribution cannot reset a receiver chain.
+3. Partitioned anchors with conflicting floors merge conservatively (no false
+   deletion), and a later valid anchor can advance the floor deterministically.
+4. A Byzantine member cannot allocate unbounded future epochs before anchor
+   validation; the receiver applies a measured admission budget and exposes a
+   fail-closed diagnostic rather than silently changing replay semantics.
+5. Restart/restore preserves the anchor, retained references, and sender-key
+   generation atomically; failed persistence leaves the prior retention state
+   intact.
+
 The remaining indexes are indirectly bounded: `sync_view.entries` is rebuilt
 from the bounded bundle store on each `ids()` call; `blob_index` and
 `symbol_of` contain only indexed class-4 bundles and are pruned with store
@@ -1884,6 +1916,9 @@ not reveal a separate attacker-controlled lifetime accumulation in this pass.
 
 Regression evidence for the new bounds is in
 `proxy_summary_hints_are_bounded_per_peer` and
-`blob_serve_counters_are_bounded_for_unseen_peers`. The focused `mmp-node`
-library suite passes 74 tests, and `cargo clippy -p mmp-node --all-targets
---all-features -- -D warnings` passes.
+`blob_serve_counters_are_bounded_for_unseen_peers`. Identity lifetime evidence
+is in `known_identity_cache_releases_after_contact_teardown`,
+`known_identity_cache_survives_another_live_link`, and the engine-close
+assertion in `session_slot_releases_when_engine_closes`. The focused
+`mmp-node` library suite passes 76 tests, and `cargo clippy -p mmp-node
+--all-targets --all-features -- -D warnings` passes.

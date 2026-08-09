@@ -505,7 +505,8 @@ struct NodeCore {
     /// Identities learned via ID_PROOF (doc 08 §3.2, recorded in
     /// `accept_peer`) — resolves a session peer's `NodeId` back to its
     /// Ed25519 identity key for the friendship handshake, which the
-    /// `SessionHost` seam only carries `NodeId` for (handbook §4.5).
+    /// `SessionHost` seam only carries `NodeId` for (handbook §4.5). Entries
+    /// are session-scoped and released after the peer's last live link closes.
     known_identities: HashMap<NodeId, Key32>,
     /// Dependents we buffer for, patron side (handbook §4.5).
     friends: HashMap<NodeId, FriendState>,
@@ -1258,8 +1259,26 @@ impl Node {
                 > (OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE).saturating_mul(OUTBOX_FRAME_BYTES)
     }
 
+    /// Drop the peer identity cache entry once its last authenticated session
+    /// is removed. `known_identities` exists only because the friendship
+    /// callbacks receive a `NodeId`; they run while an established
+    /// `SessionEngine` is alive and do not need a process-lifetime identity
+    /// cache. Keeping entries while another link for the same peer remains
+    /// established preserves interleaved FRIEND_ACK handling.
+    fn release_known_identity_for_link(&mut self, link: LinkId) {
+        let Some(peer) = self.sessions.get(&link).and_then(SessionEngine::peer) else { return };
+        let still_active = self
+            .sessions
+            .iter()
+            .any(|(other, engine)| *other != link && engine.peer() == Some(peer));
+        if !still_active {
+            self.core.known_identities.remove(&peer);
+        }
+    }
+
     fn clear_link_outbox(&mut self, link: LinkId) {
         self.outbox.retain(|(queued_link, _)| *queued_link != link);
+        self.release_known_identity_for_link(link);
         self.sessions.remove(&link);
     }
 
@@ -1277,6 +1296,7 @@ impl Node {
         // entered CLOSING, but those terminal control frames must still reach
         // the transport before the host tears the physical link down.
         self.outbox.retain(|(queued_link, bytes)| *queued_link != link || Self::is_close_frame(bytes));
+        self.release_known_identity_for_link(link);
         self.sessions.remove(&link);
     }
 

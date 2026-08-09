@@ -96,6 +96,36 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
     assert_eq!(n.core.blob_served.len(), super::MAX_BLOB_SERVE_PEERS);
 }
 
+#[test]
+fn known_identity_cache_releases_after_contact_teardown() {
+    let mut a = node(254);
+    for (link, seed) in (0u64..16).zip(0u8..16) {
+        let mut b = node(seed);
+        contact(&mut a, &mut b, link, link + 1);
+        assert!(
+            a.core.known_identities.is_empty(),
+            "identity cache must not retain peer {} after its session is down",
+            seed
+        );
+    }
+}
+
+#[test]
+fn known_identity_cache_survives_another_live_link() {
+    let mut a = node(240);
+    let mut b = node(241);
+    establish(&mut a, &mut b, 1);
+    establish(&mut a, &mut b, 2);
+
+    let peer = b.node_id();
+    assert_eq!(a.core.known_identities.len(), 1);
+    a.on_tal_event(TalEvent::LinkDown { link: 1 });
+    assert!(a.core.known_identities.contains_key(&peer));
+
+    a.on_tal_event(TalEvent::LinkDown { link: 2 });
+    assert!(a.core.known_identities.is_empty());
+}
+
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).
 fn introduce(a: &mut Node, b: &mut Node) {
     for c in a.own_claims() {
@@ -322,6 +352,10 @@ fn session_slot_releases_when_engine_closes() {
     assert!(
         n.sessions.is_empty(),
         "a closed engine must be removed before a replacement is admitted"
+    );
+    assert!(
+        n.core.known_identities.is_empty(),
+        "engine closure must release the peer identity before LinkDown"
     );
     assert_eq!(n.poll_close(), None, "physical close waits for terminal wire frames");
     let terminal_types: Vec<u8> = std::iter::from_fn(|| n.poll_send().map(|(_, bytes)| bytes[2])).collect();
