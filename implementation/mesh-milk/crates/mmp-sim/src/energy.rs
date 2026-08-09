@@ -25,8 +25,12 @@ pub struct RendezvousActivity {
 /// protocol fields or scheduler parameters.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RendezvousMeasurement {
-    /// Stable identifier shared by the baseline and candidate runs.
-    pub trace_id: u64,
+    /// Full 16-byte identifier shared by the baseline and candidate runs.
+    ///
+    /// This is the replay trace identity, not a protocol credential. Keeping
+    /// all 128 bits avoids collapsing distinct schedules to the same pairing
+    /// key before comparison.
+    pub trace_id: [u8; 16],
     /// Number of advertisement/transmit events emitted by the controller.
     pub tx_events: u64,
     /// Number of scan/receive windows requested or observed.
@@ -187,7 +191,7 @@ impl PairedRendezvousMeasurement {
 /// Stable fields used to compare two validated rendezvous observations.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RendezvousComparison {
-    pub trace_id: u64,
+    pub trace_id: [u8; 16],
     pub baseline_discovery_rate: f64,
     pub candidate_discovery_rate: f64,
     pub discovery_rate_delta: f64,
@@ -531,7 +535,7 @@ mod tests {
         assert!(RendezvousEnergyModel::from_baseline(1.0, 1.0, f64::MAX, f64::MAX).is_none());
     }
 
-    fn measurement(trace_id: u64, discoveries: u64, delivered: u64, energy: f64) -> RendezvousMeasurement {
+    fn measurement(trace_id: [u8; 16], discoveries: u64, delivered: u64, energy: f64) -> RendezvousMeasurement {
         RendezvousMeasurement {
             trace_id,
             tx_events: 40,
@@ -555,14 +559,14 @@ mod tests {
 
     #[test]
     fn paired_edr_measurement_reports_reproducible_rates_energy_and_latency() {
-        let baseline = measurement(7, 2, 2, 100.0);
-        let candidate = measurement(7, 3, 3, 75.0);
+        let baseline = measurement([7; 16], 2, 2, 100.0);
+        let candidate = measurement([7; 16], 3, 3, 75.0);
         let summary = PairedRendezvousMeasurement::new(baseline, candidate)
             .unwrap()
             .summary()
             .unwrap();
 
-        assert_eq!(summary.trace_id, 7);
+        assert_eq!(summary.trace_id, [7; 16]);
         assert_eq!(summary.baseline_discovery_rate, 0.5);
         assert_eq!(summary.candidate_discovery_rate, 0.75);
         assert_eq!(summary.discovery_rate_delta, 0.25);
@@ -584,35 +588,37 @@ mod tests {
 
     #[test]
     fn paired_edr_measurement_rejects_mismatched_trace_and_bad_counts() {
-        let baseline = measurement(7, 2, 2, 100.0);
-        let mismatched = measurement(8, 3, 3, 75.0);
+        let baseline = measurement([7; 16], 2, 2, 100.0);
+        let mut mismatched_trace = [7; 16];
+        mismatched_trace[15] = 8;
+        let mismatched = measurement(mismatched_trace, 3, 3, 75.0);
         assert_eq!(
             PairedRendezvousMeasurement::new(baseline, mismatched),
             Err(MeasurementError::MismatchedTrace)
         );
 
-        let mut invalid = measurement(7, 2, 2, 100.0);
+        let mut invalid = measurement([7; 16], 2, 2, 100.0);
         invalid.discoveries = invalid.contact_attempts + 1;
         assert_eq!(
-            PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
+            PairedRendezvousMeasurement::new(invalid, measurement([7; 16], 3, 3, 75.0)),
             Err(MeasurementError::InconsistentCounts)
         );
     }
 
     #[test]
     fn paired_edr_measurement_rejects_nonfinite_energy() {
-        let mut invalid = measurement(7, 2, 2, 100.0);
+        let mut invalid = measurement([7; 16], 2, 2, 100.0);
         invalid.whole_device_energy_mwh = f64::NAN;
         assert_eq!(
-            PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
+            PairedRendezvousMeasurement::new(invalid, measurement([7; 16], 3, 3, 75.0)),
             Err(MeasurementError::NonFiniteValue)
         );
     }
 
     #[test]
     fn paired_edr_measurement_marks_zero_sample_intervals_unknown() {
-        let mut baseline = measurement(7, 0, 0, 100.0);
-        let mut candidate = measurement(7, 0, 0, 75.0);
+        let mut baseline = measurement([7; 16], 0, 0, 100.0);
+        let mut candidate = measurement([7; 16], 0, 0, 75.0);
         baseline.contact_attempts = 0;
         candidate.contact_attempts = 0;
         baseline.offered_bundles = 0;
