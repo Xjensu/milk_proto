@@ -280,6 +280,10 @@ jobs:
       - run: cargo install cargo-fuzz --locked
       - name: validate deterministic seed recipe
         run: python fuzz/seed_corpus.py check
+      - name: materialize and verify deterministic seed corpus
+        run: |
+          python fuzz/seed_corpus.py write
+          python fuzz/seed_corpus.py verify
       - name: build every target (cheap correctness gate, every push)
         run: |
           cd fuzz

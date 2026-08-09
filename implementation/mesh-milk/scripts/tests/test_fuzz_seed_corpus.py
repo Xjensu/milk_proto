@@ -24,6 +24,8 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         self.assertGreaterEqual(len(first["fuzz_envelope"]), 20)
         self.assertGreaterEqual(len(first["fuzz_bundle"]), 12)
         self.assertGreaterEqual(len(first["fuzz_hs"]), 4)
+        self.assertTrue(any(seed.name == "max-256" and len(seed.data) == 256 for seed in first["fuzz_hs"]))
+        self.assertTrue(any(seed.name == "over-max-257" and len(seed.data) == 257 for seed in first["fuzz_hs"]))
         self.assertTrue(any(len(seed.data) > 4096 for seed in first["fuzz_envelope"]))
         self.assertTrue(any("recon-range-count-no-records" in seed.name for seed in first["fuzz_envelope"]))
         self.assertTrue(any("unknown_critical_tlv" in seed.name for seed in first["fuzz_bundle"]))

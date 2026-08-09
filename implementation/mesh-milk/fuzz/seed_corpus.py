@@ -193,6 +193,18 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
             _seed("fuzz_hs", "zero-32", bytes(32), "deterministic-zero-32"),
             _seed(
                 "fuzz_hs",
+                "max-256",
+                bytes((i * 29 + 7) & 0xFF for i in range(256)),
+                "deterministic-max-handshake-input-256",
+            ),
+            _seed(
+                "fuzz_hs",
+                "over-max-257",
+                bytes((i * 29 + 7) & 0xFF for i in range(257)),
+                "deterministic-over-max-handshake-input-257",
+            ),
+            _seed(
+                "fuzz_hs",
                 "pattern-96",
                 bytes((i * 17 + 3) & 0xFF for i in range(96)),
                 "deterministic-pattern-96",
