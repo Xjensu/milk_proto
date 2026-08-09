@@ -60,6 +60,68 @@ NOTE: `connect`/`send` use mmp-cli's BLE central transport (mmp-tal-btleplug)
       stack over an in-memory link, no radio required.
 ";
 
+const KEYGEN_USAGE: &str = "\
+mmp-cli keygen — generate an identity seed
+
+USAGE:
+    mmp-cli keygen <file>
+
+Writes 32 bytes of OS-generated identity seed as hexadecimal text to <file>.
+The path must not begin with '-' (use ./<name> or an absolute path instead).
+";
+
+const DEMO_USAGE: &str = "\
+mmp-cli demo — run a two-node in-memory exchange
+
+USAGE:
+    mmp-cli demo
+";
+
+const INSPECT_USAGE: &str = "\
+mmp-cli inspect — print a snapshot bundle table
+
+USAGE:
+    mmp-cli inspect <path>
+
+The snapshot path must not begin with '-'.
+";
+
+const VECTORS_USAGE: &str = "\
+mmp-cli vectors — generate golden test vectors
+
+USAGE:
+    mmp-cli vectors [<dir>]
+
+The optional output directory must not begin with '-'.
+";
+
+const CONNECT_USAGE: &str = "\
+mmp-cli connect — run a BLE central node
+
+USAGE:
+    mmp-cli connect <seedfile> [--store <path>]
+
+Both paths must not begin with '-'.
+";
+
+const SEND_USAGE: &str = "\
+mmp-cli send — queue a text message and run a BLE central node
+
+USAGE:
+    mmp-cli send <seedfile> <hex-nodeid> <text> [--store <path>]
+
+The seed and store paths must not begin with '-'.
+";
+
+const LISTEN_USAGE: &str = "\
+mmp-cli listen — run a BLE peripheral node
+
+USAGE:
+    mmp-cli listen <seedfile> [--store <path>]
+
+Both paths must not begin with '-'.
+";
+
 /// How long `send` waits for its message to reach `Delivered` before giving
 /// up (exit code 1). Real DTN contacts can take a couple of round trips
 /// (doc 06 §5) even over a good link, so this is generous rather than tight.
@@ -73,11 +135,19 @@ fn main() -> ExitCode {
     };
     match cmd.as_str() {
         "-h" | "--help" | "help" => {
-            print!("{USAGE}");
-            ExitCode::SUCCESS
+            if cmd == "help" {
+                cmd_help(&args[1..])
+            } else if args.len() == 1 {
+                print!("{USAGE}");
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("mmp-cli: help does not accept additional arguments\n");
+                eprint!("{USAGE}");
+                ExitCode::from(2)
+            }
         }
         "keygen" => cmd_keygen(&args[1..]),
-        "demo" => cmd_demo(),
+        "demo" => cmd_demo(&args[1..]),
         "inspect" => cmd_inspect(&args[1..]),
         "vectors" => cmd_vectors(&args[1..]),
         "connect" => cmd_connect(&args[1..]),
@@ -91,14 +161,95 @@ fn main() -> ExitCode {
     }
 }
 
+fn subcommand_usage(subcmd: &str) -> &'static str {
+    match subcmd {
+        "keygen" => KEYGEN_USAGE,
+        "demo" => DEMO_USAGE,
+        "inspect" => INSPECT_USAGE,
+        "vectors" => VECTORS_USAGE,
+        "connect" => CONNECT_USAGE,
+        "send" => SEND_USAGE,
+        "listen" => LISTEN_USAGE,
+        _ => USAGE,
+    }
+}
+
+fn cmd_help(args: &[String]) -> ExitCode {
+    match args {
+        [] => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        [arg] if is_help_arg(arg) => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        [subcmd]
+            if matches!(
+                subcmd.as_str(),
+                "keygen" | "demo" | "inspect" | "vectors" | "connect" | "send" | "listen"
+            ) =>
+        {
+            print!("{}", subcommand_usage(subcmd));
+            ExitCode::SUCCESS
+        }
+        [other] => {
+            eprintln!("mmp-cli: unknown subcommand '{other}'\n");
+            eprint!("{USAGE}");
+            ExitCode::from(2)
+        }
+        _ => {
+            eprintln!("mmp-cli help: expected at most one subcommand\n");
+            eprint!("{USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn is_help_arg(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "help")
+}
+
+/// Print a subcommand's help when its first argument is a help token. Help
+/// must be the only argument so a typo cannot silently discard other input.
+fn subcommand_help(subcmd: &str, args: &[String]) -> Option<ExitCode> {
+    if args.first().is_some_and(|arg| is_help_arg(arg)) {
+        return Some(if args.len() == 1 {
+            print!("{}", subcommand_usage(subcmd));
+            ExitCode::SUCCESS
+        } else {
+            usage_error(subcmd, "help does not accept additional arguments")
+        });
+    }
+    None
+}
+
+fn validate_path_argument(label: &str, path: &str) -> Result<(), String> {
+    if path.starts_with('-') {
+        return Err(format!(
+            "{label} '{path}' looks like an option; prefix it with './' or use an absolute path"
+        ));
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ keygen --
 
 fn cmd_keygen(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("keygen", args) {
+        return result;
+    }
     let Some(path) = args.first() else {
         eprintln!("mmp-cli keygen: missing <file>\n");
-        eprint!("{USAGE}");
+        eprint!("{KEYGEN_USAGE}");
         return ExitCode::from(2);
     };
+    if args.len() != 1 {
+        return usage_error("keygen", "expected exactly one <file>");
+    }
+    if let Err(error) = validate_path_argument("output path", path) {
+        return usage_error("keygen", &error);
+    }
 
     let seed = match random_seed() {
         Ok(seed) => seed,
@@ -129,8 +280,17 @@ fn cmd_keygen(args: &[String]) -> ExitCode {
 /// crate's manifest dir), so `mmp-cli vectors` with no argument just refreshes
 /// the committed set in place.
 fn cmd_vectors(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("vectors", args) {
+        return result;
+    }
+    if args.len() > 1 {
+        return usage_error("vectors", "expected at most one [<dir>]");
+    }
     let default_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors");
     let dir = args.first().map(String::as_str).unwrap_or(default_dir);
+    if let Err(error) = validate_path_argument("output directory", dir) {
+        return usage_error("vectors", &error);
+    }
 
     if let Err(e) = std::fs::create_dir_all(dir) {
         eprintln!("mmp-cli vectors: cannot create '{dir}': {e}");
@@ -209,7 +369,13 @@ fn parse_node_id(s: &str) -> Result<NodeId, String> {
 
 // -------------------------------------------------------------------- demo --
 
-fn cmd_demo() -> ExitCode {
+fn cmd_demo(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("demo", args) {
+        return result;
+    }
+    if !args.is_empty() {
+        return usage_error("demo", "does not accept positional arguments");
+    }
     let alice_seed = *blake3::hash(b"mmp-cli demo alice").as_bytes();
     let bob_seed = *blake3::hash(b"mmp-cli demo bob").as_bytes();
     let mut alice = Node::new(alice_seed, Box::new(MemStore::new()), Tier::Relay);
@@ -315,11 +481,20 @@ fn print_event(who: &str, ev: &Event) {
 // ----------------------------------------------------------------- inspect --
 
 fn cmd_inspect(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("inspect", args) {
+        return result;
+    }
     let Some(path) = args.first() else {
         eprintln!("mmp-cli inspect: missing <path>\n");
-        eprint!("{USAGE}");
+        eprint!("{INSPECT_USAGE}");
         return ExitCode::from(2);
     };
+    if args.len() != 1 {
+        return usage_error("inspect", "expected exactly one <path>");
+    }
+    if let Err(error) = validate_path_argument("snapshot path", path) {
+        return usage_error("inspect", &error);
+    }
     if !std::path::Path::new(path).exists() {
         eprintln!("mmp-cli inspect: no such file '{path}'");
         return ExitCode::from(2);
@@ -404,16 +579,22 @@ fn parse_positional_and_store(args: &[String], n_positional: usize) -> Result<(V
         return Err("missing argument(s)".to_string());
     }
     let positional = args[..n_positional].to_vec();
+    if let Some(seedfile) = positional.first() {
+        validate_path_argument("seed file", seedfile)?;
+    }
     match &args[n_positional..] {
         [] => Ok((positional, None)),
-        [flag, path] if flag == "--store" => Ok((positional, Some(path.clone()))),
+        [flag, path] if flag == "--store" => {
+            validate_path_argument("store path", path)?;
+            Ok((positional, Some(path.clone())))
+        }
         rest => Err(format!("unrecognized trailing argument(s): {}", rest.join(" "))),
     }
 }
 
 fn usage_error(subcmd: &str, msg: &str) -> ExitCode {
     eprintln!("mmp-cli {subcmd}: {msg}\n");
-    eprint!("{USAGE}");
+    eprint!("{}", subcommand_usage(subcmd));
     ExitCode::from(2)
 }
 
@@ -521,6 +702,9 @@ fn prime_node_clock<C: ClockSource>(node: &mut Node, clock: &mut C) {
 }
 
 fn cmd_connect(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("connect", args) {
+        return result;
+    }
     let (positional, store_path) = match parse_positional_and_store(args, 1) {
         Ok(v) => v,
         Err(e) => return usage_error("connect", &e),
@@ -549,6 +733,9 @@ fn cmd_connect(args: &[String]) -> ExitCode {
 }
 
 fn cmd_send(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("send", args) {
+        return result;
+    }
     let (positional, store_path) = match parse_positional_and_store(args, 3) {
         Ok(v) => v,
         Err(e) => return usage_error("send", &e),
@@ -594,6 +781,9 @@ fn cmd_send(args: &[String]) -> ExitCode {
 }
 
 fn cmd_listen(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("listen", args) {
+        return result;
+    }
     let (positional, store_path) = match parse_positional_and_store(args, 1) {
         Ok(v) => v,
         Err(e) => return usage_error("listen", &e),
@@ -933,7 +1123,41 @@ mod tests {
 
     #[test]
     fn demo_smoke_requires_receiver_and_delivery_evidence() {
-        assert_eq!(cmd_demo(), ExitCode::SUCCESS);
+        assert_eq!(cmd_demo(&[]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn keygen_help_is_handled_before_any_output_path_operation() {
+        let help = vec!["--help".to_string()];
+        assert_eq!(cmd_keygen(&help), ExitCode::SUCCESS);
+        assert!(subcommand_usage("keygen").contains("mmp-cli keygen <file>"));
+    }
+
+    #[test]
+    fn every_documented_subcommand_has_explicit_help() {
+        for subcmd in ["keygen", "demo", "inspect", "vectors", "connect", "send", "listen"] {
+            let text = subcommand_usage(subcmd);
+            assert!(text.contains(&format!("mmp-cli {subcmd}")), "missing help for {subcmd}");
+        }
+        assert_eq!(cmd_help(&["keygen".to_string()]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn option_looking_paths_are_rejected_but_message_text_remains_free_form() {
+        assert!(validate_path_argument("output path", "--help").is_err());
+        let store = vec!["seed.hex", "00112233445566778899aabbccddeeff", "--help"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert!(parse_positional_and_store(&store, 3).is_ok());
+
+        let bad_store = vec!["seed.hex", "--store", "--help"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert!(parse_positional_and_store(&bad_store, 1)
+            .expect_err("option-looking store paths must fail")
+            .contains("looks like an option"));
     }
 
     #[test]
