@@ -413,6 +413,28 @@ and all pre-existing dirty application/docs paths remain untouched. The complete
 Python suite is now 89 tests with six intentional skips; the Rust and target
 checks above remain green.
 
+### Orchestration continuation II (2026-08-09)
+
+The next delegated cycle added three scoped outcomes. `d6f4e24` makes the BLE
+evidence validator require the exact command line for each host, matching the
+existing manual evidence checklist; it does not turn operator-supplied logs
+into cryptographic proof. `17906a4` records the E7-S1 fixed-store blocker:
+`BundleStore::put` cannot report capacity rejection, read-side APIs allocate,
+and the current `mmp-store` filesystem graph is `std`-only. The handoff defines
+the required API split, board-derived capacities, and HIL evidence instead of
+adding a misleading embedded store. `abcfe67` adds checked EDR gain reporting
+for finite model inputs whose quotient overflows and documents why no raw-log
+parser is justified until provenance, calibration, and confidence-interval
+fields are agreed.
+
+The post-cycle verification is green: 412 Rust tests are listed (406 active,
+6 intentionally ignored), including 25 active simulator tests; the Python
+harness reports 90 tests with 6 skips; the deterministic fuzz corpus validates
+46 seeds; focused BLE and EDR suites pass; the embedded target closure passes;
+and `specification/` remains unchanged. These are host-side or structural
+results only. Physical BlueZ exchange, native mobile radio behavior, linked
+embedded images, and normative RBSR/D3 decisions remain separate gates.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
