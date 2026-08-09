@@ -365,6 +365,14 @@ jobs:
           --signature ${{ matrix.artifact_name }}.sig
           --certificate ${{ matrix.artifact_name }}.pem
           --output ${{ matrix.artifact_name }}.manifest.json
+      - name: verify signed artifact digest manifest
+        run: >
+          python scripts/verify_release_manifest.py
+          --manifest ${{ matrix.artifact_name }}.manifest.json
+          --directory .
+          --repository "${{ github.repository }}"
+          --commit "${{ github.sha }}"
+          --ref "${{ github.ref }}"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-signed

@@ -107,6 +107,23 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("--certificate ${{ matrix.artifact_name }}.pem", run)
         self.assertIn("--output ${{ matrix.artifact_name }}.manifest.json", run)
 
+    def test_release_job_verifies_manifest_against_source_and_files(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["release"]["steps"]
+        verification = [
+            step
+            for step in steps
+            if step.get("name") == "verify signed artifact digest manifest"
+        ]
+        self.assertEqual(len(verification), 1)
+        run = verification[0]["run"]
+        self.assertIn("scripts/verify_release_manifest.py", run)
+        self.assertIn("--manifest ${{ matrix.artifact_name }}.manifest.json", run)
+        self.assertIn("--directory .", run)
+        self.assertIn('--repository "${{ github.repository }}"', run)
+        self.assertIn('--commit "${{ github.sha }}"', run)
+        self.assertIn('--ref "${{ github.ref }}"', run)
+
     def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
         """Keep fuzz commands relative to the workflow's default directory."""
 
