@@ -33,8 +33,9 @@ const HS_OVERHEAD: usize = 128;
 /// is 153 bytes after the two public-key/DH tokens and two AEAD tags.  A
 /// 256-byte buffer leaves margin for the framing headroom while keeping
 /// pre-auth receive memory independent of attacker-controlled input length.
-/// Inputs above this bound are not valid v1 handshake messages and are
-/// rejected before calling into `snow`.
+/// Inputs above this implementation bound are rejected before calling into
+/// `snow`; no current HELLO-bearing handshake emitted by this crate exceeds
+/// it.
 pub(crate) const MAX_HANDSHAKE_MESSAGE: usize = 256;
 
 /// Cipher suites this build can speak (doc 03 §8: 1-byte registry pinned in

@@ -59,6 +59,10 @@ repository-wide security certification or an external cryptographic review.
    identity-plus-HELLO payload is 57 bytes, and the largest standard Noise XX
    message carrying that payload is 153 bytes. The remaining margin is for
    framing/implementation headroom, not an extension to the wire format.
+   The reference implementation also applies this bound to an optional
+   cleartext payload on XX message 1; such a payload is consumed by Noise but
+   ignored by the MMP parser. Peers that need larger pre-auth messages remain
+   an explicit future-profile compatibility question.
    `noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state` covers
    early rejection and confirms that a subsequent valid first message still
    progresses the handshake.
