@@ -1065,6 +1065,37 @@ Android/Xcode artifact builds, or real BLE exchange. Focused evidence is 34
 Python suite and workspace matrix remain the next verification gate. Existing
 dirty paths and the entire `specification/` tree remain untouched.
 
+### Orchestration continuation XXV (2026-08-09)
+
+The next bounded platform cycle produced `ef37de0` and `371127d`. The
+embedded track added a source-level regression which keeps the Embassy and
+embedded TAL shells unconditionally `#![no_std]`; this guards the dependency
+boundary but does not invent an allocator, flash provider, executor, radio
+backend, linked image, or hardware result.
+
+The mobile track added a deterministic iOS lifecycle-contract checker to CI.
+It verifies that both integration guides retain restoration identifiers and
+callbacks, monotonic node timing, Keychain seed ownership, serial drive-queue
+ownership, link lifecycle forwarding, and ATT back-pressure/flush markers. The
+iOS artifact verifier now rejects case-folded slice-identifier collisions and
+non-canonical packaged path casing. These are source/artifact integrity gates,
+not Swift/CoreBluetooth compilation or physical-device evidence; native iOS
+restoration, Keychain accessibility, ATT behavior, and relaunch tests remain
+external gates.
+
+The host Kotlin coordinator now queues a polled envelope before resolving ATT
+MTU. A transient MTU callback failure therefore leaves the frame retryable
+instead of losing it. The change is still a source-level coordinator result;
+Android SDK compilation, controller behavior, and real radio exchange remain
+unverified.
+
+Focused evidence for this continuation is 32 iOS/Kotlin tests (three
+platform-dependent skips), a passing iOS lifecycle checker, the embedded
+no-std target closure, and the previously recorded full workspace matrix. No
+file under `specification/` or any pre-existing protected dirty path was
+modified. The next implementation step remains a real native-platform/HIL
+gate, not a new wire or cryptographic claim.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
