@@ -1742,6 +1742,17 @@ generation after `09629bb` passes the Kotlin and Swift binding checks plus the
 complete API-surface check; only the previously recorded missing formatter
 tools remain.
 
+## 2026-08-09 Windows shell-test boundary
+
+The repository Python suite now reports 42 tests passing with one explicit
+skip on this Windows host. `test_ios_build_script_is_valid_bash` invokes
+`bash -n`; Windows' system `bash.exe` is the WSL launcher and, when WSL is not
+installed, emits `wsl.exe --install` guidance instead of parsing the script.
+`e3c5e57` skips only that unmistakable launcher response, while retaining a
+strict failure for any actual Bash syntax error and retaining the Linux/macOS
+syntax gate. This is an environment prerequisite, not evidence of an iOS
+build or a protocol failure.
+
 ## 2026-08-09 continuation: bounded application callback FIFO
 
 The `mmp-node` application callback queue (`Node::poll_event`) was previously
