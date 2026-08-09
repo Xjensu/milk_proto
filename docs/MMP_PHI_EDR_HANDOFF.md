@@ -196,3 +196,27 @@ undefined ratio rather than an infinity; an overflowing derived ratio is
 rejected. The focused tests cover valid paired output, count/trace rejection,
 and non-finite input rejection. This schema is an experimental data contract,
 not a production acceptance claim.
+
+## 2026-08-09 deterministic EDR experiment matrix
+
+`RendezvousEnergyModel::default_experiment_matrix()` now supplies a fixed,
+wire-neutral sweep for the next trace-replay step. It contains normalized
+transmit-activity multipliers:
+
+```text
+0.25, 0.50, 0.75, 1.00, 2.00, 4.00, 8.00
+```
+
+The `1.00` point is labelled `BinarySprayBaseline` only to identify the
+current MMP/1 workload in a comparison. The other six points are labelled
+`EdrDutyCycle`; each derives receive activity as `K / tx_activity`, preserving
+the toy model's fixed hazard product. The matrix is deterministic and returns
+`None` if a derived point is not representable as a finite positive value.
+
+This helper does not invoke `mmp-router`, mutate copy budgets, add wire fields,
+or select a platform scheduler. It supplies candidate normalized points to a
+future harness that must replay the same contact trace and workload for every
+point, then populate `RendezvousMeasurement` records. The multipliers are a
+bounded sweep for measurement planning, not evidence that any point is
+schedulable or superior; collision probability, controller behavior, host
+wakeups, and whole-device energy remain external measurements.

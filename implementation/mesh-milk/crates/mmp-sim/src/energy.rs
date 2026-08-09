@@ -224,6 +224,33 @@ fn ratio(numerator: f64, denominator: f64) -> Result<Option<f64>, MeasurementErr
     }
 }
 
+/// Profiles used by the research-only EDR comparison matrix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RendezvousExperimentProfile {
+    /// Current MMP/1 binary-spray workload used as the comparison baseline.
+    BinarySprayBaseline,
+    /// An EDR duty-cycle candidate with an altered transmit activity rate.
+    EdrDutyCycle,
+}
+
+/// One fixed-hazard activity point in the EDR comparison matrix.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RendezvousExperimentPoint {
+    /// Matrix profile associated with this point.
+    pub profile: RendezvousExperimentProfile,
+    /// Transmit activity relative to the measured baseline activity.
+    pub tx_scale: f64,
+    /// Activity and modeled energy for the point.
+    pub activity: RendezvousActivity,
+}
+
+/// Default transmit-activity multipliers for the deterministic research sweep.
+///
+/// The point at `1.0` is the current binary-spray baseline. Other points are
+/// EDR candidates and are deliberately bounded around it; these are normalized
+/// model values, not BLE timing recommendations.
+pub const DEFAULT_EDR_TX_SCALES: [f64; 7] = [0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0];
+
 /// Controlled square-root optimum for the energy-dual rendezvous hypothesis.
 ///
 /// Activity values are normalized rates rather than BLE timings. The model is
@@ -317,6 +344,47 @@ impl RendezvousEnergyModel {
             tx_energy,
             rx_energy,
             energy: tx_energy + rx_energy,
+        })
+    }
+
+    /// Build a deterministic, wire-neutral matrix for the binary-spray
+    /// baseline and bounded EDR duty-cycle candidates.
+    ///
+    /// Every point preserves the model's normalized hazard product. The
+    /// matrix is intended for trace replay and measurement planning only; it
+    /// does not run the router, change a copy budget, or select a scheduler
+    /// policy. `None` is returned only if the model cannot represent one of
+    /// the derived points as finite positive values.
+    pub fn default_experiment_matrix(&self) -> Option<[RendezvousExperimentPoint; 7]> {
+        Some([
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[0])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[1])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[2])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[3])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[4])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[5])?,
+            self.experiment_point(DEFAULT_EDR_TX_SCALES[6])?,
+        ])
+    }
+
+    fn experiment_point(&self, tx_scale: f64) -> Option<RendezvousExperimentPoint> {
+        if !tx_scale.is_finite() || tx_scale <= 0.0 {
+            return None;
+        }
+        let tx_activity = self.baseline_tx_activity * tx_scale;
+        if !tx_activity.is_finite() || tx_activity <= 0.0 {
+            return None;
+        }
+        let rx_activity = self.hazard_product / tx_activity;
+        let activity = self.evaluate(tx_activity, rx_activity)?;
+        Some(RendezvousExperimentPoint {
+            profile: if tx_scale == 1.0 {
+                RendezvousExperimentProfile::BinarySprayBaseline
+            } else {
+                RendezvousExperimentProfile::EdrDutyCycle
+            },
+            tx_scale,
+            activity,
         })
     }
 
@@ -439,5 +507,26 @@ mod tests {
             PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
             Err(MeasurementError::NonFiniteValue)
         );
+    }
+
+    #[test]
+    fn edr_experiment_matrix_is_deterministic_and_marks_binary_spray_baseline() {
+        let model = RendezvousEnergyModel::from_baseline(1.0, 1.0, 0.12, 4.5).unwrap();
+        let first = model.default_experiment_matrix().unwrap();
+        let second = model.default_experiment_matrix().unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 7);
+        assert_eq!(first[3].tx_scale, 1.0);
+        assert_eq!(first[3].profile, RendezvousExperimentProfile::BinarySprayBaseline);
+        for point in first {
+            assert!((point.activity.tx_activity * point.activity.rx_activity
+                - model.hazard_product())
+                .abs()
+                < 1e-9);
+        }
+        assert!(first
+            .iter()
+            .any(|point| point.profile == RendezvousExperimentProfile::EdrDutyCycle));
     }
 }
