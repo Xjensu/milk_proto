@@ -862,6 +862,33 @@ or producer snapshot protocol, so no public transactional trait or wire change
 was introduced. The frozen `specification/` tree and protected dirty paths
 remain untouched.
 
+### Orchestration continuation XVIII (2026-08-09)
+
+The embedded audit produced `e53bb2e`. The Reed–Solomon decoder now rejects
+symbol index `255`: with `MAX_N = 255`, valid zero-based indices stop at `254`.
+A maximum-`k` parity-only recovery regression also exercises the upper host
+parameter boundary. The target check passes, but linked image size, RAM, and
+named-board HIL evidence remain external E7 gates.
+
+The manual interoperability audit produced `5cef266`. The PC procedure now
+distinguishes Linux/BlueZ peripheral support from Linux, Windows, and macOS
+central paths, uses native executable/path examples per host, and names the
+Debian/Ubuntu BlueZ and D-Bus prerequisites. It explicitly retains the
+Android/iOS consuming-app and physical-radio boundary instead of presenting a
+host-only build as mobile interoperability. The documented in-memory CLI
+smoke test passed with both receiver and delivery assertions.
+
+The E7 storage audit produced `0ab41c8`, an isolated integration-test-only
+fixed-capacity transaction double. It exercises exact-fill and replacement
+delta accounting, outstanding reservations, token mismatch and idempotent
+abort behavior, injected commit failure, and recovery to the last durable
+generation. It intentionally adds no public API, producer wiring, FFI seam,
+wire behavior, or specification change. Its clone-based recovery model is
+acceptance evidence only; filesystem crash consistency, embedded allocation,
+producer rollback, and file batch transactions remain open.
+
+No file under `specification/` or any protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
