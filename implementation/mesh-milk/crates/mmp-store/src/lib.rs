@@ -534,7 +534,15 @@ fn valid_blocklist(bytes: &[u8]) -> bool {
 /// or remove the last complete image.  Use a distinct suffix in that one case.
 fn temporary_path(path: &Path) -> PathBuf {
     let candidate = path.with_extension("tmp");
-    if candidate.as_path() != path {
+    #[cfg(windows)]
+    let collision = candidate.as_path() == path
+        || path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("tmp"));
+    #[cfg(not(windows))]
+    let collision = candidate.as_path() == path;
+    if !collision {
         return candidate;
     }
 
