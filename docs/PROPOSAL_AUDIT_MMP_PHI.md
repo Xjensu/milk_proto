@@ -1140,6 +1140,31 @@ durable provider recovery, and physical platform evidence remain explicitly
 open. No file under `specification/` or any pre-existing protected dirty path
 was modified.
 
+### Orchestration continuation XXVIII (2026-08-09)
+
+The delegated AuthorityStore audit produced `52b7fc2`. Runtime mutation now
+honors the same local bounds already enforced by snapshot decoding: new
+subscriptions and pinned roots are ignored once their fail-closed capacities
+are full, while existing entries may still be refreshed. New certificates
+return an explicit `CertReject::Capacity` instead of growing beyond the
+documented limit. `expire()` now removes revocations after their own
+not-after horizon as well as expired certificates. These changes preserve
+legitimate admission and refresh behavior without silently dropping
+security-critical revocation-list entries.
+
+The parallel secret-surface review was `no_change`: the Rust-internal vault
+and secret-state symbols are already excluded from the exported `MmpNode`
+surface and covered by the existing generated Kotlin/Swift denylist and API
+surface checks. No redundant public API or generated-binding patch was added.
+
+Focused evidence: 14 authority tests and Clippy pass. Full workspace tests,
+workspace Clippy, 124 Python tests (8 platform-dependent skips), 46
+deterministic fuzz seeds, the embedded `thumbv7em-none-eabihf` closure,
+layer-check, release CLI delivery demo, and six transactional-store tests all
+pass. Revocation-list overflow policy, native keystore adapters, and physical
+platform evidence remain open. No file under `specification/` or any
+pre-existing protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
