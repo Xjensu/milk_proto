@@ -298,6 +298,18 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("cd fuzz", run_script)
         self.assertNotIn("cd implementation/mesh-milk/fuzz", run_script)
 
+    def test_fuzz_smoke_runs_bound_each_input_and_memory(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        run_script = next(
+            step.get("run", "")
+            for step in workflow["jobs"]["fuzz-run"]["steps"]
+            if "cargo fuzz run" in step.get("run", "")
+        )
+        self.assertIn("-max_total_time=120", run_script)
+        self.assertIn("-max_len=8192", run_script)
+        self.assertIn("-timeout=10", run_script)
+        self.assertIn("-rss_limit_mb=2048", run_script)
+
 
 if __name__ == "__main__":
     unittest.main()

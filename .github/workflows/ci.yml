@@ -322,7 +322,10 @@ jobs:
           python seed_corpus.py write
           python seed_corpus.py verify
           for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
-            cargo fuzz run "$t" -- -max_total_time=120 -max_len=8192
+            # Keep a single pathological input from masking campaign completion
+            # or exhausting the runner; these are smoke-run bounds, not parser
+            # performance claims.
+            cargo fuzz run "$t" -- -max_total_time=120 -max_len=8192 -timeout=10 -rss_limit_mb=2048
           done
       - uses: actions/upload-artifact@v4
         if: always()
