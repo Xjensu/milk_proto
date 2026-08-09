@@ -246,11 +246,11 @@ remain external gates. No specification or dirty `mmp-types` file was touched.
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
-workspace test matrix passes, including 29 CLI/conformance tests, 62 core unit
+workspace test matrix passes, including 29 CLI/conformance tests, 63 core unit
 tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
-76 node tests, 19 active simulator tests (5 scale/deployment tests remain
+77 node tests, 23 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
-bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 37
+bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 38
 BLE adapter tests, 43 type/codec tests, and three additional 3-test conformance
 integration suites. Workspace Clippy with all targets, features, and
 `-D warnings` also passes. The Python harness reports 42 tests,
