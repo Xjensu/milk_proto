@@ -10,7 +10,7 @@
 use super::{FfiError, FfiEvent, FfiTier, MmpNode};
 use mmp_core::store::BundleStore;
 use mmp_store::SnapshotStore;
-use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE};
+use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE, NICKNAME_MAX};
 use mmp_types::ids::Id16;
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -837,4 +837,18 @@ fn ffi_maps_invalid_priority_to_bad_argument() {
         super::map_send_error(mmp_node::SendError::InvalidPriority),
         super::FfiError::BadArg
     );
+}
+
+#[test]
+fn oversized_nickname_is_rejected_before_claim_or_gossip_side_effects() {
+    let node = node(90);
+    let claims_before = node.own_claims();
+    let store_before = node.store_len();
+    // Use ASCII here so the test proves the wire-byte boundary directly;
+    // multi-byte UTF-8 names are covered by the same byte-length check.
+    let oversized = "n".repeat(NICKNAME_MAX + 1);
+
+    assert_eq!(node.set_nickname(oversized, 1), Err(FfiError::BadArg));
+    assert_eq!(node.own_claims(), claims_before, "invalid input must not publish a claim");
+    assert_eq!(node.store_len(), store_before, "invalid input must not enqueue gossip");
 }

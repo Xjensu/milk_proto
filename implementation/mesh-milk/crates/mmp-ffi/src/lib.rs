@@ -30,6 +30,7 @@ use mmp_store::{SnapshotLimits, SnapshotStore};
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_types::authcert::AuthCert;
 use mmp_types::claim::Claim;
+use mmp_types::consts::NICKNAME_MAX;
 use mmp_types::ids::{Id16, Key32, Sig64};
 
 use store::SharedStore;
@@ -851,8 +852,18 @@ impl MmpNode {
     }
 
     /// Publish a signed nickname claim (doc 06 §4), gossiped to the mesh.
-    pub fn set_nickname(&self, name: String, seq: u32) {
+    ///
+    /// The claim body is capped at [`NICKNAME_MAX`] bytes by the v1 wire
+    /// contract. Validate at the FFI boundary before taking the node lock so
+    /// an oversized host string cannot be signed, queued, or stored as a
+    /// non-interoperable claim. The length is measured in UTF-8 bytes, not
+    /// Unicode scalar values, because that is what the wire carries.
+    pub fn set_nickname(&self, name: String, seq: u32) -> Result<(), FfiError> {
+        if name.len() > NICKNAME_MAX {
+            return Err(FfiError::BadArg);
+        }
         self.lock().set_nickname(&name, seq);
+        Ok(())
     }
 
     /// Our own signed claims (identity/exchange keys, prekey batch, nickname,
