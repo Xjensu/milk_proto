@@ -1051,6 +1051,14 @@ impl Node {
 
     /// Send a raw application body (e.g. a FileManifest as apptype 0x01).
     pub fn send_body(&mut self, peer: &NodeId, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
+        // This is an application/FFI boundary: reject a payload that cannot
+        // fit in any v1 bundle before copying attacker-sized host input into a
+        // temporary body buffer. `send_app` performs the exact wire-size
+        // preflight after framing; this coarse bound only caps the allocation
+        // shape and rejects no valid bundle.
+        if payload.len() >= MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
         let mut body = Vec::with_capacity(1 + payload.len());
         body.push(app);
         body.extend_from_slice(payload);

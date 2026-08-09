@@ -633,6 +633,11 @@ fn oversized_prekey_first_send_does_not_poison_async_state() {
 
     let oversized = "x".repeat(MAX_BUNDLE);
     assert_eq!(alice.send_text(&bob.node_id(), &oversized), Err(SendError::TooLarge));
+    let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
+    assert!(!alice.core.convs.contains_key(&conv_id));
+    assert!(!alice.core.pending_async.contains_key(&conv_id));
+    assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
+    assert!(alice.core.sent.is_empty());
 
     let msg_id = alice.send_text(&bob.node_id(), "retry after rejection").unwrap();
     let (_, raw) = alice.core.store.get(&msg_id).unwrap();
