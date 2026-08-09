@@ -2606,3 +2606,29 @@ regression that changes only the high byte and is rejected. The focused and
 full simulator suites pass (33 passed, 6 intentionally ignored), and strict
 Clippy is clean. This is a research-data integrity correction only; it adds no
 wire field, scheduler policy, or performance claim.
+
+## 2026-08-09 continuation: bounded blob advertisements, group errors, and EWS research
+
+The blob-plane audit confirmed that origin-targeted `BLOB_REQ` scheduling is
+not implementable without guessing semantics absent from the current frame:
+after re-sharing, the bundle origin and manifest sharer can differ, while the
+frame carries no target field. Instead, commit `0637a67` adds a local,
+wire-neutral bound: at most four `BLOB_HAVE` advertisements are emitted per
+authenticated contact, with a bounded per-peer cursor rotating active roots
+across later contacts. The cursor resets at contact establishment. Node tests
+cover the cap, rotation, and reset; the origin-targeted request remains
+explicitly deferred pending a normative decision.
+
+The same commit closes the public error-boundary mismatch introduced by the
+unknown-member invariant. `Node::group_remove` now returns the existing
+`UnknownPeer` error before any epoch work, and the FFI reports that error rather
+than `Internal`; Node and FFI regressions cover both paths. Epoch exhaustion
+continues to report `RatchetExhausted`.
+
+The research track added `mmp-sim::ews`, committed as `49b9a41`. It is a
+bounded, deterministic Evidence-Weighted Spray evaluator over caller-supplied
+probabilities and costs. It validates finite inputs, duplicate labels, copy and
+cost limits, records marginal gain/cost decisions, and explicitly states that
+the result is a local planning heuristic rather than a global copy-budget
+security primitive. Three focused tests and strict Clippy pass. It does not
+change `mmp-router`, wire frames, admission, or default behavior.
