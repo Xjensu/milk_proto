@@ -16,7 +16,7 @@ every change and the buildable specs for remaining work (§4).
 As of 2026-08-09 the workspace is well past the original "Stage 0 scaffold"
 point: all 15 crates plus `mmp-tal-peripheral` have working implementations.
 The latest serial `cargo test --workspace --all-targets` run reported zero
-failures across 403 listed test items (397 active, 6 intentionally ignored
+failures across 404 listed test items (398 active, 6 intentionally ignored
 simulation deployment/scale cases); clippy and `layer-check` are clean. Phase A
 is implementation-complete but its exit gate — a real two-machine BLE exchange
 — still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact

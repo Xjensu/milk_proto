@@ -303,17 +303,30 @@ this remains only a no-std compile-closure proof. It does not claim an Embassy
 executor, flash store, radio backend, linked image, or hardware-in-the-loop
 result. No specification, `mmp-types`, or pre-existing dirty path was touched.
 
+The subsequent interop/release/session cycle added three more bounded records.
+`0323deb` updates the manual PC/mobile procedure with the FFI close-drain
+ordering, sticky overload counters, Android NDK/zip prerequisites, and the
+required evidence fields; it does not substitute for a consuming app or real
+radio. `c15d6ff` makes signed release uploads auditable by adding atomic
+SHA-256/size manifests for each binary, signature, and certificate, bound to
+the GitHub repository, commit, and ref. This improves artifact integrity but
+does not prove a remote Actions run or replace Sigstore verification.
+`55054f2` adds the exact Noise-tag envelope-boundary regression and records the
+remaining clear envelope-type authentication, infallible public frame
+encoder, and pre-auth allocation gaps. No specification, `mmp-types`, or
+pre-existing dirty path was touched.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
-workspace test matrix passes, including 30 CLI/conformance tests, 63 core unit
+workspace test matrix passes, including 30 CLI/conformance tests, 64 core unit
 tests plus 5 decoder-limit integration tests, 37 crypto tests, 19 FFI tests,
 79 node tests, 24 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
 bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 38
 BLE adapter tests, 43 type/codec tests, and three additional 3-test conformance
 integration suites. Workspace Clippy with all targets, features, and
-`-D warnings` also passes. The Python harness reports 61 tests,
+`-D warnings` also passes. The Python harness reports 66 tests,
 compileall is clean, the deterministic fuzz recipe validates 44 seeds,
 layer-check passes, and the CLI demo observes both receiver delivery and
 sender receipt completion.
@@ -326,8 +339,8 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 403 tests (397 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 62 tests (three platform-specific skips), while the
+listed 404 tests (398 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 66 tests (four platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
