@@ -458,6 +458,10 @@ mod tests {
         StreamStamp { generation, side: 0 }
     }
 
+    fn writer(generation: u64) -> StreamStamp {
+        StreamStamp { generation, side: 1 }
+    }
+
     #[tokio::test]
     async fn control_survives_full_data_lane() {
         let (tx, mut rx) = event_channel();
@@ -485,6 +489,25 @@ mod tests {
         tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
         assert_eq!(tx.try_stream_data(7, reader(1), data(2)), Err(DataEnqueueError::Stale));
         tx.try_stream_data(7, reader(2), data(3)).unwrap();
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
+        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(rx.recv().await, Some(data(3)));
+    }
+
+    #[tokio::test]
+    async fn stale_writer_data_is_rejected_after_replacement() {
+        let (tx, mut rx) = event_channel();
+        tx.set_streams(7, [None, Some(writer(1))]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_stream_data(7, writer(1), data(1)).unwrap();
+        tx.set_streams(7, [None, Some(writer(2))]);
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 2).unwrap();
+        tx.set_streams(7, [None, Some(writer(2))]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
+
+        assert_eq!(tx.try_stream_data(7, writer(1), data(2)), Err(DataEnqueueError::Stale));
+        tx.try_stream_data(7, writer(2), data(3)).unwrap();
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
