@@ -503,6 +503,28 @@ deterministic fuzz seeds check and verify, the embedded no-default-features
 target check passes, and layer-check remains clean. No file under
 `specification/` and no pre-existing dirty path was modified or staged.
 
+### Orchestration continuation VI (2026-08-09)
+
+The follow-up gate-preparation pass closed two reproducibility mismatches and
+one deliberately preserved transactional blocker. `0514fed` extends the
+embedded CI dependency-closure check to include `mmp-store` under
+`--no-default-features`; this verifies that its host filesystem graph cannot
+leak into the target profile, but still does not claim a fixed-capacity store.
+`0bcbffe` corrects the manual PC/BLE procedure so the bootstrap `connect` log
+and delivery-producing `send` log are retained separately and concatenated
+into the single central evidence log required by the validator. `c875c72`
+audits own-origin writes and records why replacing `BundleStore::put` with
+`try_put` immediately would be unsafe: pairwise/group ratchets, pending
+first-contact state, and file-symbol indexes can advance before storage. The
+handoff defines the required reserve/commit or snapshot/restore contract
+instead of introducing a partial failure path.
+
+The post-cycle verification remains green: 420 listed Rust tests (414 active,
+6 intentionally ignored), 93 Python tests with 6 skips, the focused node
+suite, Clippy, the exact embedded target check including `mmp-store`, fuzz
+seed validation, and the prior full workspace matrix all pass. No file under
+`specification/` and no pre-existing dirty path was modified or staged.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
