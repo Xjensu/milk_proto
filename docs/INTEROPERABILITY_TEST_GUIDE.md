@@ -14,7 +14,7 @@ higher one.
 | Level | What is exercised | Current status |
 | --- | --- | --- |
 | Deterministic | Two in-memory `MmpNode` instances and the reference state machine | Available on every supported Rust host |
-| PC BLE | A real Linux/BlueZ peripheral and a real Linux/BlueZ central | Available with two Linux hosts and compatible adapters |
+| PC BLE | A real Linux/BlueZ peripheral and a real Linux/Windows/macOS central | Available with a Linux peripheral, a supported central adapter, and two hosts |
 | Mobile BLE | A consuming Android or iOS app, its OS BLE callbacks, and the Rust node | Bindings/build scripts are available; a turnkey app and device result are not included |
 
 The deterministic test is not radio interoperability. A successful artifact
@@ -60,11 +60,13 @@ but it must not be confused with the tested revision.
 
 ### Hardware and operating-system requirements
 
-Use two Linux machines, each with a working BLE adapter and BlueZ. Confirm
-that the adapter is powered and visible to the user running the process. One
-machine is the peripheral (`listen`); the other is the central (`connect` and
-`send`). The current peripheral implementation is not available on Windows or
-macOS, so a Windows/macOS pair cannot satisfy this real-BLE gate.
+Use two PCs, each with a working BLE adapter. Confirm that the adapter is
+powered and visible to the user running the process. One machine must be Linux
+with BlueZ and runs the peripheral (`listen`); the other machine is the central
+(`connect` and `send`) and may run Linux, Windows, or macOS through the
+`mmp-tal-btleplug` backend. The current peripheral implementation is not
+available on Windows or macOS, so a Windows/macOS pair cannot satisfy this
+real-BLE gate.
 
 Build the release CLI on both machines:
 
@@ -98,7 +100,7 @@ Leave this process running. The log must show at least `advertising`, then
 message. The beacon is only a discovery hint; the handshake and identity proof
 are the gates that make the peer usable.
 
-### Host B: central bootstrap
+### Host B: central bootstrap (Linux, Windows, or macOS)
 
 Use a different store directory. Capture the bootstrap connection separately:
 
