@@ -194,6 +194,14 @@ impl SnapshotStore {
         if bytes.len() < 8 || &bytes[..8] != MAGIC {
             return;
         }
+        // `persist` emits at most one record for each of these singleton
+        // auxiliary states.  Keep the first valid instance if a damaged or
+        // locally rewritten image contains duplicates: last-valid-wins would
+        // let an appended stale record roll back receiver-local state.
+        let mut seen_index_loaded = false;
+        let mut receipt_filter_loaded = false;
+        let mut authority_loaded = false;
+        let mut blocklist_loaded = false;
         let mut pos: usize = 8;
         while let Some(length_end) = pos.checked_add(4) {
             // `.get()` + `?` rather than direct indexing: this is the one path
@@ -239,27 +247,47 @@ impl SnapshotStore {
                     self.group_blobs.push(payload.to_vec());
                 }
                 RECORD_SEEN_INDEX => {
+                    if seen_index_loaded {
+                        continue;
+                    }
                     // A malformed record is dropped exactly like a corrupt
                     // record — the node just starts with an empty SeenIndex,
                     // same safe-direction posture as never having persisted
                     // one at all.
                     if let Some(seen) = SeenIndex::decode(payload) {
                         self.seen_index = Some(seen);
+                        seen_index_loaded = true;
                     }
                 }
                 RECORD_RECEIPT_FILTER => {
+                    if receipt_filter_loaded {
+                        continue;
+                    }
                     if let Some(rf) = ReceiptFilter::decode(payload) {
                         self.receipt_filter = Some(rf);
+                        receipt_filter_loaded = true;
                     }
                 }
                 // AuthorityStore::decode re-verifies certificates against the
                 // restored pinned roots before this state can affect
                 // admission after restart.
-                RECORD_AUTHORITY if mmp_core::AuthorityStore::decode(payload).is_some() => {
-                    self.authority = Some(payload.to_vec());
+                RECORD_AUTHORITY => {
+                    if authority_loaded {
+                        continue;
+                    }
+                    if mmp_core::AuthorityStore::decode(payload).is_some() {
+                        self.authority = Some(payload.to_vec());
+                        authority_loaded = true;
+                    }
                 }
-                RECORD_BLOCKLIST if valid_blocklist(payload) => {
-                    self.blocklist = Some(payload.to_vec());
+                RECORD_BLOCKLIST => {
+                    if blocklist_loaded {
+                        continue;
+                    }
+                    if valid_blocklist(payload) {
+                        self.blocklist = Some(payload.to_vec());
+                        blocklist_loaded = true;
+                    }
                 }
                 _ => {} // unknown kind: forward-compat, skip rather than fail closed
             }
@@ -1526,5 +1554,66 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
         assert!(s3.blocklist().is_none(), "the corrupted blocklist record must not survive load");
+    }
+
+    #[test]
+    fn duplicate_singleton_records_keep_first_valid_state() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("duplicate-singletons.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let mut first_seen = SeenIndex::new();
+        first_seen.insert(&Id16([41; 16]), class::DIRECT, 1000);
+        let mut second_seen = SeenIndex::new();
+        second_seen.insert(&Id16([42; 16]), class::DIRECT, 1000);
+
+        let mut first_receipts = ReceiptFilter::new();
+        first_receipts.note_verified_receipt(&Id16([43; 16]), 5000);
+        let mut second_receipts = ReceiptFilter::new();
+        second_receipts.note_verified_receipt(&Id16([44; 16]), 5000);
+
+        let first_authority = mmp_core::AuthorityStore::new().encode();
+        let mut second_authority_state = mmp_core::AuthorityStore::new();
+        second_authority_state.subscribe(Id16([45; 16]));
+        let second_authority = second_authority_state.encode();
+
+        let first_blocklist = {
+            let mut bytes = vec![BLOCKLIST_VERSION, 1, 0];
+            bytes.extend_from_slice(&[46; 16]);
+            bytes
+        };
+        let second_blocklist = {
+            let mut bytes = vec![BLOCKLIST_VERSION, 1, 0];
+            bytes.extend_from_slice(&[47; 16]);
+            bytes
+        };
+
+        let mut store = SnapshotStore::open(&path);
+        store.set_seen_index(first_seen.clone());
+        store.set_receipt_filter(first_receipts.clone());
+        store.set_authority(first_authority.clone());
+        store.set_blocklist(first_blocklist.clone());
+        store.persist().unwrap();
+
+        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut append_record = |kind: u8, payload: &[u8]| {
+            let mut record = vec![kind];
+            record.extend_from_slice(payload);
+            write_record(&mut file, &record).unwrap();
+        };
+        append_record(RECORD_SEEN_INDEX, &second_seen.encode());
+        append_record(RECORD_RECEIPT_FILTER, &second_receipts.encode());
+        append_record(RECORD_AUTHORITY, &second_authority);
+        append_record(RECORD_BLOCKLIST, &second_blocklist);
+        drop(file);
+
+        let restored = SnapshotStore::open(&path);
+        assert_eq!(restored.seen_index().unwrap().encode(), first_seen.encode());
+        assert_eq!(restored.receipt_filter().unwrap().encode(), first_receipts.encode());
+        assert_eq!(restored.authority(), Some(first_authority.as_slice()));
+        assert_eq!(restored.blocklist(), Some(first_blocklist.as_slice()));
+
+        let _ = std::fs::remove_file(path);
     }
 }
