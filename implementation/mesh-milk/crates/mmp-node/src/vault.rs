@@ -779,6 +779,26 @@ mod tests {
     }
 
     #[test]
+    fn high_level_restore_rejects_cross_node_record_replay_without_mutation() {
+        let source = Node::new([117; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut source_vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(117);
+        assert_eq!(save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(), 1);
+
+        // A valid envelope and DEK are not sufficient for restore: the
+        // authenticated context is bound to the source identity and node ID.
+        // Model a provider replaying that complete record to a different node.
+        let mut replay_vault = ReferenceSnapshotVault::new();
+        replay_vault.high_water = source_vault.high_water;
+        replay_vault.record = source_vault.record.clone();
+
+        let mut target = Node::new([118; 32], Box::new(MemStore::new()), Tier::Relay);
+        let before = target.secret_state_snapshot().unwrap();
+        assert_eq!(target.restore_secret_state_from_vault(&mut replay_vault), Err(VaultError::Invalid));
+        assert_eq!(target.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+    }
+
+    #[test]
     fn commit_generation_rejects_gaps_and_overflow() {
         let node = Node::new([101; 32], Box::new(MemStore::new()), Tier::Leaf);
         let mut rng = StdRng::seed_from_u64(18);
