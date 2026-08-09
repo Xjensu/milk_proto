@@ -390,9 +390,11 @@ python scripts/validate_release_preflight.py \
   /path/to/evidence.json --repo ../..
 ```
 
-In addition to the manifest checks, this verifies that the recorded Git commit
-exists and that `git status -- specification` is empty, including staged,
-unstaged, and untracked specification files. Changes elsewhere in the
+In addition to the manifest checks, this resolves the recorded Git commit and
+requires it to equal the checkout's current `HEAD`, then verifies that
+`git status -- specification` is empty, including staged, unstaged, and
+untracked specification files. Running the preflight from another revision
+fails instead of certifying a nearby implementation. Changes elsewhere in the
 worktree are intentionally ignored so the check does not adjudicate unrelated
 development work. A preflight pass is an evidence-integrity result, not proof
 that the physical radio exchange actually occurred.

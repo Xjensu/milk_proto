@@ -45,6 +45,20 @@ class InteropGuideTests(unittest.TestCase):
         self.assertNotIn("mkdir -p /tmp/mmp-alice.store", guide)
         self.assertNotIn("mkdir -p /tmp/mmp-bob.store", guide)
 
+    def test_release_preflight_is_described_as_revision_exact(self) -> None:
+        guide = (REPO_ROOT / "docs" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
+            encoding="utf-8"
+        )
+        manual = (REPO_ROOT / "docs" / "MANUAL_INTEROP_TESTING.md").read_text(
+            encoding="utf-8"
+        )
+
+        # The repository-side wrapper binds evidence to the checkout's
+        # current revision; documentation must not imply that object existence
+        # alone is sufficient.
+        self.assertIn("requires it to equal the checkout's current `HEAD`", guide)
+        self.assertIn("requires it to equal the checkout's current `HEAD`", manual)
+
 
 if __name__ == "__main__":
     unittest.main()

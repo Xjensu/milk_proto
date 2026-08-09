@@ -192,9 +192,12 @@ python scripts/validate_release_preflight.py /absolute/path/to/evidence.json \
 ```
 
 The first command checks package shape, bounded file sizes, paths, markers,
-and internal consistency. The second additionally checks that the recorded
-commit exists and that `git status -- specification` is clean. Neither command
-is a substitute for observing the radio or reviewing the raw logs.
+and internal consistency. The second additionally resolves the recorded
+commit and requires it to equal the checkout's current `HEAD`, then checks
+that `git status -- specification` is clean. Running the preflight from a
+different revision therefore fails instead of accidentally certifying a
+nearby implementation. Neither command is a substitute for observing the
+radio or reviewing the raw logs.
 
 ## 5. Android procedure
 

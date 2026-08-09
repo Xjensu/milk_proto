@@ -64,6 +64,34 @@ def validate_repository(repo: Path, commit: str, runner: GitRunner = _run_git) -
         code, _output, detail = runner(repo, ("cat-file", "-e", f"{commit}^{{commit}}"))
         if code != 0:
             errors.append(f"recorded commit does not exist: {commit} ({detail.strip()})")
+        else:
+            # Existence alone is not enough: an evidence package recorded
+            # against an older (or unrelated) object would otherwise pass
+            # while this checkout runs a different implementation. Resolve
+            # both sides to full commit IDs so abbreviated manifest values
+            # remain supported, then require the repository under test to be
+            # exactly the revision named by the package.
+            resolve_code, resolved, resolve_detail = runner(
+                repo, ("rev-parse", f"{commit}^{{commit}}")
+            )
+            head_code, head, head_detail = runner(repo, ("rev-parse", "HEAD"))
+            resolved_id = resolved.strip().splitlines()[0] if resolved.strip() else ""
+            head_id = head.strip().splitlines()[0] if head.strip() else ""
+            if resolve_code != 0 or not resolved_id:
+                errors.append(
+                    f"could not resolve recorded commit: {commit} "
+                    f"({resolve_detail.strip() or resolved.strip()})"
+                )
+            elif head_code != 0 or not head_id:
+                errors.append(
+                    "could not resolve checked-out HEAD: "
+                    f"{head_detail.strip() or head.strip()}"
+                )
+            elif resolved_id.casefold() != head_id.casefold():
+                errors.append(
+                    "checked-out HEAD does not match recorded commit: "
+                    f"HEAD={head_id}, recorded={resolved_id}"
+                )
 
     # `status --porcelain` includes both index and worktree changes and the
     # explicit untracked flag covers a newly created specification file.
