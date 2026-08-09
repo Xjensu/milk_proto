@@ -377,7 +377,12 @@ impl SessionEngine {
                 // Only accepted bytes are activity.  A rejected length prefix
                 // above leaves the timer untouched, so a peer cannot keep a
                 // malformed session alive by repeatedly sending junk.
-                self.last_activity = now_ms;
+                // The Node drive loop rejects clock rewinds, but SessionEngine
+                // is also a public sans-IO seam used by TALs and tests.  Keep
+                // the timer monotonic here as a second line of defence: a
+                // stale callback must not move the idle baseline backwards
+                // and cause a premature expiry.
+                self.last_activity = self.last_activity.max(now_ms);
             }
 
             loop {
@@ -1513,6 +1518,47 @@ mod rx_bound_tests {
         }
         assert_eq!(sent, 8);
         assert_eq!(a.phase, Phase::Established);
+    }
+
+    #[test]
+    fn transport_activity_timestamp_cannot_rewind_idle_timer() {
+        let ia = identity(31);
+        let ib = identity(32);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1_000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1_000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1_000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1_000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+
+        b.tx_credits = FRAME_CREDIT_WINDOW;
+        b.send_frame(&Frame::Summary(Summary::default()));
+        let first = b.poll_out().expect("peer summary");
+        a.on_wire(&first, 7_000, &ia, &mut ha);
+        assert_eq!(a.last_activity, 7_000);
+
+        b.tx_credits = FRAME_CREDIT_WINDOW;
+        b.send_frame(&Frame::Summary(Summary::default()));
+        let second = b.poll_out().expect("second peer summary");
+        a.on_wire(&second, 1_000, &ia, &mut ha);
+        assert_eq!(
+            a.last_activity, 7_000,
+            "a stale transport timestamp must not rewind the idle deadline"
+        );
     }
 
     #[test]
