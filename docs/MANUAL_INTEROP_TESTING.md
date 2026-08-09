@@ -284,12 +284,17 @@ python scripts/validate_ble_evidence.py /path/to/evidence.json
 ```
 
 The manifest format is `mmp-ble-evidence-v1`. It requires one peripheral and
-one central host, a clean commit/toolchain record, message delivery and receipt
-flags, reconnect evidence, and explicit MTU/RSSI measurements. If an adapter
-does not expose MTU or RSSI, the manifest must record `available: false` and a
-reason; an omitted measurement is not silently treated as a pass. Each host's
-declared log markers and each store-inspection path are checked, and paths may
-not escape the manifest directory.
+one central host with distinct seed fingerprints, a clean commit/toolchain
+record, message delivery and receipt flags, reconnect evidence, and explicit
+MTU/RSSI measurements. If an adapter does not expose MTU or RSSI, the manifest
+must record `available: false` and a reason; an omitted measurement is not
+silently treated as a pass. Each host's declared log markers and each
+store-inspection path are checked, and paths may not escape the manifest
+directory. The reference CLI role markers are mandatory: the peripheral log
+must declare and contain `advertising`, `Established`, and `MessageReceived`;
+the central log must declare and contain `dialed`, `Established`, and
+`Delivered`. These checks make the package structurally complete but cannot
+authenticate text logs or prove that a real adapter produced them.
 
 The validator checks evidence completeness and internal consistency only. It
 cannot establish that a claimed log came from a real adapter, authenticate a

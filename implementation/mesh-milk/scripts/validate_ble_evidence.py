@@ -6,6 +6,14 @@ deliberately independent of the Rust protocol implementation so a report can
 be checked on a machine that did not run the test.  Paths in the manifest are
 relative to the manifest file and may not escape its directory.
 
+The two hosts must use distinct seed fingerprints.  Each role must also
+declare the reference-CLI markers that establish its side of the exchange:
+``advertising``, ``Established``, and ``MessageReceived`` for the peripheral;
+``dialed``, ``Established``, and ``Delivered`` for the central.  The markers
+must occur in the corresponding log.  These checks prevent a manifest from
+passing with two arbitrary logs and self-selected markers, while remaining
+honest that text logs are not cryptographically authenticated.
+
 Manifest shape (``mmp-ble-evidence-v1``)::
 
     {
@@ -63,6 +71,16 @@ REQUIRED_GATES = (
     "bundle_transfer",
     "receipt_returned",
 )
+# A release manifest is not allowed to reduce the Phase-A exchange to two
+# arbitrary logs with self-selected markers.  These are the minimum role
+# markers emitted by the reference CLI for the corresponding physical path.
+# The validator still cannot authenticate a log (see the module docstring),
+# but requiring both the declaration and the observed text prevents an
+# incomplete/one-sided run from being presented as a complete gate.
+REQUIRED_LOG_MARKERS = {
+    "peripheral": ("advertising", "Established", "MessageReceived"),
+    "central": ("dialed", "Established", "Delivered"),
+}
 
 
 def _is_mapping(value: object) -> bool:
@@ -160,6 +178,7 @@ def validate_manifest(path: Path) -> list[str]:
         hosts = []
     roles: set[str] = set()
     names: set[str] = set()
+    seed_fingerprints: set[str] = set()
     for index, host in enumerate(hosts):
         label = f"hosts[{index}]"
         if not _is_mapping(host):
@@ -180,10 +199,21 @@ def validate_manifest(path: Path) -> list[str]:
         for key in ("os", "kernel", "adapter", "seed_fingerprint"):
             if not _text(host.get(key)):
                 errors.append(f"{label}.{key} must be recorded")
+        fingerprint = host.get("seed_fingerprint")
+        if _text(fingerprint):
+            normalized_fingerprint = fingerprint.strip().casefold()
+            if normalized_fingerprint in seed_fingerprints:
+                errors.append(f"duplicate host seed_fingerprint: {fingerprint}")
+            else:
+                seed_fingerprints.add(normalized_fingerprint)
         log = _relative_file(path.parent, host.get("log"), f"{label}.log", errors)
         markers = host.get("markers")
         if not isinstance(markers, list) or any(not _text(marker) for marker in markers):
             errors.append(f"{label}.markers must be a list of non-empty strings")
+        elif role in REQUIRED_LOG_MARKERS:
+            for required_marker in REQUIRED_LOG_MARKERS[role]:
+                if required_marker not in markers:
+                    errors.append(f"{label}.markers must include role gate marker: {required_marker}")
         if log is not None and isinstance(markers, list):
             try:
                 content = log.read_text(encoding="utf-8")

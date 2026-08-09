@@ -122,6 +122,44 @@ class BleEvidenceTests(unittest.TestCase):
             errors = validate_manifest(path)
             self.assertIn("hosts[0].log escapes the manifest directory", errors)
 
+    def test_role_gate_markers_cannot_be_omitted(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][0]["markers"] = ["advertising"]
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[0].markers must include role gate marker: Established",
+                errors,
+            )
+            self.assertIn(
+                "hosts[0].markers must include role gate marker: MessageReceived",
+                errors,
+            )
+
+    def test_duplicate_seed_fingerprints_block_two_host_evidence(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][1]["seed_fingerprint"] = data["hosts"][0]["seed_fingerprint"]
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "duplicate host seed_fingerprint: sha256:aaaaaaaa",
+                errors,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
