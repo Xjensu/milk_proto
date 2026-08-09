@@ -31,6 +31,7 @@ from validate_ble_evidence import MAX_MANIFEST_BYTES, validate_manifest  # type:
 
 
 GitRunner = Callable[[Path, Sequence[str]], tuple[int, str, str]]
+GIT_COMMAND_TIMEOUT_SECONDS = 30
 
 
 def _run_git(repo: Path, args: Sequence[str]) -> tuple[int, str, str]:
@@ -40,7 +41,10 @@ def _run_git(repo: Path, args: Sequence[str]) -> tuple[int, str, str]:
             capture_output=True,
             text=True,
             check=False,
+            timeout=GIT_COMMAND_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:
+        return 124, "", f"git command timed out after {GIT_COMMAND_TIMEOUT_SECONDS}s: {exc}"
     except OSError as exc:
         return 127, "", str(exc)
     return result.returncode, result.stdout, result.stderr

@@ -1,3 +1,4 @@
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -97,6 +98,22 @@ class ReleasePreflightTests(unittest.TestCase):
             path = Path(directory) / "evidence.json"
             path.write_bytes(b"{" + b"x" * MAX_MANIFEST_BYTES + b"}")
             self.assertEqual(_manifest_commit(path), "")
+
+    def test_git_runner_converts_hung_command_to_bounded_failure(self) -> None:
+        import sys
+        from unittest.mock import patch
+
+        sys.path.insert(0, str(ROOT))
+        from validate_release_preflight import _run_git
+
+        timeout = subprocess.TimeoutExpired(["git", "status"], 30)
+        with patch("validate_release_preflight.subprocess.run", side_effect=timeout) as run:
+            code, output, detail = _run_git(Path("/repo"), ("status",))
+        self.assertEqual(code, 124)
+        self.assertEqual(output, "")
+        self.assertIn("timed out", detail)
+        run.assert_called_once()
+        self.assertEqual(run.call_args.kwargs["timeout"], 30)
 
 
 if __name__ == "__main__":
