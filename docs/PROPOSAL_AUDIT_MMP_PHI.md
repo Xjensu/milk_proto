@@ -835,6 +835,33 @@ Reed–Solomon target benchmarking, and phone-to-sensor hardware-in-the-loop
 recovery tests. No file under `specification/` or any protected dirty path was
 modified.
 
+### Orchestration continuation XVII (2026-08-09)
+
+The release-governance audit produced `8dda7d4`. Release manifest creation now
+rejects empty artifacts, signatures, and certificates, while verification
+requires strictly positive recorded sizes. This closes a package-integrity
+case where an empty file could otherwise pass a digest/schema check. The CI
+release audit also produced `780ba6f`: Linux, Windows, and macOS artifacts now
+install, build, and copy from explicit declared Rust targets instead of relying
+on the runner's default architecture. Workflow assertions pin the matrix and
+target-specific output paths.
+
+The fixed-store audit produced `2d25072`. When `SnapshotLimits` is configured,
+`SnapshotStore::try_put` now calculates the exact projected complete image:
+magic, bundle framing/checksum, replacement delta, and currently staged claims,
+groups, SeenIndex, ReceiptFilter, authority, and blocklist records. It rejects
+over-limit, load-rejected, or malformed-size candidates before mutating memory.
+`mmp-ffi::SharedStore` forwards this bounded admission method instead of
+silently inheriting the unbounded default. Exact-fill, replacement, and
+rejection regressions pass.
+
+This does not close the E7 producer transaction. FFI auxiliary state is staged
+at `persist_now`; if it grows after a successful receive admission, a later
+flush can still fail. A complete fix requires the deferred reservation/commit
+or producer snapshot protocol, so no public transactional trait or wire change
+was introduced. The frozen `specification/` tree and protected dirty paths
+remain untouched.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
