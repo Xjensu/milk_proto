@@ -203,7 +203,7 @@ pub struct SocialClusteredRunMetrics {
 
 /// A whole-scenario counter block, exposed so scenario tests can assert on
 /// outcomes beyond pass/fail (delivery ratio, quota headroom, ...).
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Counters {
     pub messages_sent: u64,
     pub messages_received: u64,
@@ -242,6 +242,142 @@ pub struct ContactScenarioMetrics {
     pub p90_latency_ms: Option<u64>,
     pub store_high_water_bytes: u64,
     pub quota_ok: bool,
+}
+
+/// Maximum number of contacts retained by one research replay schedule.
+///
+/// This bound keeps a malformed or accidental fixture from turning the
+/// simulator into an unbounded trace allocator. Larger scale runs should use
+/// the streaming generators below and persist only their trace identifier.
+pub const MAX_REPLAY_CONTACTS: usize = 100_000;
+
+/// One deterministic contact event in a paired research replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContactEvent {
+    /// First node index in the contact pair.
+    pub left: usize,
+    /// Second node index in the contact pair.
+    pub right: usize,
+    /// Virtual milliseconds to advance after this contact.
+    pub gap_ms: u64,
+}
+
+/// Validation failures for an explicit research replay schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleError {
+    /// The schedule retained more events than [`MAX_REPLAY_CONTACTS`].
+    TooManyContacts,
+    /// A contact referred to a node outside the schedule's node count.
+    NodeOutOfRange,
+    /// A contact attempted to connect a node to itself.
+    SelfContact,
+    /// The simulator has a different node count or seed/trace prefix.
+    TraceStateMismatch,
+}
+
+/// A bounded, explicit contact schedule for paired baseline/candidate runs.
+///
+/// The schedule identity includes the node count, seed, ordered contact pairs,
+/// and every virtual gap. Replaying it into two fresh simulators therefore
+/// gives both runs the same full 16-byte trace identity without changing any
+/// router, copy-budget, or wire behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContactSchedule {
+    node_count: usize,
+    seed: u64,
+    events: Vec<ContactEvent>,
+    config_id: [u8; 16],
+    trace_id: [u8; 16],
+}
+
+impl ContactSchedule {
+    /// Validate and retain an explicit schedule for `node_count` nodes.
+    pub fn new(
+        node_count: usize,
+        seed: u64,
+        events: Vec<ContactEvent>,
+    ) -> Result<Self, ScheduleError> {
+        if events.len() > MAX_REPLAY_CONTACTS {
+            return Err(ScheduleError::TooManyContacts);
+        }
+        for event in &events {
+            if event.left >= node_count || event.right >= node_count {
+                return Err(ScheduleError::NodeOutOfRange);
+            }
+            if event.left == event.right {
+                return Err(ScheduleError::SelfContact);
+            }
+        }
+        let config_hasher = trace_hasher(node_count, seed);
+        let config_id = trace_id(&config_hasher);
+        let mut hasher = config_hasher.clone();
+        for event in &events {
+            update_trace(&mut hasher, event.left, event.right, event.gap_ms);
+        }
+        Ok(Self {
+            node_count,
+            seed,
+            events,
+            config_id,
+            trace_id: trace_id(&hasher),
+        })
+    }
+
+    /// Return the full 16-byte identity of this schedule and its configuration.
+    pub fn trace_id(&self) -> [u8; 16] {
+        self.trace_id
+    }
+
+    /// Return the 16-byte identity before any contact events are consumed.
+    pub fn config_id(&self) -> [u8; 16] {
+        self.config_id
+    }
+
+    /// Return the simulator seed used to derive node identities for this run.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Return the retained contact events in replay order.
+    pub fn events(&self) -> &[ContactEvent] {
+        &self.events
+    }
+
+    /// Replay the schedule into a fresh simulator with matching configuration.
+    ///
+    /// The preflight trace check rejects a simulator with a different seed,
+    /// node count, or already-consumed contact events before mutating it.
+    pub fn replay(&self, sim: &mut Sim) -> Result<[u8; 16], ScheduleError> {
+        if sim.len() != self.node_count || sim.trace_id() != self.config_id {
+            return Err(ScheduleError::TraceStateMismatch);
+        }
+        for event in &self.events {
+            sim.meet(event.left, event.right, event.gap_ms);
+        }
+        Ok(sim.trace_id())
+    }
+}
+
+fn trace_hasher(node_count: usize, seed: u64) -> blake3::Hasher {
+    let mut hasher = blake3::Hasher::new_derive_key("mmp1 sim trace-v1");
+    hasher.update(&(node_count as u64).to_le_bytes());
+    hasher.update(&seed.to_le_bytes());
+    hasher
+}
+
+fn update_trace(hasher: &mut blake3::Hasher, left: usize, right: usize, gap_ms: u64) {
+    let (trace_left, trace_right) = if left < right { (left, right) } else { (right, left) };
+    hasher.update(b"meet-v1");
+    hasher.update(&(trace_left as u64).to_le_bytes());
+    hasher.update(&(trace_right as u64).to_le_bytes());
+    hasher.update(&gap_ms.to_le_bytes());
+}
+
+fn trace_id(hasher: &blake3::Hasher) -> [u8; 16] {
+    let digest = hasher.finalize();
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest.as_bytes()[..16]);
+    id
 }
 
 /// The simulator: N nodes, a virtual clock, and a contact schedule.
@@ -287,9 +423,7 @@ impl Sim {
     /// reproducible end to end).
     pub fn new(n: usize, seed: u64) -> Sim {
         let mut rng = Rng::new(seed);
-        let mut trace_hasher = blake3::Hasher::new_derive_key("mmp1 sim trace-v1");
-        trace_hasher.update(&(n as u64).to_le_bytes());
-        trace_hasher.update(&seed.to_le_bytes());
+        let trace_hasher = trace_hasher(n, seed);
         let mut nodes = Vec::with_capacity(n);
         for i in 0..n {
             let mut node_seed = [0u8; 32];
@@ -333,10 +467,7 @@ impl Sim {
     /// emitted so far. This is intentionally not a cryptographic protocol
     /// value; retain the seed and generator configuration for reproduction.
     pub fn trace_id(&self) -> [u8; 16] {
-        let digest = self.trace_hasher.finalize();
-        let mut id = [0u8; 16];
-        id.copy_from_slice(&digest.as_bytes()[..16]);
-        id
+        trace_id(&self.trace_hasher)
     }
 
     pub fn node_id(&self, i: usize) -> NodeId {
@@ -419,11 +550,7 @@ impl Sim {
     /// scenario tests can inspect anything beyond the built-in counters.
     pub fn meet(&mut self, i: usize, j: usize, dt_ms: u64) -> Vec<(usize, Event)> {
         assert_ne!(i, j, "a node cannot meet itself");
-        let (trace_i, trace_j) = if i < j { (i, j) } else { (j, i) };
-        self.trace_hasher.update(b"meet-v1");
-        self.trace_hasher.update(&(trace_i as u64).to_le_bytes());
-        self.trace_hasher.update(&(trace_j as u64).to_le_bytes());
-        self.trace_hasher.update(&dt_ms.to_le_bytes());
+        update_trace(&mut self.trace_hasher, i, j, dt_ms);
         let link = self.next_link;
         self.next_link += 1;
         let now = self.now_ms;

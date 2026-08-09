@@ -200,6 +200,96 @@ fn contact_trace_id_distinguishes_schedules_with_equal_empty_metrics() {
 }
 
 #[test]
+fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
+    let schedule = crate::ContactSchedule::new(
+        4,
+        0x7ACE_0001,
+        vec![
+            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
+            crate::ContactEvent { left: 2, right: 3, gap_ms: 2_000 },
+            crate::ContactEvent { left: 1, right: 2, gap_ms: 3_000 },
+        ],
+    )
+    .expect("valid replay schedule");
+    let mut baseline = Sim::new(4, 0x7ACE_0001);
+    let mut candidate = Sim::new(4, 0x7ACE_0001);
+
+    let baseline_trace = schedule.replay(&mut baseline).expect("baseline replay");
+    let candidate_trace = schedule.replay(&mut candidate).expect("candidate replay");
+
+    assert_eq!(baseline_trace, candidate_trace);
+    assert_eq!(baseline_trace, schedule.trace_id());
+    assert_eq!(baseline.now_ms(), candidate.now_ms());
+    assert_eq!(baseline.counters(), candidate.counters());
+}
+
+#[test]
+fn replay_schedule_rejects_invalid_contacts_before_mutating_sim() {
+    let schedule = crate::ContactSchedule::new(
+        2,
+        0x7ACE_0001,
+        vec![crate::ContactEvent { left: 0, right: 2, gap_ms: 1_000 }],
+    );
+    assert_eq!(schedule, Err(crate::ScheduleError::NodeOutOfRange));
+
+    let schedule = crate::ContactSchedule::new(
+        2,
+        0x7ACE_0001,
+        vec![crate::ContactEvent { left: 1, right: 1, gap_ms: 1_000 }],
+    );
+    assert_eq!(schedule, Err(crate::ScheduleError::SelfContact));
+
+    let schedule = crate::ContactSchedule::new(
+        2,
+        0x7ACE_0001,
+        vec![crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 }],
+    )
+    .expect("valid schedule");
+    let mut mismatched = Sim::new(2, 0x7ACE_0002);
+    assert_eq!(
+        schedule.replay(&mut mismatched),
+        Err(crate::ScheduleError::TraceStateMismatch)
+    );
+    assert_eq!(mismatched.now_ms(), 0);
+    assert_eq!(mismatched.counters().meetings_run, 0);
+}
+
+#[test]
+fn replay_trace_is_undirected_per_contact_but_ordered_across_contacts() {
+    let forward = crate::ContactSchedule::new(
+        3,
+        0x7ACE_0001,
+        vec![
+            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
+            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
+        ],
+    )
+    .expect("valid forward schedule");
+    let reversed_direction = crate::ContactSchedule::new(
+        3,
+        0x7ACE_0001,
+        vec![
+            crate::ContactEvent { left: 1, right: 0, gap_ms: 1_000 },
+            crate::ContactEvent { left: 2, right: 1, gap_ms: 2_000 },
+        ],
+    )
+    .expect("valid direction-reversed schedule");
+    let reordered = crate::ContactSchedule::new(
+        3,
+        0x7ACE_0001,
+        vec![
+            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
+            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
+        ],
+    )
+    .expect("valid reordered schedule");
+
+    assert_eq!(forward.config_id(), reversed_direction.config_id());
+    assert_eq!(forward.trace_id(), reversed_direction.trace_id());
+    assert_ne!(forward.trace_id(), reordered.trace_id());
+}
+
+#[test]
 fn ten_node_random_mesh_delivers_and_receipts() {
     const N: usize = 10;
     const SENDER: usize = 0;
