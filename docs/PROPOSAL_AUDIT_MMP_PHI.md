@@ -481,6 +481,28 @@ an embedded linked image/HIL run, external cryptographic review, and the
 normative RBSR/D3 decision remain open. No file under `specification/` and no
 pre-existing dirty path was modified or staged.
 
+### Orchestration continuation V (2026-08-09)
+
+The subsequent delegated cycle closed three additional implementation and
+release boundaries. `4961ff5` bounds BLE evidence manifests to 1 MiB and each
+referenced log/store artifact to 8 MiB, rejecting oversized files before JSON
+or UTF-8 materialization; this hardens the offline evidence checker without
+pretending that operator-supplied logs prove a physical exchange. `8b46dad`
+rejects impossible application payloads at the `Node::send_body` boundary
+before copying host/FFI input, while retaining exact bundle-size preflight and
+proving that a rejected first-contact send leaves no conversation or pending
+ratchet state. `b5eac2b` makes the release workflow run `cosign verify-blob`
+with repository/workflow/ref and GitHub OIDC identity constraints before
+creating the digest manifest. The actual keyless verification still requires
+a GitHub Actions tag run; local execution has no OIDC context.
+
+The post-cycle verification is green: the workspace remains at 420 listed
+Rust tests (414 active, 6 intentionally ignored), Clippy with all
+targets/features passes, the Python suite reports 93 tests with 6 skips, 46
+deterministic fuzz seeds check and verify, the embedded no-default-features
+target check passes, and layer-check remains clean. No file under
+`specification/` and no pre-existing dirty path was modified or staged.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
