@@ -648,9 +648,6 @@ impl SessionEngine {
             }
             Frame::Bundle(bytes) => {
                 self.pending_budget = true;
-                // Canonical decoding only identifies the bundle for stream
-                // sequencing; signature/admission verification remains in
-                // the host's verify-before-store pipeline.
                 self.pending_bundle_id = Bundle::decode_canonical(&bytes).ok().map(|bundle| bundle.id());
                 host.on_bundle(&peer, &bytes);
             }
