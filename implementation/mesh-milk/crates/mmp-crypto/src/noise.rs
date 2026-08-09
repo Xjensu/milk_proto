@@ -262,8 +262,16 @@ impl NoiseChannel {
     }
 
     /// The ID_PROOF signature this side must send (doc 08 §3.2).
-    pub fn make_id_proof(&self, identity: &Identity, local_identity_is_initiator: bool) -> Sig64 {
-        let (init_pk, resp_pk) = if local_identity_is_initiator {
+    ///
+    /// The initiator/responder role is taken from the completed Noise
+    /// transcript rather than supplied by the caller.  The role is part of
+    /// the channel state, so accepting a second, caller-controlled role flag
+    /// made it possible for an integration mistake to produce a proof over a
+    /// different identity ordering.  Such a proof would be rejected by the
+    /// peer (an availability/interop failure), but it is still preferable to
+    /// make the canonical wire preimage unambiguous at this API boundary.
+    pub fn make_id_proof(&self, identity: &Identity) -> Sig64 {
+        let (init_pk, resp_pk) = if self.initiator {
             (identity.public(), self.peer.identity)
         } else {
             (self.peer.identity, identity.public())

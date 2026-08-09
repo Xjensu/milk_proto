@@ -471,7 +471,7 @@ impl SessionEngine {
             self.phase = Phase::Binding;
             // Both sides send ID_PROOF immediately (doc 08 §3.2).
             let chan = self.chan.as_ref().expect("just set");
-            let sig = chan.make_id_proof(identity, self.initiator);
+            let sig = chan.make_id_proof(identity);
             self.send_frame(&Frame::IdProof { identity: identity.public(), sig });
             self.sent_proof = true;
         }
@@ -1290,7 +1290,7 @@ mod rx_bound_tests {
 
         // A plaintext ID_PROOF envelope is not a valid post-handshake record;
         // the receiver must attempt Noise AEAD first and close on failure.
-        let sig = a.chan.as_ref().expect("Noise channel exists").make_id_proof(&ia, true);
+        let sig = a.chan.as_ref().expect("Noise channel exists").make_id_proof(&ia);
         let plaintext = Frame::IdProof { identity: ia.public(), sig }.encode();
         assert_eq!(plaintext.get(2), Some(&FT_ID_PROOF));
         b.on_wire(&plaintext, 1000, &ib, &mut hb);

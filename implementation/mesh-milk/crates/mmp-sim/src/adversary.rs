@@ -212,9 +212,7 @@ impl AdversarySession {
             self.hs = None;
             self.chan = Some(chan);
             if !self.sent_id_proof {
-                // Same construction `SessionEngine::on_hs` uses: local_identity_is_initiator
-                // is literally true here, since `Adversary` always dials.
-                let sig = self.chan.as_ref().expect("just set").make_id_proof(&self.identity, true);
+                let sig = self.chan.as_ref().expect("just set").make_id_proof(&self.identity);
                 self.send(Frame::IdProof { identity: self.identity.public(), sig });
                 self.sent_id_proof = true;
             }

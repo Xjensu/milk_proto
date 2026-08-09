@@ -73,9 +73,9 @@ fn noise_xx_handshake_agrees_and_binds() {
     assert_eq!(chan_a.handshake_hash, chan_b.handshake_hash);
 
     // ID_PROOF both directions (doc 08 §3.2).
-    let proof_a = chan_a.make_id_proof(&alice, true);
+    let proof_a = chan_a.make_id_proof(&alice);
     chan_b.verify_id_proof(&bob.public(), &proof_a).unwrap();
-    let proof_b = chan_b.make_id_proof(&bob, false);
+    let proof_b = chan_b.make_id_proof(&bob);
     chan_a.verify_id_proof(&alice.public(), &proof_b).unwrap();
 
     // Data flows.
@@ -223,7 +223,7 @@ fn id_proof_from_wrong_identity_rejected() {
     let chan_b = b.advance(&out_a.reply.unwrap()).unwrap().channel.unwrap();
 
     // Mallory signs with the right preimage but is not the claimed identity.
-    let forged = chan_a.make_id_proof(&mallory, true);
+    let forged = chan_a.make_id_proof(&mallory);
     assert!(chan_b.verify_id_proof(&bob.public(), &forged).is_err());
 }
 
