@@ -202,6 +202,18 @@ run. It verifies internal evidence completeness—roles, logs, markers, stores,
 delivery, receipt, reconnect, MTU/RSSI availability, and gate flags—but does
 not authenticate logs or claim hardware success.
 
+The next delegated cycle closed three additional non-wire gaps. `4f6351e`
+adds `validate_release_preflight.py`, which combines the BLE evidence checks
+with repository-side verification of the recorded commit and a clean
+`specification/` tree; unrelated dirty paths are intentionally ignored.
+`847758e` adds a high-level vault regression proving that an unavailable
+provider fails closed before commit and leaves the restore target unchanged;
+native keystore, lock/invalidation, and crash-recovery behavior remain external
+platform gates. `1e2fdef` adds a reproducible research matrix comparing random,
+periodic-clustered, and social-clustered contact generators with delivery,
+latency, elapsed time, storage, quota, and bridge metrics. It is a control
+experiment only and does not support a human-mobility or 2x claim.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
@@ -224,9 +236,9 @@ and true RBSR/D3 cross-domain conformance remain external gates. The working
 tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
-The later serial rerun supersedes the earlier component inventory above: it
-listed 394 tests (388 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 47 tests, while the 44-seed fuzz check,
+The latest serial rerun supersedes the earlier component inventory above: it
+listed 396 tests (390 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 50 tests, while the 44-seed fuzz check,
 compileall, layer-check, and CLI delivery/receipt smoke evidence remain green.
 
 ## Source register
