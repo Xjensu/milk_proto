@@ -34,6 +34,18 @@ fn tick_compacts_idle_admission_bucket_maps() {
     assert!(n.core.auth_buckets.is_empty());
 }
 
+#[test]
+fn callback_event_queue_is_bounded_when_host_does_not_poll() {
+    let mut n = node(251);
+    while n.poll_event().is_some() {}
+    for _ in 0..(super::EVENT_QUEUE_CAPACITY * 2) {
+        n.core.enqueue_event(Event::TierChanged { tier: Tier::Relay });
+    }
+
+    assert_eq!(n.core.events.len(), super::EVENT_QUEUE_CAPACITY);
+    assert_eq!(n.core.event_queue_dropped, super::EVENT_QUEUE_CAPACITY as u64);
+}
+
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).
 fn introduce(a: &mut Node, b: &mut Node) {
     for c in a.own_claims() {

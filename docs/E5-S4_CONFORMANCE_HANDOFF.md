@@ -1735,3 +1735,31 @@ not installed on this Windows host; this is a formatting-tool warning, not a
 binding-generation failure. The checks prove generated API/secret-surface
 coverage only. They do not prove Kotlin or Swift compilation, Android/iOS
 background scheduling, keystore/keychain behavior, or physical BLE exchange.
+
+## 2026-08-09 continuation: bounded application callback FIFO
+
+The `mmp-node` application callback queue (`Node::poll_event`) was previously
+an unbounded `VecDeque<Event>`. A peer could therefore keep a valid session
+busy while the host failed to poll, retaining an attacker-sized backlog of
+ciphertext-free message, group, announcement, and file event payloads. The
+queue now has a local capacity of 2,048 entries and is initialized with that
+capacity. Every event producer uses one `NodeCore::enqueue_event` seam.
+
+The saturation policy is deliberately explicit and deterministic: FIFO order
+of already queued entries is preserved and the *newest* event is dropped when
+the queue is full. No coalescing or silent eviction of older lifecycle events
+is performed. `Node::event_queue_dropped` and the additive FFI accessor
+`MmpNode::event_queue_dropped` expose a sticky loss counter. A non-zero value
+is an application backpressure/observability failure: hosts MUST drain
+`poll_event` promptly and should surface or recover from the loss. Required
+user-visible events (for example `MessageReceived`) can be lost while the
+queue is saturated; this is a documented local overload policy, not a claim
+of lossless protocol delivery. The wire format, session grammar, and
+specification remain unchanged.
+
+The focused regression fills the queue through the public FFI tier callback and
+asserts that saturation is observable. The `mmp-node` library suite passes 72
+tests and the focused FFI saturation test passes. This bound protects process
+memory but does not by itself provide transport-level backpressure or prove
+mobile callback scheduling; a future lossless-event design would need an
+explicit session admission/close policy and a reviewed API contract.

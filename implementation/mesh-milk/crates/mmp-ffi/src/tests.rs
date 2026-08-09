@@ -186,6 +186,21 @@ fn transport_close_saturation_is_visible_at_the_ffi_boundary() {
 }
 
 #[test]
+fn callback_event_queue_saturation_is_visible_at_the_ffi_boundary() {
+    let node = node(13);
+    while node.poll_event().is_some() {}
+
+    // `set_tier` is a host callback producer. Keep the queue undrained and
+    // alternate tiers until the bounded mmp-node FIFO starts dropping the
+    // newest event.
+    for index in 0..4096 {
+        node.set_tier(if index % 2 == 0 { FfiTier::Leaf } else { FfiTier::Relay });
+    }
+
+    assert!(node.event_queue_dropped() > 0);
+}
+
+#[test]
 fn successor_revocation_forwards_and_validates_fixed_length_keys() {
     let bob = node(2);
     let successor = node(3);

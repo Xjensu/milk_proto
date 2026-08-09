@@ -96,6 +96,10 @@ const OUTBOX_CONTROL_RESERVE: usize = 4;
 const OUTBOX_FRAME_BYTES: usize = MAX_ENVELOPE_PAYLOAD + 3;
 /// Bound transport-local close actions so denied links cannot grow node RAM.
 const CLOSE_ACTION_CAPACITY: usize = 64;
+/// Bound the application callback FIFO so a peer cannot retain an attacker-
+/// sized backlog of ciphertext-free `Event` payloads when the host stops
+/// polling.  This is a local backpressure policy, not a wire limit.
+const EVENT_QUEUE_CAPACITY: usize = 2048;
 /// Local persistence cap for explicit user blocklist entries. This is a host
 /// policy bound, not a wire limit.
 const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
@@ -476,6 +480,7 @@ struct NodeCore {
     /// Sender-key dists already sent, keyed (gid, member, epoch).
     sent_dists: HashSet<(Id16, NodeId, u16)>,
     events: VecDeque<Event>,
+    event_queue_dropped: u64,
     sent: HashMap<Id16, SentMessage>,
     sprayed: HashSet<Id16>,
     blocklist: HashSet<NodeId>,
@@ -576,7 +581,8 @@ impl Node {
             pending_async: HashMap::new(),
             pending_first_contact: HashMap::new(),
             sent_dists: HashSet::new(),
-            events: VecDeque::new(),
+            events: VecDeque::with_capacity(EVENT_QUEUE_CAPACITY),
+            event_queue_dropped: 0,
             sent: HashMap::new(),
             sprayed: HashSet::new(),
             blocklist: HashSet::new(),
@@ -688,7 +694,7 @@ impl Node {
             self.core.tier = tier;
             self.hello.tier = tier as u8;
             self.core.quota = if tier == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
-            self.core.events.push_back(Event::TierChanged { tier });
+            self.core.enqueue_event(Event::TierChanged { tier });
         }
     }
 
@@ -1144,7 +1150,7 @@ impl Node {
                 let _ = self.core.send_own_dist(gid, &m);
             }
         }
-        self.core.events.push_back(Event::GroupEpochChanged { gid: *gid, epoch });
+        self.core.enqueue_event(Event::GroupEpochChanged { gid: *gid, epoch });
         Ok(epoch)
     }
 
@@ -1367,8 +1373,8 @@ impl Node {
                     match ev {
                         SessionEvent::Established { peer, .. } => {
                             self.core.utility.note_contact(&peer, 1000, self.core.now);
-                            self.core.events.push_back(Event::Established { peer });
-                            self.core.events.push_back(Event::ContactSeen { peer });
+                            self.core.enqueue_event(Event::Established { peer });
+                            self.core.enqueue_event(Event::ContactSeen { peer });
                         }
                         SessionEvent::Closed => closed = true,
                     }
@@ -1422,6 +1428,14 @@ impl Node {
         self.core.events.pop_front()
     }
 
+    /// Number of application events discarded because the host did not drain
+    /// [`Node::poll_event`] before the bounded callback FIFO filled.  A
+    /// non-zero value is an operational backpressure signal; it is never
+    /// caused by a remote peer directly and does not alter protocol state.
+    pub fn event_queue_dropped(&self) -> u64 {
+        self.core.event_queue_dropped
+    }
+
     /// Advance the monotonic clock (doc 11 §7): expiry, filter rotation,
     /// session timers, quota eviction.
     pub fn tick(&mut self, now_ms: u64) {
@@ -1433,9 +1447,10 @@ impl Node {
             if let Some(m) = self.core.sent.get_mut(id) {
                 if m.state != DeliveryState::Delivered {
                     m.state = DeliveryState::Expired;
-                    self.core
-                        .events
-                        .push_back(Event::DeliveryProgress { id: *id, state: DeliveryState::Expired });
+                    self.core.enqueue_event(Event::DeliveryProgress {
+                        id: *id,
+                        state: DeliveryState::Expired,
+                    });
                 }
             }
         }
@@ -1472,6 +1487,18 @@ impl Node {
 // ------------------------------------------------------------- NodeCore -----
 
 impl NodeCore {
+    /// Enqueue one ciphertext-free application callback without allowing the
+    /// host-facing queue to grow with authenticated peer traffic.  Keep the
+    /// existing FIFO when saturated (drop newest) so already queued lifecycle
+    /// events retain ordering; expose the loss through a sticky counter.
+    fn enqueue_event(&mut self, event: Event) {
+        if self.events.len() >= EVENT_QUEUE_CAPACITY {
+            self.event_queue_dropped = self.event_queue_dropped.saturating_add(1);
+            return;
+        }
+        self.events.push_back(event);
+    }
+
     fn learn_claim(&mut self, claim: Claim, pinned: bool) {
         let owner = node_id_of(&claim.owner);
         let field_id = claim.field;
@@ -1479,7 +1506,7 @@ impl NodeCore {
         let claim_body = claim.body.clone();
         match self.claims.merge(claim, self.now, pinned) {
             mmp_core::ClaimMerge::Adopted => {
-                self.events.push_back(Event::ClaimUpdated { owner, field: field_id });
+                self.enqueue_event(Event::ClaimUpdated { owner, field: field_id });
                 // Doc 18 §2.1/§6: AuthCert and REVOCATION_LIST ride ordinary
                 // claim gossip at fields 0x07/0x08. Only acted on once
                 // adopted — a Stale claim means we already hold the winner,
@@ -1510,13 +1537,13 @@ impl NodeCore {
                         // verified — a hook for explicit user confirmation,
                         // never an automatic petname migration.
                         let successor = self.claims.successor(&owner);
-                        self.events.push_back(Event::PeerRevoked { peer: owner, successor });
+                        self.enqueue_event(Event::PeerRevoked { peer: owner, successor });
                     }
                     _ => {}
                 }
             }
             mmp_core::ClaimMerge::Conflict { .. } => {
-                self.events.push_back(Event::CompromiseWarning { owner });
+                self.enqueue_event(Event::CompromiseWarning { owner });
             }
             mmp_core::ClaimMerge::Stale | mmp_core::ClaimMerge::Rejected => {}
         }
@@ -1698,7 +1725,7 @@ impl NodeCore {
             .is_some_and(|now_unix_s| self.authority.official(&bundle.origin, &bundle.dest, now_unix_s));
 
         if subscribed {
-            self.events.push_back(Event::Announcement {
+            self.enqueue_event(Event::Announcement {
                 id: bundle.id(),
                 scope: bundle.dest,
                 ann_type: body.ann_type,
@@ -1797,7 +1824,7 @@ impl NodeCore {
             id,
             SentMessage { conv: conversation_id(&self.public, &self.resolve_peer_key(peer).expect("resolved in send_app")), state: DeliveryState::Queued },
         );
-        self.events.push_back(Event::DeliveryProgress { id, state: DeliveryState::Queued });
+        self.enqueue_event(Event::DeliveryProgress { id, state: DeliveryState::Queued });
         Ok(id)
     }
 
@@ -2021,7 +2048,7 @@ impl NodeCore {
             .map(|c| c.dag.insert(bundle.id(), bundle.parents()))
             .unwrap_or_default();
         if !missing.is_empty() {
-            self.events.push_back(Event::MessageGap { conv: conv_id, parents: missing });
+            self.enqueue_event(Event::MessageGap { conv: conv_id, parents: missing });
         }
 
         let (app, msg) =
@@ -2037,7 +2064,7 @@ impl NodeCore {
             if app == apptype::FILE_MANIFEST {
                 self.try_offer_file(&conv_id, &from, &msg);
             }
-            self.events.push_back(Event::MessageReceived {
+            self.enqueue_event(Event::MessageReceived {
                 conv: conv_id,
                 from,
                 id: bundle.id(),
@@ -2146,7 +2173,7 @@ impl NodeCore {
                 return;
             }
             self.groups.insert(gid, gs);
-            self.events.push_back(Event::GroupInvite { gid, from: *from });
+            self.enqueue_event(Event::GroupInvite { gid, from: *from });
         } else {
             let Some(gs) = self.groups.get_mut(&gid) else { return };
             // A removed/non-member peer cannot reintroduce sender-key state.
@@ -2168,7 +2195,7 @@ impl NodeCore {
         let Ok(body) = remote.decrypt(&gp, &bundle.canonical_aead_ad()) else { return };
         let (_, msg) =
             body.split_first().map(|(a, r)| (*a, r.to_vec())).unwrap_or((apptype::TEXT, Vec::new()));
-        self.events.push_back(Event::GroupMessage {
+        self.enqueue_event(Event::GroupMessage {
             gid: gp.gid,
             from: gp.member,
             id: bundle.id(),
@@ -2235,9 +2262,11 @@ impl NodeCore {
         if sent.is_none() {
             return;
         }
-        self.events.push_back(Event::Delivered { id: rp.delivered });
-        self.events
-            .push_back(Event::DeliveryProgress { id: rp.delivered, state: DeliveryState::Delivered });
+        self.enqueue_event(Event::Delivered { id: rp.delivered });
+        self.enqueue_event(Event::DeliveryProgress {
+            id: rp.delivered,
+            state: DeliveryState::Delivered,
+        });
     }
 
     /// Quota eviction (doc 04 §2). Bundles pinned by a live friendship
@@ -2418,7 +2447,7 @@ impl NodeCore {
             }
         }
         for root in failed {
-            self.events.push_back(Event::FileFailed { root, reason: FileFailReason::Abandoned });
+            self.enqueue_event(Event::FileFailed { root, reason: FileFailReason::Abandoned });
         }
     }
 
@@ -2553,7 +2582,7 @@ impl NodeCore {
                 thumb_root: e.thumb_root,
             });
         }
-        self.events.push_back(Event::FileOffered {
+        self.enqueue_event(Event::FileOffered {
             conv: *conv,
             from: *from,
             sharer: manifest.sharer,
@@ -2596,7 +2625,7 @@ impl NodeCore {
         if let Some(a) = self.assemblies.get_mut(root) {
             if !matches!(a.state, BlobState::Assembled) {
                 a.state = BlobState::Abandoned;
-                self.events.push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+                self.enqueue_event(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
             }
         }
     }
@@ -2700,10 +2729,12 @@ impl NodeCore {
                     a.state = if renamed { BlobState::Assembled } else { BlobState::Abandoned };
                 }
                 if renamed {
-                    self.events.push_back(Event::FileReady { root: *root, path: dest_path });
+                    self.enqueue_event(Event::FileReady { root: *root, path: dest_path });
                 } else {
-                    self.events
-                        .push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+                    self.enqueue_event(Event::FileFailed {
+                        root: *root,
+                        reason: FileFailReason::Abandoned,
+                    });
                 }
             }
             Ok(false) => {
@@ -2711,15 +2742,19 @@ impl NodeCore {
                 if let Some(a) = self.assemblies.get_mut(root) {
                     a.state = BlobState::Abandoned;
                 }
-                self.events
-                    .push_back(Event::FileFailed { root: *root, reason: FileFailReason::HashMismatch });
+                self.enqueue_event(Event::FileFailed {
+                    root: *root,
+                    reason: FileFailReason::HashMismatch,
+                });
             }
             Err(_) => {
                 if let Some(a) = self.assemblies.get_mut(root) {
                     a.state = BlobState::Abandoned;
                 }
-                self.events
-                    .push_back(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+                self.enqueue_event(Event::FileFailed {
+                    root: *root,
+                    reason: FileFailReason::Abandoned,
+                });
             }
         }
     }
@@ -2887,8 +2922,10 @@ impl SessionHost for NodeCore {
             if let Some(m) = self.sent.get_mut(id) {
                 if m.state == DeliveryState::Queued {
                     m.state = DeliveryState::InMesh;
-                    self.events
-                        .push_back(Event::DeliveryProgress { id: *id, state: DeliveryState::InMesh });
+                    self.enqueue_event(Event::DeliveryProgress {
+                        id: *id,
+                        state: DeliveryState::InMesh,
+                    });
                 }
             }
         }
@@ -3065,7 +3102,7 @@ impl SessionHost for NodeCore {
             buffered: BTreeSet::new(),
         });
         state.since = offer.since; // renewal: refresh TTL, keep existing pins
-        self.events.push_back(Event::FriendshipEstablished { peer: *peer, since: offer.since });
+        self.enqueue_event(Event::FriendshipEstablished { peer: *peer, since: offer.since });
         Some(FriendAckBody { countersig }.encode())
     }
 
@@ -3088,7 +3125,7 @@ impl SessionHost for NodeCore {
         self.next_friendship_seq += 1;
         let body = Friendship { friend: patron_key, since, countersig: ack.countersig }.encode();
         self.publish_claim_now(field::FRIENDSHIP, seq, body);
-        self.events.push_back(Event::FriendshipEstablished { peer: *peer, since });
+        self.enqueue_event(Event::FriendshipEstablished { peer: *peer, since });
     }
 
     fn on_proxy_summary(&mut self, peer: &NodeId, body: &[u8]) {

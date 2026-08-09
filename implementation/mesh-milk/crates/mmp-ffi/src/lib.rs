@@ -1050,6 +1050,15 @@ impl MmpNode {
         self.lock().close_actions_dropped()
     }
 
+    /// Return the sticky count of app events dropped because the bounded
+    /// callback FIFO was full. The queue keeps existing FIFO entries and
+    /// drops the newest event when saturated; hosts must drain
+    /// [`Self::poll_event`] promptly and treat a non-zero count as a
+    /// backpressure/observability signal.
+    pub fn event_queue_dropped(&self) -> u64 {
+        self.lock().event_queue_dropped()
+    }
+
     /// Drain one app event; call in a loop until `None`.
     pub fn poll_event(&self) -> Option<FfiEvent> {
         self.lock().poll_event().map(FfiEvent::from)
