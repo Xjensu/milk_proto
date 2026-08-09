@@ -2925,17 +2925,25 @@ impl NodeCore {
         let id = bundle.id();
         let Some((root, sym_no)) = self.index_symbol_bundle(bundle, id) else { return };
 
-        let Some(assembly) = self.assemblies.get(&root) else { return };
-        if !matches!(assembly.state, BlobState::Wanted | BlobState::Fetching) || assembly.have_bit(sym_no) {
-            return;
-        }
-
+        // Verify every symbol before it becomes servable, even when no local
+        // assembly currently requests it.  `index_symbol_bundle` runs for all
+        // class-4 traffic so relays can retain opaque symbols, but an
+        // unverified shape-valid payload must not enter `blob_index`: a later
+        // BLOB_HAVE/BLOB_REQ would otherwise hand the bytes to another peer
+        // through `load_for_handoff` without a second Merkle check.
         if !symbol_payload_verifies(bundle, &root, sym_no) {
             self.store.remove(&id);
             self.deindex_symbol(&id);
             if let Some(a) = self.assemblies.get_mut(&root) {
-                a.bad_symbols += 1;
+                if matches!(a.state, BlobState::Wanted | BlobState::Fetching) {
+                    a.bad_symbols = a.bad_symbols.saturating_add(1);
+                }
             }
+            return;
+        }
+
+        let Some(assembly) = self.assemblies.get(&root) else { return };
+        if !matches!(assembly.state, BlobState::Wanted | BlobState::Fetching) || assembly.have_bit(sym_no) {
             return;
         }
 

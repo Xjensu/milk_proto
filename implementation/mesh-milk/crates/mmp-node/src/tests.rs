@@ -12,11 +12,11 @@ use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
-    OFFER_MIN_LIFETIME_MS,
+    OFFER_MIN_LIFETIME_MS, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload};
+use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::Ext;
 
 use crate::{DeliveryState, Event, Node, SendError, SentMessage, Tier};
@@ -227,6 +227,78 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
     }
 
     assert_eq!(n.core.blob_served.len(), super::MAX_BLOB_SERVE_PEERS);
+}
+
+/// A shape-valid class-4 bundle with a malformed Merkle payload must not be
+/// retained in the holder index merely because no local fetch is active.  If
+/// it were indexed first, a later BLOB_HAVE/BLOB_REQ could serve the bytes to
+/// another peer without a verification pass.
+#[test]
+fn unsolicited_invalid_symbol_is_removed_before_indexing() {
+    let sender = node(230);
+    let mut receiver = node(231);
+    let root = Id16([0x91; 16]);
+    let mut bundle = Bundle {
+        class: class::SYMBOL,
+        flags: 0,
+        origin: sender.identity.public(),
+        dest: receiver.node_id(),
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::BULK,
+        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
+        // The payload has the required symbol length and a decodable path
+        // envelope (depth zero), but the path cannot prove this random root.
+        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = sender.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+
+    receiver.core.on_bundle(&sender.node_id(), &bundle.encode());
+
+    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must not remain durable");
+    assert!(!receiver.core.symbol_of.contains_key(&id), "invalid symbol must not enter reverse index");
+    assert!(!receiver.core.blob_index.contains_key(&root), "invalid symbol must not enter holder index");
+}
+
+#[test]
+fn active_invalid_symbol_is_counted_and_removed() {
+    let sender = node(228);
+    let mut receiver = node(229);
+    let root = Id16([0x92; 16]);
+    receiver.core.offers.insert(
+        root,
+        crate::blob::FileOfferInfo {
+            size: 1_000,
+            full_hash: [0; 32],
+            sharer: sender.identity.public(),
+        },
+    );
+    let dest = std::env::temp_dir().join(format!("mmp-node-invalid-symbol-{}.part", std::process::id()));
+    receiver.core.fetch_file(&root, &dest).expect("cached offer admits fetch");
+
+    let mut bundle = Bundle {
+        class: class::SYMBOL,
+        flags: 0,
+        origin: sender.identity.public(),
+        dest: receiver.node_id(),
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::BULK,
+        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
+        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = sender.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+    receiver.core.on_bundle(&sender.node_id(), &bundle.encode());
+
+    let assembly = receiver.core.assemblies.get(&root).expect("fetch remains visible");
+    assert_eq!(assembly.bad_symbols, 1, "invalid symbol is attributable to the active fetch");
+    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must be removed from storage");
+    assert!(!receiver.core.symbol_of.contains_key(&id));
+    assert!(!receiver.core.blob_index.contains_key(&root));
+
+    let _ = std::fs::remove_file(dest);
 }
 
 #[test]
