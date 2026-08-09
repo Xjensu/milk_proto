@@ -70,6 +70,11 @@ from typing import Any
 SCHEMA = "mmp-ble-evidence-v1"
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 ROLES = {"peripheral", "central"}
+# Evidence is an offline release artifact, not an unbounded log collector.
+# Keep parser memory bounded when a package is supplied by an untrusted host
+# or copied from a long-running adapter process.
+MAX_MANIFEST_BYTES = 1 << 20
+MAX_EVIDENCE_FILE_BYTES = 8 << 20
 REQUIRED_GATES = (
     "advertisement",
     "gatt_connection",
@@ -97,6 +102,22 @@ def _text(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def _read_utf8_bounded(path: Path, label: str, limit: int, errors: list[str]) -> str | None:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
+        return None
+    if size > limit:
+        errors.append(f"{label} exceeds maximum size of {limit} bytes")
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(f"{label} cannot be read as UTF-8: {exc}")
+        return None
+
+
 def _relative_file(root: Path, value: object, label: str, errors: list[str]) -> Path | None:
     if not isinstance(value, str) or not value.strip():
         errors.append(f"{label} must be a non-empty relative path")
@@ -113,6 +134,13 @@ def _relative_file(root: Path, value: object, label: str, errors: list[str]) -> 
         return None
     if not resolved.is_file():
         errors.append(f"{label} does not exist: {value}")
+        return None
+    try:
+        if resolved.stat().st_size > MAX_EVIDENCE_FILE_BYTES:
+            errors.append(f"{label} exceeds maximum size of {MAX_EVIDENCE_FILE_BYTES} bytes")
+            return None
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
         return None
     return resolved
 
@@ -156,6 +184,12 @@ def validate_manifest(path: Path) -> list[str]:
     """Return deterministic validation errors for one evidence manifest."""
 
     errors: list[str] = []
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return [f"manifest cannot be inspected: {exc}"]
+    if size > MAX_MANIFEST_BYTES:
+        return [f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes"]
     try:
         raw = path.read_text(encoding="utf-8")
         document = json.loads(raw)
@@ -233,11 +267,8 @@ def validate_manifest(path: Path) -> list[str]:
                 if required_marker not in markers:
                     errors.append(f"{label}.markers must include role gate marker: {required_marker}")
         if log is not None and isinstance(markers, list):
-            try:
-                content = log.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                errors.append(f"{label}.log cannot be read as UTF-8: {exc}")
-            else:
+            content = _read_utf8_bounded(log, f"{label}.log", MAX_EVIDENCE_FILE_BYTES, errors)
+            if content is not None:
                 for marker in markers:
                     if isinstance(marker, str) and marker not in content:
                         errors.append(f"{label}.log is missing marker: {marker}")

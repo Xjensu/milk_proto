@@ -206,6 +206,36 @@ class BleEvidenceTests(unittest.TestCase):
                 errors,
             )
 
+    def test_oversized_host_log_is_rejected_before_read(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import MAX_EVIDENCE_FILE_BYTES, validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._manifest(root)
+            (root / "peripheral.log").write_bytes(b"x" * (MAX_EVIDENCE_FILE_BYTES + 1))
+            errors = validate_manifest(path)
+            self.assertIn(
+                f"hosts[0].log exceeds maximum size of {MAX_EVIDENCE_FILE_BYTES} bytes",
+                errors,
+            )
+
+    def test_oversized_manifest_is_rejected_before_json_parse(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import MAX_MANIFEST_BYTES, validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.json"
+            path.write_bytes(b"{" + b"x" * MAX_MANIFEST_BYTES + b"}")
+            self.assertEqual(
+                validate_manifest(path),
+                [f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
