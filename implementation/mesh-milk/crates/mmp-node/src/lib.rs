@@ -1205,6 +1205,17 @@ impl Node {
                 .ok_or(SendError::RatchetExhausted)?;
             (epoch, gs.members.members())
         };
+        // A new local sender-key epoch supersedes every distribution marker
+        // from older epochs for this group.  Keeping those markers forever
+        // lets repeated membership rotations grow RAM without bound and can
+        // suppress no useful send: `send_own_dist` always includes the epoch
+        // in its idempotence key.  Drop only this group's stale epochs; other
+        // groups and the freshly rotated epoch remain untouched.  If a
+        // re-key send below fails, the missing current-epoch marker is still
+        // absent and will be retried on the next contact.
+        self.core.sent_dists.retain(|(sent_gid, _, sent_epoch)| {
+            *sent_gid != *gid || *sent_epoch == epoch
+        });
         let me = self.core.node_id;
         for m in members {
             if m != me && m != *member {

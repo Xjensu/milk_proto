@@ -1458,6 +1458,15 @@ fn group_create_invite_and_message() {
 
     // Removal rotates the epoch; the removed member reads nothing new.
     alice.group_remove(&gid, &carol.node_id()).unwrap();
+    let rotated_epoch = alice.core.groups.get(&gid).unwrap().epoch;
+    assert!(
+        alice
+            .core
+            .sent_dists
+            .iter()
+            .all(|(sent_gid, _, sent_epoch)| *sent_gid != gid || *sent_epoch == rotated_epoch),
+        "stale sender-key distribution markers must not survive an epoch rotation"
+    );
     contact(&mut alice, &mut bob, 7, 70_000);
     alice.group_send(&gid, "carol is out").unwrap();
     contact(&mut alice, &mut bob, 8, 80_000);
