@@ -131,9 +131,12 @@ parsers first — attacker input costs the attacker nothing before any identity 
   run** doc 12 §7's "N CPU-hours once a baseline throughput is measured" calls for — no baseline has
   been measured yet, so no CPU-hour figure is pre-committed (same no-pre-commit discipline the
   roadmap's Phase C exit gate states generally).
-- **No curated seed corpus** — `corpus/` is gitignored (libFuzzer's own discovered-input directory,
-  regenerated per run); no hand-picked seeds (maximal-length beacon, every-TLV-type bundle,
-  truncated Noise message) are committed. Tracked as follow-on under E5-S6, not silently dropped.
+- **Deterministic seed recipe, no persisted discovered corpus:** `seed_corpus.py` derives hand-picked
+  seeds (maximal-length beacon, every-TLV-type bundle, truncated Noise message, and the Noise
+  256/257-byte boundary) from committed vectors; CI runs `check`, `write`, and `verify` before the
+  fuzz build. Generated seed files and libFuzzer's discovered-input directory remain gitignored by
+  design, so a measured CPU-hour hardening run is still open. This distinction is tracked under
+  E5-S6 rather than silently dropped.
 - **Windows toolchain gap, not a code defect:** all four harnesses compile cleanly under plain
   `rustc` on Windows; the sanitizer-instrumented `cargo fuzz build` link step fails on Windows for
   toolchain reasons (`clang_rt.asan_dynamic_runtime_thunk` / unresolved `__sancov_pcs`), documented
