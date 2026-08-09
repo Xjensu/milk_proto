@@ -2011,15 +2011,17 @@ and its replay/suppression semantics.
 Live ratchet counters previously used unchecked `u32`/`u16` increments even
 though provider-local snapshots already rejected terminal values. The
 wire-neutral hardening adds fallible `try_next` and `try_bump_epoch` methods,
-uses checked arithmetic, rejects terminal receive indexes, and keeps the
-existing `next`/`bump_epoch` methods as compatibility wrappers. The wrappers
-fail closed with an explicit panic at exhaustion instead of wrapping and
-reusing `(epoch, index)`; new providers should use the fallible methods to
+uses checked arithmetic, and keeps the existing `next`/`bump_epoch` methods as
+compatibility wrappers. The final `u32::MAX` message index is still accepted
+once, then the in-memory chain enters an explicit exhausted state; no counter
+wrap or `(epoch, index)` reuse is possible. The wrappers fail closed with an
+explicit panic at exhaustion; new providers should use the fallible methods to
 surface `CryptoError::Ratchet` without panicking. Existing mmp-node/group
 callers still use the compatibility wrappers because adding a new public node
 error would be an API change; their normal output is byte-for-byte unchanged.
-The terminal boundary tests verify no key/counter mutation on the fallible
-failure path and reject an exhausted receive chain. This is a local terminal
-counter policy, not a claim that a peer can be forced to send 2³² messages;
-the external-review residual is graceful application-level recovery and
-provider migration before a production counter can exhaust.
+The terminal boundary tests verify final-index acceptance, no post-exhaustion
+key generation, and no state mutation on fallible failure. Provider-local
+snapshots continue to reject terminal states, so a provider must persist or
+re-key before reaching the final counter. This is a local lifecycle residual,
+not a claim that a peer can be forced to send 2³² messages; external review
+should still define graceful application recovery and provider migration.

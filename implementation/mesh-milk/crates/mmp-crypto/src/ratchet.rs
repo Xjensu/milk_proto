@@ -56,6 +56,10 @@ fn bumped(ck: &[u8; 32], session_material: &[u8; 32]) -> [u8; 32] {
 /// Sending side of one direction.
 pub struct SendChain {
     ck: [u8; 32],
+    /// True after the final representable message index has been emitted.
+    /// This distinguishes a chain ready to emit `u32::MAX` from one that has
+    /// already consumed it; the wire field remains a full `u32`.
+    exhausted: bool,
     /// The current epoch (bumped by [`SendChain::bump_epoch`]).
     pub epoch: u16,
     /// The index that will be assigned to the next message key.
@@ -65,7 +69,7 @@ pub struct SendChain {
 impl SendChain {
     /// Start a send chain at (`ck`, `epoch`), index 0.
     pub fn new(ck: [u8; 32], epoch: u16) -> SendChain {
-        SendChain { ck, epoch, next_index: 0 }
+        SendChain { ck, exhausted: false, epoch, next_index: 0 }
     }
 
     /// Yields (message key, epoch, index) and advances — the spent CK is erased.
@@ -76,20 +80,25 @@ impl SendChain {
         self.try_next().expect("ratchet send counter exhausted")
     }
 
-    /// Fallible form of [`SendChain::next`]. The maximum wire index is
-    /// reserved as an exhausted-state sentinel: emitting it and then wrapping
-    /// to zero would reuse `(epoch, index)` and make the AEAD context
-    /// ambiguous. Existing callers retain [`SendChain::next`] for source
-    /// compatibility; new provider integrations should use this method to
-    /// fail closed instead of panicking at the terminal counter.
+    /// Fallible form of [`SendChain::next`]. The final wire index may be
+    /// emitted once; any subsequent call fails closed instead of wrapping to
+    /// zero and reusing the AEAD context. Existing callers retain
+    /// [`SendChain::next`] for source compatibility; new provider integrations
+    /// should use this method to surface the terminal state without panicking.
     pub fn try_next(&mut self) -> Result<(Zeroizing<[u8; 32]>, u16, u32), CryptoError> {
-        let next_index = self.next_index.checked_add(1).ok_or(CryptoError::Ratchet)?;
+        if self.exhausted {
+            return Err(CryptoError::Ratchet);
+        }
         let key = Zeroizing::new(msg_key(&self.ck));
         let (epoch, index) = (self.epoch, self.next_index);
         let new = next_ck(&self.ck);
         self.ck.zeroize();
         self.ck = new;
-        self.next_index = next_index;
+        if index == u32::MAX {
+            self.exhausted = true;
+        } else {
+            self.next_index = index + 1;
+        }
         Ok((key, epoch, index))
     }
 
@@ -146,13 +155,15 @@ impl SendChain {
         }
         let mut ck = Zeroizing::new([0u8; 32]);
         ck.copy_from_slice(&bytes[1..33]);
-        Ok(SendChain { ck: *ck, epoch, next_index })
+        Ok(SendChain { ck: *ck, exhausted: false, epoch, next_index })
     }
 }
 
 /// Receiving side of one direction, tolerant of DTN reordering within `window`.
 pub struct RecvChain {
     ck: [u8; 32],
+    /// True after the final representable message index has been consumed.
+    exhausted: bool,
     epoch: u16,
     next_index: u32,
     window: u32,
@@ -163,16 +174,16 @@ impl RecvChain {
     /// Start a receive chain at (`ck`, `epoch`), index 0, tolerating up to
     /// `window` messages of reordering ahead of the expected index.
     pub fn new(ck: [u8; 32], epoch: u16, window: u32) -> RecvChain {
-        RecvChain { ck, epoch, next_index: 0, window, skipped: BTreeMap::new() }
+        RecvChain { ck, exhausted: false, epoch, next_index: 0, window, skipped: BTreeMap::new() }
     }
 
     /// Message key for (epoch, index). Old-epoch or already-consumed keys only
     /// exist in the skipped store; everything else advances the chain.
     pub fn key_for(&mut self, epoch: u16, index: u32) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
-        // `u32::MAX` is reserved as the terminal counter state. Reject it
-        // before any subtraction or chain advancement so a forged terminal
-        // record cannot drive the receive side into an index wrap.
-        if index == u32::MAX || self.next_index == u32::MAX {
+        // Once the final representable index has been consumed, no later
+        // message key exists. Before that point `u32::MAX` remains a valid
+        // wire index and is accepted exactly once.
+        if self.exhausted {
             return Err(CryptoError::Ratchet);
         }
         if epoch < self.epoch || (epoch == self.epoch && index < self.next_index) {
@@ -201,7 +212,11 @@ impl RecvChain {
         let new = next_ck(&self.ck);
         self.ck.zeroize();
         self.ck = new;
-        self.next_index = self.next_index.checked_add(1).ok_or(CryptoError::Ratchet)?;
+        if self.next_index == u32::MAX {
+            self.exhausted = true;
+        } else {
+            self.next_index += 1;
+        }
         Ok(key)
     }
 
@@ -327,7 +342,7 @@ impl RecvChain {
         if pos != bytes.len() {
             return Err(snapshot_error());
         }
-        Ok(RecvChain { ck: *ck, epoch, next_index, window, skipped })
+        Ok(RecvChain { ck: *ck, exhausted: false, epoch, next_index, window, skipped })
     }
 
     fn store_skipped(&mut self, epoch: u16, index: u32, key: [u8; 32]) {
@@ -356,5 +371,23 @@ impl Drop for RecvChain {
         for v in self.skipped.values_mut() {
             v.zeroize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{msg_key, RecvChain};
+    use crate::error::CryptoError;
+
+    #[test]
+    fn receive_chain_accepts_final_index_once() {
+        let mut recv = RecvChain::new([0x99; 32], 0, 8);
+        // Reach the final representable index without iterating through the
+        // whole u32 space; this models the terminal state after index
+        // `u32::MAX - 1` was consumed.
+        recv.next_index = u32::MAX;
+        let expected = msg_key(&recv.ck);
+        assert_eq!(*recv.key_for(0, u32::MAX).unwrap(), expected);
+        assert_eq!(recv.key_for(0, u32::MAX), Err(CryptoError::Ratchet));
     }
 }

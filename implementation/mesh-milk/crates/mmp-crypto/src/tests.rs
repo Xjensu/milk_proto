@@ -379,6 +379,7 @@ fn ratchet_counter_and_epoch_exhaustion_fail_closed_without_mutation() {
     let mut send = SendChain::new([0x11; 32], u16::MAX);
     send.next_index = u32::MAX;
     let send_snapshot = send.snapshot();
+    assert_eq!(send.try_next().unwrap().2, u32::MAX);
     assert_eq!(send.try_next(), Err(CryptoError::Ratchet));
     assert_eq!(send.snapshot(), send_snapshot);
     assert_eq!(send.try_bump_epoch(&[0x22; 32]), Err(CryptoError::Ratchet));
@@ -396,6 +397,7 @@ fn ratchet_terminal_index_is_not_emitted_or_accepted() {
     send.next_index = u32::MAX - 1;
     let (_, epoch, index) = send.try_next().unwrap();
     assert_eq!((epoch, index), (0, u32::MAX - 1));
+    assert_eq!(send.try_next().unwrap().2, u32::MAX);
     assert_eq!(send.try_next(), Err(CryptoError::Ratchet));
 
     let mut recv = RecvChain::new([0x55; 32], 0, 8);
@@ -409,6 +411,7 @@ fn legacy_ratchet_wrappers_fail_closed_at_exhaustion() {
     // must never silently wrap the public counter back to zero.
     let mut legacy = SendChain::new([0x66; 32], 0);
     legacy.next_index = u32::MAX;
+    assert_eq!(legacy.next().2, u32::MAX);
     let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| legacy.next()));
     assert!(panic.is_err());
     assert_eq!(legacy.next_index, u32::MAX);
