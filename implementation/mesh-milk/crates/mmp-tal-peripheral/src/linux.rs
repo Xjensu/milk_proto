@@ -51,7 +51,7 @@ use tokio::time::{timeout, Duration};
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
 use crate::{
-    event_channel, mint_link_id, LinkId, LinkQuality, PeriphError, TalEvent,
+    event_channel, mint_link_id, validate_beacon, LinkId, LinkQuality, PeriphError, TalEvent,
     DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
@@ -203,6 +203,7 @@ impl PeripheralRole {
     /// (service data keyed by the same 128-bit UUID), which is the contract
     /// that matters for M5b.
     pub async fn advertise(&self, beacon: Vec<u8>) -> Result<(), PeriphError> {
+        validate_beacon(&beacon)?;
         let adv = Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral, // connectable
             service_uuids: [service_uuid()].into_iter().collect(),

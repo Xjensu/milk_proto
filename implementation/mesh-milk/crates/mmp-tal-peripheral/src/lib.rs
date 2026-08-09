@@ -82,6 +82,8 @@ use core::fmt;
 use tokio::sync::mpsc;
 
 pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
+#[cfg(any(target_os = "linux", test))]
+use mmp_types::beacon::BEACON_LEN;
 use mmp_types::consts::EPHEM_SLOT_MS;
 
 pub mod framing;
@@ -148,6 +150,13 @@ pub enum PeriphError {
     /// The central is connected (it wrote to us) but has not subscribed to
     /// the notify characteristic yet, so there is no outbound path.
     NotSubscribed,
+    /// The advertisement payload is not the fixed-size v1 MMP beacon.
+    InvalidBeaconLength {
+        /// Required v1 beacon size.
+        expected: usize,
+        /// Supplied payload size.
+        actual: usize,
+    },
     /// This build's OS has no peripheral backend (Windows/macOS stubs); the
     /// payload says what implementing one would take.
     Unsupported(&'static str),
@@ -161,10 +170,25 @@ impl fmt::Display for PeriphError {
         match self {
             PeriphError::UnknownLink => write!(f, "unknown link"),
             PeriphError::NotSubscribed => write!(f, "central has not subscribed to notifications"),
+            PeriphError::InvalidBeaconLength { expected, actual } => {
+                write!(f, "invalid beacon length: expected {expected} bytes, got {actual}")
+            }
             PeriphError::Unsupported(what) => write!(f, "peripheral role unsupported: {what}"),
             #[cfg(target_os = "linux")]
             PeriphError::Bluer(e) => write!(f, "bluer error: {e}"),
         }
+    }
+}
+
+/// Validate the fixed-size MMP/1 beacon before handing it to an OS advertiser.
+/// Keeping this check at the TAL boundary prevents a syntactically valid
+/// BlueZ advertisement from carrying bytes that every MMP node will reject.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn validate_beacon(beacon: &[u8]) -> Result<(), PeriphError> {
+    if beacon.len() == BEACON_LEN {
+        Ok(())
+    } else {
+        Err(PeriphError::InvalidBeaconLength { expected: BEACON_LEN, actual: beacon.len() })
     }
 }
 
@@ -259,5 +283,20 @@ mod tests {
     fn readvertise_due_when_the_slot_boundary_is_crossed() {
         assert!(readvertise_due(EPHEM_SLOT_MS - 1, EPHEM_SLOT_MS));
         assert!(readvertise_due(0, 3 * EPHEM_SLOT_MS));
+    }
+
+    #[test]
+    fn beacon_length_matches_the_fixed_mmp_wire_shape() {
+        assert!(validate_beacon(&[0; BEACON_LEN]).is_ok());
+        assert!(matches!(
+            validate_beacon(&[0; BEACON_LEN - 1]),
+            Err(PeriphError::InvalidBeaconLength { expected, actual })
+                if expected == BEACON_LEN && actual == BEACON_LEN - 1
+        ));
+        assert!(matches!(
+            validate_beacon(&[0; BEACON_LEN + 1]),
+            Err(PeriphError::InvalidBeaconLength { expected, actual })
+                if expected == BEACON_LEN && actual == BEACON_LEN + 1
+        ));
     }
 }
