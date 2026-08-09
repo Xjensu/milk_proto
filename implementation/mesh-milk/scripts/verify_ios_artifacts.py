@@ -96,6 +96,13 @@ def _verify_slice(
             f"slice {identifier} has unexpected SupportedPlatformVariant: "
             f"{item.get('SupportedPlatformVariant')!r}"
         )
+    architectures = item.get("SupportedArchitectures")
+    if not isinstance(architectures, list) or set(architectures) != {"arm64"}:
+        violations.append(
+            f"slice {identifier} has invalid SupportedArchitectures; expected "
+            "exactly ['arm64']: "
+            f"{architectures!r}"
+        )
 
     library = _safe_relative_path(item.get("LibraryPath"), field=f"{identifier}.LibraryPath", violations=violations)
     if library is not None:

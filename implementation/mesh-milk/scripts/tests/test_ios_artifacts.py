@@ -80,6 +80,18 @@ class IOSArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("static library is empty" in item for item in violations))
 
+    def test_slice_without_arm64_architecture_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            plist_path = xcframework / "Info.plist"
+            with plist_path.open("rb") as stream:
+                plist = plistlib.load(stream)
+            plist["AvailableLibraries"][0]["SupportedArchitectures"] = ["x86_64"]
+            with plist_path.open("wb") as stream:
+                plistlib.dump(plist, stream)
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("SupportedArchitectures" in item for item in violations))
+
     def test_unsafe_plist_library_path_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             xcframework, bindings = _write_fixture(Path(root))

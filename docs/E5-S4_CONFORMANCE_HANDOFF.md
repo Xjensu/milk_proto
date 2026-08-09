@@ -1922,3 +1922,16 @@ is in `known_identity_cache_releases_after_contact_teardown`,
 assertion in `session_slot_releases_when_engine_closes`. The focused
 `mmp-node` library suite passes 76 tests, and `cargo clippy -p mmp-node
 --all-targets --all-features -- -D warnings` passes.
+
+## 2026-08-09 continuation: iOS slice architecture manifest gate
+
+The host-only iOS artifact verifier now requires every expected XCFramework
+slice emitted by `build-ios-xcframework.sh` to declare exactly `arm64` in
+`SupportedArchitectures`. The build script targets `aarch64-apple-ios` and
+`aarch64-apple-ios-sim`; accepting a plist that silently names only another
+architecture could let a structurally valid but unusable artifact pass before
+Xcode or a device ever sees it. The new regression mutates a synthetic device
+slice to `x86_64` and confirms deterministic rejection. The complete Python
+script suite passes 43 tests with one documented Windows Bash-launcher skip.
+This is a manifest/artifact consistency check only; it does not claim Xcode
+compilation, Swift compilation, simulator execution, or device/radio behavior.
