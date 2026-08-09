@@ -707,6 +707,27 @@ mobility, channel-sounding scheduler, or DoF coding change has been promoted
 into v1 implementation or specification without measurements and an approved
 wire contract.
 
+### Orchestration continuation XIII (2026-08-09)
+
+The mobile audit produced `930dac9`. The Android-SDK-free Kotlin `MeshDrive`
+reference now exposes the UniFFI transport-local close actions and saturation
+diagnostics, drains `pollClose()` before `pollSend()`, purges pending fragments
+for a closing link, and requires the native adapter to report physical
+disconnect through `onLinkDown`. This closes the previously documented stale-
+send lifecycle gap at the reference-drive-loop boundary. Twenty focused source
+and binding/build tests pass; no Android SDK, Kotlin compiler, CoreBluetooth
+runtime, or physical-device evidence exists yet.
+
+The release-security audit produced `a678f5f`. Release manifests now reject
+case-insensitive filename collisions, preventing two distinct textual paths
+from referring to one artifact on Windows/macOS and creating ambiguous digest
+or role evidence. The change is tooling-only and has no protocol effect.
+
+The transport handoff was refreshed to distinguish the completed Kotlin seam
+from the still-external native Android/iOS adapter and hardware gates. The
+frozen specification remains untouched, and no MMP-Φ research hypothesis was
+promoted into v1 behavior.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

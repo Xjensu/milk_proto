@@ -68,7 +68,12 @@ seam, an explicit shutdown-all operation, and fail-closed overload handling.
 
 ## Remaining platform work
 
-Android and iOS integration layers still need to wire `poll_close()` to their
-native GATT disconnect APIs and report the resulting `link_down` callback. A
-hardware run must confirm that the OS actually releases the connection and that
-the host drains the bounded queue before saturation.
+The Android-SDK-free Kotlin `MeshDrive` reference now drains `pollClose()`
+before `pollSend()`, purges pending fragments for the closing link, exposes the
+two sticky saturation counters, and requires `GattAdapter.close(link)`. The
+native Android adapter still must implement that method and call
+`MeshDrive.onLinkDown(link)` only after the platform reports physical teardown.
+The iOS/CoreBluetooth adapter must provide the equivalent ordering. A hardware
+run must confirm that the OS actually releases the connection and that the host
+drains the bounded queue before saturation; the Kotlin source-level checks are
+not Android SDK, Swift compiler, or device evidence.
