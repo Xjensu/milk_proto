@@ -37,6 +37,31 @@ fn clustered_mobility_rejects_invalid_configuration() {
 }
 
 #[test]
+#[should_panic(expected = "min_gap_ms must be <= max_gap_ms")]
+fn random_meetings_reject_inverted_gap_range() {
+    let mut sim = Sim::new(2, 0xBAD5_EED);
+    sim.run_random_meetings(0, 2_000, 1_000);
+}
+
+#[test]
+fn clustered_meetings_reject_inverted_gap_range_without_mutation() {
+    let mut sim = Sim::new(4, 0xBAD5_EED);
+    assert!(!sim.run_clustered_meetings(0, 2_000, 1_000, 2, 1));
+    assert_eq!(sim.now_ms(), 0);
+    assert_eq!(sim.counters().meetings_run, 0);
+}
+
+#[test]
+fn social_clustered_meetings_reject_inverted_gap_range_without_mutation() {
+    let mut sim = Sim::new(4, 0xBAD5_EED);
+    assert!(sim
+        .run_social_clustered_meetings(0, 2_000, 1_000, 2, 250)
+        .is_none());
+    assert_eq!(sim.now_ms(), 0);
+    assert_eq!(sim.counters().meetings_run, 0);
+}
+
+#[test]
 fn social_clustered_mobility_is_deterministic_with_bounded_bridges() {
     let mut first = crate::SocialClusteredMobility::new(24, 4, 250).expect("valid profile");
     let mut second = crate::SocialClusteredMobility::new(24, 4, 250).expect("valid profile");

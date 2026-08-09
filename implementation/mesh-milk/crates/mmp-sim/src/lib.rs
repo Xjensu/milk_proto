@@ -574,26 +574,32 @@ impl Sim {
     /// Run `count` meetings between uniformly random distinct node pairs,
     /// each followed by a `min_gap_ms..max_gap_ms` clock advance. Discards
     /// events (use `meet` directly when the scenario needs to inspect a
-    /// specific contact).
+    /// specific contact). Panics when the gap range is inverted or fewer than
+    /// two nodes are present, so an invalid experiment cannot silently report
+    /// a distorted fixed-gap trace.
     pub fn run_random_meetings(&mut self, count: usize, min_gap_ms: u64, max_gap_ms: u64) {
+        assert!(
+            min_gap_ms <= max_gap_ms,
+            "min_gap_ms must be <= max_gap_ms"
+        );
         let n = self.nodes.len() as u64;
         assert!(n >= 2, "need at least two nodes to meet");
+        let span = max_gap_ms - min_gap_ms;
         for _ in 0..count {
             let i = self.rng.below(n) as usize;
             let mut j = self.rng.below(n) as usize;
             while j == i {
                 j = self.rng.below(n) as usize;
             }
-            let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
-            let dt = min_gap_ms + self.rng.below(span);
+            let dt = min_gap_ms + self.rng.below(span.max(1));
             self.meet(i, j, dt);
         }
     }
 
     /// Run a deterministic clustered-contact schedule. This is a simulation
     /// model for the open SLAW/clustered-mobility measurement gap, not a
-    /// production routing behavior. Invalid community parameters leave the
-    /// simulator unchanged and return `false`.
+    /// production routing behavior. Invalid community or gap parameters leave
+    /// the simulator unchanged and return `false`.
     pub fn run_clustered_meetings(
         &mut self,
         count: usize,
@@ -602,10 +608,13 @@ impl Sim {
         community_count: usize,
         bridge_every: usize,
     ) -> bool {
+        if min_gap_ms > max_gap_ms {
+            return false;
+        }
         let Some(mut plan) = ClusteredMobility::new(self.nodes.len(), community_count, bridge_every) else {
             return false;
         };
-        let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
+        let span = (max_gap_ms - min_gap_ms).max(1);
         for _ in 0..count {
             let (i, j, _) = plan.next_pair(&mut self.rng);
             let dt = min_gap_ms + self.rng.below(span);
@@ -616,7 +625,8 @@ impl Sim {
 
     /// Run a deterministic social-cluster schedule and return only generator
     /// metrics. This is a research instrument for comparing contact traces;
-    /// it leaves routing, copy budgets, and wire behavior untouched.
+    /// it leaves routing, copy budgets, and wire behavior untouched. Invalid
+    /// community or gap parameters return `None` without mutating the sim.
     pub fn run_social_clustered_meetings(
         &mut self,
         count: usize,
@@ -625,12 +635,15 @@ impl Sim {
         community_count: usize,
         bridge_probability_per_mille: u16,
     ) -> Option<SocialClusteredRunMetrics> {
+        if min_gap_ms > max_gap_ms {
+            return None;
+        }
         let mut plan = SocialClusteredMobility::new(
             self.nodes.len(),
             community_count,
             bridge_probability_per_mille,
         )?;
-        let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
+        let span = (max_gap_ms - min_gap_ms).max(1);
         let mut bridge_meetings = 0usize;
         let mut intra_community_meetings = 0usize;
         let mut intra_streak = 0usize;
