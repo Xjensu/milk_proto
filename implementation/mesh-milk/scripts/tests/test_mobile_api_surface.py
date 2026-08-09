@@ -22,6 +22,9 @@ def _swift(methods: tuple[str, ...]) -> str:
 
 
 class MobileApiSurfaceTests(unittest.TestCase):
+    def test_manifest_includes_event_queue_backpressure_accessor(self) -> None:
+        self.assertIn("eventQueueDropped", CHECK.EXPECTED_MMP_NODE_METHODS)
+
     def test_accepts_complete_generated_surface(self) -> None:
         methods = CHECK.EXPECTED_MMP_NODE_METHODS
         with tempfile.TemporaryDirectory() as root:

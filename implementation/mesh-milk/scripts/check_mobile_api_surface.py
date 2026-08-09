@@ -33,6 +33,7 @@ EXPECTED_MMP_NODE_METHODS = (
     "createGroup",
     "diagDump",
     "enableDiagnostics",
+    "eventQueueDropped",
     "fetchFile",
     "fileProgress",
     "flush",
