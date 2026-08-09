@@ -210,6 +210,14 @@ impl SnapshotStore {
 
     fn load_bytes(&mut self, bytes: &[u8]) {
         if bytes.len() < 8 || &bytes[..8] != MAGIC {
+            // A primary path that exists but is not an MMPSNAP2 image is not
+            // equivalent to an empty store.  In particular, this protects
+            // legacy/foreign files from being silently replaced by a fresh
+            // snapshot on the next persist.  A recognized MMPSNAP2 image may
+            // still contain a truncated or corrupt tail: the documented
+            // skip-corrupt-record policy intentionally permits compaction of
+            // that tail, so this guard is deliberately limited to the magic.
+            self.load_rejected = true;
             return;
         }
         // `persist` emits at most one record for each of these singleton
@@ -1239,6 +1247,31 @@ mod tests {
         assert!(path.is_dir(), "the original primary path remains intact");
 
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn unknown_primary_format_fails_closed_before_persist() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("unknown-primary-format.mmp");
+        let temp = temporary_path(&path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&temp);
+
+        // A legacy/foreign image must not be mistaken for an empty snapshot.
+        // Persisting an empty working set here would silently destroy the only
+        // copy of data the host may still be able to migrate or inspect.
+        let original = b"MMPSNAP1\x00legacy";
+        std::fs::write(&path, original).unwrap();
+
+        let store = SnapshotStore::open(&path);
+        assert!(store.load_rejected(), "an unknown primary format must be rejected");
+        let error = store.persist().expect_err("unknown primary must not be replaced");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(temp);
     }
 
     #[test]
