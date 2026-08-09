@@ -2501,6 +2501,13 @@ impl NodeCore {
         if name.len() > NAME_MAX || mime.len() > MIME_MAX {
             return Err(SendError::TooLarge);
         }
+        // Match `send_app`'s revocation gate before minting any class-4
+        // symbols. A manifest send to a revoked identity must not leave
+        // durable blob bytes or holder-index entries behind after the final
+        // application-send preflight rejects it.
+        if self.claims.revocation(peer).is_some() {
+            return Err(SendError::PeerRevoked);
+        }
         // Check the application-send admission boundary before minting any
         // content-addressed symbol bundles. A rejected first-contact send
         // must be side-effect free: otherwise ConversationPending or an

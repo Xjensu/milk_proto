@@ -719,6 +719,46 @@ fn send_file_pending_rejects_before_minting_new_symbols() {
     assert_eq!(symbols_after, symbols_before, "rejected manifest must not mint symbols");
 }
 
+#[test]
+fn send_file_revoked_peer_is_transactionally_side_effect_free() {
+    let mut alice = node(55);
+    let mut bob = node(56);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    bob.revoke_identity(0);
+    for claim in bob.own_claims() {
+        alice.ingest_claim(claim, true);
+    }
+    drain(&mut alice);
+
+    let symbol_count_before = alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
+        .count();
+    let blob_index_before = alice.core.blob_index.clone();
+    let symbol_of_before = alice.core.symbol_of.clone();
+
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "revoked.bin", "application/octet-stream", &[0x5a; 3000]),
+        Err(SendError::PeerRevoked)
+    );
+    let symbol_count_after = alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
+        .count();
+    assert_eq!(symbol_count_after, symbol_count_before, "rejected file must not mint symbol bundles");
+    assert_eq!(alice.core.blob_index, blob_index_before, "rejected file must not index symbols");
+    assert_eq!(alice.core.symbol_of, symbol_of_before, "rejected file must not populate reverse index");
+}
+
 /// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session
 /// with a brand-new conversation must NOT bump (nothing to heal yet — the
 /// bug this drill caught: bumping too early, before that first session's own
