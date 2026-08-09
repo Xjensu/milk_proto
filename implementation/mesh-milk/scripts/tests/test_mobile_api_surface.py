@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,30 @@ def _swift(methods: tuple[str, ...]) -> str:
 class MobileApiSurfaceTests(unittest.TestCase):
     def test_manifest_includes_event_queue_backpressure_accessor(self) -> None:
         self.assertIn("eventQueueDropped", CHECK.EXPECTED_MMP_NODE_METHODS)
+
+    def test_manifest_matches_rust_uniffi_mmp_node_exports(self) -> None:
+        rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
+        source = rust_source.read_text(encoding="utf-8")
+        marker = "#[uniffi::export]"
+        start = source.index(marker)
+        end = source.index("#[cfg(test)]", start)
+        exported = tuple(
+            re.findall(
+                r"^\s*pub fn\s+([A-Za-z_]\w*)\s*\(",
+                source[start:end],
+                re.MULTILINE,
+            )
+        )
+        constructors = {"new", "new_with_store_limit"}
+        rust_methods = {
+            name.split("_")[0]
+            + "".join(part[:1].upper() + part[1:] for part in name.split("_")[1:])
+            for name in exported
+            if name not in constructors
+        }
+        manifest_methods = set(CHECK.EXPECTED_MMP_NODE_METHODS)
+        self.assertEqual(len(CHECK.EXPECTED_MMP_NODE_METHODS), len(manifest_methods))
+        self.assertEqual(manifest_methods, rust_methods)
 
     def test_accepts_complete_generated_surface(self) -> None:
         methods = CHECK.EXPECTED_MMP_NODE_METHODS
