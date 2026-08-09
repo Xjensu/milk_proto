@@ -2581,3 +2581,28 @@ consume the identical schedule without changing routing, copy budgets, or wire
 behavior. The simulator suite passes 33 tests with 6 intentionally ignored and
 strict clippy passes. EDR/EWS/contact-survival performance claims remain
 unmeasured until this seam is driven by calibrated device traces.
+
+## 2026-08-09 continuation: group-removal invariant, evidence format, and trace identity
+
+The security/control-plane audit found that removing an unknown group member
+still consumed an epoch and rotated the local sender key. Commit `4c1398f`
+now rejects the non-effective removal before mutating membership, epoch, or
+sender-key state; the regression passes in the `mmp-node` suite. The remaining
+future-epoch sender-key authorization/state-growth risk is deliberately not
+patched locally: a safe bound or equality rule would require an authenticated
+epoch anchor and could break partitioned re-key convergence.
+
+The interoperability evidence validator was tightened in `ce25f9e` to require
+the canonical `sha256:<64 lowercase hex>` seed fingerprint emitted by the
+evidence helper. This prevents ambiguous, hand-written, or truncated markers
+from being accepted as proof. Focused validation tests pass; physical BLE
+execution remains an external gate.
+
+The research instrumentation audit found that EDR measurements used a 64-bit
+trace identifier while `ContactSchedule` and `Sim` already produce a full
+16-byte identity. Commit `e3f066e` carries `[u8; 16]` through
+`RendezvousMeasurement`, paired validation, and comparison summaries, with a
+regression that changes only the high byte and is rejected. The focused and
+full simulator suites pass (33 passed, 6 intentionally ignored), and strict
+Clippy is clean. This is a research-data integrity correction only; it adds no
+wire field, scheduler policy, or performance claim.
