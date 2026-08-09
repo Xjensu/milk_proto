@@ -232,6 +232,16 @@ signal, not a successful interoperability result. The current Kotlin
 drive-loop source is deliberately not a complete implementation of this seam;
 the consuming Android/iOS host must add it and test the native close callback.
 
+Immediately after constructing or restoring `MmpNode`, on the same serialized
+drive queue, call `tick` once with current same-boot monotonic uptime before
+calling `sendText`, `sendBody`, `sendFile`, or any group-send method. Android
+should use `SystemClock.elapsedRealtime()`; iOS should use
+`ProcessInfo.processInfo.systemUptime`. Assert that this first tick completes
+before exposing send controls or injecting the first link event. A send before
+the initial tick is a failed host-ordering run, not a protocol or radio
+failure: persisted deadlines and expiry policy are intentionally anchored by
+that first monotonic sample.
+
 The repository also contains an Android-SDK-free Kotlin drive-loop reference at
 `implementation/mesh-milk/platform/kotlin-mesh-drive/`. Its injected clock,
 scanner, advertiser, GATT, and node adapters make callback ordering and
