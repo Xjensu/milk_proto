@@ -13,6 +13,12 @@ use std::sync::{Arc, Mutex};
 use mmp_tal::{LinkId, TalEvent};
 use tokio::sync::Notify;
 
+/// Maximum raw link-data record accepted by the session reassembly seam:
+/// two-byte length prefix + type byte + the protocol envelope payload cap.
+/// Larger notifications cannot contribute to a valid envelope and are
+/// rejected before their attacker-controlled allocation enters the queue.
+const MAX_LINK_DATA_BYTES: usize = mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 3;
+
 pub(crate) const TOTAL_CAPACITY: usize = 2048;
 pub(crate) const CONTROL_CAPACITY: usize = 64;
 pub(crate) const DATA_CAPACITY: usize = TOTAL_CAPACITY - CONTROL_CAPACITY;
@@ -210,6 +216,11 @@ impl EventSender {
             || state.current.get(&link).and_then(|streams| streams[side]) != Some(stamp)
         {
             return Err(DataEnqueueError::Stale);
+        }
+        if matches!(&event, TalEvent::LinkData { bytes, .. } if bytes.len() > MAX_LINK_DATA_BYTES) {
+            // Treat this like data-lane overflow so the caller retires the
+            // affected link instead of silently losing stream ordering.
+            return Err(DataEnqueueError::Full);
         }
         if state.data.len() >= DATA_CAPACITY {
             return Err(DataEnqueueError::Full);
@@ -555,6 +566,20 @@ mod tests {
         assert_eq!(tx.try_stream_data(7, reader(1), data(9)), Err(DataEnqueueError::Stale));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
+    }
+
+    #[tokio::test]
+    async fn oversized_link_data_is_rejected_before_queueing() {
+        let (tx, _rx) = event_channel();
+        tx.set_streams(7, [Some(reader(1)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1)
+            .unwrap();
+        let oversized = TalEvent::LinkData {
+            link: 7,
+            bytes: vec![0; mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 4],
+        };
+
+        assert_eq!(tx.try_stream_data(7, reader(1), oversized), Err(DataEnqueueError::Full));
     }
 
     #[tokio::test]
