@@ -2538,9 +2538,10 @@ The mobile lifecycle audit found that a saturated Rust close-action queue could
 leave physical links alive if the host treated the counter as diagnostic only.
 Commit `0659a66` makes `MeshDrive` latch overload, stop admitting work, release
 logical links, clear pending fragments, request native teardown, and reject late
-callbacks. Tracked physical links are independently capped. Commit `3f703fe`
+callbacks. Tracked physical links are independently capped. Commit `0576ef2`
 keeps the existing source contract, retries failed native close requests, and
-preserves normal drain errors while allowing overload cleanup to continue. The
+preserves normal drain errors while allowing overload cleanup to continue.
+History cleanup `967c41d` removes an accidental comment-only overlap. The
 focused Kotlin source suite passes 17 tests and the full Python suite passes 140
 tests (nine intentionally skipped); mmp-node passes 105 tests.
 
