@@ -23,16 +23,19 @@ cargo check -p mmp-node-embassy -p mmp-tal-embedded \
 Finished `dev` profile
 ```
 
-The persistence crate is not a target build today:
+The persistence crate now has an explicit dependency-fence profile. Its
+no-default-features target check passes, but that profile intentionally exports
+no store API until the fixed-capacity backend is designed:
 
 ```text
 cargo check -p mmp-store --target thumbv7em-none-eabihf --no-default-features
-error[E0463]: can't find crate for `std` (getrandom/subtle)
+Finished `dev` profile
 ```
 
-This is expected from the current manifest: `mmp-store` is a filesystem
-`SnapshotStore` crate with unconditional `std` imports, and its `mmp-core` and
-`mmp-crypto` path dependencies currently select their default feature sets.
+The default `std` feature still provides the filesystem `SnapshotStore`; its
+`mmp-core` and `mmp-crypto` path dependencies are now explicitly default-off
+and are re-enabled only by `mmp-store/std`. This is compile hygiene, not an
+embedded persistence implementation.
 
 The lower protocol API also demonstrates why a store-only patch is not enough:
 
@@ -64,9 +67,9 @@ message even though the durable record was never admitted.
    maximum bytes per bundle, metadata/output counts, claims/group state, and
    allocator/stack reservation. Do not invent constants from the protocol's
    network quota; storage capacity is a board policy.
-4. Split `mmp-store` into a default `std` snapshot module and a feature-gated
-   embedded module. Both must depend on `mmp-core`/`mmp-crypto` with
-   `default-features = false`; the filesystem module alone enables `std`.
+4. Add the fixed-capacity embedded module behind the existing dependency-fence
+   profile. The default `std` snapshot module and its explicit feature wiring
+   are now in place, but no embedded store API is exposed yet.
 5. Add host tests for replacement, capacity rejection, expiry, sorted range
    output, and no-state-change on rejected writes. Then run target checks and a
    linked board image before claiming E7-S1.
@@ -80,4 +83,3 @@ The HIL matrix must include authenticated phone-to-sensor exchange, full-store
 rejection, packet loss, reset, power-cycle recovery, and Reed–Solomon decode
 measurements. Until those artifacts exist, the target check above is only a
 dependency-closure proof, not evidence of a functioning embedded store.
-

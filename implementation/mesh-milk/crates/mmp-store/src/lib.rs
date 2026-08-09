@@ -20,6 +20,13 @@
 //! validated, receiver-local records. One file, one framing, seven record
 //! kinds are supported under the same framing.
 
+#![cfg_attr(not(feature = "std"), no_std)]
+// The no-default-features build is an intentional dependency fence while the
+// fixed-capacity embedded backend is designed. Keep the filesystem API and
+// its std imports entirely out of that profile rather than pretending that
+// `SnapshotStore` is available on a target without an allocator/filesystem.
+#![cfg(feature = "std")]
+
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
