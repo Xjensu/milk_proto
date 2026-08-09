@@ -232,7 +232,8 @@ pub enum Event {
     FriendshipEstablished {
         /// The patron/dependent on the other side of the relationship.
         peer: NodeId,
-        /// The relationship's start/renewal timestamp.
+        /// The relationship's start/renewal timestamp in host monotonic
+        /// milliseconds, using the same clock advanced by `Node::tick`.
         since: u64,
     },
     /// A session with `peer` was established (also implies contact, doc 04's

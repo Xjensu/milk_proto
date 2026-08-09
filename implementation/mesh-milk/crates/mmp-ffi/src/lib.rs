@@ -392,7 +392,8 @@ pub enum FfiEvent {
     FriendshipEstablished {
         /// The peer the friendship is with.
         peer: Vec<u8>,
-        /// When the friendship was established/renewed (unix seconds).
+        /// When the friendship was established/renewed, in host monotonic
+        /// milliseconds (the same clock supplied to [`MmpNode::tick`]).
         since: u64,
     },
     /// A beacon/session activity resolved to a known contact (not necessarily

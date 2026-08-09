@@ -681,6 +681,13 @@ fn friendship_handshake_via_ffi_surface() {
         )),
         "patron sees FriendshipEstablished: {carol_events:?}"
     );
+    for events in [&bob_events, &carol_events] {
+        let since = events.iter().find_map(|event| match event {
+            FfiEvent::FriendshipEstablished { since, .. } => Some(*since),
+            _ => None,
+        });
+        assert_eq!(since, Some(10_000), "friendship timestamp uses host monotonic milliseconds");
+    }
 }
 
 /// `revoke_identity` (doc handbook §4.6, E5-S3): the returned bytes are a
