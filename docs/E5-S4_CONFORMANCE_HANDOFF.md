@@ -2075,3 +2075,20 @@ passes 87 tests and the provider-backed `open_record` path continues to retain
 its independent context and identity checks. Native Android Keystore, iOS
 Keychain, DPAPI, crash injection, and platform lifecycle evidence remain
 external gates.
+
+## 2026-08-09 continuation: CLI persistence failure is fail-closed
+
+The reference `mmp-cli` drive loops now propagate the result of their exit-time
+`SnapshotStore` persistence. Previously, a failed `--store` write was logged but
+the successful-delivery and normal-listen paths could still return exit status
+0, falsely implying restart state had been durably recorded. `finish` now
+returns a boolean; successful delivery, timeout, normal shutdown, and both
+central/peripheral loops return exit status 2 when persistence fails. Setup and
+transport-overload exits still remain non-success while attempting best-effort
+state persistence.
+
+The regression uses a path whose parent does not exist and asserts that the
+finish seam reports failure without creating the path. `mmp-cli` now passes 34
+focused tests. This is host-process reliability evidence only; it does not
+prove filesystem crash consistency, mobile storage semantics, or physical BLE
+interoperability.

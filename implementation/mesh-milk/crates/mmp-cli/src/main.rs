@@ -845,12 +845,17 @@ async fn drive_loop<C: ClockSource>(
         Ok(c) => c,
         Err(e) => {
             eprintln!("mmp-cli: no usable BLE adapter: {e}");
+            // A host may have advanced timers or restored local state before
+            // the adapter was opened.  Persist that state even on setup
+            // failure, and fail closed if the snapshot cannot be written.
+            let _ = finish(shared, node, 0, 0);
             return ExitCode::from(2);
         }
     };
     if let Err(e) = central.start_scan().await {
         eprintln!("mmp-cli: failed to start BLE scan: {e}");
         central.shutdown_all().await;
+        let _ = finish(shared, node, 0, 0);
         return ExitCode::from(2);
     }
     println!("scanning for MMP peers... (Ctrl-C to stop)");
@@ -913,8 +918,11 @@ async fn drive_loop<C: ClockSource>(
                 Event::Delivered { id } if watch == Some(*id) => {
                     println!("message {} delivered", hex(id.as_bytes()));
                     central.shutdown_all().await;
-                    finish(shared, node, frames_sent, messages_received);
-                    return ExitCode::SUCCESS;
+                    return if finish(shared, node, frames_sent, messages_received) {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(2)
+                    };
                 }
                 _ => {}
             }
@@ -923,15 +931,18 @@ async fn drive_loop<C: ClockSource>(
         if watch.is_some() && start.elapsed() >= SEND_TIMEOUT {
             println!("timed out after {}s waiting for delivery", SEND_TIMEOUT.as_secs());
             central.shutdown_all().await;
-            finish(shared, node, frames_sent, messages_received);
-            return ExitCode::from(1);
+            return if finish(shared, node, frames_sent, messages_received) {
+                ExitCode::from(1)
+            } else {
+                ExitCode::from(2)
+            };
         }
     }
 
     let overload = node.close_actions_dropped() != 0 || central.control_events_dropped() != 0;
     central.shutdown_all().await;
-    finish(shared, node, frames_sent, messages_received);
-    if overload { ExitCode::from(2) } else { ExitCode::SUCCESS }
+    let persisted = finish(shared, node, frames_sent, messages_received);
+    if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
 /// Dial every beacon-sighted peer not already in `dialed`. See `drive_loop`
@@ -978,6 +989,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
         Ok(p) => p,
         Err(e) => {
             eprintln!("mmp-cli: no usable BLE peripheral backend: {e}");
+            let _ = finish(shared, node, 0, 0);
             return ExitCode::from(2);
         }
     };
@@ -986,6 +998,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
     if let Err(e) = peripheral.advertise(node.beacon(last_advertised_ms).to_vec()).await {
         eprintln!("mmp-cli: failed to start advertising: {e}");
         peripheral.shutdown_all().await;
+        let _ = finish(shared, node, 0, 0);
         return ExitCode::from(2);
     }
     println!("advertising for MMP peers... (Ctrl-C to stop)");
@@ -1054,23 +1067,38 @@ async fn drive_loop_peripheral<C: ClockSource>(
 
     let overload = node.close_actions_dropped() != 0 || peripheral.control_events_dropped() != 0;
     peripheral.shutdown_all().await;
-    finish(shared, node, frames_sent, messages_received);
-    if overload { ExitCode::from(2) } else { ExitCode::SUCCESS }
+    let persisted = finish(shared, node, frames_sent, messages_received);
+    if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
 /// Exit path shared by every `drive_loop` return: persist to disk if a
-/// `--store` path is in play, then print the run summary.
-fn finish(shared: Option<&Arc<Mutex<SnapshotStore>>>, node: &Node, frames_sent: u64, messages_received: u64) {
-    if let Some(shared) = shared {
-        match persist_node_state(shared, node) {
-            Ok(()) => println!("store persisted to disk"),
-            Err(e) => eprintln!("mmp-cli: failed to persist store: {e}"),
-        }
-    }
+/// `--store` path is in play, then print the run summary. A failed persistence
+/// operation is returned to the caller so a host cannot report a successful
+/// run while silently losing its restart state.
+fn finish(
+    shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    node: &Node,
+    frames_sent: u64,
+    messages_received: u64,
+) -> bool {
+    let persisted = match shared {
+        Some(shared) => match persist_node_state(shared, node) {
+            Ok(()) => {
+                println!("store persisted to disk");
+                true
+            }
+            Err(e) => {
+                eprintln!("mmp-cli: failed to persist store: {e}");
+                false
+            }
+        },
+        None => true,
+    };
     println!("--- summary ---");
     println!("frames sent to links:  {frames_sent}");
     println!("messages received:     {messages_received}");
     println!("store_len:             {}", node.store_len());
+    persisted
 }
 
 #[cfg(test)]
@@ -1166,6 +1194,25 @@ mod tests {
         assert_eq!(clock.now_ms(), 1_000);
         assert_eq!(clock.now_ms(), 1_001);
         assert_eq!(clock.now_ms(), 999);
+    }
+
+    #[test]
+    fn finish_fails_closed_when_snapshot_cannot_be_written() {
+        let missing_parent = env::temp_dir().join(format!(
+            "mmp-cli-missing-parent-{}-{}",
+            std::process::id(),
+            wall_clock_ms()
+        ));
+        let path = missing_parent.join("state.bin");
+        let shared = Arc::new(Mutex::new(SnapshotStore::open(&path)));
+        let node = Node::new([0x41; 32], Box::new(MemStore::new()), Tier::Anchor);
+
+        assert!(
+            !finish(Some(&shared), &node, 0, 0),
+            "a successful CLI exit must never be reported when persistence failed"
+        );
+        assert!(!path.exists());
+        assert!(!missing_parent.exists());
     }
 
     /// The CLI must perform the same bootstrap sequence as the FFI host:
