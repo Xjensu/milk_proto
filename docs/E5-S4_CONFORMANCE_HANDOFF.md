@@ -2463,3 +2463,28 @@ binding roots or descendants, allowing source outside the artifact boundary to
 be scanned. Commit `d19e734` rejects both forms before reading source, matching
 the Android artifact policy. Python and iOS verifier tests cover real and
 deterministic symlink cases; physical Xcode/device validation remains external.
+
+## 2026-08-09 continuation: embedded, codec, and simulator readiness
+
+The embedded audit found unchecked refill multiplication in
+`mmp-router::OriginBuckets`. A terminal monotonic-clock jump could panic in
+debug or wrap the refill amount in release. Commit `6f15894` uses saturating
+arithmetic and adds a regression while preserving ordinary-clock behavior.
+The `thumbv7em-none-eabihf` debug/release checks for `mmp-router`,
+`mmp-node-embassy`, and `mmp-tal-embedded` pass. The unbounded in-memory
+`MemLink` remains a simulator/test seam and is not exposed by the embedded
+orchestration crates.
+
+The codec audit found that `Hello::decode` accepted arbitrary protocol version
+bytes even though other v1 frame families reject unsupported versions. Commit
+`02281a8` now requires `WIRE_VERSION` and returns `WireError::BadVersion` for
+incompatible HELLO frames. The mmp-types and mmp-crypto suites pass; this is a
+wire-conformance correction, not a new version-negotiation rule.
+
+The simulator audit found that inverted `min_gap_ms..max_gap_ms` ranges were
+silently converted into a fixed minimum-gap trace. Commit `5c80e1b` rejects
+the invalid range (panic for the low-level random runner, `false`/`None` for
+the clustered research runners) before mutating simulation state. The complete
+simulator suite passes with 30 active tests and 6 intentionally ignored scale/
+deployment tests. This improves experiment validity without affecting routing
+or wire behavior.
