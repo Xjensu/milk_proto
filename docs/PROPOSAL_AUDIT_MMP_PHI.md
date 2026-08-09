@@ -190,6 +190,18 @@ uncapped because their retention semantics still require a normative anchor;
 the handoff now records the exact conformance tests needed before such a policy
 can be enabled.
 
+The next delegated gate-preparation cycle added three non-wire artifacts. The
+`SocialClusteredMobility` control in `71ff465` provides seeded per-mille bridge
+transitions and realized bridge metrics for paired simulator experiments; its
+handoff explicitly rejects SLAW or human-mobility claims until trace
+calibration. `7a4eb6e` hardens the iOS XCFramework verifier so every expected
+slice declares exactly `arm64`, matching the build targets, with a synthetic
+negative test. `b4e3039` adds `validate_ble_evidence.py`, a path-safe
+`mmp-ble-evidence-v1` manifest checker for the future two-host Linux/BlueZ
+run. It verifies internal evidence completeness—roles, logs, markers, stores,
+delivery, receipt, reconnect, MTU/RSSI availability, and gate flags—but does
+not authenticate logs or claim hardware success.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
@@ -211,6 +223,11 @@ not been run here, and Android/iOS background behavior, keystore persistence,
 and true RBSR/D3 cross-domain conformance remain external gates. The working
 tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
+
+The later serial rerun supersedes the earlier component inventory above: it
+listed 394 tests (388 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 47 tests, while the 44-seed fuzz check,
+compileall, layer-check, and CLI delivery/receipt smoke evidence remain green.
 
 ## Source register
 

@@ -1935,3 +1935,18 @@ slice to `x86_64` and confirms deterministic rejection. The complete Python
 script suite passes 43 tests with one documented Windows Bash-launcher skip.
 This is a manifest/artifact consistency check only; it does not claim Xcode
 compilation, Swift compilation, simulator execution, or device/radio behavior.
+
+## 2026-08-09 continuation: clustered mobility and BLE evidence gates
+
+The simulator now includes `SocialClusteredMobility` as a seeded control for
+paired routing experiments. It models explicit communities and per-mille bridge
+transitions and reports realized bridge contacts. This is an experiment seam,
+not a calibrated SLAW trace and not evidence of human mobility; calibration
+inputs and a paired baseline remain required before any performance claim.
+
+The BLE evidence helper `scripts/validate_ble_evidence.py` validates the shape
+of a future `mmp-ble-evidence-v1` manifest: central/peripheral roles, clean
+commit and toolchain metadata, host logs and markers, store paths, delivery,
+receipt, reconnect, MTU/RSSI availability, and explicit gate flags. It is
+path-safe and fail-closed for missing fields, but it does not authenticate
+logs or assert that a physical two-host exchange succeeded.
