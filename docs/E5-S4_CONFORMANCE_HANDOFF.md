@@ -1883,4 +1883,5 @@ not reveal a separate attacker-controlled lifetime accumulation in this pass.
 Regression evidence for the new bounds is in
 `proxy_summary_hints_are_bounded_per_peer` and
 `blob_serve_counters_are_bounded_for_unseen_peers`. The focused `mmp-node`
-library suite passes 74 tests; package Clippy is the required follow-up gate.
+library suite passes 74 tests, and `cargo clippy -p mmp-node --all-targets
+--all-features -- -D warnings` passes.
