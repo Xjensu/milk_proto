@@ -24,6 +24,7 @@ import re
 import stat
 import sys
 import tempfile
+import xml.etree.ElementTree as ElementTree
 from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
@@ -39,6 +40,7 @@ REQUIRED_ABI_LIBRARIES = (
     "jni/armeabi-v7a/libmmp_ffi.so",
     "jni/x86_64/libmmp_ffi.so",
 )
+EXPECTED_ANDROID_PACKAGE = "org.meshmilk.ffi"
 _ALLOWED_AAR_DIRECTORIES = {
     "jni",
     "jni/arm64-v8a",
@@ -132,6 +134,21 @@ def _verify_aar(archive_path: Path) -> list[str]:
                 manifest = archive.read(manifest_info)  # type: ignore[arg-type]
                 if not manifest:
                     violations.append("AAR AndroidManifest.xml is empty")
+                else:
+                    try:
+                        root = ElementTree.fromstring(manifest)
+                    except ElementTree.ParseError as exc:
+                        violations.append(f"AAR AndroidManifest.xml is not valid XML: {exc}")
+                    else:
+                        if root.tag != "manifest":
+                            violations.append(
+                                "AAR AndroidManifest.xml root element must be manifest"
+                            )
+                        if root.attrib.get("package") != EXPECTED_ANDROID_PACKAGE:
+                            violations.append(
+                                "AAR AndroidManifest.xml package must be "
+                                f"{EXPECTED_ANDROID_PACKAGE}"
+                            )
 
         for path in REQUIRED_ABI_LIBRARIES:
             info = members.get(path)

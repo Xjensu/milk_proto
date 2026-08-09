@@ -62,6 +62,32 @@ class MobileArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(aar, bindings)
             self.assertTrue(any("jni/x86_64/libmmp_ffi.so" in item for item in violations))
 
+    def test_malformed_android_manifest_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            aar = directory / "mmp-ffi.aar"
+            bindings = directory / "bindings.zip"
+            members = _valid_aar_members()
+            members["AndroidManifest.xml"] = b"<manifest"
+            _write_zip(aar, members)
+            _write_zip(bindings, {"mmp_ffi.kt": _kotlin()})
+
+            violations = VERIFY.verify_artifacts(aar, bindings)
+            self.assertTrue(any("not valid XML" in item for item in violations))
+
+    def test_android_manifest_package_identity_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            aar = directory / "mmp-ffi.aar"
+            bindings = directory / "bindings.zip"
+            members = _valid_aar_members()
+            members["AndroidManifest.xml"] = '<manifest package="org.example.wrong" />'
+            _write_zip(aar, members)
+            _write_zip(bindings, {"mmp_ffi.kt": _kotlin()})
+
+            violations = VERIFY.verify_artifacts(aar, bindings)
+            self.assertTrue(any("package must be org.meshmilk.ffi" in item for item in violations))
+
     def test_classes_jar_is_rejected_from_native_only_aar(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
