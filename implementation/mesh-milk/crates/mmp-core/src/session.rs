@@ -7,6 +7,7 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
 use mmp_crypto::{Identity, NoiseChannel, NoiseHandshake};
+use mmp_types::bundle::Bundle;
 use mmp_types::consts::{
     HANDSHAKE_BUDGET_MS, L_MAX, MAX_FRAME_PAYLOAD, SESSION_AIRTIME_CAP_MS, SESSION_IDLE_MS,
 };
@@ -242,6 +243,11 @@ pub struct SessionEngine {
     events: VecDeque<SessionEvent>,
     tx_credits: u8,
     rx_credits: u8,
+    /// A received BUNDLE must be followed immediately by its matching
+    /// BUDGET frame (doc 10 §2.5).  Keep the decoded ID so a peer cannot
+    /// attach a grant to a different bundle in the same session.
+    pending_budget: bool,
+    pending_bundle_id: Option<Id16>,
     recon: Option<Reconciler>,
     domain_cursor: usize,
     started_at: u64,
@@ -292,6 +298,8 @@ impl SessionEngine {
             events: VecDeque::new(),
             tx_credits: 0,
             rx_credits: local_credits.min(FRAME_CREDIT_WINDOW),
+            pending_budget: false,
+            pending_bundle_id: None,
             recon: None,
             domain_cursor: 0,
             started_at: now_ms,
@@ -496,6 +504,26 @@ impl SessionEngine {
         identity: &Identity,
         host: &mut H,
     ) {
+        // BUDGET is a two-frame transfer record, not an independent control
+        // message (doc 10 §2.5).  Preserve stream ordering across transport
+        // callbacks: a grant is valid only immediately after the canonical
+        // BUNDLE whose ID it names.  Terminal frames remain admissible so a
+        // peer may close cleanly while a grant is outstanding.
+        if self.pending_budget {
+            let follows_bundle = match &frame {
+                Frame::Budget { id, .. } => self.pending_bundle_id == Some(*id),
+                Frame::Close | Frame::Error { .. } => true,
+                _ => false,
+            };
+            if !follows_bundle {
+                self.protocol_error(errcode::PROTOCOL);
+                return;
+            }
+        } else if matches!(&frame, Frame::Budget { .. }) {
+            self.protocol_error(errcode::PROTOCOL);
+            return;
+        }
+
         match (self.phase, frame) {
             (Phase::Binding, Frame::IdProof { identity: claimed, sig }) => {
                 let chan = self.chan.as_ref().expect("binding implies channel");
@@ -618,9 +646,15 @@ impl SessionEngine {
                 self.queue_handoffs(ids);
                 self.flush_pending_handoffs(host);
             }
-            Frame::Bundle(bytes) => host.on_bundle(&peer, &bytes),
+            Frame::Bundle(bytes) => {
+                self.pending_budget = true;
+                self.pending_bundle_id = Bundle::decode_canonical(&bytes).ok().map(|bundle| bundle.id());
+                host.on_bundle(&peer, &bytes);
+            }
             Frame::Budget { id, granted } => {
                 // Receive-side clamp (AUDIT F3) — silent, never an error.
+                self.pending_budget = false;
+                self.pending_bundle_id = None;
                 host.on_budget(&peer, &id, granted.min(L_MAX));
             }
             Frame::BlobReq { root, block, bitmap } => {
@@ -1372,6 +1406,43 @@ mod rx_bound_tests {
 
         assert_eq!(b.phase, Phase::Closed);
         assert!(!b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+    }
+
+    #[test]
+    fn budget_without_preceding_bundle_closes_session() {
+        let ia = identity(17);
+        let ib = identity(18);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        a.tx_credits = FRAME_CREDIT_WINDOW;
+        b.rx_credits = FRAME_CREDIT_WINDOW;
+        a.send_frame(&Frame::Budget { id: Id16([0x77; 16]), granted: 1 });
+        let orphan = a.poll_out().expect("orphan BUDGET");
+        b.on_wire(&orphan, 2000, &ib, &mut hb);
+
+        assert_eq!(b.phase, Phase::Closed);
+        assert!(b.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
     }
 
     #[test]
