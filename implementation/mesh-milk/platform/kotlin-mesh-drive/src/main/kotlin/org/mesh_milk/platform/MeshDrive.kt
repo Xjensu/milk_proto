@@ -120,21 +120,52 @@ public class MeshDrive(
     public fun start() {
         check(!running) { "MeshDrive is already running" }
         running = true
-        applyTier()
+        var advertiserStarted = false
+        var scannerStarted = false
+        try {
+            applyTier()
 
-        val now = clock.nowMs()
-        advance(now, emit = false)
-        advertiser.start(node.beacon(now))
-        scanner.start(::onScanResult)
+            val now = clock.nowMs()
+            advance(now, emit = false)
+            try {
+                advertiser.start(node.beacon(now))
+                advertiserStarted = true
+            } catch (error: Throwable) {
+                // A platform may have allocated radio state before reporting a
+                // startup failure. Stop is the only injected rollback seam;
+                // ignore a cleanup failure so the original error remains
+                // visible to the host.
+                runCatching { advertiser.stop() }
+                throw error
+            }
+            try {
+                scanner.start(::onScanResult)
+                scannerStarted = true
+            } catch (error: Throwable) {
+                runCatching { scanner.stop() }
+                throw error
+            }
 
-        // Startup remains pull-based: only this drain calls pollSend/pollEvent.
-        drain()
+            // Startup remains pull-based: only this drain calls pollSend/pollEvent.
+            drain()
+        } catch (error: Throwable) {
+            if (scannerStarted) runCatching { scanner.stop() }
+            if (advertiserStarted) runCatching { advertiser.stop() }
+            running = false
+            throw error
+        }
     }
 
     public fun stop() {
         if (!running) return
-        activeLinks.toList().forEach { node.linkDown(it) }
+        // LinkDown releases the protocol-side session.  The physical GATT
+        // connection is a separate host resource and must be torn down too;
+        // clear ownership before requesting it so a synchronous adapter
+        // callback cannot feed a duplicate LinkDown back into the node.
+        val links = activeLinks.toList()
+        links.forEach { node.linkDown(it) }
         activeLinks.clear()
+        links.forEach { gatt.close(it) }
         pending.clear()
         scanner.stop()
         advertiser.stop()

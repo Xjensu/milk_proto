@@ -30,6 +30,31 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         for parameter in ("clock: MonotonicClock", "advertiser: Advertiser", "scanner: Scanner", "gatt: GattAdapter"):
             self.assertIn(parameter, self.source)
 
+    def test_start_rolls_back_partial_radio_start(self) -> None:
+        """A failed startup must not leave the drive claiming to be active."""
+
+        start = self.source.index("public fun start()")
+        stop = self.source.index("public fun stop()", start)
+        body = self.source[start:stop]
+        self.assertIn("var advertiserStarted = false", body)
+        self.assertIn("var scannerStarted = false", body)
+        self.assertIn("runCatching { advertiser.stop() }", body)
+        self.assertIn("runCatching { scanner.stop() }", body)
+        self.assertIn("running = false", body)
+        self.assertIn("throw error", body)
+        self.assertLess(body.index("advertiser.start"), body.index("scanner.start"))
+        self.assertLess(body.index("scanner.start"), body.index("running = false"))
+
+    def test_stop_requests_native_teardown_after_releasing_protocol_links(self) -> None:
+        start = self.source.index("public fun stop()")
+        end = self.source.index("public fun pump()", start)
+        body = self.source[start:end]
+        self.assertIn("val links = activeLinks.toList()", body)
+        self.assertIn("links.forEach { node.linkDown(it) }", body)
+        self.assertIn("links.forEach { gatt.close(it) }", body)
+        self.assertLess(body.index("node.linkDown(it)"), body.index("activeLinks.clear()"))
+        self.assertLess(body.index("activeLinks.clear()"), body.index("gatt.close(it)"))
+
     def test_monotonic_tick_is_checked_before_node_tick(self) -> None:
         self.assertIn("nowMs >= (previous ?: Long.MIN_VALUE)", self.source)
         guard = self.source.index("nowMs >= (previous ?: Long.MIN_VALUE)")

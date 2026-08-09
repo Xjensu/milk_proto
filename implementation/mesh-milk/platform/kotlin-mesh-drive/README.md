@@ -15,6 +15,10 @@ generated `MmpNode` bindings.
   back-pressure retained for the next pump;
 - close/event saturation diagnostics are exposed so a host can fail closed;
 - foreground relay capability demotion to `MeshTier.LEAF` when unavailable;
+- atomic startup rollback: a failed clock/radio/initial drain leaves
+  `isRunning == false` and stops any advertiser/scanner that started;
+- `stop()` releases protocol sessions and requests native GATT teardown for
+  every active link before dropping coordinator ownership;
 - scanner/advertiser/GATT/clock dependencies injected through interfaces.
 
 The Android foreground service should adapt these interfaces to
