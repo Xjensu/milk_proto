@@ -163,6 +163,13 @@ evidence for the dialogue's claimed 2× gain; host/controller harnesses must
 provide the measurements and report whole-device energy separately from radio
 and host channels.
 
+The final adversarial review found and closed one additional local DoS edge in
+`9615929`: an empty or non-matching blob request no longer inserts a zero-valued
+peer counter. Only a response containing at least one candidate consumes a
+slot, so a Sybil stream cannot exhaust the 256-peer table without causing any
+blob work. Matching requests remain subject to the same per-contact budget and
+the focused node suite remains green.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
