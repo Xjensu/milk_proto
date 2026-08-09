@@ -1305,6 +1305,41 @@ strict Clippy pass; `mmp-sim` has 27 passing tests and 6 ignored research/HIL
 cases. No file under `specification/`, no AI-specific artifact, and no
 pre-existing dirty path was modified.
 
+### Orchestration continuation XXXIII (2026-08-09)
+
+The final delegated runtime pass covered the session engine, both BLE
+transport adapters, and the generated mobile boundary. `SessionEngine` keeps
+remote-driven reassembly, pending frames, handoffs, outbound frames, and RBSR
+ledgers within explicit caps; malformed aggregate counts are rejected before
+allocation and ledger exhaustion closes the session. Its event queue has only
+the bounded lifecycle transitions (`Established` and `Closed`), so no
+attacker-controlled growth path was found. The production node supplies
+quota-backed host data; custom `SessionHost` implementations remain
+responsible for local collection limits.
+
+The btleplug central and peripheral adapters already use bounded control/data
+event lanes, generation fencing, stale-callback rejection, bounded disconnect
+feedback, and fail-closed tombstone exhaustion. Active-link maps and
+`known_peers()` materialization remain adapter-policy surfaces: adding an
+arbitrary cap could reject legitimate concurrent physical links and needs an
+explicit configurable admission contract. Peripheral stream pre-announcement
+also means that recording every unknown generation in `set_streams` would be
+incorrect; this is tracked as an internal-invariant follow-up rather than a
+one-line patch.
+
+The FFI review found no source-level error mismatch. A regression now locks the
+intentional compatibility policy that `ResourceLimit` and `RatchetExhausted`
+map to the coarse `FfiError::Internal`; exposing new variants requires a
+versioned Kotlin/Swift API decision. Existing user-owned API/mobile documents
+still need reconciliation for restore semantics, `ConversationPending`, close
+feedback, monotonic ticks, group return types, ATT-write retention, and
+`pollClose -> native close -> linkDown` ordering. They were not edited.
+
+Focused evidence: `mmp-core` 79 tests, `mmp-tal-btleplug` 23 tests,
+`mmp-tal-peripheral` 40 tests, and `mmp-ffi` 21 tests pass; strict Clippy is
+green for the touched crates. No file under `specification/` or AI-specific
+artifact was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

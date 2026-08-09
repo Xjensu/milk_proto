@@ -645,3 +645,19 @@ fn revoke_identity_surfaces_as_peer_revoked_and_blocks_further_sends() {
     let err = alice.send_text(bob_id, "after".to_string()).unwrap_err();
     assert_eq!(err, super::FfiError::UnknownPeer);
 }
+
+/// The generated mobile error surface intentionally folds local lifecycle
+/// admission failures into `Internal` until a versioned FFI error-policy
+/// change is approved.  Keep this policy explicit so adding a new
+/// `SendError` variant cannot silently alter the Kotlin/Swift contract.
+#[test]
+fn ffi_maps_local_lifecycle_failures_to_internal() {
+    assert_eq!(
+        super::map_send_error(mmp_node::SendError::ResourceLimit),
+        super::FfiError::Internal
+    );
+    assert_eq!(
+        super::map_send_error(mmp_node::SendError::RatchetExhausted),
+        super::FfiError::Internal
+    );
+}

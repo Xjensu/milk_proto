@@ -2183,3 +2183,37 @@ native back-pressure/lifecycle tests are the next integration gate.
 Focused evidence: `mmp-store` tests and strict Clippy pass; `mmp-sim` has 27
 passing tests and 6 ignored research/HIL cases. Native Android/iOS builds,
 real ATT back-pressure, and physical BLE exchange remain unverified.
+
+## 2026-08-09 continuation: session, transport, and FFI boundary audit
+
+The session-engine audit found no additional production patch. Remote-driven
+reassembly, pending frames/handoffs, outbound frames, aggregate decode counts,
+and RBSR ledgers are explicitly bounded; malformed input is rejected before
+allocation, and exhaustion closes the session fail-closed. The lifecycle event
+queue only emits the bounded established/closed transitions. Custom
+`SessionHost` implementations must still keep their local callback results
+quota-backed, as the production node does.
+
+Both BLE transport audits also found no narrow safe patch. Central and
+peripheral ingress use bounded control/data lanes, generation fences, stale
+callback rejection, bounded disconnect feedback, and fail-closed tombstone
+limits. Active-link registries and peer-list materialization are host-policy
+surfaces where an arbitrary hard cap could reject valid simultaneous physical
+links. Peripheral stream setup intentionally permits pre-announcement, so
+blindly recording every unknown generation would introduce a stale-link bug;
+an admission contract is required before changing it.
+
+The FFI boundary now has a direct regression asserting that `ResourceLimit` and
+`RatchetExhausted` map to `FfiError::Internal`. This preserves the current
+versioned Kotlin/Swift surface; adding finer-grained variants requires an
+explicit API decision. The pre-existing dirty API/mobile documents still need
+reconciliation for persisted seen/receipt state, `ConversationPending`, close
+feedback, monotonic tick examples, group return types, destructive-send
+retention during ATT back-pressure, and close ordering. They remain untouched.
+
+Verification: `cargo test -p mmp-core --all-targets -- --test-threads=1`
+(79 passed), `cargo test -p mmp-tal-btleplug --all-targets` (23 passed),
+`cargo test -p mmp-tal-peripheral --all-targets` (40 passed), and
+`cargo test -p mmp-ffi --all-features -- --test-threads=1` (21 passed), with
+strict Clippy green for the touched crates. Specification files and
+AI-specific artifacts remain unchanged.
