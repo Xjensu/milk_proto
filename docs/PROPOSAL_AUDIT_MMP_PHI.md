@@ -752,6 +752,64 @@ closing an attacker-controlled memory-amplification path. The host-selected
 bounded `SnapshotStore` policy and vault generation fences were retained; no
 global persistence cap was guessed.
 
+### Orchestration continuation XV (2026-08-09)
+
+The evidence-manifest audit produced `a931e70`. A host entry is no longer
+accepted merely because its command string is non-empty: the peripheral role
+must invoke `mmp-cli listen`, and the central delivery evidence must invoke
+`mmp-cli send`. A bootstrap-only `connect` command, including one with a free-
+form argument containing the word `send`, is rejected. The validator accepts
+the documented direct executable and `cargo run -p mmp-cli -- ...` forms. This
+improves reproducibility and prevents a manifest from passing with commands
+that could not have produced the claimed role-specific evidence; it does not
+prove that a physical adapter ran.
+
+The delegated cryptographic audit found no new high-confidence Rust-only defect:
+the Noise XX channel binding and encrypted `ID_PROOF` gate, prekey replay
+boundary, ratchet snapshot checks, and snapshot AEAD/rollback tests match the
+current implementation. The focused crypto suite reports 41 passing tests,
+`--no-default-features` checks, and all-target Clippy are clean. The remaining
+composition review is external and must precede a v1.0 security claim. The
+keystore audit likewise found no provider-neutral patch: durable generation
+floors, trusted platform time, opaque DEK wrapping, atomic crash recovery, and
+Android Keystore/iOS Keychain/Linux adapters remain external gates.
+
+### Three-pass re-audit of the supplied MMP/Φ dialogue
+
+This addendum repeats the requested validation cycle rather than promoting the
+dialogue's proposed optimizations into MMP/1:
+
+1. **Repository pass.** The current Rust/session/router code confirms the
+   encrypted `ID_PROOF` interpretation, canonical lifetime-zeroed AEAD AD,
+   receiver-local (not globally spend-once) quotas, and the deliberate
+   no-change cryptographic/keystore gates. The EDR experiment seam records
+   measurements only; it is not a scheduler or a 2× result.
+2. **Authoritative-source pass.** RFC 9171 supports store-carry-forward and
+   bundle-age handling but leaves route computation out of scope; RFC 6693
+   defines encounter-history transitivity but does not make peer claims
+   trustworthy. Noise separates handshake messages from post-handshake
+   transport ciphertext. Bluetooth Core 6.0 confirms advertiser monitoring and
+   decision-based filtering as controller capabilities, not phone-level energy
+   guarantees. Android's Ranging API confirms capability discovery and also
+   documents permission/background restrictions. RaptorQ and the NASA DTN study
+   support fountain coding as a credible experiment, not an automatic win.
+3. **Adversarial/model pass.** The dialogue's proposed vouchers and
+   evidence-weighted routing were tested against collusion, stale proofs,
+   correlated mobility, privacy leakage, and probability miscalibration. The
+   square-root EDR calculation was reclassified as a controlled toy model
+   because daily mAh totals are not independent linear TX/RX coefficients and
+   omit OS wakeups, collisions, and burst-scan effects. The illustrative
+   22-to-4 carrier reduction remains conditional on calibrated, independent
+   paths. The amended work order therefore keeps these ideas research-only,
+   requires trace-driven confidence intervals and whole-device measurements,
+   and preserves the frozen wire contract.
+
+The implementation plan is consequently extended with two gates: (a) require
+role-correct, delivery-producing commands in every future radio evidence
+manifest, and (b) require an external cryptographic/provider review plus
+platform measurements before any MMP/Φ mechanism can alter routing, timing, or
+wire semantics. No file under `specification/` was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
