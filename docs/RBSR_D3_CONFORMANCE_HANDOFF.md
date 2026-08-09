@@ -233,3 +233,52 @@ in one normative source (or an approved erratum), with byte-level examples:
 Until these answers exist, no production Rust change is justified. A test-only
 assertion of current D0–D3 behavior or another resource bound is safe; a new
 partition cursor, domain value, or D3 quota policy is not.
+
+## External release gate (manual PC/mobile procedure re-audit, 2026-08-09)
+
+The manual procedure in `docs/MANUAL_INTEROP_TESTING.md` is useful for the
+Phase-A radio gate, but it cannot close this RBSR/D3 item. Its successful path
+observes handshake, message delivery, receipt return, and reconnect behavior;
+it does not expose the per-priority RBSR sets or a negotiated partition key.
+Therefore a report MUST NOT label a successful PC BLE or mobile foreground run
+as “RBSR/D3 conformant.” Keep the results as separate gates:
+
+| Gate | Required external evidence | What it proves | What it does **not** prove |
+| --- | --- | --- | --- |
+| Host loopback | `mmp-cli demo` exits 0 and contains both fail-closed assertions | Rust stack can deliver a message and receipt without radio | BLE, mobile callbacks, RBSR priority partitions |
+| PC BLE | Two Linux/BlueZ hosts run `listen` and `connect` with distinct seeds; logs, `inspect` output, adapter/MTU/RSSI, and reconnect trace are retained | Phase-A real-radio message/receipt path | A normative priority partition or D3 admission weight |
+| Mobile bridge | Android/iOS consuming app compiles generated bindings and records callback/permission/background evidence | API bridge and platform lifecycle behavior | Background delivery parity, RBSR/D3 semantics, or production battery target |
+| RBSR/D3 conformance | Approved erratum/amendment, byte-level vectors, and two independent transcript producers/consumers (one legacy D0–D4 peer) | Interoperable partition and admission behavior | Hardware radio performance (a separate gate) |
+
+The current diagnostic output is not a substitute for the final RBSR/D3
+artifact. `mmp-node::DiagLog::dump` is a local, line-oriented journey log with
+truncated BundleIDs and Rust `Debug` event formatting; it does not record a
+stable domain/priority transcript, and adding such a field before the wire
+decision could accidentally make a local policy look normative. A future
+release may add a versioned, local-only trace schema and validator, but that
+work should begin only after the partition decision fixes the fields to be
+validated. Until then, retain raw CLI output and stores as observational
+evidence, not as conformance vectors.
+
+### Exact hardware evidence bundle for reopening the external gate
+
+For each real-radio run, attach all of the following to the release record:
+
+1. Commit ID and toolchain (`rustc --version`, `cargo --version`), host OS and
+   kernel, adapter model/firmware, and phone model/OS when applicable.
+2. The exact commands from `MANUAL_INTEROP_TESTING.md`, with distinct seed-file
+   fingerprints (never the seed bytes), timestamps, and process exit codes.
+3. Complete `mmp-cli listen`/`connect`/`send` logs, both `mmp-cli inspect`
+   outputs, negotiated MTU if available, RSSI samples, elapsed delivery time,
+   and a controlled disconnect/reconnect attempt.
+4. A gate classification for every run: advertisement, GATT connection,
+   identity proof, bundle transfer, receipt, or restart persistence. “BLE
+   failed” without the failed gate is insufficient.
+5. If a wire/spec discrepancy appears, preserve the raw frame bytes and map it
+   to the relevant specification section; do not edit `specification/` to make
+   the observed implementation pass.
+
+The release decision remains **blocked on the protocol decision and the
+Linux/BlueZ hardware evidence independently**. A successful hardware run may
+close only the radio row above; it cannot authorize a guessed RBSR partition or
+D3 weighting rule.
