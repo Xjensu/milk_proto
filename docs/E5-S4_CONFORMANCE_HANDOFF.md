@@ -2961,3 +2961,44 @@ Android/iOS binding regeneration and host error handling, Linux/BlueZ physical
 exchange, platform keystore providers, calibrated radio measurements, and
 the external cryptographic review. No wire or specification change was
 introduced in this continuation.
+
+## 2026-08-09 continuation: claim semantics and mobile migration audit
+
+Commit `a6b3e1c` closes the normative nickname-claim gap identified during the
+dialogue audit. The 32-byte UTF-8 rule from doc 06 §4.1 is now enforced by the
+shared `Claim::validate_known_body` path at wire decode, `ClaimStore::merge`,
+and local publication before signing, storage, or gossip. Oversized and
+non-UTF-8 nickname bodies are rejected without state mutation; unknown fields
+remain opaque and relayable. Regression coverage spans `mmp-types`,
+`mmp-core`, and `mmp-node`.
+
+The generic infallible `Node::publish_claim` method now returns an empty result
+for an invalid recognized body, preserving source compatibility while making
+the failure side-effect-free. This is not a complete typed authoring API:
+friendship, revocation, prekey, and authority claim construction still need a
+fallible generic method or typed builders before arbitrary host input should be
+accepted. The receiver-side `ClaimStore` validation remains authoritative.
+
+Commit `2a84045` adds `docs/MOBILE_API_MIGRATION.md`, documenting the FFI
+`setNickname` error-result change and the required Kotlin `@Throws`, Swift
+`throws`, and React-Native Promise rejection handling. The source-derived
+manifest and 151-test Python tooling gate pass, but the checked-in integration
+guides remain user-owned dirty files and were intentionally not staged. Native
+consumer compilation, binding regeneration in the host apps, and physical
+Android/iOS background-radio behavior remain open gates.
+
+Verification for this continuation:
+
+- `cargo test -p mmp-types -p mmp-core -p mmp-node --all-targets -- --test-threads=1`:
+  all affected targets passed (46, 3, 3, 89, 5, 114, plus integration targets).
+- Strict Clippy for the affected crates with `--all-features -D warnings`:
+  passed.
+- Full Python tooling suite: 151 passed, 11 expected skips.
+- `check_spec_status.py`, `layer-check`, and `git diff --check`: passed.
+- No path under `specification/` changed; existing user-owned dirty files and
+  temporary audit directories remain unstaged.
+
+Next safe steps are the typed/fallible known-claim authoring API, native mobile
+consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
+external dialogue remains a research backlog, not evidence for a wire change
+or a 2× production claim.

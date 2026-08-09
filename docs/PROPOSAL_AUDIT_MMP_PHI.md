@@ -1570,6 +1570,48 @@ physical evidence. The next work order is therefore:
    extension research; verify that every cited audit/roadmap artifact exists in
    the published revision.
 
+## Post-audit implementation delta (2026-08-09)
+
+The dialogue review also exposed a boundary issue that was not safe to leave
+to callers: doc 06 §4.1 makes a nickname claim body both UTF-8 and no larger
+than 32 bytes, but a directly constructed `Claim` could previously bypass
+that rule after wire decoding. Commit `a6b3e1c` closes the same invariant at
+three boundaries: `Claim::decode`, `ClaimStore::merge`, and local publication
+before signing, adoption, or gossip. Unknown claim fields remain opaque and
+forward-compatible, as required by doc 06; they are not passed through a
+guessed schema validator.
+
+The remaining limitation is deliberate and must stay visible in the plan:
+the legacy generic `Node::publish_claim` API is infallible. Invalid recognized
+nickname bodies now fail closed by returning an empty byte vector, but the
+generic publisher still does not provide a typed error for every recognized
+schema (notably friendship and revocation). Before exposing that API as a
+production authoring surface, add a fallible `try_publish_claim` or typed
+builders that validate every locally authored known schema. Do not weaken the
+receiver-side rejection rule and do not silently truncate input.
+
+The mobile ABI migration is documented in `docs/MOBILE_API_MIGRATION.md`
+(commit `2a84045`). Generated Kotlin/Swift bindings now have a checked
+throwing manifest for the fallible Rust exports. The checked-in integration
+guides and API reference are still user-owned dirty files and were intentionally
+not staged; a native consumer compile and host-side error handling remain an
+explicit release gate.
+
+The implementation plan is therefore amended, without changing
+`specification/`:
+
+7. **Claim authoring P1:** add typed/fallible publication for all recognized
+   claim schemas, with no-side-effect tests for malformed friendship,
+   revocation, prekey, and authority bodies; retain opaque relay semantics for
+   unknown fields.
+8. **Mobile ABI P1:** update the downstream Kotlin/Swift/React-Native docs and
+   regenerate bindings in a native consumer shell; verify that `BadArg` and
+   all other `FfiError` results are surfaced rather than ignored.
+9. **Research discipline P1:** keep EDR, mobility vouchers, deadline routing,
+   and DoF coding behind measured experiments. Bluetooth capabilities and
+   conditional probability formulas are not acceptance evidence for a 2×
+   production claim; require trace/device comparisons and confidence intervals.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
