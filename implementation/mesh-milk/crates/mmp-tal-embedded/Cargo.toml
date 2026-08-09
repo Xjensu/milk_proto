@@ -12,7 +12,10 @@ keywords = ["ble", "nrf52", "esp32", "embedded"]
 categories = ["embedded", "no-std", "hardware-support"]
 
 [dependencies]
-mmp-tal = { path = "../mmp-tal" }
+# Keep the future backend's dependency edge explicit: if `mmp-tal` ever grows
+# a host-only default feature, the embedded crate must remain no_std by
+# construction rather than depending on today's empty default feature set.
+mmp-tal = { path = "../mmp-tal", default-features = false }
 
 [lints]
 workspace = true

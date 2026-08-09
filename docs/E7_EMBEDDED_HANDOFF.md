@@ -11,9 +11,10 @@ The two E7 crates have different readiness levels:
 | Crate | Host/cross check | What is actually present | Blocking gap |
 | --- | --- | --- | --- |
 | `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; re-exports only `mmp-tal::LinkId` and `LinkQuality` | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
-| `mmp-node-embassy` | host check passes; the same target check fails | `#![no_std]` marker and no executor code | its dependency closure enables `mmp-core`/`mmp-crypto` defaults and `mmp-store`'s std snapshot implementation |
+| `mmp-node-embassy` | host check and the same target check pass after `750c807` | `#![no_std]` marker and no executor code | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
 
-The failing command and first error are deterministic on the current workspace:
+The following failure is retained as historical evidence from before
+`750c807`; it is not the current result:
 
 ```text
 cargo check -p mmp-node-embassy --target thumbv7em-none-eabihf --no-default-features
@@ -21,10 +22,11 @@ error[E0463]: can't find crate for `std`
 .../getrandom-0.2.17/src/error_impls.rs
 ```
 
-`--no-default-features` on the root package cannot remove dependency defaults
-when the dependency manifests do not expose a corresponding feature. The
-current feature tree confirms that `mmp-node-embassy` selects `mmp-core`
-`default`/`std`, while `mmp-store` selects `mmp-core` and `mmp-crypto` defaults.
+Before `750c807`, `--no-default-features` on the root package could not remove dependency defaults
+when the dependency manifests did not expose a corresponding feature. The
+pre-fence feature tree selected `mmp-core` `default`/`std` for
+`mmp-node-embassy`, while `mmp-store` selected `mmp-core` and `mmp-crypto`
+defaults.
 This is an E7-S1/E7-S3 dependency-closure gap, not an Embassy compiler bug.
 
 The existing root CI `no-std-size-gate` intentionally excludes both E7 crates
@@ -46,7 +48,7 @@ cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-feat
 cargo check --target thumbv7em-none-eabihf --no-default-features `
   -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code -p mmp-tal -p mmp-tal-embedded
 
-# Expected to fail until the E7-S1 fixed-capacity/store split is implemented.
+# Current Embassy shell closure (passes after `750c807`; no executor or store yet).
 cargo check -p mmp-node-embassy --target thumbv7em-none-eabihf --no-default-features
 ```
 
@@ -230,5 +232,4 @@ checkable. It does not close E7-S1's fixed-capacity flash store, E7-S2's radio
 backend, E7-S3's Embassy executor wiring, the linked-image flash/RAM budget,
 the OQ-7 benchmark, or phone-to-sensor HIL. Those acceptance gates and the
 historical failure explanation above remain valid as implementation work still
-outstanding; the stale sentence in the audit table should be read as
-pre-`750c807` evidence, not the current result.
+outstanding; the historical failure block above is not the current result.

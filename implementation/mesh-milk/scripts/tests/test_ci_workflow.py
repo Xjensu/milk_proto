@@ -5,6 +5,7 @@ import yaml
 
 
 WORKFLOW = Path(__file__).parents[4] / ".github" / "workflows" / "ci.yml"
+WORKSPACE = Path(__file__).parents[2]
 
 
 class CIWorkflowTests(unittest.TestCase):
@@ -44,6 +45,30 @@ class CIWorkflowTests(unittest.TestCase):
                 "cargo check -p mmp-node-embassy -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features"
             ],
         )
+
+    def test_embedded_manifests_fence_default_features(self) -> None:
+        node_manifest = (WORKSPACE / "crates" / "mmp-node-embassy" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+        tal_manifest = (WORKSPACE / "crates" / "mmp-tal-embedded" / "Cargo.toml").read_text(
+            encoding="utf-8"
+        )
+
+        # Keep this source-level fence close to the dependency declarations:
+        # the target check is the authoritative proof, while this regression
+        # catches an accidental feature reintroduction during review before a
+        # cross target job is available.
+        for dependency in ("mmp-core", "mmp-router", "mmp-tal"):
+            self.assertRegex(
+                node_manifest,
+                rf"{dependency}\s*=\s*\{{[^\n]*default-features\s*=\s*false",
+                dependency,
+            )
+        self.assertRegex(
+            tal_manifest,
+            r"mmp-tal\s*=\s*\{[^\n]*default-features\s*=\s*false",
+        )
+        self.assertNotRegex(node_manifest, r"(?m)^mmp-store\s*=")
 
     def test_mobile_artifact_uploads_fail_on_missing_paths(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
