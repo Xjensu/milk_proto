@@ -400,7 +400,11 @@ fn ratchet_terminal_index_is_not_emitted_or_accepted() {
 
     let mut recv = RecvChain::new([0x55; 32], 0, 8);
     assert!(recv.key_for(0, u32::MAX).is_err());
+}
 
+#[cfg(feature = "std")]
+#[test]
+fn legacy_ratchet_wrappers_fail_closed_at_exhaustion() {
     // The compatibility wrapper must fail closed in release builds too; it
     // must never silently wrap the public counter back to zero.
     let mut legacy = SendChain::new([0x66; 32], 0);
