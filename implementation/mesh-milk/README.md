@@ -13,11 +13,11 @@ execution plan). `../../ROADMAP.md` is a thin pointer mapping the legacy
 `../../docs/IMPLEMENTATION_HANDBOOK.md` has the golden rules (§0) binding on
 every change and the buildable specs for remaining work (§4).
 
-As of 2026-08-08 the workspace is well past the original "Stage 0 scaffold"
+As of 2026-08-09 the workspace is well past the original "Stage 0 scaffold"
 point: all 15 crates plus `mmp-tal-peripheral` have working implementations.
 The latest serial `cargo test --workspace --all-targets` run reported zero
-failures across 217 listed test items, with four intentionally ignored
-simulation deployment/scale cases; clippy and `layer-check` are clean. Phase A
+failures across 390 listed test items (385 active, 5 intentionally ignored
+simulation deployment/scale cases); clippy and `layer-check` are clean. Phase A
 is implementation-complete but its exit gate — a real two-machine BLE exchange
 — still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact
 integration seam until native Android/iOS consuming radio shells exist. See
