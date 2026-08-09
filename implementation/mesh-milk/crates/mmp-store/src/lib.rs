@@ -290,6 +290,18 @@ impl SnapshotStore {
                     "snapshot working set changed while validating a bundle",
                 ));
             };
+            if !valid_persisted_metadata(
+                stored_meta.class,
+                stored_meta.budget,
+                stored_meta.own_origin as u8,
+                stored_meta.stored_at,
+                stored_meta.expires_at,
+            ) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "snapshot metadata is outside its canonical domain",
+                ));
+            }
             if stored_meta.size as usize != body.len() {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
@@ -1007,6 +1019,49 @@ mod tests {
         invalid.size = 4;
         store.put(invalid, b"hello");
         let error = store.persist().expect_err("invalid metadata must not be persisted");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(std::fs::read(&path).unwrap(), primary);
+        assert!(!tmp.exists(), "validation must happen before creating a replacement image");
+
+        let restored = SnapshotStore::open(&path);
+        assert!(restored.get(&valid.id).is_some(), "the previous complete image remains recoverable");
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(tmp);
+    }
+
+    #[test]
+    fn persist_rejects_noncanonical_metadata_without_replacing_primary() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("noncanonical-meta.mmp");
+        let tmp = path.with_extension("tmp");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&tmp);
+
+        let mut store = SnapshotStore::open(&path);
+        let valid = BundleMeta {
+            id: Id16([10; 16]),
+            class: class::DIRECT,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 5,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+        store.put(valid, b"hello");
+        store.persist().unwrap();
+        let primary = std::fs::read(&path).unwrap();
+
+        let mut invalid = valid;
+        invalid.budget = L_MAX.saturating_add(1);
+        store.update_meta(invalid);
+        let error = store.persist().expect_err("noncanonical metadata must not be persisted");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), primary);
         assert!(!tmp.exists(), "validation must happen before creating a replacement image");
