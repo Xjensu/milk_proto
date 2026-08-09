@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use mmp_crypto::Identity;
 use mmp_types::bundle::{class, zero_lifetime, Bundle, LIFETIME_OFFSET};
 use mmp_types::claim::Claim;
-use mmp_types::consts::{class_max_lifetime_ms, L_MAX, LIFETIME_MESSAGE_MS};
+use mmp_types::consts::{class_max_lifetime_ms, BLOOM_CAPACITY, L_MAX, LIFETIME_MESSAGE_MS};
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{Hello, Summary};
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
@@ -18,7 +18,7 @@ use crate::claims::{ClaimMerge, ClaimStore};
 use crate::ingest::{ingest, Disposition, DropReason};
 use crate::orset::{MembershipOp, OrSet};
 use crate::rbsr::{fingerprint, IdSource, Reconciler};
-use crate::receiptfilter::{ReceiptFilter, SuppressSignal};
+use crate::receiptfilter::{ReceiptFilter, SuppressSignal, EXACT_RECEIPT_CAP};
 use crate::seen::SeenIndex;
 use crate::session::{SessionEngine, SessionEvent, SessionHost};
 use crate::store::{
@@ -299,6 +299,45 @@ fn receipt_filter_decode_rejects_truncated_and_trailing_bytes() {
     let mut trailing = bytes.clone();
     trailing.push(0);
     assert!(ReceiptFilter::decode(&trailing).is_none(), "trailing bytes must not decode");
+}
+
+#[test]
+fn receipt_filter_exact_set_is_bounded_and_evicts_oldest() {
+    assert_eq!(EXACT_RECEIPT_CAP, BLOOM_CAPACITY);
+    let mut rf = ReceiptFilter::new();
+    for n in 0..EXACT_RECEIPT_CAP {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(n as u64).to_le_bytes());
+        rf.note_verified_receipt(&Id16(id), 5_000);
+    }
+
+    // A new authenticated receipt cannot grow the exact map past its local
+    // bound. Equal expiry timestamps make the lowest Id16 the deterministic
+    // eviction candidate.
+    let mut fresh = [0u8; 16];
+    fresh[..8].copy_from_slice(&(EXACT_RECEIPT_CAP as u64).to_le_bytes());
+    rf.note_verified_receipt(&Id16(fresh), 5_000);
+
+    let mut oldest = [0u8; 16];
+    oldest[..8].copy_from_slice(&0u64.to_le_bytes());
+    assert_eq!(rf.signal(&Id16(oldest)), SuppressSignal::Hint);
+    assert_eq!(rf.signal(&Id16(fresh)), SuppressSignal::Purge);
+
+    // The bounded state remains restartable through the existing persistence
+    // format, with the same conservative hint-vs-purge behavior.
+    let restored = ReceiptFilter::decode(&rf.encode()).expect("bounded filter must decode");
+    assert_eq!(restored.signal(&Id16(oldest)), SuppressSignal::Hint);
+    assert_eq!(restored.signal(&Id16(fresh)), SuppressSignal::Purge);
+}
+
+#[test]
+fn receipt_filter_decode_rejects_exact_count_above_local_cap() {
+    // A syntactically complete count with enough bytes must still be rejected
+    // before allocating a BTreeMap larger than the documented local bound.
+    let count = EXACT_RECEIPT_CAP + 1;
+    let mut encoded = vec![0u8; 8 + count * 24];
+    encoded[4..8].copy_from_slice(&(count as u32).to_le_bytes());
+    assert!(ReceiptFilter::decode(&encoded).is_none());
 }
 
 #[test]

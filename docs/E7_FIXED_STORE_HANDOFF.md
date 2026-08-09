@@ -121,3 +121,35 @@ no-default-features profile still exports no flash-backed provider, and no
 board capacity or allocator policy is selected here. Future work must not
 interpret the current target check or acceptance double as closing those
 remaining E7-S1 requirements.
+
+## Lower-layer bounded-state increment (2026-08-09)
+
+The E7 audit found one concrete unbounded state path below the provider seam:
+`mmp_core::ReceiptFilter` kept its exact-purge `BTreeMap` without a runtime
+bound, even though the implementation handbook's Standard-tier RAM table
+budgets that map at 8,192 entries. The implementation now binds the local map
+to the existing `BLOOM_CAPACITY` value (8,192), rejects persisted exact counts
+above that bound before allocating, and evicts the earliest-expiring exact
+entry when a new authenticated receipt arrives at a full map. Equal-expiry
+ties are deterministic by `Id16`.
+
+This is intentionally conservative: the corresponding Bloom bit remains a
+hint, so evicting an exact entry can only delay an optional purge; it cannot
+cause an undelivered bundle to be deleted. The bound is local state only and
+does not alter receipt wire encoding, RBSR, quotas, or bundle semantics. The
+focused tests cover full-capacity insertion, deterministic eviction, and
+hostile persisted counts. This change reduces an attacker- or workload-driven
+allocation path in the shared no-std+alloc core, but it does not select a Core
+tier capacity, provide a flash backend, or establish allocator-free operation.
+
+Evidence:
+
+```text
+cargo test -p mmp-core --lib receipt_filter -- --test-threads=1
+5 passed
+```
+
+The remaining E7 decision is unchanged: a board-specific fixed-capacity
+provider must still define allocator/flash policy, producer reservation and
+rollback semantics, and linked-image/HIL acceptance before the embedded gate
+can be closed.

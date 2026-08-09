@@ -15,6 +15,14 @@ use mmp_types::ids::Id16;
 
 use crate::bloom::{Bloom, INTERNAL_SALT, MIN_ENCODED_BYTES};
 
+// The implementation handbook's Standard-tier RAM table budgets the exact
+// receipt map at 8,192 entries (~448 KiB with BTreeMap node overhead).  Keep
+// that local resource bound explicit here: receipt admission is authenticated,
+// but a peer can still present many valid receipts over time.  Exceeding the
+// bound may delay an optional purge (the Bloom remains only a hint), never
+// authorize an unsafe deletion.
+pub(crate) const EXACT_RECEIPT_CAP: usize = BLOOM_CAPACITY;
+
 /// Hint deprioritizes offers; Purge is the only deletion authority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuppressSignal {
@@ -63,6 +71,23 @@ impl ReceiptFilter {
             }
         };
         bloom.insert(delivered, &INTERNAL_SALT);
+
+        // Do not let the exact-purge index grow without bound.  Replacing an
+        // existing receipt refreshes its expiry and does not consume a slot.
+        // When the local cap is full, discard the entry with the earliest
+        // expiry (Id16 breaks equal-expiry ties deterministically).  Losing an
+        // exact entry can only retain a bundle longer: the Bloom hint is still
+        // present, and no Bloom path is allowed to purge.
+        if !self.exact.contains_key(delivered) && self.exact.len() >= EXACT_RECEIPT_CAP {
+            if let Some((oldest, _)) = self
+                .exact
+                .iter()
+                .min_by_key(|(id, expiry)| (**expiry, **id))
+                .map(|(id, expiry)| (*id, *expiry))
+            {
+                let _ = self.exact.remove(&oldest);
+            }
+        }
         self.exact.insert(*delivered, now_ms + LIFETIME_MESSAGE_MS);
     }
 
@@ -171,7 +196,9 @@ impl ReceiptFilter {
         // Each exact entry is a 16-byte ID plus an 8-byte expiry.  Check the
         // count against the remaining bytes before entering the loop so a
         // hostile snapshot cannot force an unbounded parse.
-        if exact_count > bytes.len().saturating_sub(pos) / 24 {
+        if exact_count > EXACT_RECEIPT_CAP
+            || exact_count > bytes.len().saturating_sub(pos) / 24
+        {
             return None;
         }
         let mut exact = BTreeMap::new();
