@@ -10,7 +10,7 @@
 use super::{FfiError, FfiEvent, FfiTier, MmpNode};
 use mmp_core::store::BundleStore;
 use mmp_store::SnapshotStore;
-use mmp_types::consts::LIFETIME_MESSAGE_MS;
+use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE};
 use mmp_types::ids::Id16;
 
 fn node(seed: u8) -> std::sync::Arc<MmpNode> {
@@ -145,6 +145,26 @@ fn bad_length_ids_are_rejected_at_the_ffi_boundary() {
         Ok(_) => panic!("31-byte seed must be rejected"),
     };
     assert_eq!(err, super::FfiError::BadArg);
+}
+
+#[test]
+fn oversized_text_is_rejected_without_poisoning_first_contact_at_ffi_boundary() {
+    let alice = node(3);
+    let bob = node(4);
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    // The first-contact path preflights the largest authenticated encoding
+    // before allocating conversation state.  Keep this regression at the
+    // mobile-facing API boundary: a host-controlled String at the bundle cap
+    // must map to BadArg and must not leave a pending conversation behind.
+    let oversized = "x".repeat(MAX_BUNDLE);
+    assert_eq!(alice.send_text(bob.node_id(), oversized), Err(FfiError::BadArg));
+
+    // A valid retry must still be accepted immediately; otherwise the
+    // rejected caller input would have poisoned the first-contact state.
+    assert!(alice.send_text(bob.node_id(), "retry after rejection".to_string()).is_ok());
 }
 
 #[test]
