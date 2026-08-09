@@ -347,8 +347,8 @@ were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
 listed 411 tests (405 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 85 tests (six platform-specific skips), while the
-44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
+The Python harness now reports 89 tests (six platform-specific skips), while the
+46-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
 ### Security/release continuation (2026-08-09)
@@ -377,7 +377,7 @@ operator-supplied logs.
 
 Focused verification after this continuation passed: `mmp-crypto` (39 tests),
 workspace tests (411 listed / 405 active / 6 ignored), workspace Clippy with all
-features, Python tests (85 / 6 skipped), compileall, 44 deterministic fuzz seeds,
+features, Python tests (89 / 6 skipped), compileall, 46 deterministic fuzz seeds,
 the embedded target check, and layer-check. No `specification/` file or
 pre-existing dirty path was staged.
 
@@ -399,6 +399,19 @@ when public `Frame` encoders remain infallible for compatibility. The focused
 `mmp-core` suite is 66 tests; frame-type authentication remains a deliberately
 recorded future wire-revision residual because adding Noise associated data or a
 duplicate encrypted type would change frozen v1 bytes.
+
+The next delegated cycle added three scoped release gates. `a01a867` pins the
+Noise seed corpus at the 256/257-byte pre-auth boundary, and CI now materializes
+and verifies the 46 deterministic seeds before building the four fuzz targets.
+`a09e6cb` makes the Android artifact verifier parse the manifest XML, require the
+`org.meshmilk.ffi` package identity, and tests that both mobile packaging jobs
+invoke their structural verifiers. `e708c49` fences the embedded TAL dependency
+with `default-features = false`, adds a source-level regression for the Embassy
+dependency graph, and corrects the E7 handoff's historical failure wording.
+These changes are implementation/release hardening only: the specification tree
+and all pre-existing dirty application/docs paths remain untouched. The complete
+Python suite is now 89 tests with six intentional skips; the Rust and target
+checks above remain green.
 
 ## Source register
 
