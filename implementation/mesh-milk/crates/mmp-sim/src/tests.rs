@@ -73,7 +73,32 @@ fn social_clustered_run_reports_only_contact_generator_metrics() {
     assert_eq!(metrics.bridge_probability_per_mille, 500);
     assert!(metrics.bridge_meetings > 0);
     assert!(metrics.bridge_meetings < metrics.meetings);
+    assert_eq!(
+        metrics.intra_community_meetings + metrics.bridge_meetings,
+        metrics.meetings
+    );
+    assert!(metrics.max_intra_community_streak > 0);
+    assert!(metrics.max_intra_community_streak <= metrics.intra_community_meetings);
+    assert_eq!(
+        metrics.realized_bridge_probability_per_mille,
+        ((metrics.bridge_meetings * 1_000) / metrics.meetings) as u16
+    );
     assert_eq!(sim.counters().meetings_run, 40);
+}
+
+#[test]
+fn social_clustered_empty_run_has_zero_realized_distribution() {
+    let mut sim = Sim::new(8, 0x50C1_0000);
+    let metrics = sim
+        .run_social_clustered_meetings(0, 1_000, 2_000, 4, 250)
+        .expect("valid profile");
+
+    assert_eq!(metrics.meetings, 0);
+    assert_eq!(metrics.bridge_meetings, 0);
+    assert_eq!(metrics.intra_community_meetings, 0);
+    assert_eq!(metrics.max_intra_community_streak, 0);
+    assert_eq!(metrics.realized_bridge_probability_per_mille, 0);
+    assert_eq!(sim.counters().meetings_run, 0);
 }
 
 fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {

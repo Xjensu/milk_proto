@@ -191,7 +191,14 @@ impl SocialClusteredMobility {
 pub struct SocialClusteredRunMetrics {
     pub meetings: usize,
     pub bridge_meetings: usize,
+    /// Contacts sampled within the active community.
+    pub intra_community_meetings: usize,
+    /// Longest consecutive run of intra-community contacts in this schedule.
+    /// This is a deterministic dwell proxy, not a human-mobility estimate.
+    pub max_intra_community_streak: usize,
     pub bridge_probability_per_mille: u16,
+    /// Realized bridge rate, rounded down to per-mille. Zero for an empty run.
+    pub realized_bridge_probability_per_mille: u16,
 }
 
 /// A whole-scenario counter block, exposed so scenario tests can assert on
@@ -624,15 +631,35 @@ impl Sim {
             bridge_probability_per_mille,
         )?;
         let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
+        let mut bridge_meetings = 0usize;
+        let mut intra_community_meetings = 0usize;
+        let mut intra_streak = 0usize;
+        let mut max_intra_community_streak = 0usize;
         for _ in 0..count {
-            let (i, j, _) = plan.next_pair(&mut self.rng);
+            let (i, j, is_bridge) = plan.next_pair(&mut self.rng);
             let dt = min_gap_ms + self.rng.below(span);
             self.meet(i, j, dt);
+            if is_bridge {
+                bridge_meetings = bridge_meetings.saturating_add(1);
+                intra_streak = 0;
+            } else {
+                intra_community_meetings = intra_community_meetings.saturating_add(1);
+                intra_streak = intra_streak.saturating_add(1);
+                max_intra_community_streak = max_intra_community_streak.max(intra_streak);
+            }
         }
+        let realized_bridge_probability_per_mille = bridge_meetings
+            .saturating_mul(1_000)
+            .checked_div(count)
+            .unwrap_or(0)
+            .min(1_000) as u16;
         Some(SocialClusteredRunMetrics {
             meetings: count,
-            bridge_meetings: plan.bridge_count(),
+            bridge_meetings,
+            intra_community_meetings,
+            max_intra_community_streak,
             bridge_probability_per_mille: plan.bridge_probability_per_mille(),
+            realized_bridge_probability_per_mille,
         })
     }
 

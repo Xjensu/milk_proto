@@ -102,13 +102,17 @@ fn social_clustered_mobility_measurement_is_reproducible() {
     assert!(sim.quota_ok(), "social clustered schedule must stay within store quotas");
     eprintln!(
         "social_clustered_mobility_measurement: delivery_ratio={:.3} p50_ms={:?} p90_ms={:?} \
-         meetings={} bridges={} bridge_rate={:.3} simulated_hours={:.2}",
+         meetings={} bridges={} bridge_rate={:.3} realized_bridge_rate_per_mille={} \
+         intra={} max_intra_streak={} simulated_hours={:.2}",
         sim.delivery_ratio(),
         sim.latency_percentile_ms(0.50),
         sim.latency_percentile_ms(0.90),
         metrics.meetings,
         metrics.bridge_meetings,
         metrics.bridge_meetings as f64 / metrics.meetings.max(1) as f64,
+        metrics.realized_bridge_probability_per_mille,
+        metrics.intra_community_meetings,
+        metrics.max_intra_community_streak,
         sim.now_ms() as f64 / 3_600_000.0,
     );
 }
