@@ -1469,6 +1469,53 @@ mod rx_bound_tests {
     }
 
     #[test]
+    fn noise_tag_is_counted_at_envelope_boundary() {
+        let ia = identity(13);
+        let ib = identity(14);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        // Complete the handshake and drain the ordinary SUMMARY/RBSR traffic
+        // before exercising the boundary in isolation.
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        // Noise transport adds a 16-byte tag.  A plaintext of 4080 bytes is
+        // therefore exactly one maximum 4096-byte envelope payload and must
+        // remain sendable.
+        a.tx_credits = 1;
+        a.send_frame(&Frame::FriendOffer(vec![0xa5; MAX_FRAME_PAYLOAD - 16]));
+        let at_cap = a.poll_out().expect("4080-byte plaintext fits one envelope");
+        assert_eq!(u16::from_le_bytes([at_cap[0], at_cap[1]]) as usize, MAX_ENVELOPE_PAYLOAD);
+        b.on_wire(&at_cap, 2000, &ib, &mut hb);
+        assert_eq!(b.phase, Phase::Established);
+
+        // One additional plaintext byte would make the encrypted payload
+        // exceed the frozen envelope cap; the sender must fail closed rather
+        // than emit a truncated length or oversized record.
+        a.tx_credits = 1;
+        a.send_frame(&Frame::FriendOffer(vec![0xa5; MAX_FRAME_PAYLOAD - 15]));
+        assert_eq!(a.phase, Phase::Closed);
+        assert!(a.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+    }
+
+    #[test]
     fn bundle_requests_wait_for_two_frame_credits_before_loading() {
         let ia = identity(7);
         let ib = identity(8);
