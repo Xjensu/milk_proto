@@ -1165,6 +1165,41 @@ pass. Revocation-list overflow policy, native keystore adapters, and physical
 platform evidence remain open. No file under `specification/` or any
 pre-existing protected dirty path was modified.
 
+### Orchestration continuation XXIX (2026-08-09)
+
+The revocation-overflow gap is now closed by `31da872`. The earlier proposal
+to persist a global `authority_disabled` marker was rejected: one exhausted
+authority could otherwise deny unrelated scopes and create a cross-scope
+denial-of-service condition. The implementation instead adds the additive
+`AuthorityStore::try_merge_revocation_list` result while retaining the legacy
+`merge_revocation_list` wrapper for existing callers.
+
+Verified entries are preflighted as a unique set before mutation. If the
+bounded sticky union would exceed `MAX_AUTH_REVOKED`, no new tombstone is
+silently dropped and no older tombstone is evicted. Every affected scope is
+quarantined atomically by removing its pinned root and cached certificates;
+unrelated roots and certificates remain usable. Existing tombstones remain in
+the bounded map and may outlive the quarantined root, so a later explicit
+re-pin cannot erase them. Re-pinning is an operator recovery action, not an
+automatic overflow response. Unknown suites and already-retained tombstones
+retain their prior behavior.
+
+The private authority snapshot remains version 1 and wire-compatible. Decoder
+validation now permits a bounded tombstone whose root was deliberately
+quarantined; certificates still require a currently pinned root and are
+re-verified on restore. This keeps the fail-closed state durable without
+introducing a new wire field or a global disable bit. Regression coverage
+checks atomic overflow, unrelated-scope availability, root/certificate
+removal, rootless-tombstone persistence, and explicit re-pin recovery.
+
+Focused evidence for this continuation is 15 `mmp-core` authority tests and
+targeted Clippy. The complete post-commit gate is also green: workspace tests
+and Clippy, 124 Python tests (8 skipped), 46 deterministic fuzz seeds, the
+embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
+demo, and six transactional-store tests. No file under `specification/` was
+modified, no AI-specific artifact was added, and all pre-existing dirty paths
+remain outside the commit.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
