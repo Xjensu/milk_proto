@@ -56,26 +56,23 @@ repository-wide security certification or an external cryptographic review.
    receive buffer and reuses it for every `read_message` call; the buffer is
    never resized from attacker input. The bound is wire-neutral for the
    current v1 profile: `Hello::decode` caps suites at 16 bytes, so the largest
-   identity-plus-HELLO payload is 56 bytes, and the largest standard Noise XX
-   message carrying that payload is 152 bytes. The remaining margin is for
+   identity-plus-HELLO payload is 57 bytes, and the largest standard Noise XX
+   message carrying that payload is 153 bytes. The remaining margin is for
    framing/implementation headroom, not an extension to the wire format.
    `noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state` covers
    early rejection and confirms that a subsequent valid first message still
    progresses the handshake.
 
-7. **Noise XX first-message grammar.** The responder now requires the first
-   inbound XX message to be exactly the 32-byte ephemeral-key message (`-> e`)
-   with no payload. `snow` permits a payload at this position, but MMP/1 puts
-   identity+HELLO only in encrypted messages 2 and 3; accepting a cleartext
-   payload would let an unauthenticated initiator seed a provisional
-   `remote_intro`. `noise_xx_rejects_nonempty_msg1_payload_before_provisional_intro`
-   proves the malformed shape is rejected before state consumption and that a
-   subsequent valid msg1 still progresses the responder. This is a grammar
-   check over existing v1 bytes; no new field or frame allocation is added.
-   The frozen documents describe the HELLO payload placement but do not state
-   the empty-msg1 rule as a standalone MUST; therefore this remains an
-   implementation-profile restriction until an independently reviewed
-   conformance erratum records the rule. No specification file was changed.
+7. **Noise XX first-message payload handling.** `snow` permits a payload on
+   XX message 1. MMP/1 does not use that cleartext payload: identity+HELLO is
+   carried in encrypted messages 2 and 3. The responder therefore consumes
+   any bounded message-1 payload for transcript correctness but deliberately
+   ignores it rather than parsing a provisional `remote_intro`. The regression
+   `noise_xx_ignores_nonempty_msg1_payload_until_encrypted_intro` injects an
+   invalid cleartext payload and still completes the handshake from the
+   encrypted msg3 identity. This preserves interoperability with Noise peers
+   that use a bounded msg1 payload while preventing unauthenticated HELLO or
+   identity state from influencing the session. No specification file changed.
 
 ## Residual gaps requiring a reviewed follow-up
 
@@ -120,7 +117,7 @@ bounded suite vector (maximum 16 bytes), and outbound reply buffers are
 allocated from the locally supplied HELLO. `Hello::encode` remains an
 infallible local API, so callers should validate their own HELLO before
 construction; non-conforming oversized suite lists are rejected by the peer.
-The responder's cleartext XX message-1 payload is now rejected separately;
+The responder's cleartext XX message-1 payload is consumed but ignored;
 identity+HELLO is accepted only from the encrypted message-2/message-3
 payloads prescribed by the current handshake construction.
 

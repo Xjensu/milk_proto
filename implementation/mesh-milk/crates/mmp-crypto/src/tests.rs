@@ -104,24 +104,34 @@ fn noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state() {
 }
 
 #[test]
-fn noise_xx_rejects_nonempty_msg1_payload_before_provisional_intro() {
+fn noise_xx_ignores_nonempty_msg1_payload_until_encrypted_intro() {
     let alice = id(1);
     let bob = id(2);
-    let (msg1, _a) = NoiseHandshake::initiator(&alice, &hello()).unwrap();
+    let secret = alice.exchange_secret_bytes();
+    let params = crate::noise::NOISE_PARAMS.parse().expect("valid noise params");
+    let mut raw_initiator = snow::Builder::new(params)
+        .local_private_key(&secret[..])
+        .build_initiator()
+        .unwrap();
+    let mut msg1 = vec![0u8; MAX_HANDSHAKE_MESSAGE];
+    let n = raw_initiator.write_message(&[0xde, 0xad, 0xbe, 0xef], &mut msg1).unwrap();
+    msg1.truncate(n);
     let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
 
-    // Snow permits payload on XX message 1, but MMP/1 deliberately places
-    // identity+HELLO only in encrypted messages 2 and 3.  Appending a valid
-    // looking intro must therefore be rejected before the responder records a
-    // provisional peer state.
-    let mut malformed = msg1.clone();
-    malformed.extend_from_slice(&alice.public().0);
-    malformed.extend_from_slice(&hello().encode());
-    assert!(matches!(b.advance(&malformed), Err(CryptoError::Noise)));
-
-    // The early grammar check must not consume the responder's state.
-    let out_b = b.advance(&msg1).unwrap();
-    assert!(out_b.reply.is_some());
+    // The cleartext payload is accepted by Noise but must not be parsed as a
+    // provisional identity/HELLO.  A deliberately invalid payload therefore
+    // still permits the encrypted handshake to complete.
+    let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
+    let mut payload = vec![0u8; MAX_HANDSHAKE_MESSAGE];
+    let n = raw_initiator.read_message(&msg2, &mut payload).unwrap();
+    assert!(n >= 32);
+    let mut msg3_payload = alice.public().0.to_vec();
+    msg3_payload.extend_from_slice(&hello().encode());
+    let n = raw_initiator.write_message(&msg3_payload, &mut payload).unwrap();
+    payload.truncate(n);
+    let out_b = b.advance(&payload).unwrap();
+    let channel = out_b.channel.expect("encrypted msg3 completes handshake");
+    assert_eq!(channel.peer.identity, alice.public());
 }
 
 #[test]

@@ -28,9 +28,9 @@ const HS_OVERHEAD: usize = 128;
 /// Fixed receive storage for one Noise XX handshake message.
 ///
 /// The v1 HELLO decoder caps the suite vector at 16 bytes.  Together with the
-/// 32-byte identity key, the largest v1 handshake payload is therefore 56
+/// 32-byte identity key, the largest v1 handshake payload is therefore 57
 /// bytes; the largest XX message (the responder's `e, ee, s, es, payload`)
-/// is 152 bytes after the two public-key/DH tokens and two AEAD tags.  A
+/// is 153 bytes after the two public-key/DH tokens and two AEAD tags.  A
 /// 256-byte buffer leaves margin for the framing headroom while keeping
 /// pre-auth receive memory independent of attacker-controlled input length.
 /// Inputs above this bound are not valid v1 handshake messages and are
@@ -58,7 +58,8 @@ pub struct NoiseHandshake {
     hs: Option<snow::HandshakeState>,
     initiator: bool,
     /// Number of inbound Noise handshake messages successfully consumed.
-    /// Used to enforce the v1 XX first-message grammar on the responder side.
+    /// Used to identify the responder's first XX message, whose optional
+    /// payload is intentionally ignored until encrypted payloads arrive.
     read_messages: u8,
     local_payload: Vec<u8>,
     /// Reused fixed-size output for `snow::HandshakeState::read_message`.
@@ -150,23 +151,19 @@ impl NoiseHandshake {
         if incoming.len() > MAX_HANDSHAKE_MESSAGE {
             return Err(CryptoError::Noise);
         }
-        // XX message 1 is `-> e` with an empty payload in MMP/1.  Snow quite
-        // correctly permits an arbitrary Noise payload here, but accepting it
-        // would let an unauthenticated initiator inject a provisional HELLO
-        // into `remote_intro` before the encrypted payloads arrive.  Reject
-        // the non-conforming shape before touching the Noise state.  Only the
-        // responder receives message 1; the initiator's first inbound message
-        // is encrypted message 2 and is parsed below as usual.
-        if !self.initiator && self.read_messages == 0 && incoming.len() != 32 {
-            return Err(CryptoError::Noise);
-        }
+        // Noise permits an optional payload on XX message 1.  MMP/1 does not
+        // use that cleartext payload: identity+HELLO is carried in encrypted
+        // messages 2 and 3.  Remember this position so the bytes can be
+        // consumed by Snow (and transcript-bound) without being parsed into a
+        // provisional `remote_intro` before authentication.
+        let first_responder_message = !self.initiator && self.read_messages == 0;
         let mut hs = self.hs.take().ok_or(CryptoError::Noise)?;
 
         let n = hs
             .read_message(incoming, &mut self.read_buf)
             .map_err(|_| CryptoError::Noise)?;
         self.read_messages = self.read_messages.saturating_add(1);
-        if n > 0 {
+        if n > 0 && !first_responder_message {
             let (peer_pk, hello) = parse_payload(&self.read_buf[..n])?;
             // Cipher-agility gate (doc 03 §8): refuse rather than silently
             // fall back if the peer names no suite this build can speak.
