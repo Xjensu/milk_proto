@@ -146,13 +146,15 @@ The continuation resource audit adds two further wire-neutral bounds in
 256 peer entries, while `blob_served` keeps at most 256 distinct peer counters
 and fails closed for a new peer after saturation. These policies affect only
 optional spray suppression or local blob service; they do not change bundle
-validity or delivery semantics. The same audit deliberately did **not** add
-arbitrary limits to `known_identities` or group `remotes`/`dists`: delayed
-friendship acknowledgements and sender-key replay semantics need a normative
-lifetime/retention rule first. `pending_offers`, `offered_since`, and
-`patrons` are already bounded by `MAX_PATRONS`; `friends` is allowlist-gated
-and TTL-pruned. The residual map-growth issue is now an explicit release
-backlog rather than an unreviewed denial-of-service claim.
+validity or delivery semantics. Follow-up `5a50e43` gives `known_identities` a
+session-scoped lifetime: entries are released after the peer's last live link,
+without imposing an arbitrary count or wall-clock TTL that could break delayed
+friendship acknowledgements. Group `remotes`/`dists` still receive no local
+epoch cap because sender-key replay semantics need a normative retention rule
+first. `pending_offers`, `offered_since`, and `patrons` are already bounded by
+`MAX_PATRONS`; `friends` is allowlist-gated and TTL-pruned. The remaining
+map-growth backlog is therefore group epoch retention, not an unreviewed
+known-identity denial-of-service claim.
 
 The EDR research seam is also now executable as an aggregate-only input in
 `e0cee7c`. `RendezvousMeasurement` and its paired comparison validate trace
