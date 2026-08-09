@@ -155,7 +155,15 @@ There is currently no runnable Android or iOS application in this repository.
 The mobile surface is a UniFFI library: the app owns scanning, advertising,
 GATT subscriptions, permissions, background execution, and clock values, then
 passes received link bytes to `MmpNode` and writes bytes returned by the FFI
-back to the platform BLE characteristic.
+back to the platform BLE characteristic. The host must also drain the
+transport-local lifecycle seam after every injected event or tick: drain
+`pollClose()` before `pollSend()`, close the corresponding native BLE/GATT
+link, and call `linkDown()` exactly once when the platform reports the physical
+disconnect. Read the sticky `closeActionsDropped()` and
+`eventQueueDropped()` counters; any increase is a fail-closed host-overload
+signal, not a successful interoperability result. The current Kotlin
+drive-loop source is deliberately not a complete implementation of this seam;
+the consuming Android/iOS host must add it and test the native close callback.
 
 The repository also contains an Android-SDK-free Kotlin drive-loop reference at
 `implementation/mesh-milk/platform/kotlin-mesh-drive/`. Its injected clock,
@@ -169,8 +177,9 @@ records, while the legacy `MmpNode.new(...)` behavior is unchanged.
 
 ### Android preparation
 
-On a Linux/macOS host with Android SDK/NDK, `cargo-ndk`, and the required
-Rust targets installed:
+On a Linux/macOS host with Android SDK/NDK, `cargo-ndk`, `zip`, and the
+required Rust targets installed, set `ANDROID_NDK_HOME` to the installed NDK
+directory before running the packaging script:
 
 ```bash
 cd implementation/mesh-milk
@@ -178,6 +187,9 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 cargo install cargo-ndk
 scripts/build-android-aar.sh mobile-artifacts/android
 ```
+
+The script fails closed when `ANDROID_NDK_HOME` is unset or when `zip` is not
+available; neither prerequisite is installed by the script.
 
 The script produces a native-only `mmp-ffi.aar` plus a Kotlin bindings source
 zip. Before packaging, it runs the repository's source-level API/secret gate:
@@ -229,10 +241,16 @@ At minimum, capture:
 * permission and Bluetooth state transitions;
 * scan/advertise visibility and connection time;
 * callback ordering (`onBeacon`, link established, inbound bytes, outbound
-  bytes, disconnect);
+  bytes, `pollClose`/native close callback, disconnect);
 * handshake completion and peer node ID;
 * message and receipt delivery;
 * behavior after app suspension, process restart, and radio loss.
+
+Also record `closeActionsDropped()` and `eventQueueDropped()` at startup and
+after each test run. They must not increase. If either counter increases,
+stop admitting links, close active native connections, and report the run as a
+host-overload failure requiring restart/reconciliation rather than as a wire
+or radio failure.
 
 Until a consuming app and physical devices are available, the mobile result
 must be reported as **artifact/build verified** or **API-bridge verified**, not
