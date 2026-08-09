@@ -281,8 +281,14 @@ def verify_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
 
     output = _corpus_root(output)
     errors: list[str] = []
+    expected_by_target: dict[str, set[str]] = {}
     for seed in iter_seeds(seed_sets):
-        path = _seed_path(_target_dir(output, seed.target), seed)
+        target_dir = _target_dir(output, seed.target)
+        expected_by_target.setdefault(seed.target, set()).add(seed.filename)
+        path = _seed_path(target_dir, seed)
+        if path.is_symlink():
+            errors.append(f"generated corpus member must not be a symlink: {path}")
+            continue
         try:
             actual = path.read_bytes()
         except OSError as exc:
@@ -290,6 +296,14 @@ def verify_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
             continue
         if actual != seed.data:
             errors.append(f"content mismatch for {path} (source {seed.source})")
+    # The generated prefix is reserved for this recipe.  Reject stale members
+    # so a local verify cannot silently run an obsolete seed alongside the
+    # current vectors; developer-owned discoveries use another filename.
+    for target, expected in expected_by_target.items():
+        target_dir = _target_dir(output, target)
+        for path in target_dir.glob(f"{GENERATED_PREFIX}*.bin"):
+            if path.name not in expected:
+                errors.append(f"unexpected generated corpus member {path}")
     if errors:
         raise ValueError("\n".join(errors))
 

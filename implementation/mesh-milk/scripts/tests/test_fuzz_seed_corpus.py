@@ -39,6 +39,16 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 CORPUS.verify_corpus(output, seeds)
 
+    def test_verify_rejects_stale_generated_member(self) -> None:
+        seeds = CORPUS.build_seed_sets()
+        with tempfile.TemporaryDirectory() as root:
+            output = Path(root) / "corpus"
+            CORPUS.write_corpus(output, seeds)
+            stale = output / "fuzz_bundle" / "mmp-seed-retired-vector.bin"
+            stale.write_bytes(b"retired")
+            with self.assertRaisesRegex(ValueError, "unexpected generated corpus member"):
+                CORPUS.verify_corpus(output, seeds)
+
     def test_write_preserves_unmanaged_corpus_members(self) -> None:
         seeds = CORPUS.build_seed_sets()
         with tempfile.TemporaryDirectory() as root:
