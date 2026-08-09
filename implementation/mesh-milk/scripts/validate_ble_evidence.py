@@ -14,6 +14,10 @@ must occur in the corresponding log.  These checks prevent a manifest from
 passing with two arbitrary logs and self-selected markers, while remaining
 honest that text logs are not cryptographically authenticated.
 
+The two host logs and two store-inspection files must also be distinct
+canonical paths.  Reusing one file for both roles would make a two-host gate
+one-sided even if that file contains every required marker.
+
 Manifest shape (``mmp-ble-evidence-v1``)::
 
     {
@@ -179,6 +183,17 @@ def validate_manifest(path: Path) -> list[str]:
     roles: set[str] = set()
     names: set[str] = set()
     seed_fingerprints: set[str] = set()
+    evidence_paths: dict[Path, str] = {}
+
+    def record_evidence_path(candidate: Path | None, label: str) -> None:
+        if candidate is None:
+            return
+        previous = evidence_paths.get(candidate)
+        if previous is not None:
+            errors.append(f"{label} reuses evidence path already assigned to {previous}")
+        else:
+            evidence_paths[candidate] = label
+
     for index, host in enumerate(hosts):
         label = f"hosts[{index}]"
         if not _is_mapping(host):
@@ -207,6 +222,7 @@ def validate_manifest(path: Path) -> list[str]:
             else:
                 seed_fingerprints.add(normalized_fingerprint)
         log = _relative_file(path.parent, host.get("log"), f"{label}.log", errors)
+        record_evidence_path(log, f"{label}.log")
         markers = host.get("markers")
         if not isinstance(markers, list) or any(not _text(marker) for marker in markers):
             errors.append(f"{label}.markers must be a list of non-empty strings")
@@ -231,7 +247,8 @@ def validate_manifest(path: Path) -> list[str]:
         errors.append("stores must be an object")
     else:
         for key in ("peripheral_inspect", "central_inspect"):
-            _relative_file(path.parent, stores.get(key), f"stores.{key}", errors)
+            inspect = _relative_file(path.parent, stores.get(key), f"stores.{key}", errors)
+            record_evidence_path(inspect, f"stores.{key}")
 
     _validate_radio(document.get("radio"), errors)
 

@@ -290,7 +290,9 @@ MTU/RSSI measurements. If an adapter does not expose MTU or RSSI, the manifest
 must record `available: false` and a reason; an omitted measurement is not
 silently treated as a pass. Each host's declared log markers and each
 store-inspection path are checked, and paths may not escape the manifest
-directory. The reference CLI role markers are mandatory: the peripheral log
+directory. The two host log paths and two store-inspection paths must be
+distinct (canonicalized path aliases are rejected), so one file cannot stand
+in for both hosts. The reference CLI role markers are mandatory: the peripheral log
 must declare and contain `advertising`, `Established`, and `MessageReceived`;
 the central log must declare and contain `dialed`, `Established`, and
 `Delivered`. These checks make the package structurally complete but cannot

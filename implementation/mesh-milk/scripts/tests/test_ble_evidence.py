@@ -160,6 +160,36 @@ class BleEvidenceTests(unittest.TestCase):
                 errors,
             )
 
+    def test_evidence_files_cannot_be_reused_between_roles(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._manifest(root)
+            # Make the shared log satisfy both role marker sets so this test
+            # isolates the path-reuse guard rather than marker validation.
+            (root / "peripheral.log").write_text(
+                (root / "peripheral.log").read_text(encoding="utf-8")
+                + "dialed\nDelivered\n",
+                encoding="utf-8",
+            )
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][1]["log"] = "./peripheral.log"
+            data["stores"]["central_inspect"] = "./peripheral.inspect"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[1].log reuses evidence path already assigned to hosts[0].log",
+                errors,
+            )
+            self.assertIn(
+                "stores.central_inspect reuses evidence path already assigned to stores.peripheral_inspect",
+                errors,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
