@@ -346,8 +346,8 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 409 tests (403 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 76 tests (five platform-specific skips), while the
+listed 411 tests (405 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 85 tests (six platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
@@ -376,10 +376,29 @@ guards; they do not claim a physical Linux/BlueZ exchange or authenticate
 operator-supplied logs.
 
 Focused verification after this continuation passed: `mmp-crypto` (39 tests),
-workspace tests (409 listed / 403 active / 6 ignored), workspace Clippy with all
-features, Python tests (76 / 5 skipped), compileall, 44 deterministic fuzz seeds,
+workspace tests (411 listed / 405 active / 6 ignored), workspace Clippy with all
+features, Python tests (85 / 6 skipped), compileall, 44 deterministic fuzz seeds,
 the embedded target check, and layer-check. No `specification/` file or
 pre-existing dirty path was staged.
+
+### Orchestration continuation (2026-08-09)
+
+Three independent follow-up audits produced additional non-wire hardening. The
+BLE evidence validator `25c28fa` now canonicalizes all four evidence paths and
+rejects reused or aliased log/store files, preventing one-sided evidence from
+passing the two-host gate. The release checker `2d69a6a`/`53fecae` verifies that
+`ROADMAP.md`, `CHANGELOG.md`, and `COUNCIL-REVIEW.md` are non-empty regular files
+both in the checkout and in the recorded Git tree, including blob-mode checks;
+the tag-release workflow runs it before signing. Historical `AUDIT.md` references
+remain provenance only; no missing transcript is fabricated.
+
+The session audit `8debea6`/`4aba52b`/`b2c1d02` adds pre-encoding width checks for
+every narrow summary, reconciliation, WANT, blob, and error field. Invalid local
+frames now fail closed before either the pending queue or encrypted output, even
+when public `Frame` encoders remain infallible for compatibility. The focused
+`mmp-core` suite is 66 tests; frame-type authentication remains a deliberately
+recorded future wire-revision residual because adding Noise associated data or a
+duplicate encrypted type would change frozen v1 bytes.
 
 ## Source register
 
