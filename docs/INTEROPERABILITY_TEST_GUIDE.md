@@ -82,8 +82,18 @@ target/release/mmp-cli keygen /secure/path/alice.seed
 target/release/mmp-cli keygen /secure/path/bob.seed
 ```
 
-Record a non-secret fingerprint for each seed if your local test harness
-provides one; never put the seed bytes in an evidence package.
+Record a canonical, non-secret fingerprint for each seed; never put the seed
+bytes in an evidence package. The helper hashes the decoded 32-byte seed, so
+line endings and hexadecimal case do not change the value:
+
+```bash
+python scripts/fingerprint_seed.py /secure/path/alice.seed
+python scripts/fingerprint_seed.py /secure/path/bob.seed
+```
+
+Copy only the printed `sha256:<64 lowercase hex>` values into
+`hosts[].seed_fingerprint`. This is an evidence label, not an MMP node ID and
+does not make the seed safe to disclose.
 
 ### Host A: peripheral
 

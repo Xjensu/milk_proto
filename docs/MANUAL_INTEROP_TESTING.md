@@ -88,6 +88,19 @@ Record the printed node IDs. They are 32 hexadecimal characters (16 bytes).
 Do not reuse a seed between machines or delete a seed after a test unless the
 identity is intentionally being revoked.
 
+Before collecting the evidence manifest, record a canonical, non-secret
+fingerprint for each seed. Hash the decoded seed rather than the text file so
+line endings and hexadecimal case do not affect the value:
+
+```bash
+python scripts/fingerprint_seed.py /path/to/alice.seed
+python scripts/fingerprint_seed.py /path/to/bob.seed
+```
+
+Copy only the printed `sha256:<64 lowercase hex>` values into
+`hosts[].seed_fingerprint`; never publish the seed files. This fingerprint is
+an evidence label, not an MMP node ID and not a replacement for seed secrecy.
+
 ## 3. PC ↔ PC over real BLE (Linux peripheral + Linux/Windows/macOS central)
 
 The current peripheral backend is Linux/BlueZ only. The central backend uses
