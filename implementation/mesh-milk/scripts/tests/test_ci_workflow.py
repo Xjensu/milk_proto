@@ -49,6 +49,14 @@ class CIWorkflowTests(unittest.TestCase):
                 "name": "mmp-core-xcframework",
                 "path": "implementation/mesh-milk/mobile-artifacts/ios",
             },
+            "release": {
+                "name": "${{ matrix.artifact_name }}-signed",
+                "path": {
+                    "implementation/mesh-milk/${{ matrix.artifact_name }}",
+                    "implementation/mesh-milk/${{ matrix.artifact_name }}.sig",
+                    "implementation/mesh-milk/${{ matrix.artifact_name }}.pem",
+                },
+            },
         }
 
         for job_id, requirement in expected.items():

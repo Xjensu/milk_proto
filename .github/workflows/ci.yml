@@ -354,6 +354,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}-signed
+          if-no-files-found: error
           path: |
             implementation/mesh-milk/${{ matrix.artifact_name }}
             implementation/mesh-milk/${{ matrix.artifact_name }}.sig
