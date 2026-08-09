@@ -157,6 +157,9 @@ pub enum PeriphError {
         /// Supplied payload size.
         actual: usize,
     },
+    /// The peripheral has entered terminal shutdown and cannot advertise
+    /// again; construct a new role to restart the backend.
+    ShuttingDown,
     /// This build's OS has no peripheral backend (Windows/macOS stubs); the
     /// payload says what implementing one would take.
     Unsupported(&'static str),
@@ -173,6 +176,7 @@ impl fmt::Display for PeriphError {
             PeriphError::InvalidBeaconLength { expected, actual } => {
                 write!(f, "invalid beacon length: expected {expected} bytes, got {actual}")
             }
+            PeriphError::ShuttingDown => write!(f, "peripheral is shutting down"),
             PeriphError::Unsupported(what) => write!(f, "peripheral role unsupported: {what}"),
             #[cfg(target_os = "linux")]
             PeriphError::Bluer(e) => write!(f, "bluer error: {e}"),
@@ -190,6 +194,14 @@ pub(crate) fn validate_beacon(beacon: &[u8]) -> Result<(), PeriphError> {
     } else {
         Err(PeriphError::InvalidBeaconLength { expected: BEACON_LEN, actual: beacon.len() })
     }
+}
+
+/// Keep terminal shutdown admission testable without constructing a BlueZ
+/// role. The Linux backend calls this immediately before and after the
+/// asynchronous advertisement registration.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn ensure_not_shutting_down(shutting_down: bool) -> Result<(), PeriphError> {
+    if shutting_down { Err(PeriphError::ShuttingDown) } else { Ok(()) }
 }
 
 impl std::error::Error for PeriphError {
@@ -298,5 +310,11 @@ mod tests {
             Err(PeriphError::InvalidBeaconLength { expected, actual })
                 if expected == BEACON_LEN && actual == BEACON_LEN + 1
         ));
+    }
+
+    #[test]
+    fn shutdown_fence_rejects_advertisement_admission() {
+        assert!(ensure_not_shutting_down(false).is_ok());
+        assert!(matches!(ensure_not_shutting_down(true), Err(PeriphError::ShuttingDown)));
     }
 }

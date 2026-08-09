@@ -51,7 +51,8 @@ use tokio::time::{timeout, Duration};
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
 use crate::{
-    event_channel, mint_link_id, validate_beacon, LinkId, LinkQuality, PeriphError, TalEvent,
+    ensure_not_shutting_down, event_channel, mint_link_id, validate_beacon, LinkId, LinkQuality,
+    PeriphError, TalEvent,
     DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
@@ -204,6 +205,7 @@ impl PeripheralRole {
     /// that matters for M5b.
     pub async fn advertise(&self, beacon: Vec<u8>) -> Result<(), PeriphError> {
         validate_beacon(&beacon)?;
+        ensure_not_shutting_down(self.shutting_down.load(Ordering::Acquire))?;
         let adv = Advertisement {
             advertisement_type: bluer::adv::Type::Peripheral, // connectable
             service_uuids: [service_uuid()].into_iter().collect(),
@@ -212,8 +214,15 @@ impl PeripheralRole {
             ..Default::default()
         };
         let mut slot = self.adv.lock().await;
+        ensure_not_shutting_down(self.shutting_down.load(Ordering::Acquire))?;
         *slot = None; // drop (unregister) the previous advertisement first
-        *slot = Some(self.adapter.advertise(adv).await?);
+        let handle = self.adapter.advertise(adv).await?;
+        // `shutdown_all` waits for this advertisement lock. If it won the
+        // shutdown flag race while BlueZ registration was in flight, do not
+        // publish a handle after terminal teardown; dropping it here
+        // unregisters the just-created advertisement.
+        ensure_not_shutting_down(self.shutting_down.load(Ordering::Acquire))?;
+        *slot = Some(handle);
         Ok(())
     }
 
