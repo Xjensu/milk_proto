@@ -17,6 +17,7 @@ mod vectors;
 use std::collections::HashSet;
 use std::env;
 use std::fmt::Write as _;
+use std::fs::OpenOptions;
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -67,6 +68,8 @@ USAGE:
     mmp-cli keygen <file>
 
 Writes 32 bytes of OS-generated identity seed as hexadecimal text to <file>.
+The command refuses to overwrite an existing file; choose a new path when
+minting another identity.
 The path must not begin with '-' (use ./<name> or an absolute path instead).
 ";
 
@@ -258,7 +261,7 @@ fn cmd_keygen(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Err(e) = std::fs::write(path, hex(&seed)) {
+    if let Err(e) = write_seed_file(path, &seed) {
         eprintln!("mmp-cli keygen: failed to write '{path}': {e}");
         return ExitCode::from(2);
     }
@@ -317,6 +320,26 @@ fn random_seed() -> Result<[u8; 32], rand::Error> {
     let mut seed = [0u8; 32];
     OsRng.try_fill_bytes(&mut seed)?;
     Ok(seed)
+}
+
+/// Create a seed file without ever truncating an existing identity.
+///
+/// Identity seeds are long-lived credentials.  An accidental second `keygen`
+/// invocation must not silently replace the identity that an operator still
+/// expects to own, so creation is exclusive (`create_new`) rather than the
+/// usual truncating `fs::write`.  On Unix, apply the narrowest ordinary file
+/// mode available before writing; Windows inherits the directory ACL because
+/// the standard library has no portable ACL-construction API.  The complete
+/// file is flushed before reporting success so a successful command does not
+/// immediately leave a zero-length or partially buffered identity behind.
+fn write_seed_file(path: &str, seed: &[u8; 32]) -> std::io::Result<()> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(path)?;
+    std::io::Write::write_all(&mut file, hex(seed).as_bytes())?;
+    file.sync_all()
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -1127,6 +1150,11 @@ mod tests {
         env::temp_dir().join(format!("mmp-cli-snapshot-{}-{nonce}.bin", std::process::id()))
     }
 
+    fn temp_seed_path() -> std::path::PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        env::temp_dir().join(format!("mmp-cli-seed-{}-{nonce}.hex", std::process::id()))
+    }
+
     fn remove_snapshot(path: &std::path::Path) {
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(path.with_extension("tmp"));
@@ -1159,6 +1187,37 @@ mod tests {
         let help = vec!["--help".to_string()];
         assert_eq!(cmd_keygen(&help), ExitCode::SUCCESS);
         assert!(subcommand_usage("keygen").contains("mmp-cli keygen <file>"));
+    }
+
+    #[test]
+    fn seed_creation_is_exclusive_and_does_not_overwrite_an_identity() {
+        let path = temp_seed_path();
+        let _ = std::fs::remove_file(&path);
+        let path_string = path.to_string_lossy().into_owned();
+        let first = [0x11; 32];
+        let second = [0x22; 32];
+
+        write_seed_file(&path_string, &first).expect("first seed creation must succeed");
+        let original = std::fs::read_to_string(&path).expect("seed must be readable");
+        let error = write_seed_file(&path_string, &second).expect_err("existing seed must not be replaced");
+        assert_eq!(error.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn seed_creation_uses_owner_only_permissions_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = temp_seed_path();
+        let _ = std::fs::remove_file(&path);
+        let path_string = path.to_string_lossy().into_owned();
+        write_seed_file(&path_string, &[0x33; 32]).expect("seed creation must succeed");
+
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
