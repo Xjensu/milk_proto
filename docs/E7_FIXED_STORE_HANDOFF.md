@@ -186,3 +186,29 @@ cargo check -p mmp-core -p mmp-node-embassy \
   --target thumbv7em-none-eabihf --no-default-features
 Finished `dev` profile
 ```
+
+## Authority-state overflow closure (2026-08-09)
+
+The revocation-capacity blocker described above is closed by commit `31da872`.
+The chosen policy is scoped quarantine, not a global authority-disable bit:
+when a verified revocation list would exceed the bounded 512-entry sticky
+union, the merge preflights all unique entries, leaves the existing union
+unchanged, removes the pinned root and cached certificates for each affected
+scope, and returns `RevocationMergeError::Capacity`. The legacy infallible
+`merge_revocation_list` wrapper invokes the same fail-closed behavior, while
+`try_merge_revocation_list` exposes the local outcome to newer callers.
+
+Unrelated scopes remain available, and existing tombstones remain bounded and
+durable even while a quarantined scope has no root. The private snapshot stays
+at version 1; decoder validation permits such rootless tombstones, while all
+restored certificates still require a currently pinned root and a fresh
+signature check. Explicit local re-pinning is the only recovery action. No
+wire object or file under `specification/` changed.
+
+Focused authority tests now cover atomic overflow, unrelated-scope survival,
+root/certificate removal, rootless-tombstone snapshot round-trip, and
+explicit re-pin recovery. Full workspace tests and Clippy, 124 Python tests
+(8 skipped), 46 fuzz seeds, the embedded target closure, layer-check, the
+release CLI demo, and six transactional-store acceptance-double tests pass.
+The fixed-capacity flash provider, board-specific allocator policy, linked
+image, and HIL evidence remain open E7 work.
