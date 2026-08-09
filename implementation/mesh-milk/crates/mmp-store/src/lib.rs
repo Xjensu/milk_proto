@@ -30,7 +30,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState};
+use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
 use mmp_types::bundle::{class, prio};
@@ -355,6 +355,50 @@ impl SnapshotStore {
         replace_snapshot(&tmp, &self.path)
     }
 
+    /// Return the complete encoded snapshot size after replacing or inserting
+    /// one bundle. This is the bounded receive-side admission calculation for
+    /// [`BundleStore::try_put`]; it deliberately includes framing, checksums,
+    /// and every staged auxiliary record because `SnapshotLimits` applies to
+    /// the complete image rather than to bundle bytes alone.
+    fn projected_image_size(&self, candidate: &BundleMeta, body: &[u8]) -> Option<u64> {
+        if usize::try_from(candidate.size).ok()? != body.len() {
+            return None;
+        }
+
+        let mut total = u64::try_from(MAGIC.len()).ok()?;
+        for meta in self.mem.all_meta() {
+            if meta.id == candidate.id {
+                continue; // replacement delta: do not count the old body
+            }
+            let (stored_meta, stored_body) = self.mem.get(&meta.id)?;
+            if usize::try_from(stored_meta.size).ok()? != stored_body.len() {
+                return None;
+            }
+            total = total.checked_add(bundle_record_size(stored_body.len())?)?;
+        }
+        total = total.checked_add(bundle_record_size(body.len())?)?;
+
+        for claim in &self.claims {
+            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+        }
+        for blob in &self.group_blobs {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
+        }
+        if let Some(seen) = &self.seen_index {
+            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+        }
+        if let Some(filter) = &self.receipt_filter {
+            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+        }
+        if let Some(authority) = &self.authority {
+            total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
+        }
+        if let Some(blocklist) = &self.blocklist {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blocklist.len())?)?)?;
+        }
+        Some(total)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -588,6 +632,21 @@ fn replace_snapshot(tmp: &Path, path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Size of one framed record (`u32 length` + record + BLAKE3 checksum).
+/// `None` means the record cannot be represented by the snapshot framing.
+fn framed_record_size(record_len: usize) -> Option<u64> {
+    let record_len = u32::try_from(record_len).ok()? as u64;
+    4u64.checked_add(record_len)?.checked_add(32)
+}
+
+/// Size of a bundle record, including its kind byte and fixed metadata header.
+/// The body length is the exact byte vector held by `MemStore`.
+fn bundle_record_size(body_len: usize) -> Option<u64> {
+    const BUNDLE_META_LEN: usize = 16 + 1 + 16 + 16 + 1 + 4 + 8 + 8 + 1 + 1 + 1;
+    let record_len = 1usize.checked_add(BUNDLE_META_LEN)?.checked_add(body_len)?;
+    framed_record_size(record_len)
+}
+
 #[cfg(unix)]
 fn sync_parent_directory(path: &Path) -> std::io::Result<()> {
     let parent = path
@@ -671,6 +730,25 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
 impl BundleStore for SnapshotStore {
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
         self.mem.put(meta, bytes)
+    }
+    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+        let replaced = self.mem.meta(&meta.id).is_some();
+        let Some(limits) = self.limits else {
+            self.mem.put(meta, bytes);
+            return Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted });
+        };
+        // An oversized image was intentionally not loaded. Do not let a
+        // subsequent receive path appear to admit state that `persist` is
+        // permanently forbidden to replace.
+        if self.load_rejected
+            || self
+                .projected_image_size(&meta, bytes)
+                .is_none_or(|size| size > limits.max_file_bytes())
+        {
+            return Err(StorePutError::Capacity);
+        }
+        self.mem.put(meta, bytes);
+        Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted })
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.mem.get(id)

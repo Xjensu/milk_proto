@@ -21,7 +21,7 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use mmp_core::store::{BundleMeta, BundleStore};
+use mmp_core::store::{BundleMeta, BundleStore, StorePutError, StorePutOutcome};
 use mmp_store::SnapshotStore;
 use mmp_types::ids::Id16;
 
@@ -39,6 +39,9 @@ impl SharedStore {
 impl BundleStore for SharedStore {
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
         self.lock().put(meta, bytes)
+    }
+    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+        self.lock().try_put(meta, bytes)
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.lock().get(id)

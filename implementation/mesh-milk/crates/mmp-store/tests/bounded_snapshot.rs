@@ -1,6 +1,6 @@
 use std::fs;
 
-use mmp_core::store::{BundleMeta, BundleStore, SlotState};
+use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_store::{SnapshotLimits, SnapshotStore};
 use mmp_types::ids::Id16;
 
@@ -68,4 +68,58 @@ fn bounded_persist_removes_oversized_temp_image() {
 
     let _ = fs::remove_file(path);
     let _ = fs::remove_file(temp);
+}
+
+#[test]
+fn bounded_try_put_accounts_for_replacement_delta_before_admission() {
+    let stem = format!("mmp-store-bounded-admission-{}", std::process::id());
+    let fixture_path = std::env::temp_dir().join(format!("{stem}-fixture.mmp"));
+    let path = std::env::temp_dir().join(format!("{stem}.mmp"));
+    let fixture_tmp = fixture_path.with_extension("tmp");
+    let temp = path.with_extension("tmp");
+    for file in [&fixture_path, &fixture_tmp, &path, &temp] {
+        let _ = fs::remove_file(file);
+    }
+
+    // Establish the exact image size of one five-byte bundle. The bounded
+    // store is then opened from that complete image so the replacement test
+    // exercises an already-full working set rather than only an in-memory
+    // estimate.
+    let mut fixture = SnapshotStore::open(&fixture_path);
+    fixture.put(meta(1), b"hello");
+    fixture.persist().expect("fixture persists");
+    let image = fs::read(&fixture_path).expect("fixture image");
+    fs::write(&path, &image).expect("copy complete fixture image");
+
+    // One extra byte is available: replacing the existing body with six
+    // bytes must fit, while inserting even a one-byte second record must not
+    // fit because it also carries framing, metadata, and a checksum.
+    let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64 + 1));
+    let mut replacement = meta(1);
+    replacement.size = 6;
+    assert_eq!(
+        bounded.try_put(replacement, b"123456"),
+        Ok(StorePutOutcome::Replaced),
+        "replacement accounting must charge only the size delta"
+    );
+
+    let mut second = meta(2);
+    second.size = 1;
+    assert_eq!(
+        bounded.try_put(second, b"x"),
+        Err(StorePutError::Capacity),
+        "a new record must include its complete framing overhead"
+    );
+    assert_eq!(bounded.len(), 1);
+    assert_eq!(bounded.total_bytes(), 6);
+
+    bounded.persist().expect("the exact-fill replacement remains durable");
+    assert_eq!(fs::metadata(&path).unwrap().len(), image.len() as u64 + 1);
+    let restored = SnapshotStore::open(&path);
+    assert_eq!(restored.get(&replacement.id).unwrap().1, b"123456");
+    assert!(restored.get(&second.id).is_none());
+
+    for file in [&fixture_path, &fixture_tmp, &path, &temp] {
+        let _ = fs::remove_file(file);
+    }
 }
