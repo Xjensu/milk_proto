@@ -2154,3 +2154,32 @@ Python tests (8 skipped), 46 deterministic fuzz seeds, the embedded
 `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery demo, and
 six transactional-store tests. Native platform and physical BLE gates remain
 open.
+
+## 2026-08-09 continuation: store, simulator, and mobile contract residuals
+
+The production store audit found no safe local patch to commit. The default
+`SnapshotStore::open()` path still reads an unbounded file and can retain all
+valid claims/group blobs from an unbounded image. The explicit
+`open_with_limits()` path rejects oversized images before retaining them, and
+blocklist records are strictly versioned, sorted, and capped. A safe default
+requires a tier-aware storage policy plus streaming/early-reject parsing; an
+arbitrary cap would silently reject valid anchor snapshots or change recovery
+semantics. This remains a host-integration gate.
+
+The simulator audit found that adversary-session buffers, schedules, and
+metrics are intentionally test-driver-owned and unbounded. Production `Node`
+does not import those types, and adversarial/contact loops are iteration-bounded
+in the test scenarios. No production memory guarantee relies on simulator
+buffers, so no simulator change was made.
+
+The mobile contract audit found stale pre-existing documentation for
+`ConversationPending`, `pollClose`/queue-drop signals, monotonic `tick`, group
+method return types, destructive `pollSend` back-pressure retention, and
+`pollClose -> native close -> linkDown` ordering. Those user-owned dirty files
+were not overwritten. The Rust FFI surface and committed manual procedure
+remain the authoritative implementation contract; documentation correction and
+native back-pressure/lifecycle tests are the next integration gate.
+
+Focused evidence: `mmp-store` tests and strict Clippy pass; `mmp-sim` has 27
+passing tests and 6 ignored research/HIL cases. Native Android/iOS builds,
+real ATT back-pressure, and physical BLE exchange remain unverified.

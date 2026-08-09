@@ -1271,6 +1271,40 @@ embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
 demo, and six transactional-store tests. No file under `specification/`, no
 AI-specific artifact, and no pre-existing dirty path was modified.
 
+### Orchestration continuation XXXII (2026-08-09)
+
+Three delegated audits completed with no additional code patch. The production
+store review confirmed that `SnapshotStore::open()` still uses an unbounded
+`std::fs::read` path and can retain all valid claims/group blobs from an
+unbounded image. `open_with_limits()` bounds the complete image and its hostile
+length tests pass, while blocklist validation is already strict and capped.
+Changing the default is not safe without a tier-aware policy (standard versus
+anchor storage) and a streaming/early-reject parser; this remains a production
+host integration gate.
+
+The simulator audit confirmed that `mmp-sim::AdversarySession` buffers,
+metrics, and schedules are intentionally caller/test-driver-owned. They are
+not imported by production `Node` code, and iteration/payload limits constrain
+the adversarial scenarios. No production memory claim is based on those
+buffers, so no simulator patch was warranted.
+
+The mobile contract audit found documentation mismatches that remain in
+pre-existing dirty files: the FFI error enum omits `ConversationPending` in the
+API reference; `pollClose`, `closeActionsDropped`, and `eventQueueDropped` are
+missing from that reference; example ticks still use `Date.now()`; one mobile
+signature table groups `groupInvite/groupSend/groupRemove` under the wrong
+return type; and RN/iOS snippets do not visibly retain destructive `pollSend`
+frames across ATT back-pressure or show the `pollClose -> native close ->
+linkDown` ordering. Those files were deliberately not overwritten. The
+authoritative Rust FFI and committed manual procedure already express the
+correct monotonic-time and close-queue requirements; updating the user-owned
+dirty documentation is the next human-owned integration action.
+
+Focused evidence: `mmp-store` unit/hostile/bounded/transactional tests and
+strict Clippy pass; `mmp-sim` has 27 passing tests and 6 ignored research/HIL
+cases. No file under `specification/`, no AI-specific artifact, and no
+pre-existing dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
