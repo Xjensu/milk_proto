@@ -19,6 +19,10 @@ use tokio::sync::Notify;
 /// Larger notifications cannot contribute to a valid envelope and are
 /// rejected before their attacker-controlled allocation enters the queue.
 const MAX_LINK_DATA_BYTES: usize = mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 3;
+/// The beacon parser accepts one fixed v1 payload.  Service Data is supplied by
+/// the platform as an owned `Vec<u8>` and must not be allowed to consume a data
+/// slot with an arbitrarily large malformed/extended-advertising value.
+const MAX_BEACON_BYTES: usize = mmp_types::beacon::BEACON_LEN;
 
 pub(crate) const TOTAL_CAPACITY: usize = 2048;
 pub(crate) const CONTROL_CAPACITY: usize = 64;
@@ -164,11 +168,15 @@ impl EventSender {
                 return Err(DataEnqueueError::Stale);
             }
         }
-        if matches!(stamp, DataStamp::Link { .. })
-            && matches!(&event, TalEvent::LinkData { bytes, .. } if bytes.len() > MAX_LINK_DATA_BYTES)
-        {
+        let oversized_link_data = matches!(stamp, DataStamp::Link { .. })
+            && matches!(&event, TalEvent::LinkData { bytes, .. } if bytes.len() > MAX_LINK_DATA_BYTES);
+        let oversized_beacon =
+            matches!(&event, TalEvent::Beacon { payload, .. } if payload.len() > MAX_BEACON_BYTES);
+        if oversized_link_data || oversized_beacon {
             // Treat this like data-lane overflow so the caller retires the
-            // affected link instead of silently losing stream ordering.
+            // affected link instead of silently losing stream ordering.  For a
+            // beacon the caller may safely drop the hint; the same error keeps
+            // the admission boundary nonblocking and allocation-bounded.
             return Err(DataEnqueueError::Full);
         }
         if state.data.len() >= DATA_CAPACITY {
@@ -467,6 +475,17 @@ mod tests {
         };
 
         assert_eq!(tx.try_link_data(7, 1, oversized), Err(DataEnqueueError::Full));
+    }
+
+    #[tokio::test]
+    async fn oversized_beacon_is_rejected_before_queueing() {
+        let (tx, _rx) = event_channel();
+        let oversized = TalEvent::Beacon {
+            payload: vec![0; mmp_types::beacon::BEACON_LEN + 1],
+            rssi: -40,
+        };
+
+        assert_eq!(tx.try_data(oversized), Err(DataEnqueueError::Full));
     }
 
     #[tokio::test]
