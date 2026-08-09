@@ -249,11 +249,7 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
 
     frozen: dict[str, tuple[Seed, ...]] = {}
     for target, seeds in result.items():
-        seen: set[str] = set()
-        for seed in seeds:
-            if seed.name in seen:
-                raise ValueError(f"duplicate seed name {target}/{seed.name}")
-            seen.add(seed.name)
+        _validate_seed_names(target, seeds)
         frozen[target] = tuple(seeds)
     return frozen
 
@@ -297,6 +293,21 @@ def _seed_path(target_dir: Path, seed: Seed) -> Path:
     return target_dir / filename
 
 
+def _validate_seed_names(target: str, seeds: Iterable[Seed]) -> None:
+    """Reject generated filenames that collide on case-insensitive filesystems."""
+
+    seen: dict[str, str] = {}
+    for seed in seeds:
+        folded = seed.name.casefold()
+        previous = seen.get(folded)
+        if previous is not None:
+            raise ValueError(
+                f"case-insensitive duplicate seed name {target}/{seed.name} "
+                f"conflicts with {target}/{previous}"
+            )
+        seen[folded] = seed.name
+
+
 def write_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
     """Write generated members, preserving any user-owned corpus files."""
 
@@ -307,6 +318,7 @@ def write_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
     validated: list[tuple[str, tuple[Seed, ...], Path]] = []
     for target, seeds in seed_sets.items():
         target_dir = _target_dir(output, target)
+        _validate_seed_names(target, seeds)
         for seed in seeds:
             if seed.target != target:
                 raise ValueError(f"seed target mismatch: {seed.target!r} != {target!r}")
@@ -329,6 +341,8 @@ def verify_corpus(output: Path, seed_sets: dict[str, tuple[Seed, ...]]) -> None:
     output = _corpus_root(output)
     errors: list[str] = []
     expected_by_target: dict[str, set[str]] = {}
+    for target, seeds in seed_sets.items():
+        _validate_seed_names(target, seeds)
     for seed in iter_seeds(seed_sets):
         target_dir = _target_dir(output, seed.target)
         expected_by_target.setdefault(seed.target, set()).add(seed.filename)
