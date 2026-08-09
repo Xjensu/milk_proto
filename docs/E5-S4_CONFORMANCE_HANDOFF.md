@@ -2788,3 +2788,28 @@ Verification for this continuation:
 - `check_spec_status.py`, `layer-check`, and `git diff --check`: passed.
 - No path under `specification/` changed; pre-existing user-owned dirty paths
   remain unstaged.
+
+## 2026-08-09 continuation: final integrity and smoke-campaign verification
+
+The orchestrator re-ran the affected suites after integrating `b0fb953`,
+`3efea1e`, and `426f7d0`. Core snapshot decoding, RBSR state-machine checks,
+node orchestration, and FFI behavior remain green. The fixes are local
+fail-closed checks and CI resource bounds; none changes a frozen frame,
+signature, bundle, or specification definition.
+
+Current verification evidence:
+
+- `cargo test -p mmp-core -p mmp-node -p mmp-ffi --all-targets -- --test-threads=1`:
+  87 core unit tests + 5 persistence tests, 110 node tests, and 28 FFI tests
+  passed.
+- Strict Clippy for `mmp-core`, `mmp-router`, `mmp-node`, and `mmp-ffi` with
+  `-D warnings` passed.
+- Python tooling suite: 149 passed, 10 expected platform-specific skips.
+- `check_spec_status.py`, `layer-check`, and `git diff --check` passed.
+
+The remaining work is unchanged and should not be guessed into the wire:
+RBSR declared-priority partition signaling, D3 subscribed-scope weighting,
+gossiped authority roots, platform-keystore ratchet persistence, native
+Android/iOS integration, physical Linux/BlueZ exchange, calibrated radio
+energy/contact-survival measurements, SLAW mobility validation, and the
+external cryptographic review.
