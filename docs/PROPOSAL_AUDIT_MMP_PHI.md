@@ -316,10 +316,17 @@ remaining clear envelope-type authentication, infallible public frame
 encoder, and pre-auth allocation gaps. No specification, `mmp-types`, or
 pre-existing dirty path was touched.
 
+`ba736d1` closes a separate operator-safety issue found while executing the
+manual procedure: every documented CLI subcommand now handles help before
+performing I/O, `keygen --help` cannot create an identity file, and only
+option-looking path values are rejected. Free-form message text and ordinary
+absolute/relative paths remain valid. Focused CLI tests and process-level help
+checks pass; this is usability/release hardening, not a protocol change.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
-workspace test matrix passes, including 30 CLI/conformance tests, 64 core unit
+workspace test matrix passes, including 33 CLI/conformance tests, 64 core unit
 tests plus 5 decoder-limit integration tests, 37 crypto tests, 19 FFI tests,
 79 node tests, 24 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
@@ -339,7 +346,7 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 404 tests (398 active, 6 intentionally ignored) with zero failures.
+listed 407 tests (401 active, 6 intentionally ignored) with zero failures.
 The Python harness now reports 66 tests (four platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
