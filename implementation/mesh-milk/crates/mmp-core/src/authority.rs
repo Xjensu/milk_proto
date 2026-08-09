@@ -47,6 +47,16 @@ pub enum CertReject {
     Capacity,
 }
 
+/// Local authority-state admission failure. This is not a wire rejection:
+/// the affected scope is quarantined when its sticky revocation union cannot
+/// retain another verified entry without evicting an older one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevocationMergeError {
+    /// The sticky revocation map reached its local capacity. The affected
+    /// scope is quarantined instead of dropping or evicting an entry.
+    Capacity,
+}
+
 /// Doc 18 §2.2: two trust levels for an operator root. Only `Pinned` is wired
 /// in this slice (gossiped-root learning is deferred, E5-S5 scope call) — the
 /// variant is reserved so the enum doesn't need to change when it lands.
@@ -121,8 +131,10 @@ impl AuthorityStore {
 
     /// Decode a bounded authority snapshot. Cryptographic certificates are
     /// verified again against the restored pinned root; malformed, unknown,
-    /// duplicate, or cross-scope records reject the complete snapshot so the
-    /// caller can fail closed to an empty authority store.
+    /// or duplicate records reject the complete snapshot so the caller can
+    /// fail closed to an empty authority store. Revocation tombstones may
+    /// outlive a quarantined root so that explicit re-pinning cannot silently
+    /// erase previously observed revocations.
     pub fn decode(bytes: &[u8]) -> Option<AuthorityStore> {
         let mut r = Reader::new(bytes);
         if r.u8().ok()? != AUTH_SNAPSHOT_VERSION {
@@ -181,9 +193,7 @@ impl AuthorityStore {
             let subject = r.key32().ok()?;
             let scope = r.id16().ok()?;
             let not_after = r.u32().ok()?;
-            if !store.roots.contains_key(&scope)
-                || store.revoked.insert((subject, scope), not_after).is_some()
-            {
+            if store.revoked.insert((subject, scope), not_after).is_some() {
                 return None;
             }
         }
@@ -267,26 +277,76 @@ impl AuthorityStore {
         self.certs.retain(|(s, _), _| s != subject);
     }
 
+    /// Quarantine one scope when its sticky revocation ledger is exhausted.
+    /// Silently dropping a new revocation would be fail-open: a certificate
+    /// whose tombstone could not be retained might still elevate priority.
+    /// Removing the local root and all cached certs preserves the security
+    /// direction at the cost of requiring an explicit re-pin after recovery.
+    fn quarantine_scope(&mut self, scope: &Id16) {
+        self.roots.remove(scope);
+        self.certs.retain(|(_, cert_scope), _| cert_scope != scope);
+    }
+
     /// Doc 18 §6 issuer-signed revocation, "revoked wins, sticky": insert-or-
     /// max each entry's `not_after`, never remove on a shorter/absent later
     /// list. `issuer` must be the trusted root for an entry's scope — an
     /// issuer cannot revoke into a scope it doesn't own (mirrors §5.2's
     /// cross-scope rule for grants).
     pub fn merge_revocation_list(&mut self, issuer: &Key32, list: &RevocationList) {
+        let _ = self.try_merge_revocation_list(issuer, list);
+    }
+
+    /// Fallible revocation-list merge for callers that need an explicit local
+    /// capacity signal. The legacy [`AuthorityStore::merge_revocation_list`]
+    /// wrapper remains source-compatible and still quarantines affected scopes
+    /// when its result is ignored.
+    pub fn try_merge_revocation_list(
+        &mut self,
+        issuer: &Key32,
+        list: &RevocationList,
+    ) -> Result<(), RevocationMergeError> {
         // Unknown suites remain opaque claim bodies and must never be
         // interpreted by the v1 authority store.
         if list.suite != 0x01 {
-            return;
+            return Ok(());
         }
+
+        // Preflight unique verified keys before mutating the sticky union. A
+        // list that would overflow is rejected atomically; affected scopes
+        // are quarantined instead of silently dropping a revocation or
+        // evicting an older one.
+        let mut pending = BTreeSet::new();
+        for entry in &list.entries {
+            if self.roots.get(&entry.scope).map(|(i, _)| i) == Some(issuer)
+                && !self.revoked.contains_key(&(entry.subject, entry.scope))
+            {
+                pending.insert((entry.subject, entry.scope));
+            }
+        }
+        if self
+            .revoked
+            .len()
+            .checked_add(pending.len())
+            .is_none_or(|total| total > MAX_AUTH_REVOKED)
+        {
+            let affected_scopes: BTreeSet<Id16> = pending.into_iter().map(|(_, scope)| scope).collect();
+            for scope in &affected_scopes {
+                self.quarantine_scope(scope);
+            }
+            return Err(RevocationMergeError::Capacity);
+        }
+
         for entry in &list.entries {
             if self.roots.get(&entry.scope).map(|(i, _)| i) != Some(issuer) {
                 continue;
             }
-            let slot = self.revoked.entry((entry.subject, entry.scope)).or_insert(0);
+            let key = (entry.subject, entry.scope);
+            let slot = self.revoked.entry(key).or_insert(0);
             if entry.not_after > *slot {
                 *slot = entry.not_after;
             }
         }
+        Ok(())
     }
 
     /// Doc 18 §5.2 elevation predicate, minus the token bucket (that's
@@ -598,6 +658,85 @@ mod tests {
         subject[..8].copy_from_slice(&(MAX_AUTH_CERTS as u64).to_le_bytes());
         let cert = signed_cert(&issuer, Key32(subject), scope, CAP_ANNOUNCE, 10_000);
         assert_eq!(store.consider_cert(&cert, 0), Err(CertReject::Capacity));
+    }
+
+    #[test]
+    fn revocation_capacity_quarantines_scope_instead_of_dropping_tombstone() {
+        let issuer = Identity::from_seed(&[0xb1u8; 32]);
+        let filler_scope = Id16([0xb2u8; 16]);
+        let target_scope = Id16([0xb3u8; 16]);
+        let target_subject = Key32([0xb4u8; 32]);
+        let retained_revoked_subject = Key32([0xb5u8; 32]);
+        let filler_subject = Key32([0xb6u8; 32]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(filler_scope, issuer.public());
+        store.pin_root(target_scope, issuer.public());
+
+        let target_cert = signed_cert(&issuer, target_subject, target_scope, CAP_ANNOUNCE, 10_000);
+        let retained_revoked_cert = signed_cert(&issuer, retained_revoked_subject, target_scope, CAP_ANNOUNCE, 10_000);
+        let filler_cert = signed_cert(&issuer, filler_subject, filler_scope, CAP_ANNOUNCE, 10_000);
+        store.consider_cert(&target_cert, 0).unwrap();
+        store.consider_cert(&retained_revoked_cert, 0).unwrap();
+        store.consider_cert(&filler_cert, 0).unwrap();
+        assert!(store.grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store.grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0).is_some());
+
+        store.merge_revocation_list(
+            &issuer.public(),
+            &RevocationList {
+                suite: 1,
+                entries: vec![mmp_types::authcert::RevEntry {
+                    subject: retained_revoked_subject,
+                    scope: target_scope,
+                    not_after: 10_000,
+                }],
+            },
+        );
+
+        for n in 0..(MAX_AUTH_REVOKED - 1) {
+            let mut subject = [0u8; 32];
+            subject[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            store.merge_revocation_list(
+                &issuer.public(),
+                &RevocationList {
+                    suite: 1,
+                    entries: vec![mmp_types::authcert::RevEntry {
+                        subject: Key32(subject),
+                        scope: filler_scope,
+                        not_after: 10_000,
+                    }],
+                },
+            );
+        }
+        assert_eq!(store.revoked.len(), MAX_AUTH_REVOKED);
+
+        assert_eq!(
+            store.try_merge_revocation_list(
+                &issuer.public(),
+                &RevocationList {
+                    suite: 1,
+                    entries: vec![mmp_types::authcert::RevEntry {
+                        subject: target_subject,
+                        scope: target_scope,
+                        not_after: 10_000,
+                    }],
+                },
+            ),
+            Err(RevocationMergeError::Capacity)
+        );
+
+        assert!(store.grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0).is_none());
+        assert_eq!(store.consider_cert(&target_cert, 0), Err(CertReject::UntrustedIssuer));
+        assert!(store.grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0).is_some());
+        assert_eq!(store.revoked.len(), MAX_AUTH_REVOKED);
+
+        let mut restored = AuthorityStore::decode(&store.encode()).expect("quarantined snapshot remains valid");
+        assert_eq!(restored.consider_cert(&target_cert, 0), Err(CertReject::UntrustedIssuer));
+        assert_eq!(restored.consider_cert(&retained_revoked_cert, 0), Err(CertReject::UntrustedIssuer));
+
+        let mut recovered = restored;
+        recovered.pin_root(target_scope, issuer.public());
+        assert_eq!(recovered.consider_cert(&retained_revoked_cert, 0), Err(CertReject::Revoked));
     }
 
     #[test]
