@@ -83,6 +83,25 @@ class CIWorkflowTests(unittest.TestCase):
         )
         self.assertNotRegex(node_manifest, r"(?m)^mmp-store\s*=")
 
+    def test_embedded_shell_sources_keep_the_no_std_boundary(self) -> None:
+        """Catch an accidental host-only import before the target job runs."""
+
+        for crate in ("mmp-node-embassy", "mmp-tal-embedded"):
+            source = (
+                WORKSPACE / "crates" / crate / "src" / "lib.rs"
+            ).read_text(encoding="utf-8")
+            self.assertRegex(
+                source,
+                r"(?m)^#!\[no_std\]\s*$",
+                crate,
+            )
+            self.assertNotRegex(
+                source,
+                r"(?m)^\s*(?:use|extern\s+crate)\s+std(?:[:;]|$)",
+                crate,
+            )
+            self.assertNotIn("std::", source, crate)
+
     def test_mobile_artifact_uploads_fail_on_missing_paths(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         jobs = workflow["jobs"]

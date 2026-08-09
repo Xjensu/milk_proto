@@ -233,3 +233,33 @@ backend, E7-S3's Embassy executor wiring, the linked-image flash/RAM budget,
 the OQ-7 benchmark, or phone-to-sensor HIL. Those acceptance gates and the
 historical failure explanation above remain valid as implementation work still
 outstanding; the historical failure block above is not the current result.
+
+## Source-boundary regression (2026-08-09)
+
+The follow-up audit deliberately added no provider API or allocator policy. It
+added one host-side CI regression in
+`implementation/mesh-milk/scripts/tests/test_ci_workflow.py`:
+`test_embedded_shell_sources_keep_the_no_std_boundary`. The test checks both E7
+shell entry points for an unconditional `#![no_std]` crate attribute and rejects
+direct `std` imports or `std::` references. The existing manifest-fence test and
+the target dependency-closure job remain the authoritative checks for the
+dependency graph; this source check is an early-review guard against turning an
+empty shell into a host-only crate by accident.
+
+Evidence from this audit:
+
+```text
+python -m unittest scripts.tests.test_ci_workflow -v
+Ran 15 tests ... OK
+
+cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store \
+  --target thumbv7em-none-eabihf --no-default-features
+Finished `dev` profile
+```
+
+This is a regression improvement, not an embedded implementation. The shells
+still contain no Embassy executor, radio backend, flash provider, linked board
+image, static-RAM measurement, or phone-to-sensor HIL path. The next E7 change
+must first name the allocator/flash policy and producer transaction boundary;
+adding a generic `BundleStore` implementation before those decisions would
+make capacity and crash-atomicity claims unverifiable.
