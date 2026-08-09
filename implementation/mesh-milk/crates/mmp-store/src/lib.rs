@@ -245,7 +245,15 @@ impl SnapshotStore {
             match kind {
                 RECORD_BUNDLE => {
                     if let Some((meta, body)) = decode_record(payload) {
-                        self.mem.put(meta, &body);
+                        // The persisted image is supposed to contain one
+                        // record per BundleID.  If a crash, append-only repair,
+                        // or local attacker supplies duplicate valid records,
+                        // keep the first complete state rather than allowing
+                        // a later stale metadata record to roll back expiry,
+                        // budget, or handoff accounting.
+                        if self.mem.meta(&meta.id).is_none() {
+                            self.mem.put(meta, &body);
+                        }
                     }
                 }
                 RECORD_CLAIM => {
@@ -1670,6 +1678,51 @@ mod tests {
         assert_eq!(restored.receipt_filter().unwrap().encode(), first_receipts.encode());
         assert_eq!(restored.authority(), Some(first_authority.as_slice()));
         assert_eq!(restored.blocklist(), Some(first_blocklist.as_slice()));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn duplicate_bundle_records_keep_first_valid_metadata() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("duplicate-bundles.mmp");
+        let _ = std::fs::remove_file(&path);
+
+        let id = Id16([51; 16]);
+        let first = BundleMeta {
+            id,
+            class: class::DIRECT,
+            origin: Id16([52; 16]),
+            dest: Id16([53; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 5,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+        let mut stale = first;
+        stale.stored_at = 20;
+        stale.expires_at = 2000;
+        stale.budget = 32;
+
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(MAGIC).unwrap();
+        for meta in [first, stale] {
+            let mut record = vec![RECORD_BUNDLE];
+            record.extend_from_slice(&encode_record(&meta, b"hello"));
+            write_record(&mut file, &record).unwrap();
+        }
+        drop(file);
+
+        let restored = SnapshotStore::open(&path);
+        let meta = restored.meta(&id).expect("duplicate bundle was loaded");
+        assert_eq!(meta.stored_at, first.stored_at);
+        assert_eq!(meta.expires_at, first.expires_at);
+        assert_eq!(meta.budget, first.budget);
 
         let _ = std::fs::remove_file(path);
     }
