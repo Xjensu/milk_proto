@@ -32,7 +32,7 @@ class BleEvidenceTests(unittest.TestCase):
                     "os": "Ubuntu 24.04",
                     "kernel": "6.8.0",
                     "adapter": "adapter-a",
-                    "seed_fingerprint": "sha256:aaaaaaaa",
+                    "seed_fingerprint": "sha256:" + "aa" * 32,
                     "command": "cargo run --release -p mmp-cli -- listen /tmp/alice.seed --store /tmp/mmp-alice.store",
                     "log": "peripheral.log",
                     "markers": ["advertising", "Established", "MessageReceived"],
@@ -43,7 +43,7 @@ class BleEvidenceTests(unittest.TestCase):
                     "os": "Ubuntu 24.04",
                     "kernel": "6.8.0",
                     "adapter": "adapter-b",
-                    "seed_fingerprint": "sha256:bbbbbbbb",
+                    "seed_fingerprint": "sha256:" + "bb" * 32,
                     "command": "cargo run --release -p mmp-cli -- send /tmp/bob.seed 0123456789abcdef0123456789abcdef --store /tmp/mmp-bob.store",
                     "log": "central.log",
                     "markers": ["dialed", "Established", "Delivered"],
@@ -240,7 +240,24 @@ class BleEvidenceTests(unittest.TestCase):
             path.write_text(json.dumps(data), encoding="utf-8")
             errors = validate_manifest(path)
             self.assertIn(
-                "duplicate host seed_fingerprint: sha256:aaaaaaaa",
+                "duplicate host seed_fingerprint: sha256:" + "aa" * 32,
+                errors,
+            )
+
+    def test_seed_fingerprint_must_use_canonical_helper_format(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][0]["seed_fingerprint"] = "sha256:AAAAAAAA"
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[0].seed_fingerprint must be sha256:<64 lowercase hex>",
                 errors,
             )
 

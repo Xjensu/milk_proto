@@ -28,11 +28,13 @@ Manifest shape (``mmp-ble-evidence-v1``)::
       "toolchain": {"rustc": "...", "cargo": "..."},
       "hosts": [
         {"name": "alice", "role": "peripheral", "os": "...",
-         "kernel": "...", "adapter": "...", "seed_fingerprint": "...",
+         "kernel": "...", "adapter": "...",
+         "seed_fingerprint": "sha256:<64 lowercase hex>",
          "command": "cargo run --release -p mmp-cli -- listen ...",
          "log": "alice.log", "markers": ["advertising", "MessageReceived"]},
         {"name": "bob", "role": "central", "os": "...",
-         "kernel": "...", "adapter": "...", "seed_fingerprint": "...",
+         "kernel": "...", "adapter": "...",
+         "seed_fingerprint": "sha256:<64 lowercase hex>",
          "command": "cargo run --release -p mmp-cli -- send ...",
          "log": "bob.log", "markers": ["Established", "Delivered"]}
       ],
@@ -70,6 +72,7 @@ from typing import Any
 
 SCHEMA = "mmp-ble-evidence-v1"
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+SEED_FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 ROLES = {"peripheral", "central"}
 # Evidence is an offline release artifact, not an unbounded log collector.
 # Keep parser memory bounded when a package is supplied by an untrusted host
@@ -340,11 +343,14 @@ def validate_manifest(path: Path) -> list[str]:
             )
         fingerprint = host.get("seed_fingerprint")
         if _text(fingerprint):
-            normalized_fingerprint = fingerprint.strip().casefold()
-            if normalized_fingerprint in seed_fingerprints:
+            if not SEED_FINGERPRINT_RE.fullmatch(fingerprint):
+                errors.append(
+                    f"{label}.seed_fingerprint must be sha256:<64 lowercase hex>"
+                )
+            elif fingerprint in seed_fingerprints:
                 errors.append(f"duplicate host seed_fingerprint: {fingerprint}")
             else:
-                seed_fingerprints.add(normalized_fingerprint)
+                seed_fingerprints.add(fingerprint)
         log = _relative_file(path.parent, host.get("log"), f"{label}.log", errors)
         record_evidence_path(log, f"{label}.log")
         markers = host.get("markers")
