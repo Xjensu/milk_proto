@@ -214,6 +214,16 @@ periodic-clustered, and social-clustered contact generators with delivery,
 latency, elapsed time, storage, quota, and bridge metrics. It is a control
 experiment only and does not support a human-mobility or 2x claim.
 
+The current delegated security/readiness cycle recorded three further results.
+`67183c9` confirms that group `(member, epoch)` retention cannot receive a
+wire-neutral cap until an authenticated retention anchor and partition-merge
+rule exist; pruning now would change delayed decrypt/replay behavior. `9525e14`
+hardens the generated fuzz corpus against traversal, target mismatch, and
+root/target symlink attacks, while preserving the developer-owned corpus.
+`b439ce9` adds writer-generation fencing coverage for the peripheral ingress
+and a BlueZ lifecycle handoff; host tests are green, but D-Bus, ATT-MTU,
+reconnect, and two-machine evidence remain hardware-only.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
@@ -237,9 +247,10 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 396 tests (390 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 50 tests, while the 44-seed fuzz check,
-compileall, layer-check, and CLI delivery/receipt smoke evidence remain green.
+listed 397 tests (391 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 55 tests (one platform-specific skip), while the
+44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
+evidence remain green.
 
 ## Source register
 
