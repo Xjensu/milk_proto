@@ -31,6 +31,10 @@ pub enum DropReason {
     /// The receive-side lifetime clamp (`lifetime_ms.min(class_max_lifetime_ms)`)
     /// reduced the remaining lifetime to zero.
     Expired,
+    /// The local [`BundleStore`] rejected the write (for example because a
+    /// fixed-capacity embedded store is full). The bundle was authenticated,
+    /// but it was not reported as stored or delivered.
+    StoreRejected,
 }
 
 /// The outcome of running [`ingest`] on one wire bundle.
@@ -114,6 +118,8 @@ pub fn ingest(
         own_origin: origin_node == *self_node,
         slot: SlotState::Stored,
     };
-    store.put(meta, bytes);
+    if store.try_put(meta, bytes).is_err() {
+        return (Disposition::Dropped(DropReason::StoreRejected), None);
+    }
     (Disposition::Stored { to_self }, Some(bundle))
 }

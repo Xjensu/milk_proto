@@ -60,6 +60,23 @@ pub struct BundleMeta {
     pub slot: SlotState,
 }
 
+/// Result of an accepted [`BundleStore::try_put`] operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorePutOutcome {
+    /// No bundle with this ID was present before the write.
+    Inserted,
+    /// The write replaced the bytes and metadata for an existing ID.
+    Replaced,
+}
+
+/// Why a [`BundleStore::try_put`] operation did not accept a bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorePutError {
+    /// The local store has no capacity for this bundle. This is a local
+    /// resource decision and carries no wire-level meaning.
+    Capacity,
+}
+
 impl BundleMeta {
     /// Milliseconds remaining before `expires_at`, relative to the
     /// caller-supplied monotonic `now_ms` (saturates to 0 once past expiry).
@@ -72,6 +89,17 @@ impl BundleMeta {
 pub trait BundleStore {
     /// Stores (or replaces) a bundle's metadata and raw wire bytes.
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]);
+    /// Bounded write seam for stores that can reject a local resource request.
+    ///
+    /// The default preserves the legacy [`Self::put`] behavior and reports
+    /// whether the ID was new or replaced. Embedded stores should override
+    /// this method so a capacity rejection reaches [`crate::ingest`] instead
+    /// of being misreported as a successful durable store.
+    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+        let replaced = self.meta(&meta.id).is_some();
+        self.put(meta, bytes);
+        Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted })
+    }
     /// Fetches a bundle's metadata and raw wire bytes, if present.
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)>;
     /// Fetches a bundle's metadata only, if present.

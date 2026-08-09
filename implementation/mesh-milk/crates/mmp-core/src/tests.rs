@@ -21,7 +21,9 @@ use crate::rbsr::{fingerprint, IdSource, Reconciler};
 use crate::receiptfilter::{ReceiptFilter, SuppressSignal};
 use crate::seen::SeenIndex;
 use crate::session::{SessionEngine, SessionEvent, SessionHost};
-use crate::store::{BundleMeta, BundleStore, MemStore, SlotState};
+use crate::store::{
+    BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome,
+};
 
 fn identity(seed: u8) -> Identity {
     Identity::from_seed(&[seed; 32])
@@ -46,6 +48,105 @@ fn make_bundle(origin: &Identity, dest: Id16, payload: &[u8]) -> Bundle {
 
 fn accept_all(_b: &Bundle, _n: &NodeId) -> bool {
     true
+}
+
+fn test_meta(id: Id16) -> BundleMeta {
+    BundleMeta {
+        id,
+        class: class::DIRECT,
+        origin: Id16([2; 16]),
+        dest: Id16([3; 16]),
+        priority: 1,
+        effective_priority: 1,
+        size: 0,
+        stored_at: 0,
+        expires_at: 60_000,
+        budget: 1,
+        own_origin: false,
+        slot: SlotState::Stored,
+    }
+}
+
+struct RejectStore;
+
+impl BundleStore for RejectStore {
+    fn put(&mut self, _meta: BundleMeta, _bytes: &[u8]) {}
+
+    fn try_put(
+        &mut self,
+        _meta: BundleMeta,
+        _bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
+        Err(StorePutError::Capacity)
+    }
+
+    fn get(&self, _id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        None
+    }
+
+    fn meta(&self, _id: &Id16) -> Option<BundleMeta> {
+        None
+    }
+
+    fn update_meta(&mut self, _meta: BundleMeta) {}
+
+    fn remove(&mut self, _id: &Id16) -> bool {
+        false
+    }
+
+    fn ids_range(&self, _lo: &Id16, _hi: &Id16) -> Vec<Id16> {
+        Vec::new()
+    }
+
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        Vec::new()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        0
+    }
+
+    fn len(&self) -> usize {
+        0
+    }
+
+    fn expire(&mut self, _now_ms: u64) -> Vec<Id16> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn default_try_put_reports_insert_and_replacement() {
+    let id = Id16([1; 16]);
+    let mut store = MemStore::new();
+    assert_eq!(store.try_put(test_meta(id), b"one"), Ok(StorePutOutcome::Inserted));
+    assert_eq!(store.try_put(test_meta(id), b"two"), Ok(StorePutOutcome::Replaced));
+    assert_eq!(store.get(&id).map(|(_, bytes)| bytes), Some(b"two".to_vec()));
+}
+
+#[test]
+fn ingest_propagates_store_rejection_without_reporting_delivery() {
+    let alice = identity(1);
+    let me = Id16([9; 16]);
+    let mut seen = SeenIndex::new();
+    let mut store = RejectStore;
+    let bundle = make_bundle(&alice, me, b"capacity");
+    let id = bundle.id();
+
+    let (disposition, decoded) = ingest(
+        &bundle.encode(),
+        1000,
+        &me,
+        &mut seen,
+        &mut store,
+        &mut accept_all,
+    );
+
+    assert_eq!(disposition, Disposition::Dropped(DropReason::StoreRejected));
+    assert!(decoded.is_none());
+    // FIRST-SIGHT dedup remains intact: a rejected local write must not become
+    // a replay loop merely because a later contact presents the same bundle.
+    assert!(seen.contains(&id));
 }
 
 #[test]

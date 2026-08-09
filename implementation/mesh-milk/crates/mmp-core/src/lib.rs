@@ -33,7 +33,7 @@ pub use receiptfilter::{ReceiptFilter, SuppressSignal};
 pub use seen::SeenIndex;
 #[cfg(feature = "std")]
 pub use session::{Phase, SessionEngine, SessionEvent, SessionHost};
-pub use store::{BundleMeta, BundleStore, MemStore, SlotState};
+pub use store::{BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome};
 
 #[cfg(test)]
 mod tests;
