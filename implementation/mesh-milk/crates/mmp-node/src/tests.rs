@@ -192,6 +192,25 @@ fn tick_compacts_idle_admission_bucket_maps() {
 }
 
 #[test]
+fn tick_ignores_backward_monotonic_samples() {
+    let mut n = node(201);
+
+    n.tick(10_000);
+    assert_eq!(n.core.now, 10_000);
+
+    // Direct FFI/mobile callers use the same Node::tick path as MeshDrive.
+    // A stale callback must not rewind expiry/session time or mutate state.
+    n.tick(9_999);
+    assert_eq!(n.core.now, 10_000);
+
+    // Equal timestamps remain valid and later samples still advance.
+    n.tick(10_000);
+    assert_eq!(n.core.now, 10_000);
+    n.tick(10_001);
+    assert_eq!(n.core.now, 10_001);
+}
+
+#[test]
 fn sync_view_keeps_current_base_domains_without_priority_partition() {
     let mut n = node(249);
     // Node::new publishes its own identity/prekey claims; replace the store

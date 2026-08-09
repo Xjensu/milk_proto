@@ -2339,3 +2339,26 @@ clears pending output/cache state. Source-level regression coverage passes;
 Kotlin compilation and physical devices remain external gates.
 
 No specification or pre-existing dirty path was modified.
+
+## 2026-08-09 continuation: singleton rollback and monotonic host safety
+
+The persistence loader now uses first-valid-wins semantics for duplicate
+singleton records (`SeenIndex`, `ReceiptFilter`, authority, and blocklist), so
+an appended valid stale record cannot override the selected state. This is
+defense-in-depth rather than full anti-rollback; authenticated generation
+floors remain a provider responsibility. Primary and missing-primary recovery
+candidate read errors now fail closed and prevent `persist` from masking an
+unreadable image; the ordinary missing-primary/missing-candidate create path is
+unchanged.
+
+The router ContactGraph now enforces `CONTACT_GRAPH_CAP` even when all entries
+are verified. It evicts only an unverified stranger and drops a new advisory
+tie when no safe eviction exists; encounter and duration counters saturate
+instead of wrapping. The direct Rust/UniFFI node path also now ignores backward
+`Node::tick` samples before mutating time, matching the existing MeshDrive
+monotonic guard. Equal and forward samples remain accepted.
+
+Focused regressions cover duplicate singleton records, unreadable primary and
+recovery paths, all-trusted ContactGraph capacity, counter saturation, direct
+Rust ticks, and concurrent UniFFI tick callbacks. No specification or
+pre-existing dirty path was modified.

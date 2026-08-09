@@ -12,6 +12,8 @@ use mmp_core::store::BundleStore;
 use mmp_store::SnapshotStore;
 use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE};
 use mmp_types::ids::Id16;
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 fn node(seed: u8) -> std::sync::Arc<MmpNode> {
     MmpNode::new(vec![seed; 32], FfiTier::Relay, None).expect("valid 32-byte seed")
@@ -114,6 +116,55 @@ fn first_tick_anchors_persisted_message_deadline() {
 
     alice.tick(NOW + 1);
     assert!(alice.store_len() > 0, "the first post-send tick must retain the message");
+}
+
+#[test]
+fn backward_tick_is_ignored_at_ffi_boundary() {
+    let dir = TempDir::new("backward-tick");
+    let node = MmpNode::new(
+        vec![71u8; 32],
+        FfiTier::Leaf,
+        Some(dir.file("node.mmp")),
+    )
+    .expect("valid seed");
+
+    node.tick(10_000);
+    node.tick(9_999);
+
+    let observed = node
+        .persist
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .last_seen_now_ms;
+    assert_eq!(observed, 10_000, "stale native callback must not rewind FFI persistence time");
+}
+
+#[test]
+fn concurrent_ticks_keep_the_largest_monotonic_sample() {
+    let dir = TempDir::new("concurrent-ticks");
+    let node = MmpNode::new(vec![72u8; 32], FfiTier::Leaf, Some(dir.file("node.mmp")))
+        .expect("valid seed");
+    let gate = Arc::new(Barrier::new(8));
+    let mut workers = Vec::new();
+
+    for offset in 1..=8u64 {
+        let node = Arc::clone(&node);
+        let gate = Arc::clone(&gate);
+        workers.push(thread::spawn(move || {
+            gate.wait();
+            node.tick(offset * 1_000);
+        }));
+    }
+    for worker in workers {
+        worker.join().expect("tick worker must not panic");
+    }
+
+    let observed = node
+        .persist
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .last_seen_now_ms;
+    assert_eq!(observed, 8_000, "the largest sample must win despite callback races");
 }
 
 #[test]

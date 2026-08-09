@@ -1569,8 +1569,14 @@ impl Node {
     }
 
     /// Advance the monotonic clock (doc 11 §7): expiry, filter rotation,
-    /// session timers, quota eviction.
+    /// session timers, quota eviction. A sample earlier than the last
+    /// accepted value is ignored (the public, no-return API fails closed) so
+    /// a native host that bypasses a higher-level drive-loop guard cannot
+    /// rewind TTL or session state.
     pub fn tick(&mut self, now_ms: u64) {
+        if now_ms < self.core.now {
+            return;
+        }
         self.core.now = now_ms;
         let expired = self.core.store.expire(now_ms);
         for id in &expired {

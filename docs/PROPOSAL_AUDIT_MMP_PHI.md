@@ -1472,6 +1472,32 @@ physical device tests remain external gates.
 
 No wire field or frozen specification text changed.
 
+### Orchestration continuation XXXIX (2026-08-09)
+
+The persistence and routing audits closed several local fail-closed gaps. The
+snapshot loader now ignores duplicate singleton records after the first valid
+`SeenIndex`, `ReceiptFilter`, authority, or blocklist record, preventing an
+append-only stale duplicate from overriding the selected state. This is
+defense-in-depth only; authenticated generation floors are still required for
+full anti-rollback. Primary and recovery-candidate read errors now set the
+store's rejection state, so `persist` cannot replace an unreadable image with
+an empty one; missing primary and missing candidate remains a normal create
+case.
+
+The router's verified contact graph now enforces `CONTACT_GRAPH_CAP` even when
+all retained entries are trusted: it evicts only an unverified stranger and
+drops a new advisory tie when no safe eviction exists. Encounter and duration
+counters saturate instead of wrapping. This preserves routing correctness
+while bounding attacker-influenced memory.
+
+Direct UniFFI callers now receive the same monotonic safety as `MeshDrive`:
+`Node::tick` ignores backward samples before mutating time, while equal and
+forward samples remain valid. The FFI wrapper serializes concurrent callbacks
+so an older callback cannot pass its pre-check and later rewind persisted
+time; regressions cover direct and concurrent calls.
+
+No wire field or frozen specification text changed.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

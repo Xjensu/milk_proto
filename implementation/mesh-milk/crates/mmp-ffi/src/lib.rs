@@ -632,6 +632,10 @@ pub struct MmpNode {
     /// (see [`store::SharedStore`]), used only to drive persistence timing.
     snapshot: Option<Arc<Mutex<SnapshotStore>>>,
     persist: Mutex<PersistState>,
+    /// Serializes native clock callbacks so the monotonic admission check and
+    /// persistence timestamp update observe one ordered sequence even when a
+    /// host dispatches timer callbacks concurrently.
+    tick_serial: Mutex<()>,
 }
 
 /// Persistence bookkeeping, guarded by its own small mutex — never taken
@@ -749,6 +753,7 @@ impl MmpNode {
             inner: Mutex::new(node),
             snapshot,
             persist: Mutex::new(PersistState::default()),
+            tick_serial: Mutex::new(()),
         }))
     }
 }
@@ -1085,10 +1090,31 @@ impl MmpNode {
     /// host driving `tick` from a timer has no natural way to react to an
     /// `Err` return.
     /// Call once immediately after construction, before any bundle-producing
-    /// API. Values must be nondecreasing for the lifetime of the process. Do
-    /// not substitute wall-clock time or infer a reboot offset; persisted
-    /// clock policy remains host-owned.
+    /// API. Values must be nondecreasing for the lifetime of the process;
+    /// earlier samples are ignored (the no-return API fails closed). Do not
+    /// substitute wall-clock time or infer a reboot offset; persisted clock
+    /// policy remains host-owned.
     pub fn tick(&self, now_ms: u64) {
+        // Mobile timer callbacks can be delivered concurrently. Serialize the
+        // complete admission/update sequence; checking `persist` before taking
+        // the node lock alone would allow an older callback to pass its check,
+        // then overwrite `last_seen_now_ms` after a newer callback completed.
+        let _tick_serial = self
+            .tick_serial
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        // Keep the persistence clock aligned with Node::tick's fail-closed
+        // monotonic policy. A stale native callback must not rewind
+        // `last_seen_now_ms` after Node::tick ignores the same sample.
+        {
+            let st = self
+                .persist
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if now_ms < st.last_seen_now_ms {
+                return;
+            }
+        }
         // Node lock is taken and released here, before any snapshot lock is
         // touched below — the fixed node-then-snapshot order (see
         // `store.rs`) is trivially satisfied because the two are never held
@@ -1150,6 +1176,13 @@ impl MmpNode {
     /// [`Self::tick`]-driven periodic flush. A no-op returning `Ok(())` if
     /// this node has no `store_path` (in-memory only).
     pub fn flush(&self) -> Result<(), FfiError> {
+        // Serialize explicit flushes with host timer callbacks so a flush
+        // cannot capture an older `last_seen_now_ms` while `tick` is advancing
+        // the node and then publish a stale persistence timestamp afterwards.
+        let _tick_serial = self
+            .tick_serial
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let Some(snap) = self.snapshot.clone() else { return Ok(()) };
         let now_ms = self.persist.lock().unwrap_or_else(|poison| poison.into_inner()).last_seen_now_ms;
         self.persist_now(&snap, now_ms).map_err(|_| FfiError::Internal)
