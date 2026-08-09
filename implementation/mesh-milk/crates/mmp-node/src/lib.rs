@@ -47,7 +47,8 @@ use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore,
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_crypto::sealed::{open_box, seal_box_with_root};
 use mmp_router::{
-    eviction_order, handoff_decision, origin_budget, Handoff, OriginBuckets, UtilityState,
+    eviction_order, handoff_decision, origin_budget, transfer_order, Handoff, OriginBuckets,
+    UtilityState,
 };
 use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, RevocationList};
 use mmp_types::bundle::{
@@ -3422,6 +3423,45 @@ impl SessionHost for NodeCore {
         }
         out.truncate(64);
         out
+    }
+
+    fn order_handoffs(&mut self, peer: &NodeId, ids: &mut Vec<Id16>) {
+        if ids.len() < 2 {
+            return;
+        }
+
+        // RBSR/WANT carries only BundleIDs, so the session engine cannot see
+        // the local metadata needed by doc 05 §6's transfer order.  Apply
+        // that order here, at the serving node, without changing the wire
+        // format or the reconciliation key.  Unknown IDs stay at the end:
+        // they may have expired between reconciliation and WANT handling and
+        // are harmlessly ignored by `load_for_handoff`.
+        let mut known = Vec::new();
+        let mut known_positions = Vec::new();
+        for (position, id) in ids.iter().enumerate() {
+            if let Some(meta) = self.store.meta(id) {
+                known_positions.push(position);
+                known.push(meta);
+            }
+        }
+        if known.len() < 2 {
+            return;
+        }
+
+        let order = transfer_order(&known, peer, self.now);
+        let mut reordered = Vec::with_capacity(ids.len());
+        let mut selected = vec![false; ids.len()];
+        for index in order {
+            let position = known_positions[index];
+            reordered.push(ids[position]);
+            selected[position] = true;
+        }
+        for (position, id) in ids.iter().enumerate() {
+            if !selected[position] {
+                reordered.push(*id);
+            }
+        }
+        *ids = reordered;
     }
 
     fn accept_peer(&mut self, identity: &Key32, node: &NodeId) -> bool {

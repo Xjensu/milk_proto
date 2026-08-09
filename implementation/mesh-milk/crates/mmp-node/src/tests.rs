@@ -266,6 +266,65 @@ fn sync_view_keeps_current_base_domains_without_priority_partition() {
 }
 
 #[test]
+fn want_handoffs_use_declared_transfer_order_without_priority_partition() {
+    let mut n = node(250);
+    n.core.store = Box::new(MemStore::new());
+    let peer = Id16([0xD0; 16]);
+    let other = Id16([0xD1; 16]);
+    let origin = n.node_id();
+    let entries = [
+        // Deliberately arrive in reverse value order.  A local clamp on the
+        // two announcements must not affect their declared-byte ordering.
+        (Id16([0x05; 16]), class::ANNOUNCEMENT, other, 3, 3),
+        (Id16([0x04; 16]), class::ANNOUNCEMENT, other, 1, 2),
+        (Id16([0x03; 16]), class::ANNOUNCEMENT, other, 0, 2),
+        (Id16([0x02; 16]), class::DIRECT, peer, 3, 3),
+        (Id16([0x01; 16]), class::CONTROL, other, 3, 3),
+    ];
+    for (id, bundle_class, dest, priority, effective_priority) in entries {
+        n.core.store.put(
+            BundleMeta {
+                id,
+                class: bundle_class,
+                origin,
+                dest,
+                priority,
+                effective_priority,
+                size: 0,
+                stored_at: 0,
+                expires_at: OFFER_MIN_LIFETIME_MS + 1,
+                budget: 1,
+                own_origin: false,
+                slot: SlotState::Stored,
+            },
+            &[],
+        );
+    }
+
+    let mut ids = vec![
+        Id16([0x05; 16]),
+        Id16([0x04; 16]),
+        Id16([0x03; 16]),
+        Id16([0x02; 16]),
+        Id16([0x01; 16]),
+        Id16([0xFF; 16]), // expired between RBSR and WANT: unknown locally
+    ];
+    SessionHost::order_handoffs(&mut n.core, &peer, &mut ids);
+
+    assert_eq!(
+        ids,
+        vec![
+            Id16([0x01; 16]), // control
+            Id16([0x02; 16]), // destination here
+            Id16([0x03; 16]), // declared emergency
+            Id16([0x04; 16]), // declared operational, locally clamped
+            Id16([0x05; 16]), // declared bulk
+            Id16([0xFF; 16]), // unknown request remains harmlessly last
+        ],
+    );
+}
+
+#[test]
 fn callback_event_queue_is_bounded_when_host_does_not_poll() {
     let mut n = node(251);
     while n.poll_event().is_some() {}

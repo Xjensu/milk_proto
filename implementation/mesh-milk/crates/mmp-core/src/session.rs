@@ -122,6 +122,13 @@ pub trait SessionHost {
     fn on_budget(&mut self, peer: &NodeId, id: &Id16, granted: u8);
     /// Outstanding WANTs beyond reconciliation (DAG gap repair, doc 06 §5.3).
     fn wants(&mut self, peer: &NodeId) -> Vec<Id16>;
+    /// Reorder a bounded set of requested hand-offs before the engine loads
+    /// their bytes.  The default preserves the wire/request order so custom
+    /// hosts remain compatible; a host with local bundle metadata may apply
+    /// the frozen doc 05 §6 value-density order (control, destination, then
+    /// declared priority/size/lifetime).  This is a local scheduling hook,
+    /// not a new wire field or RBSR partition key.
+    fn order_handoffs(&mut self, _peer: &NodeId, _ids: &mut Vec<Id16>) {}
     /// Admission on identity reveal: false ⇒ silent close (doc 07 §6.5).
     fn accept_peer(&mut self, identity: &Key32, node: &NodeId) -> bool;
 
@@ -601,6 +608,8 @@ impl SessionEngine {
                 self.protocol_error(errcode::UNSUPPORTED)
             }
             Frame::Want(ids) => {
+                let mut ids = ids;
+                host.order_handoffs(&peer, &mut ids);
                 self.queue_handoffs(ids);
                 self.flush_pending_handoffs(host);
             }
@@ -610,11 +619,15 @@ impl SessionEngine {
                 host.on_budget(&peer, &id, granted.min(L_MAX));
             }
             Frame::BlobReq { root, block, bitmap } => {
-                self.queue_handoffs(host.on_blob_req(&peer, &root, block, &bitmap));
+                let mut ids = host.on_blob_req(&peer, &root, block, &bitmap);
+                host.order_handoffs(&peer, &mut ids);
+                self.queue_handoffs(ids);
                 self.flush_pending_handoffs(host);
             }
             Frame::BlobHave { root, block, bitmap } => {
-                self.queue_handoffs(host.on_blob_have(&peer, &root, block, &bitmap));
+                let mut ids = host.on_blob_have(&peer, &root, block, &bitmap);
+                host.order_handoffs(&peer, &mut ids);
+                self.queue_handoffs(ids);
                 self.flush_pending_handoffs(host);
             }
             Frame::FriendOffer(body) => {
@@ -1017,8 +1030,10 @@ mod rx_bound_tests {
     struct EmptyHost {
         ids: EmptyIds,
         loads: usize,
+        loaded_ids: Vec<Id16>,
         load_bytes: Option<Vec<u8>>,
         wants_calls: usize,
+        reverse_handoffs: bool,
     }
 
     impl SessionHost for EmptyHost {
@@ -1034,8 +1049,9 @@ mod rx_bound_tests {
 
         fn on_summary(&mut self, _peer: &NodeId, _summary: Summary) {}
 
-        fn load_for_handoff(&mut self, _peer: &NodeId, _id: &Id16) -> Option<(Vec<u8>, u8)> {
+        fn load_for_handoff(&mut self, _peer: &NodeId, id: &Id16) -> Option<(Vec<u8>, u8)> {
             self.loads += 1;
+            self.loaded_ids.push(*id);
             self.load_bytes.clone().map(|bytes| (bytes, 1))
         }
 
@@ -1046,6 +1062,12 @@ mod rx_bound_tests {
         fn wants(&mut self, _peer: &NodeId) -> Vec<Id16> {
             self.wants_calls += 1;
             Vec::new()
+        }
+
+        fn order_handoffs(&mut self, _peer: &NodeId, ids: &mut Vec<Id16>) {
+            if self.reverse_handoffs {
+                ids.reverse();
+            }
         }
 
         fn accept_peer(&mut self, _identity: &Key32, _node: &NodeId) -> bool {
@@ -1062,11 +1084,25 @@ mod rx_bound_tests {
     }
 
     fn host() -> EmptyHost {
-        EmptyHost { ids: EmptyIds { ids: Vec::new() }, loads: 0, load_bytes: None, wants_calls: 0 }
+        EmptyHost {
+            ids: EmptyIds { ids: Vec::new() },
+            loads: 0,
+            loaded_ids: Vec::new(),
+            load_bytes: None,
+            wants_calls: 0,
+            reverse_handoffs: false,
+        }
     }
 
     fn host_with_ids(ids: Vec<Id16>) -> EmptyHost {
-        EmptyHost { ids: EmptyIds { ids }, loads: 0, load_bytes: None, wants_calls: 0 }
+        EmptyHost {
+            ids: EmptyIds { ids },
+            loads: 0,
+            loaded_ids: Vec::new(),
+            load_bytes: None,
+            wants_calls: 0,
+            reverse_handoffs: false,
+        }
     }
 
     #[test]
@@ -1647,5 +1683,40 @@ mod rx_bound_tests {
         assert_eq!(ha.loads, 1);
         assert!(a.poll_out().is_some());
         assert!(a.poll_out().is_some());
+    }
+
+    #[test]
+    fn bundle_requests_use_host_transfer_order_before_loading() {
+        let ia = identity(15);
+        let ib = identity(16);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+
+        ha.load_bytes = Some(vec![0x42, 0x24]);
+        ha.reverse_handoffs = true;
+        a.tx_credits = 4;
+        let first = Id16([1; 16]);
+        let second = Id16([2; 16]);
+        a.on_established(Frame::Want(vec![first, second]), &mut ha);
+
+        assert_eq!(ha.loaded_ids, vec![second, first]);
     }
 }
