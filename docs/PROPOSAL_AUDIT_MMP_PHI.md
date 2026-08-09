@@ -163,6 +163,27 @@ evidence for the dialogue's claimed 2× gain; host/controller harnesses must
 provide the measurements and report whole-device energy separately from radio
 and host channels.
 
+### Verification checkpoint (2026-08-09)
+
+The post-audit implementation gate is green on the Windows host: the complete
+workspace test matrix passes, including 29 CLI/conformance tests, 61 core unit
+tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
+74 node tests, 18 active simulator tests (5 scale/deployment tests remain
+ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
+bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 37
+BLE adapter tests, and 43 type/codec tests. Workspace Clippy with all targets,
+features, and `-D warnings` also passes. The Python harness reports 42 tests,
+compileall is clean, the deterministic fuzz recipe validates 44 seeds,
+layer-check passes, and the CLI demo observes both receiver delivery and
+sender receipt completion.
+
+This is still not physical interoperability evidence: Windows has no usable
+WSL/Bash launcher in the current environment, Linux/BlueZ two-PC exchange has
+not been run here, and Android/iOS background behavior, keystore persistence,
+and true RBSR/D3 cross-domain conformance remain external gates. The working
+tree's pre-existing application/docs changes and audit scratch directories
+were intentionally not staged. No file under `specification/` changed.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
