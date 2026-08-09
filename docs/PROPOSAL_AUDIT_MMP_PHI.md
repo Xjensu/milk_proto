@@ -457,6 +457,30 @@ remain required before the next handoff; physical native-platform behavior,
 embedded fixed-store implementation, and external cryptographic review remain
 open.
 
+### Orchestration continuation IV (2026-08-09)
+
+The next delegated implementation cycle added three scoped, non-wire gates.
+`0444d36` fences `mmp-store` behind an explicit default `std` feature: the
+host `SnapshotStore` behavior is unchanged, while its no-default-features
+profile now cross-checks on `thumbv7em-none-eabihf` without exporting a
+misleading filesystem API. The fixed-capacity embedded store is still not
+implemented, so this is dependency-closure evidence only. `e4fcaa1` adds a
+node-level capacity-rejection regression proving that an authenticated bundle
+is not retained or delivered when the provider refuses storage, while
+first-sight dedup remains recorded. `af62144` adds an FFI regression proving
+that an oversized host string maps to `BadArg` without poisoning first-contact
+state and that a valid retry succeeds immediately.
+
+The post-cycle verification is green: 420 Rust tests are listed (414 active,
+6 intentionally ignored), workspace Clippy with all targets/features passes,
+the Python suite reports 90 tests with 6 skips, 46 deterministic fuzz seeds
+check and verify, the embedded no-default-features target check passes, and
+layer-check remains clean. These results are host-side and structural only;
+Linux/BlueZ two-PC exchange, native Android/iOS radio and keystore behavior,
+an embedded linked image/HIL run, external cryptographic review, and the
+normative RBSR/D3 decision remain open. No file under `specification/` and no
+pre-existing dirty path was modified or staged.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
