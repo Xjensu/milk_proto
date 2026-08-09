@@ -224,6 +224,25 @@ root/target symlink attacks, while preserving the developer-owned corpus.
 and a BlueZ lifecycle handoff; host tests are green, but D-Bus, ATT-MTU,
 reconnect, and two-machine evidence remain hardware-only.
 
+The latest delegated gate cycle added two scoped artifacts and one explicit
+no-change result. `057b43b` adds a wire-neutral RBSR regression: an established
+responder closes when a syntactically valid D3 `RECON_INIT` arrives while D0
+remains unresolved, so the implementation cannot silently invent priority
+partitioning that the frozen documents do not define. The accompanying RBSR
+handoff records the remaining normative blocker: the specification still lacks
+the byte-level `(domain, declared_priority)` negotiation/key, legacy behavior,
+D3 weighting, starvation/abuse invariants, and golden transcripts required for
+cross-implementation priority-class reconciliation. `6ffbb21` adds the E7
+embedded handoff. It confirms that `mmp-tal-embedded` is currently a
+cross-compilable `no_std` placeholder and that `mmp-node-embassy` still fails
+the embedded target build because the dependency closure enables `std`; no
+MCU-linked image, RAM/flash budget, IRQ/GATT bridge, or hardware-in-the-loop
+claim is made. The FFI/mobile secret-surface audit made no code change: the
+existing API-completeness and generated Kotlin/Swift denylist checks cover the
+Rust-internal vault/ratchet identifiers, while native Keystore/Keychain,
+JNI/Swift compilation, React Native runtime, and background-radio validation
+remain external gates. No specification or dirty `mmp-types` file was touched.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
@@ -247,7 +266,7 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 397 tests (391 active, 6 intentionally ignored) with zero failures.
+listed 398 tests (392 active, 6 intentionally ignored) with zero failures.
 The Python harness now reports 55 tests (one platform-specific skip), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
