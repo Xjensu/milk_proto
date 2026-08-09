@@ -980,6 +980,42 @@ fuzz seeds, the complete embedded no-std target closure, layer-check, the
 transactional acceptance double, and the CLI delivery demo all pass. No file
 under `specification/` or any protected dirty path was modified.
 
+### Orchestration continuation XXII (2026-08-09)
+
+The follow-up implementation cycle closed the production-call-site residual
+identified in continuation XXI. Commit `a039351` adds fallible direct and
+group send paths: `SendChain::try_next` and
+`LocalSenderKey::try_encrypt_with_ad` now map ratchet exhaustion to the public
+`SendError::RatchetExhausted`, and no bundle is emitted after that failure.
+At repeated-contact teardown, `try_bump_epoch` is used for both directional
+chains; a terminal or asymmetric rollover retires the conversation and clears
+pending markers instead of invoking a panic-compatible wrapper or leaving
+desynchronized state. The FFI surface intentionally maps this local lifecycle
+condition to its existing coarse `Internal` error, preserving generated mobile
+API compatibility. The compatibility wrappers remain for external Rust users,
+but production node paths no longer depend on them.
+
+The E7 audit produced `0c441d3`. It records why a no-std flash provider was not
+invented: the current `BundleStore` contract has no transactional producer
+reservation, and board capacity, allocator, and flash-recovery policy are not
+specified. The shipped receive-side `try_put`, bounded snapshot framing, and
+transactional acceptance double are therefore separated from the still-open
+provider and HIL requirements.
+
+The release-evidence audit produced `b54f4e3`. Security, roadmap, and backlog
+documents now distinguish workflow-wired checks from unobserved remote CI,
+declared MSRV from an unpinned rolling stable toolchain, durable non-secret
+authority snapshots from still-open keystore secrets, and the 17 committed
+vectors from deferred X3DH deterministic-RNG coverage. A documentation
+regression suite prevents those closed-gap claims from becoming stale again.
+
+Final verification for this continuation: full workspace tests, workspace
+Clippy, 50 crypto / 87 node / 20 FFI focused tests, 115 Python tests (8
+skipped), 46 deterministic fuzz seeds, the complete embedded no-std target
+closure, layer-check, the six-test transactional acceptance double, and the
+release CLI delivery demo all pass. No file under `specification/` or any
+protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
