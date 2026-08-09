@@ -1526,6 +1526,50 @@ remains uncommitted.
 
 No wire field or frozen specification text changed.
 
+### Orchestration continuation XLI (2026-08-09)
+
+The post-dialogue verification cycle confirmed three additional implementation
+results and did not change the priority order. `4560b20` makes group receive
+ratchet advancement transactional: a malformed authenticated ciphertext no
+longer burns a sender-key index before AEAD success. `2551914` rejects
+oversized raw `LinkData` before it enters the bounded btleplug/peripheral
+queues, closing a local memory-retention path while preserving the existing
+fail-closed link-retirement behavior. `554b37f` rejects case-insensitive fuzz
+seed-name collisions, preventing Linux-generated corpus files from silently
+overwriting one another on Windows. The focused Rust and Python gates are
+green; the frozen specification remains unchanged.
+
+The dialogue review does not justify moving MMP/Φ ahead of conformance and
+physical evidence. The next work order is therefore:
+
+1. **Errata and vectors (P0):** publish non-wire errata for encrypted
+   `ID_PROOF`, canonical lifetime-zeroed AEAD AD, and the receiver-local (not
+   globally spend-once) copy-budget invariant. Add byte-exact independent
+   vectors and a Byzantine double-grant simulation; do not alter docs 03–15.
+2. **Lifecycle gates (P0):** finish transport admission/close feedback and
+   aggregate callback/output bounds, then run the affected-crate tests and
+   strict clippy. Keep group epoch retention quarantined until an authenticated
+   epoch-floor and partition-merge rule exists.
+3. **Physical interoperability (P1):** execute the two-PC Linux/BlueZ test
+   procedure and capture MTU, RSSI, reconnect, delivery, and receipt evidence.
+   Treat Android/iOS as source/API validation until native consumer shells,
+   keystore/keychain persistence, and real background-radio runs exist.
+4. **Measured optimization (P1):** compare the frozen MMP/1 baseline with
+   EDR duty-cycle points, deadline-aware scheduling, and local evidence-weighted
+   spray using identical seeds/traces. Report calibrated delivery probability,
+   p50/p90 latency, airtime, storage, controller/radio energy, and whole-device
+   energy separately with repeated runs and confidence intervals. A 2x claim is
+   forbidden until the acceptance bands pass on multiple device classes.
+5. **Research extensions (P1/P2):** prototype mobility vouchers and residual
+   contact-time prediction behind flags, with replay, collusion, stale-voucher,
+   privacy, correlation, and multipath tests. Compare DoF/fountain coding with
+   the existing signed Merkle + Reed–Solomon plane under equal traces and
+   embedded RAM/CPU limits. No new wire field is admitted from these studies.
+6. **Release governance (P1):** generate one status manifest distinguishing
+   frozen wire rules, provisional constants, historical phase labels, and
+   extension research; verify that every cited audit/roadmap artifact exists in
+   the published revision.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
