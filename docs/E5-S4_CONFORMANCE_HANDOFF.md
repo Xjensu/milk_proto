@@ -1736,6 +1736,12 @@ binding-generation failure. The checks prove generated API/secret-surface
 coverage only. They do not prove Kotlin or Swift compilation, Android/iOS
 background scheduling, keystore/keychain behavior, or physical BLE exchange.
 
+`26938a0` synchronizes the clean mobile API-surface manifest and regression
+test with the additive `eventQueueDropped` FFI method. A fresh release-library
+generation after `09629bb` passes the Kotlin and Swift binding checks plus the
+complete API-surface check; only the previously recorded missing formatter
+tools remain.
+
 ## 2026-08-09 continuation: bounded application callback FIFO
 
 The `mmp-node` application callback queue (`Node::poll_event`) was previously
