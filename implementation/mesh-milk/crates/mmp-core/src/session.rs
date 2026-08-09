@@ -952,7 +952,7 @@ mod wire_budget_tests {
         let hello = Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 };
         let mut session = SessionEngine::responder(&local, &hello, 0).unwrap();
         session.phase = Phase::Established;
-        session.tx_credits = 8;
+        session.tx_credits = 0;
         session.send_frame(&Frame::ReconRange {
             domain: 0,
             ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 256],
@@ -960,6 +960,7 @@ mod wire_budget_tests {
 
         assert_eq!(session.phase, Phase::Closed);
         assert!(matches!(session.poll_event(), Some(SessionEvent::Closed)));
+        assert!(session.pending_out.is_empty());
         assert!(session.poll_out().is_none());
     }
 
