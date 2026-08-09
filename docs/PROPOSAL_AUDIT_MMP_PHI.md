@@ -195,7 +195,7 @@ can be enabled.
 The post-audit implementation gate is green on the Windows host: the complete
 workspace test matrix passes, including 29 CLI/conformance tests, 61 core unit
 tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
-74 node tests, 18 active simulator tests (5 scale/deployment tests remain
+76 node tests, 18 active simulator tests (5 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
 bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 37
 BLE adapter tests, and 43 type/codec tests. Workspace Clippy with all targets,
