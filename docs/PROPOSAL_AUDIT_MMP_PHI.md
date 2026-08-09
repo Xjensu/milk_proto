@@ -261,17 +261,31 @@ RustSec database (HTTP 403), and cargo-deny is not installed; those checks
 remain remote-CI evidence rather than local claims. No specification,
 `mmp-types`, or pre-existing dirty path was modified.
 
+The following gate cycle added three more scoped safeguards. `567e719` proves
+that a valid sealed secret snapshot from one node cannot be replayed into a
+different identity/node, and that the failed restore leaves the target state
+byte-identical. `d1e55a7` rejects stale generated fuzz-seed members while
+preserving unmanaged developer corpus files; deterministic `check`/`verify`
+still validates all 44 seeds. `48df24f` rejects symlinked Android ZIP members
+and symlink/junction escapes in XCFramework slice, library, and header paths.
+These are artifact and persistence boundaries, not protocol or platform
+interop claims. Nightly `cargo fuzz build` reaches the Windows linker but
+cannot link because the MSVC sanitizer runtime
+`clang_rt.asan_dynamic_runtime_thunk-x86_64.lib` is unavailable; the Linux CI
+sanitizer job remains the authoritative fuzz-build/run gate. No specification,
+`mmp-types`, or pre-existing dirty path was modified.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
 workspace test matrix passes, including 29 CLI/conformance tests, 63 core unit
 tests plus 5 decoder-limit integration tests, 36 crypto tests, 19 FFI tests,
-78 node tests, 24 active simulator tests (6 scale/deployment tests remain
+79 node tests, 24 active simulator tests (6 scale/deployment tests remain
 ignored by design), 11 router tests, 3 Reed–Solomon tests, 11 store tests, 2
 bounded-snapshot tests, 1 hostile-snapshot test, 22 mobile-transport tests, 38
 BLE adapter tests, 43 type/codec tests, and three additional 3-test conformance
 integration suites. Workspace Clippy with all targets, features, and
-`-D warnings` also passes. The Python harness reports 56 tests,
+`-D warnings` also passes. The Python harness reports 60 tests,
 compileall is clean, the deterministic fuzz recipe validates 44 seeds,
 layer-check passes, and the CLI demo observes both receiver delivery and
 sender receipt completion.
@@ -284,8 +298,8 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 400 tests (394 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 56 tests (one platform-specific skip), while the
+listed 401 tests (395 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 60 tests (three platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
 
