@@ -1807,3 +1807,80 @@ encrypted `SUMMARY` envelopes. Before this guard, the receiver's queued CREDIT
 responses could grow past the cap during one `on_wire` call. Now the session
 closes with `out.len() <= 256`. The full `mmp-core` matrix passes (61 unit + 5
 decoder-limit integration tests) and package Clippy passes with `-D warnings`.
+
+## 2026-08-09 continuation: authenticated-session map growth audit
+
+This pass reviewed the remaining attacker-reachable or session-driven maps in
+`mmp-node`, specifically identity learning, friendship state, proxy hints,
+blob-serving counters, groups, and the reconciliation/blob indexes. The wire
+format and frozen specification were not changed.
+
+Two advisory/resource maps received local bounds:
+
+* `proxy_hints` now retains at most 256 dependents per authenticated peer and
+  at most 256 authenticated peers. A new dependent is ignored at the
+  per-peer limit. When the peer table is full, one arbitrary existing peer is
+  evicted before admitting a new one. These hints only suppress an optional
+  spray copy (`peer_buffers_for`); they are never an admission or delivery
+  requirement, so false positives/evictions can reduce efficiency but cannot
+  make a bundle undeliverable.
+* `blob_served` now retains counters for at most 256 distinct peers. An unseen
+  peer after the cap is served no blob candidates and is not inserted. An
+  existing entry is removed on the next authenticated contact with that peer,
+  preserving the per-contact reset rule. There is intentionally no arbitrary
+  TTL or eviction yet: evicting a counter would let a peer reset its local
+  serving allowance without a new authenticated contact. The residual policy
+  is therefore fail-closed availability for unseen peers once the table is
+  full; a future reviewed aging/eviction design may relax this.
+
+The friendship maps do not currently justify an implementation-only cap:
+
+* `pending_offers` is bounded by `MAX_PATRONS` (currently three) at the public
+  `request_friendship` API, and `offered_since` is inserted only for those
+  pending offers. `patrons` is also TTL-pruned (`FRIENDSHIP_TTL_MS`) and cannot
+  exceed the same three-entry local budget.
+* `friends` is created only when an authenticated peer sends a
+  `FRIEND_OFFER` and that peer is already in the host-controlled
+  `friend_allowlist`; it is TTL-pruned. Its buffered IDs are quota-accounted by
+  the bundle store and therefore do not create an independent unbounded byte
+  store. A hostile wire peer cannot add itself to the allowlist.
+* `friend_allowlist` is a host policy set with no wire-side insertion path. It
+  can grow if an application deliberately adds many identities, but that is
+  outside the remote-adversary resource model and should be bounded by the
+  host API/persistence policy rather than silently evicted by the protocol.
+
+`known_identities` remains an explicit residual. Every authenticated session
+  can refresh one `NodeId → Ed25519 key` entry, and a remote can generate an
+  unbounded sequence of valid pseudonymous identities over the node lifetime.
+  The map is needed to resolve the peer key at the friendship offer/ack seam;
+  arbitrary eviction or a short TTL can make a valid delayed `FRIEND_ACK` fail
+  closed, while a hard admission cap would deny otherwise valid sessions. A
+  safe fix requires a reviewed lifetime rule (for example, binding the key to
+  the live session and retaining a bounded pending-handshake record) plus
+  conformance vectors for delayed ACKs. Do not add an arbitrary cap or TTL in
+  the implementation-only layer.
+
+Group state is partially bounded but has a similar normative gap. The top-level
+`groups` table is capped at `MAX_GROUPS = 256`, including network bootstrap.
+However, each admitted group's `remotes` and `dists` maps are keyed by
+`(member, epoch)` and currently accept every authenticated member's valid
+sender-key distribution for a non-decreasing epoch. A Byzantine member can
+therefore fill finite-but-large future epochs (up to the wire `u16` range),
+while `sent_dists` also grows with local group/epoch sends. The frozen crypto
+specification does not yet define an implementation-safe epoch retention or
+administrative anchor rule that would permit dropping these records without
+changing delayed-message/replay semantics. Leave these maps unchanged and
+track the required normative decision before adding a cap.
+
+The remaining indexes are indirectly bounded: `sync_view.entries` is rebuilt
+from the bounded bundle store on each `ids()` call; `blob_index` and
+`symbol_of` contain only indexed class-4 bundles and are pruned with store
+expiry/eviction; verified file offers use the FIFO `FILE_OFFER_CACHE = 256`;
+blob assemblies are host-created and swept by `BLOB_INTEREST_TTL_MS`; and
+reconciliation ledgers already enforce their protocol limits. These paths did
+not reveal a separate attacker-controlled lifetime accumulation in this pass.
+
+Regression evidence for the new bounds is in
+`proxy_summary_hints_are_bounded_per_peer` and
+`blob_serve_counters_are_bounded_for_unseen_peers`. The focused `mmp-node`
+library suite passes 74 tests; package Clippy is the required follow-up gate.

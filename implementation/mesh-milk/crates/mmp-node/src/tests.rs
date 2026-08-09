@@ -1,10 +1,12 @@
 //! Node integration tests (HANDOFF M3): two in-memory nodes exchange direct +
 //! group messages, receipts purge; a 3-node chain relays store-carry-forward.
 
+use std::collections::HashSet;
+
 use mmp_core::store::{BundleMeta, SlotState};
-use mmp_core::MemStore;
+use mmp_core::{MemStore, SessionHost};
 use mmp_tal::TalEvent;
-use mmp_types::frame::{FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
+use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE};
@@ -44,6 +46,45 @@ fn callback_event_queue_is_bounded_when_host_does_not_poll() {
 
     assert_eq!(n.core.events.len(), super::EVENT_QUEUE_CAPACITY);
     assert_eq!(n.core.event_queue_dropped, super::EVENT_QUEUE_CAPACITY as u64);
+}
+
+#[test]
+fn proxy_summary_hints_are_bounded_per_peer() {
+    let mut n = node(252);
+    let peer = Id16([0xabu8; 16]);
+    for value in 0..(super::MAX_PROXY_HINTS_PER_PEER * 2) {
+        let mut dependent = [0u8; 16];
+        dependent[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        let body = ProxySummaryBody { dependent: Id16(dependent), bloom: Vec::new() }.encode();
+        n.core.on_proxy_summary(&peer, &body);
+    }
+
+    assert_eq!(n.core.proxy_hints.get(&peer).map(HashSet::len), Some(super::MAX_PROXY_HINTS_PER_PEER));
+
+    for value in 0..(super::MAX_PROXY_HINT_PEERS * 2) {
+        let mut peer_id = [0u8; 16];
+        peer_id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        let body = ProxySummaryBody {
+            dependent: Id16([0x55; 16]),
+            bloom: Vec::new(),
+        }
+        .encode();
+        n.core.on_proxy_summary(&Id16(peer_id), &body);
+    }
+    assert!(n.core.proxy_hints.len() <= super::MAX_PROXY_HINT_PEERS);
+}
+
+#[test]
+fn blob_serve_counters_are_bounded_for_unseen_peers() {
+    let mut n = node(253);
+    let root = Id16([0x44; 16]);
+    for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
+        let mut peer = [0u8; 16];
+        peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        n.core.blob_serve_candidates(&Id16(peer), &root, 0, &[0u8; 5], false);
+    }
+
+    assert_eq!(n.core.blob_served.len(), super::MAX_BLOB_SERVE_PEERS);
 }
 
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).

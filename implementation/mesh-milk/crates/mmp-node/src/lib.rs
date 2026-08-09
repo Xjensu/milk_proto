@@ -100,6 +100,18 @@ const CLOSE_ACTION_CAPACITY: usize = 64;
 /// sized backlog of ciphertext-free `Event` payloads when the host stops
 /// polling.  This is a local backpressure policy, not a wire limit.
 const EVENT_QUEUE_CAPACITY: usize = 2048;
+/// Bound advisory proxy-hint dependents retained per authenticated peer.
+/// Hints only suppress an optional spray copy, so dropping a new hint under
+/// local pressure is wire-neutral and cannot affect correctness.
+const MAX_PROXY_HINTS_PER_PEER: usize = 256;
+/// Bound the number of authenticated peers whose advisory proxy hints are
+/// retained. Eviction is intentionally arbitrary because hints only affect
+/// spray ordering, never admission or delivery correctness.
+const MAX_PROXY_HINT_PEERS: usize = 256;
+/// Bound per-contact blob-serving counters retained for distinct peers. A
+/// peer beyond this local policy cap is served nothing until an existing
+/// counter entry is released by policy.
+const MAX_BLOB_SERVE_PEERS: usize = 256;
 /// Local persistence cap for explicit user blocklist entries. This is a host
 /// policy bound, not a wire limit.
 const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
@@ -2784,7 +2796,11 @@ impl NodeCore {
         if !bitmap.len().is_multiple_of(5) {
             return Vec::new(); // decision D4: malformed bitmap length, ignore
         }
-        let served = self.blob_served.get(peer).copied().unwrap_or(0);
+        let served = match self.blob_served.get(peer).copied() {
+            Some(value) => value,
+            None if self.blob_served.len() >= MAX_BLOB_SERVE_PEERS => return Vec::new(),
+            None => 0,
+        };
         let remaining = BLOB_SERVE_MAX_PER_CONTACT.saturating_sub(served);
         if remaining == 0 {
             return Vec::new();
@@ -3130,7 +3146,15 @@ impl SessionHost for NodeCore {
 
     fn on_proxy_summary(&mut self, peer: &NodeId, body: &[u8]) {
         let Ok(summary) = ProxySummaryBody::decode(body) else { return };
-        self.proxy_hints.entry(*peer).or_default().insert(summary.dependent);
+        if !self.proxy_hints.contains_key(peer) && self.proxy_hints.len() >= MAX_PROXY_HINT_PEERS {
+            if let Some(evict) = self.proxy_hints.keys().next().copied() {
+                self.proxy_hints.remove(&evict);
+            }
+        }
+        let dependents = self.proxy_hints.entry(*peer).or_default();
+        if dependents.len() < MAX_PROXY_HINTS_PER_PEER {
+            dependents.insert(summary.dependent);
+        }
     }
 
     fn friend_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
