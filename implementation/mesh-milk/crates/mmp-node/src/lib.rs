@@ -1148,9 +1148,14 @@ impl Node {
             if !gs.is_admin {
                 return Err(SendError::UnknownPeer);
             }
-            gs.add_member(*peer);
         }
+        // Ship the authenticated sender-key distribution before mutating the
+        // OR-Set. Unknown peers and a pending first-contact conversation must
+        // leave local membership untouched when the application send is
+        // rejected; the key distribution itself does not require membership
+        // to have been added yet.
         self.core.send_own_dist(gid, peer)?;
+        self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?.add_member(*peer);
         Ok(())
     }
 
@@ -1184,6 +1189,7 @@ impl Node {
         if text.len() >= MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
+        self.core.preflight_group_size(gid, text.len())?;
         let me = self.core.node_id;
         let needs_distribution = self.core.groups.get(gid).is_some_and(GroupState::needs_distribution);
         if needs_distribution {
@@ -2032,14 +2038,13 @@ impl NodeCore {
         })
     }
 
-    fn send_group(&mut self, gid: &Id16, text: &[u8]) -> Result<Id16, SendError> {
-        let me = self.node_id;
-        let origin = self.public;
-        let dest = *gid;
-        let mut body = Vec::with_capacity(1 + text.len());
-        body.push(apptype::TEXT);
-        body.extend_from_slice(text);
+    fn preflight_group_size(&self, gid: &Id16, text_len: usize) -> Result<(), SendError> {
         let epoch = self.groups.get(gid).ok_or(SendError::UnknownPeer)?.epoch;
+        let body_len = text_len.checked_add(1).ok_or(SendError::TooLarge)?;
+        let ct_len = body_len.checked_add(16).ok_or(SendError::TooLarge)?;
+        if ct_len > u16::MAX as usize {
+            return Err(SendError::TooLarge);
+        }
         // Group encryption advances the local sender chain. Construct an
         // exact-size placeholder first so an oversized application body is
         // rejected before consuming a chain index or signing key operation.
@@ -2048,16 +2053,16 @@ impl NodeCore {
         let placeholder = GroupPayload {
             gid: *gid,
             epoch,
-            member: me,
+            member: self.node_id,
             chain_index: 0,
-            ct: vec![0u8; body.len() + 16],
+            ct: vec![0u8; ct_len],
             member_sig: Sig64::ZERO,
         };
         let candidate = Bundle {
             class: class::GROUP,
             flags: 0,
-            origin,
-            dest,
+            origin: self.public,
+            dest: *gid,
             lifetime_ms: LIFETIME_MESSAGE_MS,
             priority: 1,
             exts: vec![Ext::GroupEpoch(epoch)],
@@ -2067,6 +2072,18 @@ impl NodeCore {
         if bundle_wire_len(&candidate) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
+        Ok(())
+    }
+
+    fn send_group(&mut self, gid: &Id16, text: &[u8]) -> Result<Id16, SendError> {
+        let me = self.node_id;
+        let origin = self.public;
+        let dest = *gid;
+        let mut body = Vec::with_capacity(1 + text.len());
+        body.push(apptype::TEXT);
+        body.extend_from_slice(text);
+        self.preflight_group_size(gid, text.len())?;
+        let epoch = self.groups.get(gid).ok_or(SendError::UnknownPeer)?.epoch;
         let (epoch, gp) = {
             let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
             let gp = gs.local.encrypt_with_ad(me, &body, |placeholder| {

@@ -1029,6 +1029,55 @@ fn group_create_invite_and_message() {
 }
 
 #[test]
+fn rejected_group_invite_does_not_mutate_membership() {
+    let mut alice = node(62);
+    let gid = alice.create_group();
+    let me = alice.node_id();
+    let stranger = Id16([0xa5; 16]);
+
+    assert_eq!(alice.group_invite(&gid, &stranger), Err(SendError::UnknownPeer));
+    assert_eq!(alice.group_members(&gid), vec![me]);
+
+    let mut bob = node(63);
+    introduce(&mut alice, &mut bob);
+    alice.send_text(&bob.node_id(), "first contact").expect("queue first-contact root");
+    assert_eq!(
+        alice.group_invite(&gid, &bob.node_id()),
+        Err(SendError::ConversationPending)
+    );
+    assert_eq!(alice.group_members(&gid), vec![me]);
+}
+
+#[test]
+fn oversized_restored_group_send_does_not_distribute_before_rejection() {
+    let mut alice = node(64);
+    let mut bob = node(65);
+    introduce(&mut alice, &mut bob);
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).expect("known peer");
+    let blob = alice
+        .all_group_blobs()
+        .into_iter()
+        .find(|candidate| candidate[..16] == gid.0)
+        .expect("group snapshot");
+
+    // Restore the same identity from the metadata-only snapshot. The fresh
+    // local sender key sets needs_distribution, so a naive group_send would
+    // queue a key distribution before discovering the oversized bundle.
+    let mut restored = node(64);
+    introduce(&mut restored, &mut bob);
+    assert!(restored.restore_group(&blob));
+    assert!(restored.core.groups.get(&gid).unwrap().needs_distribution());
+
+    assert_eq!(
+        restored.group_send(&gid, &"x".repeat(MAX_BUNDLE - 1)),
+        Err(SendError::TooLarge)
+    );
+    assert!(restored.core.groups.get(&gid).unwrap().needs_distribution());
+    assert!(restored.poll_send().is_none(), "rejected send must not queue a distribution");
+}
+
+#[test]
 fn oversized_group_send_does_not_consume_sender_chain_index() {
     let mut alice = node(61);
     let gid = alice.create_group();
