@@ -34,6 +34,7 @@ use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState, StorePutErro
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
 use mmp_types::bundle::{class, prio};
+use mmp_types::consts::{class_max_lifetime_ms, L_MAX};
 use mmp_types::claim::Claim;
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::Id16;
@@ -512,6 +513,26 @@ fn valid_blocklist(bytes: &[u8]) -> bool {
         .is_some()
 }
 
+/// Validate metadata fields that are persisted outside the signed bundle.
+///
+/// The snapshot checksum is an integrity check for accidental corruption, not
+/// an authenticity check: a local attacker who can rewrite the file can also
+/// recompute BLAKE3.  These fields therefore need their own canonical-domain
+/// checks before they influence routing, eviction, or lifetime decisions.
+fn valid_persisted_metadata(class_byte: u8, budget: u8, own_origin: u8, stored_at: u64, expires_at: u64) -> bool {
+    // The low nibble is the complete wire class domain.  Classes 6..=15 are
+    // intentionally reserved for forward-compatible store-and-forward: a v1
+    // node must retain and relay a signed class it does not interpret.
+    if class_byte > 0x0f || budget > L_MAX
+        || own_origin > 1
+    {
+        return false;
+    }
+
+    let Some(lifetime) = expires_at.checked_sub(stored_at) else { return false };
+    lifetime <= class_max_lifetime_ms(class_byte)
+}
+
 /// Read one snapshot image, optionally enforcing a host-selected complete-file
 /// bound before and during the read. `Ok(None)` means the file exists but was
 /// rejected for exceeding the configured limit; `NotFound` remains an ordinary
@@ -695,6 +716,14 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
     let u64le = |o: usize| -> Option<u64> { Some(u64::from_le_bytes(r.get(o..o + 8)?.try_into().unwrap())) };
     let class_byte = *r.get(16)?;
     let priority = *r.get(49)?;
+    let size = u32le(50)?;
+    let stored_at = u64le(54)?;
+    let expires_at = u64le(62)?;
+    let budget = *r.get(70)?;
+    let own_origin = *r.get(71)?;
+    if !valid_persisted_metadata(class_byte, budget, own_origin, stored_at, expires_at) {
+        return None;
+    }
     // Snapshot bytes are local input, not an authenticated wire bundle. Keep
     // restored metadata inside the same priority domain enforced by the
     // canonical bundle decoder.
@@ -714,11 +743,11 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
         // re-clamps to NORMAL until the authority state that justified any
         // prior elevation is re-established (it never persisted either).
         effective_priority: if class_byte == class::ANNOUNCEMENT { prio::NORMAL } else { priority },
-        size: u32le(50)?,
-        stored_at: u64le(54)?,
-        expires_at: u64le(62)?,
-        budget: *r.get(70)?,
-        own_origin: *r.get(71)? != 0,
+        size,
+        stored_at,
+        expires_at,
+        budget,
+        own_origin: own_origin != 0,
         slot: SlotState::Stored,
     };
     let body = r.get(HDR..)?;
@@ -834,6 +863,49 @@ mod tests {
         };
         let encoded = encode_record(&meta, &[]);
         assert!(decode_record(&encoded).is_none());
+    }
+
+    #[test]
+    fn decode_record_rejects_noncanonical_persisted_metadata() {
+        let meta = BundleMeta {
+            id: Id16([7; 16]),
+            class: class::DIRECT,
+            origin: Id16([8; 16]),
+            dest: Id16([9; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 0,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: L_MAX,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+
+        let mut unknown_class = encode_record(&meta, &[]);
+        unknown_class[16] = 6;
+        assert!(decode_record(&unknown_class).is_some(), "unknown wire classes remain relayable");
+
+        let mut unrepresentable_class = encode_record(&meta, &[]);
+        unrepresentable_class[16] = 0x10;
+        assert!(decode_record(&unrepresentable_class).is_none(), "class bytes above the low nibble are invalid");
+
+        let mut oversized_budget = encode_record(&meta, &[]);
+        oversized_budget[70] = L_MAX.saturating_add(1);
+        assert!(decode_record(&oversized_budget).is_none(), "restored spray budget must stay within L_MAX");
+
+        let mut noncanonical_bool = encode_record(&meta, &[]);
+        noncanonical_bool[71] = 2;
+        assert!(decode_record(&noncanonical_bool).is_none(), "boolean metadata must have one wire encoding");
+
+        let mut reversed_time = encode_record(&meta, &[]);
+        reversed_time[62..70].copy_from_slice(&9u64.to_le_bytes());
+        assert!(decode_record(&reversed_time).is_none(), "expiry before storage must be rejected");
+
+        let mut overlong_time = encode_record(&meta, &[]);
+        let overlong = 10u64 + class_max_lifetime_ms(class::DIRECT) + 1;
+        overlong_time[62..70].copy_from_slice(&overlong.to_le_bytes());
+        assert!(decode_record(&overlong_time).is_none(), "persisted lifetime must respect class maximum");
     }
 
     #[test]
