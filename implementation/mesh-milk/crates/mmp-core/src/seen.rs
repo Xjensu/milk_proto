@@ -40,7 +40,7 @@ impl SeenIndex {
 
     /// Record first sight of `id` at monotonic `now_ms` for `class`.
     pub fn insert(&mut self, id: &Id16, class: u8, now_ms: u64) {
-        let expiry = now_ms + class_max_lifetime_ms(class);
+        let expiry = now_ms.saturating_add(class_max_lifetime_ms(class));
         let epoch = expiry / FILTER_BUCKET_MS;
         let bloom = match self.buckets.iter_mut().find(|(e, _)| *e == epoch) {
             Some((_, b)) => b,
@@ -71,7 +71,7 @@ impl SeenIndex {
     /// Drop buckets whose entire expiry window has passed. Monotonic clock only.
     pub fn rotate(&mut self, now_ms: u64) {
         while let Some((epoch, _)) = self.buckets.front() {
-            if (epoch + 1) * FILTER_BUCKET_MS <= now_ms {
+            if epoch.saturating_add(1).saturating_mul(FILTER_BUCKET_MS) <= now_ms {
                 self.buckets.pop_front();
             } else {
                 break;

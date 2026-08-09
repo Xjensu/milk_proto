@@ -88,7 +88,7 @@ impl ReceiptFilter {
                 let _ = self.exact.remove(&oldest);
             }
         }
-        self.exact.insert(*delivered, now_ms + LIFETIME_MESSAGE_MS);
+        self.exact.insert(*delivered, now_ms.saturating_add(LIFETIME_MESSAGE_MS));
     }
 
     /// OR a peer's bucket into ours — caller MUST have authenticated the

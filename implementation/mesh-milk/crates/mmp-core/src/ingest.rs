@@ -113,7 +113,7 @@ pub fn ingest(
         },
         size: bytes.len() as u32,
         stored_at: now_ms,
-        expires_at: now_ms + lifetime,
+        expires_at: now_ms.saturating_add(lifetime),
         budget: 1,
         own_origin: origin_node == *self_node,
         slot: SlotState::Stored,

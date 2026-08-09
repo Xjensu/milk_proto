@@ -233,6 +233,69 @@ fn receipt_filter_hint_never_purges() {
     assert_eq!(rf.signal(&id), SuppressSignal::Purge); // exact D0 receipt
 }
 
+#[test]
+fn clock_maximum_does_not_panic_or_wrap_seen_deadline() {
+    let mut seen = SeenIndex::new();
+    let id = Id16([0xabu8; 16]);
+
+    seen.insert(&id, class::DIRECT, u64::MAX);
+    seen.rotate(u64::MAX);
+
+    assert!(seen.contains(&id));
+}
+
+#[test]
+fn clock_maximum_does_not_panic_or_wrap_receipt_deadline() {
+    let mut filter = ReceiptFilter::new();
+    let id = Id16([0xcdu8; 16]);
+
+    filter.note_verified_receipt(&id, u64::MAX);
+
+    assert_eq!(filter.signal(&id), SuppressSignal::Purge);
+}
+
+#[test]
+fn clock_maximum_claim_expiry_is_conservative() {
+    let alice = identity(1);
+    let mut store = ClaimStore::new();
+    let mut claim = Claim {
+        owner: alice.public(),
+        field: 0x01,
+        seq: 1,
+        body: b"near-max".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    claim.sig = alice.sign(SigDomain::Claim, &claim.signed_object());
+
+    assert_eq!(store.merge(claim, u64::MAX - 1, false), ClaimMerge::Adopted);
+    store.expire(u64::MAX);
+
+    let node = mmp_types::node_id_of(&alice.public());
+    assert!(store.get(&node, 0x01).is_none());
+}
+
+#[test]
+fn clock_maximum_ingest_deadline_saturates() {
+    let alice = identity(1);
+    let me = Id16([9; 16]);
+    let mut seen = SeenIndex::new();
+    let mut store = MemStore::new();
+    let bundle = make_bundle(&alice, me, b"near-max");
+
+    let (disposition, decoded) = ingest(
+        &bundle.encode(),
+        u64::MAX,
+        &me,
+        &mut seen,
+        &mut store,
+        &mut accept_all,
+    );
+
+    assert_eq!(disposition, Disposition::Stored { to_self: true });
+    assert!(decoded.is_some());
+    assert_eq!(store.meta(&bundle.id()).unwrap().expires_at, u64::MAX);
+}
+
 /// E4-S4 persistence completion (handbook §4.3 step 3): a `SeenIndex`
 /// surviving restart must still recognize IDs it saw before — the whole
 /// point of persisting it, per doc 04 §7's "prevent post-restart duplicate

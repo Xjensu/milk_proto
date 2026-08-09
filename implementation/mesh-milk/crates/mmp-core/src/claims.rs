@@ -177,7 +177,7 @@ impl ClaimStore {
 
     /// Strangers' claims expire at 7 d; pinned (contact) claims are retained.
     pub fn expire(&mut self, now_ms: u64) {
-        self.map.retain(|_, s| s.pinned || s.received_at + LIFETIME_CLAIM_MS > now_ms);
+        self.map.retain(|_, s| s.pinned || s.received_at.saturating_add(LIFETIME_CLAIM_MS) > now_ms);
     }
 
     /// All currently-stored claims, in `(owner, field)` order.
