@@ -37,6 +37,46 @@ fn clustered_mobility_rejects_invalid_configuration() {
 }
 
 #[test]
+fn social_clustered_mobility_is_deterministic_with_bounded_bridges() {
+    let mut first = crate::SocialClusteredMobility::new(24, 4, 250).expect("valid profile");
+    let mut second = crate::SocialClusteredMobility::new(24, 4, 250).expect("valid profile");
+    let mut rng_a = crate::Rng::new(0x0510_C1A1);
+    let mut rng_b = crate::Rng::new(0x0510_C1A1);
+    let mut bridge_count = 0;
+    for _ in 0..100 {
+        let first_pair = first.next_pair(&mut rng_a);
+        let second_pair = second.next_pair(&mut rng_b);
+        assert_eq!(first_pair, second_pair, "same seed must reproduce the plan");
+        assert_ne!(first_pair.0, first_pair.1, "a contact cannot contain itself");
+        bridge_count += usize::from(first_pair.2);
+    }
+    assert_eq!(bridge_count, first.bridge_count());
+    assert!(bridge_count > 0, "a non-zero bridge probability must bridge sometimes");
+    assert!(bridge_count < 100, "a sub-unit bridge probability must retain intra-cluster contacts");
+}
+
+#[test]
+fn social_clustered_mobility_rejects_invalid_configuration() {
+    assert!(crate::SocialClusteredMobility::new(8, 1, 250).is_none());
+    assert!(crate::SocialClusteredMobility::new(7, 4, 250).is_none());
+    assert!(crate::SocialClusteredMobility::new(8, 4, 1_001).is_none());
+}
+
+#[test]
+fn social_clustered_run_reports_only_contact_generator_metrics() {
+    let mut sim = Sim::new(24, 0x0510_C1A1);
+    let metrics = sim
+        .run_social_clustered_meetings(40, 1_000, 2_000, 4, 500)
+        .expect("valid profile");
+
+    assert_eq!(metrics.meetings, 40);
+    assert_eq!(metrics.bridge_probability_per_mille, 500);
+    assert!(metrics.bridge_meetings > 0);
+    assert!(metrics.bridge_meetings < metrics.meetings);
+    assert_eq!(sim.counters().meetings_run, 40);
+}
+
+#[test]
 fn ten_node_random_mesh_delivers_and_receipts() {
     const N: usize = 10;
     const SENDER: usize = 0;

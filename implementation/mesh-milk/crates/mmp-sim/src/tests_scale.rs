@@ -72,6 +72,47 @@ fn clustered_mobility_measurement_is_reproducible() {
     );
 }
 
+/// Manual social-cluster measurement. The generator's realized bridge rate is
+/// printed alongside protocol outcomes so later trace calibration can compare
+/// runs without treating this toy model as SLAW evidence.
+#[test]
+#[ignore]
+fn social_clustered_mobility_measurement_is_reproducible() {
+    const N: usize = 100;
+    const COMMUNITIES: usize = 10;
+    const MEETINGS: usize = 5_000;
+    const BRIDGE_PROBABILITY_PER_MILLE: u16 = 120;
+
+    let mut sim = Sim::new(N, 0x50C1_AA57_000D);
+    let pairs: Vec<(usize, usize)> = (0..10).map(|k| (k, N - 1 - k)).collect();
+    for &(from, to) in &pairs {
+        sim.introduce(from, to);
+        sim.send_text(from, to, "social clustered mobility measurement");
+    }
+
+    let metrics = sim
+        .run_social_clustered_meetings(
+            MEETINGS,
+            1_000,
+            5_000,
+            COMMUNITIES,
+            BRIDGE_PROBABILITY_PER_MILLE,
+        )
+        .expect("valid social clustered profile");
+    assert!(sim.quota_ok(), "social clustered schedule must stay within store quotas");
+    eprintln!(
+        "social_clustered_mobility_measurement: delivery_ratio={:.3} p50_ms={:?} p90_ms={:?} \
+         meetings={} bridges={} bridge_rate={:.3} simulated_hours={:.2}",
+        sim.delivery_ratio(),
+        sim.latency_percentile_ms(0.50),
+        sim.latency_percentile_ms(0.90),
+        metrics.meetings,
+        metrics.bridge_meetings,
+        metrics.bridge_meetings as f64 / metrics.meetings.max(1) as f64,
+        sim.now_ms() as f64 / 3_600_000.0,
+    );
+}
+
 #[test]
 #[ignore]
 fn thousand_node_mesh_scale_validation() {

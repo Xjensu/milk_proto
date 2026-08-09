@@ -104,6 +104,96 @@ impl ClusteredMobility {
     }
 }
 
+/// Deterministic social-cluster contact model for controlled experiments.
+///
+/// Unlike [`ClusteredMobility`]'s periodic bridge cadence, this model keeps a
+/// latent active community and takes a seeded bridge transition with the
+/// configured per-mille probability. A bridge moves the latent activity to a
+/// different community; otherwise both endpoints are sampled from the active
+/// community. This makes dwell/bridge distributions explicit without claiming
+/// to reproduce SLAW, human traces, or any production routing behavior.
+pub struct SocialClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    bridge_probability_per_mille: u16,
+    active_community: usize,
+    bridge_count: usize,
+}
+
+impl SocialClusteredMobility {
+    /// Build a seeded-model-independent plan for balanced social communities.
+    ///
+    /// `bridge_probability_per_mille` is in `0..=1000`; zero is a useful
+    /// disconnected-cluster control and 1000 forces a bridge every contact.
+    /// Every community contains at least two nodes so intra-community pairs
+    /// are always valid.
+    pub fn new(
+        node_count: usize,
+        community_count: usize,
+        bridge_probability_per_mille: u16,
+    ) -> Option<Self> {
+        if community_count < 2
+            || bridge_probability_per_mille > 1_000
+            || node_count < community_count.saturating_mul(2)
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        Some(Self {
+            communities,
+            bridge_probability_per_mille,
+            active_community: 0,
+            bridge_count: 0,
+        })
+    }
+
+    /// Configured probability of a bridge contact in per-mille units.
+    pub fn bridge_probability_per_mille(&self) -> u16 {
+        self.bridge_probability_per_mille
+    }
+
+    /// Number of bridge contacts emitted so far.
+    pub fn bridge_count(&self) -> usize {
+        self.bridge_count
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let bridge = rng.below(1_000) < u64::from(self.bridge_probability_per_mille);
+        let current = self.active_community;
+        let (left, right, is_bridge) = if bridge {
+            let offset = 1 + rng.below((self.communities.len() - 1) as u64) as usize;
+            let destination = (current + offset) % self.communities.len();
+            let left = self.pick(&self.communities[current], rng);
+            let right = self.pick(&self.communities[destination], rng);
+            self.active_community = destination;
+            self.bridge_count = self.bridge_count.saturating_add(1);
+            (left, right, true)
+        } else {
+            let members = &self.communities[current];
+            let first = self.pick(members, rng);
+            let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+            let first_index = members.iter().position(|node| *node == first).expect("picked member");
+            (first, members[(first_index + offset) % members.len()], false)
+        };
+        (left, right, is_bridge)
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
+/// Metrics returned by one social-cluster schedule run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocialClusteredRunMetrics {
+    pub meetings: usize,
+    pub bridge_meetings: usize,
+    pub bridge_probability_per_mille: u16,
+}
+
 /// A whole-scenario counter block, exposed so scenario tests can assert on
 /// outcomes beyond pass/fail (delivery ratio, quota headroom, ...).
 #[derive(Debug, Default, Clone, Copy)]
@@ -457,6 +547,35 @@ impl Sim {
             self.meet(i, j, dt);
         }
         true
+    }
+
+    /// Run a deterministic social-cluster schedule and return only generator
+    /// metrics. This is a research instrument for comparing contact traces;
+    /// it leaves routing, copy budgets, and wire behavior untouched.
+    pub fn run_social_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        bridge_probability_per_mille: u16,
+    ) -> Option<SocialClusteredRunMetrics> {
+        let mut plan = SocialClusteredMobility::new(
+            self.nodes.len(),
+            community_count,
+            bridge_probability_per_mille,
+        )?;
+        let span = max_gap_ms.saturating_sub(min_gap_ms).max(1);
+        for _ in 0..count {
+            let (i, j, _) = plan.next_pair(&mut self.rng);
+            let dt = min_gap_ms + self.rng.below(span);
+            self.meet(i, j, dt);
+        }
+        Some(SocialClusteredRunMetrics {
+            meetings: count,
+            bridge_meetings: plan.bridge_count(),
+            bridge_probability_per_mille: plan.bridge_probability_per_mille(),
+        })
     }
 
     /// One conductor round (doc 17 §3.2, E6-S3): `conductor` meets each node
