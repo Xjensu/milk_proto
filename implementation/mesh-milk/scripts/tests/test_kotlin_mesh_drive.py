@@ -56,6 +56,32 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("setForegroundRelayCapable", self.source)
         self.assertIn("pending.removeIf { it.link == link }", self.source)
 
+    def test_link_callbacks_forward_before_draining_host_output(self) -> None:
+        """Keep callback ordering compatible with the FFI single-owner contract.
+
+        The Rust FFI exposes a pull-based ``pollSend``/``pollEvent`` surface;
+        a native callback must first inject the transport event and only then
+        drain the resulting output.  This source-level guard catches a future
+        refactor that drains before ``linkUp``/``linkData``/``linkDown`` and
+        would therefore reorder handshake or close events at the mobile
+        boundary without requiring an Android SDK or BLE hardware.
+        """
+
+        def method_body(start: str, end: str) -> str:
+            begin = self.source.index(start)
+            finish = self.source.index(end, begin)
+            return self.source[begin:finish]
+
+        link_up = method_body("public fun onLinkUp", "public fun onLinkData")
+        self.assertLess(link_up.index("node.linkUp(link, initiator)"), link_up.index("drain()"))
+
+        link_data = method_body("public fun onLinkData", "public fun onLinkDown")
+        self.assertLess(link_data.index("node.linkData(link, bytes.copyOf())"), link_data.index("drain()"))
+
+        link_down = method_body("public fun onLinkDown", "private fun advance")
+        self.assertLess(link_down.index("pending.removeIf { it.link == link }"), link_down.index("node.linkDown(link)"))
+        self.assertLess(link_down.index("node.linkDown(link)"), link_down.index("drainEvents()"))
+
     def test_evidence_boundary_is_documented(self) -> None:
         self.assertIn("Android-SDK-free", self.readme)
         self.assertIn("evidence of GATT", self.readme)
