@@ -28,6 +28,12 @@ public interface MeshNode {
     fun setTier(tier: MeshTier)
     fun beacon(nowMs: Long): ByteArray
     fun tick(nowMs: Long)
+    /** Drain one transport-local request to terminate a physical BLE link. */
+    fun pollClose(): Long?
+    /** Sticky close-queue saturation diagnostic; non-zero is fail-closed. */
+    fun closeActionsDropped(): Long
+    /** Sticky application-event queue saturation diagnostic; non-zero is fail-closed. */
+    fun eventQueueDropped(): Long
     fun pollSend(): OutboundFrame?
     fun pollEvent(): Any?
     fun onBeacon(serviceData: ByteArray, rssi: Byte)
@@ -59,6 +65,9 @@ public interface Scanner {
 public interface GattAdapter {
     fun mtu(link: Long): Int
     fun notifyFragment(link: Long, payload: ByteArray): Boolean
+
+    /** Request native teardown; the platform must call [MeshDrive.onLinkDown] after it completes. */
+    fun close(link: Long)
 }
 
 /**
@@ -99,6 +108,14 @@ public class MeshDrive(
 
     public val lastTick: Long?
         get() = lastTickMs
+
+    /** Sticky transport-close saturation counter exposed for fail-closed hosts. */
+    public val closeActionsDropped: Long
+        get() = node.closeActionsDropped()
+
+    /** Sticky application-event saturation counter exposed for fail-closed hosts. */
+    public val eventQueueDropped: Long
+        get() = node.eventQueueDropped()
 
     public fun start() {
         check(!running) { "MeshDrive is already running" }
@@ -176,7 +193,7 @@ public class MeshDrive(
         if (!running || !activeLinks.remove(link)) return
         pending.removeIf { it.link == link }
         node.linkDown(link)
-        drainEvents()
+        drain()
     }
 
     private fun advance(nowMs: Long, emit: Boolean) {
@@ -190,8 +207,22 @@ public class MeshDrive(
     }
 
     private fun drain() {
+        drainClose()
         drainSend()
         drainEvents()
+    }
+
+    /**
+     * Close actions are transport-local, not wire frames.  Drop queued output
+     * for a link before asking the platform to tear it down; the platform must
+     * report the physical completion through [onLinkDown].
+     */
+    private fun drainClose() {
+        while (true) {
+            val link = node.pollClose() ?: return
+            pending.removeIf { it.link == link }
+            gatt.close(link)
+        }
     }
 
     private fun drainSend() {

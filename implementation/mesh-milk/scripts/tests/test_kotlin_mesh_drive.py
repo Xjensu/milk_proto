@@ -43,6 +43,23 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("if (!accepted) return", self.source)
         self.assertIn("notifyFragment", self.source)
 
+    def test_transport_close_actions_are_drained_before_send(self) -> None:
+        self.assertIn("fun pollClose(): Long?", self.source)
+        self.assertIn("fun close(link: Long)", self.source)
+        self.assertIn("node.pollClose()", self.source)
+        self.assertIn("gatt.close(link)", self.source)
+        self.assertIn("pending.removeIf { it.link == link }", self.source)
+        self.assertLess(self.source.index("drainClose()"), self.source.index("drainSend()"))
+
+    def test_transport_diagnostics_are_exposed_and_link_down_drains_all_output(self) -> None:
+        self.assertIn("fun closeActionsDropped(): Long", self.source)
+        self.assertIn("fun eventQueueDropped(): Long", self.source)
+        self.assertIn("node.closeActionsDropped()", self.source)
+        self.assertIn("node.eventQueueDropped()", self.source)
+        link_down = self.source.index("public fun onLinkDown")
+        advance = self.source.index("private fun advance", link_down)
+        self.assertIn("drain()", self.source[link_down:advance])
+
     def test_mtu_three_fragmentation_is_explicit(self) -> None:
         self.assertIn("ATT_HEADER_BYTES: Int = 3", self.source)
         self.assertIn("fragmentSize = mtu - ATT_HEADER_BYTES", self.source)
@@ -80,7 +97,7 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
 
         link_down = method_body("public fun onLinkDown", "private fun advance")
         self.assertLess(link_down.index("pending.removeIf { it.link == link }"), link_down.index("node.linkDown(link)"))
-        self.assertLess(link_down.index("node.linkDown(link)"), link_down.index("drainEvents()"))
+        self.assertLess(link_down.index("node.linkDown(link)"), link_down.index("drain()"))
 
     def test_evidence_boundary_is_documented(self) -> None:
         self.assertIn("Android-SDK-free", self.readme)
