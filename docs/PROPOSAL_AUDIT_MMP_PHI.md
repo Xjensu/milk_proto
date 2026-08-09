@@ -945,6 +945,41 @@ sender-key epochs—still require external cryptographic review.
 
 No file under `specification/` or any protected dirty path was modified.
 
+### Orchestration continuation XXI (2026-08-09)
+
+This implementation cycle delegated three bounded tracks. The embedded track
+produced `659da7a`: the host fixed-capacity transaction acceptance double is
+now a named CI step, with exact-fill, replacement-delta, reservation/abort,
+stale-token, failed-commit, and durable-generation recovery coverage. The
+target dependency closure passes, but this remains preflight evidence; the
+fixed-capacity provider, Embassy executor, board TAL, linked-image budget,
+silicon benchmark, and phone-to-sensor HIL are still open.
+
+The interoperability track produced `c2b743d`. The guide now matches the
+implemented capability boundary: Linux/BlueZ is the peripheral path and
+Linux, Windows, and macOS are central paths through `btleplug`; Windows/macOS
+peripheral roles and real hardware execution remain explicitly unverified. A
+source-level regression prevents the guide from drifting back to a Linux-only
+central claim.
+
+The security track produced `ce7ab18`, `ba76d4a`, `b8d7dfc`, `f63ef82`,
+`3cc195c`, and handoff update `2b290aa`. Ratchet counters now use checked
+transitions and additive fallible APIs, preserve the full `u32` wire index once
+at the terminal value, retain already-skipped keys after terminal-index-first
+delivery, and reset exhaustion on a new epoch. Legacy wrappers fail closed via
+an explicit panic at exhaustion to preserve their public signatures; production
+node/group callers have not yet migrated to the fallible API, which remains an
+external application-recovery/API decision. Prekey tests now bind both
+identities, sender exchange context, and optional OTK inclusion; the bespoke
+serverless X3DH composition and replay/suppression semantics still require
+external cryptographic review.
+
+Verification for this continuation: full workspace tests and Clippy pass;
+49 crypto tests, 85 node tests, 113 Python tests (8 skipped), 46 deterministic
+fuzz seeds, the complete embedded no-std target closure, layer-check, the
+transactional acceptance double, and the CLI delivery demo all pass. No file
+under `specification/` or any protected dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
