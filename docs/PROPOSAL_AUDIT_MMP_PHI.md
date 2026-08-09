@@ -1121,6 +1121,25 @@ platform-dependent skips), 46 deterministic fuzz seeds, the embedded
 six transactional-store tests all pass. No file under `specification/` or any
 pre-existing protected dirty path was modified.
 
+### Orchestration continuation XXVII (2026-08-09)
+
+The vault security review produced `8223f13`. `restore_from_vault` now parses
+and validates the bounded identity, node, and conversation context before it
+asks a provider to unwrap any DEK. A regression provider counts unwrap calls
+and proves that a malformed context returns `VaultError::Invalid` with zero
+provider key-unwrapping activity. This enforces the keystore design's
+validate-before-decryption boundary without implementing a native backend or
+changing the wire contract.
+
+Focused vault evidence is 18 passing tests with targeted Clippy clean. The
+complete workspace matrix also passes: Rust tests and Clippy, 124 Python tests
+(8 platform-dependent skips), 46 deterministic fuzz seeds, the embedded
+`thumbv7em-none-eabihf` closure, layer-check, release CLI delivery demo, and
+six transactional-store tests. Native keystore/Keychain/DPAPI adapters,
+durable provider recovery, and physical platform evidence remain explicitly
+open. No file under `specification/` or any pre-existing protected dirty path
+was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
