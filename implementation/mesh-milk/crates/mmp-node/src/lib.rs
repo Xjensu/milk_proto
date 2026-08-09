@@ -2605,12 +2605,29 @@ impl NodeCore {
     /// and groups restore from a persisted snapshot.
     fn rebuild_blob_index(&mut self) {
         for meta in self.store.all_meta() {
+            let Some((_, bytes)) = self.store.get(&meta.id) else { continue };
+            // Snapshot checksums detect accidental corruption, not an
+            // attacker who can rewrite the local image.  Re-apply the same
+            // canonical/signature/ID and metadata binding used on wire before
+            // any restored bundle can enter a routing or blob index.
+            if !stored_bundle_is_valid(&meta, &bytes) {
+                self.store.remove(&meta.id);
+                self.deindex_symbol(&meta.id);
+                continue;
+            }
             if meta.class != class::SYMBOL {
                 continue;
             }
-            let Some((_, bytes)) = self.store.get(&meta.id) else { continue };
             let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
-            self.index_symbol_bundle(&bundle, meta.id);
+            let Some((root, sym_no)) = self.index_symbol_bundle(&bundle, meta.id) else { continue };
+            // A valid bundle signature does not prove that a class-4 payload
+            // is a symbol for the advertised Merkle root.  Do this check while
+            // rebuilding the holder index so a tampered-but-re-signed local
+            // record cannot become servable after restart.
+            if !symbol_payload_verifies(&bundle, &root, sym_no) {
+                self.store.remove(&meta.id);
+                self.deindex_symbol(&meta.id);
+            }
         }
     }
 
@@ -3123,6 +3140,22 @@ impl NodeCore {
 /// symbol's hash to the SYMBOL_INFO root's 16-byte prefix, AND the path's own
 /// proven leaf index must equal the SYMBOL_INFO-derived `sym_no` — closing the
 /// forged-position replay hole a membership-only check would leave open.
+fn stored_bundle_is_valid(meta: &BundleMeta, bytes: &[u8]) -> bool {
+    if meta.size as usize != bytes.len() {
+        return false;
+    }
+    let Ok(bundle) = Bundle::decode_canonical(bytes) else { return false };
+    if bundle.id() != meta.id
+        || bundle.class != meta.class
+        || bundle.origin_node() != meta.origin
+        || bundle.dest != meta.dest
+        || bundle.priority != meta.priority
+    {
+        return false;
+    }
+    mmp_crypto::verify(SigDomain::Bundle, &bundle.origin, &bundle.canonical_zeroed(), &bundle.signature).is_ok()
+}
+
 fn symbol_payload_verifies(bundle: &Bundle, root: &Id16, sym_no: u16) -> bool {
     let Ok(sp) = SymbolPayload::decode(&bundle.payload) else { return false };
     let Ok(path) = MerklePath::decode(&sp.path) else { return false };
@@ -3181,6 +3214,16 @@ impl SessionHost for NodeCore {
 
     fn load_for_handoff(&mut self, peer: &NodeId, id: &Id16) -> Option<(Vec<u8>, u8)> {
         let (mut meta, mut bytes) = self.store.get(id)?;
+        // The ordinary ingest path verifies before storing, but a checksum-
+        // only local snapshot can be tampered with between process starts.
+        // Revalidate before touching the lifetime bytes or emitting anything;
+        // besides preventing unauthenticated forwarding this guards the fixed
+        // offset slice below against truncated provider records.
+        if !stored_bundle_is_valid(&meta, &bytes) {
+            self.store.remove(id);
+            self.deindex_symbol(id);
+            return None;
+        }
         let peer_is_dest = meta.dest == *peer;
         let u_self = self.utility.utility(&meta.dest, self.now);
         let mut u_peer: f32 = if peer_is_dest { 1.0 } else { 0.0 };

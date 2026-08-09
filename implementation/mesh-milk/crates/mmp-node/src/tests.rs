@@ -5,14 +5,14 @@ use std::collections::{BTreeMap, HashSet};
 
 use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_core::{IdSource, MemStore, SessionHost};
-use mmp_crypto::conversation_id;
+use mmp_crypto::{conversation_id, Identity};
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
-    OFFER_MIN_LIFETIME_MS, SYMBOL_SIZE,
+    OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
@@ -23,6 +23,105 @@ use crate::{DeliveryState, Event, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
+}
+
+#[test]
+fn persisted_handoff_revalidates_raw_bundle_before_mutation() {
+    let signer = Identity::from_seed(&[241; 32]);
+    let peer = Id16([242; 16]);
+    let mut bundle = Bundle {
+        class: class::DIRECT,
+        flags: 0,
+        origin: signer.public(),
+        dest: peer,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::NORMAL,
+        exts: Vec::new(),
+        payload: vec![apptype::TEXT, 1, 2, 3],
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = signer.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+    let mut tampered = bundle.encode();
+    // Keep the bytes canonical but invalidate the origin signature. A
+    // checksum-only snapshot can otherwise reintroduce this record after a
+    // restart, and the old handoff path would slice its lifetime field before
+    // discovering the problem.
+    let payload_tail = tampered.len() - 65;
+    tampered[payload_tail] ^= 1;
+
+    let mut n = node(243);
+    n.core.store = Box::new(MemStore::new());
+    n.core.store.put(
+        BundleMeta {
+            id,
+            class: bundle.class,
+            origin: bundle.origin_node(),
+            dest: bundle.dest,
+            priority: bundle.priority,
+            effective_priority: bundle.priority,
+            size: tampered.len() as u32,
+            stored_at: 0,
+            expires_at: LIFETIME_MESSAGE_MS,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        },
+        &tampered,
+    );
+
+    assert!(SessionHost::load_for_handoff(&mut n.core, &peer, &id).is_none());
+    assert!(n.core.store.meta(&id).is_none(), "invalid persisted bundle must be removed");
+}
+
+#[test]
+fn startup_rebuild_rejects_signed_but_merkle_invalid_symbol() {
+    let signer = Identity::from_seed(&[244; 32]);
+    let root = Id16([245; 16]);
+    let peer = Id16([246; 16]);
+    let mut bundle = Bundle {
+        class: class::SYMBOL,
+        flags: 0,
+        origin: signer.public(),
+        dest: peer,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::BULK,
+        exts: vec![Ext::SymbolInfo {
+            root,
+            block: 0,
+            sym: 0,
+            k: RS_DATA_K as u8,
+            n: RS_TOTAL_N as u8,
+        }],
+        // The shape is decodable and the bundle signature is valid, but the
+        // path is not a proof for `root`; startup must not index it as
+        // servable holder state.
+        payload: SymbolPayload { path: vec![0], symbol: vec![0; SYMBOL_SIZE] }.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = signer.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+    let bytes = bundle.encode();
+    let meta = BundleMeta {
+        id,
+        class: bundle.class,
+        origin: bundle.origin_node(),
+        dest: bundle.dest,
+        priority: bundle.priority,
+        effective_priority: bundle.priority,
+        size: bytes.len() as u32,
+        stored_at: 0,
+        expires_at: LIFETIME_MESSAGE_MS,
+        budget: 1,
+        own_origin: false,
+        slot: SlotState::Stored,
+    };
+    let mut store = MemStore::new();
+    store.put(meta, &bytes);
+
+    let restored = Node::new([247; 32], Box::new(store), Tier::Relay);
+    assert!(restored.core.store.meta(&id).is_none(), "invalid symbol must not survive startup");
+    assert!(!restored.core.blob_index.contains_key(&root));
 }
 
 /// Provider fixture that refuses every durable write. This exercises the
