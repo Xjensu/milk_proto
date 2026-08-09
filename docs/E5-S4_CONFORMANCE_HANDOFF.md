@@ -2853,3 +2853,59 @@ The next implementation-safe step is to continue only at boundaries with
 explicit local invariants (for example, additional store/blob crash tests).
 Do not infer wire changes for RBSR/D3, mobility proofs, or platform keystore
 semantics until the corresponding normative contract and test vectors exist.
+
+## 2026-08-09 continuation: snapshot, vector, and FFI boundary audits
+
+Three independent implementation audits produced bounded fixes without any
+specification or wire-format change.
+
+Commit `66d92f2` closes a persistence fail-open: an existing primary file with
+foreign or legacy bytes (anything other than `MMPSNAP2`) was previously loaded
+as an empty store, allowing the next `persist` to overwrite the only copy.
+`SnapshotStore::load_bytes` now marks that state as rejected, while recognized
+`MMPSNAP2` images still retain the documented skip-corrupt-record behavior for
+truncated or damaged tails. The regression proves the unknown primary remains
+byte-identical and `persist` returns `InvalidData`.
+
+Commit `689247b` strengthens the independent E5-S4 conformance reader. It now
+checks the normative lengths of known extension TLVs independently of the
+production decoder: `PARENTS` is 16--64 bytes in 16-byte increments,
+`GROUP_EPOCH` is exactly 2 bytes, and `SYMBOL_INFO` is exactly 22 bytes.
+Malformed and boundary-positive cases are covered, and grouped bundle tests
+run this validation over every extension sequence. This is a test oracle
+hardening only; no committed vector bytes changed.
+
+Commit `343cbc5` makes the mobile FFI nickname setter return `BadArg` for
+UTF-8 inputs larger than the normative `NICKNAME_MAX` byte cap before locking,
+signing, storing, or gossiping a claim. The regression confirms no claim or
+bundle side effect. This changes the generated Kotlin/Swift method from a
+void-returning call to an error-returning call; bindings and host code must be
+regenerated to handle the existing `BadArg` error. The method name and wire
+format are unchanged. The direct Rust `Node::set_nickname` API still has a
+separate, explicitly tracked gap because it remains infallible; generic
+`publish_claim` remains field-agnostic by design and must not be silently
+reinterpreted in this pass.
+
+Verification for this continuation:
+
+- `cargo test --workspace --all-targets -- --test-threads=1`: passed; this
+  includes the full simulator and all workspace integration targets.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
+  passed.
+- `cargo test -p mmp-cli --all-targets -- --test-threads=1`: 35 tests passed
+  before the TLV additions; the focused post-change vector run reports 36
+  passed.
+- `mmp-store`: 25 tests and strict Clippy passed under the agent's focused
+  verification; the default Windows linker encountered an environment PDB
+  failure once, and the rerun with `RUSTFLAGS='-C debuginfo=0'` passed.
+- `mmp-ffi`: 29 library tests and strict Clippy passed; the complete Python
+  tooling suite passed 149 tests with 10 expected skips, including the mobile
+  API surface check. `check_spec_status.py` and `layer-check` passed.
+- No path under `specification/` changed. Existing user-owned dirty files and
+  temporary audit directories remain unstaged.
+
+Follow-up before claiming the mobile API is production-ready: update the
+checked-in Kotlin/Swift/TypeScript integration documentation and regenerated
+bindings for the new `setNickname` error result, then give direct Rust
+`Node::set_nickname` an explicit reviewed failure contract. Do not hide either
+compatibility issue by silently truncating or dropping a nickname.
