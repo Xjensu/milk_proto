@@ -278,6 +278,19 @@ For each real-radio run, attach all of the following to the release record:
    to the relevant specification section; do not edit `specification/` to make
    the observed implementation pass.
 
+## Independent fingerprint evidence (2026-08-09)
+
+The conformance reader now includes
+`vectors::conformance::rbsr_fingerprint_vector_matches_independent_reader`.
+It recomputes the committed doc-06 fingerprint from the raw Id16 hex array,
+the XOR fold, the little-endian count, and BLAKE3 directly. The test does not
+call `mmp_core::fingerprint` or any production wire decoder; it checks both the
+published eight bytes and the little-endian `u64` value. This closes a small
+drift gap in the existing `rbsr_fingerprint.json` artifact and complements the
+independent RECON frame grammar checks and the production D3 domain transcript
+test. It is wire-neutral and does not imply that priority partitions or D3
+admission weighting have been defined.
+
 The release decision remains **blocked on the protocol decision and the
 Linux/BlueZ hardware evidence independently**. A successful hardware run may
 close only the radio row above; it cannot authorize a guessed RBSR partition or

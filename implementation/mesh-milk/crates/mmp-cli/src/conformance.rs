@@ -149,6 +149,39 @@ fn json_all_u64(json: &str, key: &str) -> Vec<u64> {
     values
 }
 
+/// Collect strings from one JSON array field in the deliberately small
+/// generator-owned format.  This is intentionally limited to unescaped
+/// strings and stops at that array's closing bracket, so later fields cannot
+/// accidentally become part of the RBSR input.
+fn json_array_strings(json: &str, key: &str) -> Vec<String> {
+    let needle = format!("\"{key}\"");
+    let key_at = json
+        .find(&needle)
+        .unwrap_or_else(|| panic!("missing JSON field {key:?}"));
+    let after_key = &json[key_at + needle.len()..];
+    let colon = after_key
+        .find(':')
+        .unwrap_or_else(|| panic!("missing colon after JSON field {key:?}"));
+    let value = after_key[colon + 1..].trim_start();
+    assert!(value.starts_with('['), "JSON field {key:?} is not an array");
+    let end = value
+        .find(']')
+        .unwrap_or_else(|| panic!("unterminated JSON array field {key:?}"));
+    let array = &value[1..end];
+    let mut values = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative) = array[cursor..].find('"') {
+        let start = cursor + relative + 1;
+        let body = &array[start..];
+        let close = body
+            .find('"')
+            .unwrap_or_else(|| panic!("unterminated JSON array string {key:?}"));
+        values.push(body[..close].to_owned());
+        cursor = start + close + 1;
+    }
+    values
+}
+
 fn decode_hex(field: &str, value: &str) -> Vec<u8> {
     assert!(value.len().is_multiple_of(2), "{field} hex value has odd length");
     let mut out = Vec::with_capacity(value.len() / 2);
@@ -1024,4 +1057,34 @@ fn frame_inventory_payloads_match_independent_registered_grammars() {
             );
         }
     }
+}
+
+#[test]
+fn rbsr_fingerprint_vector_matches_independent_reader() {
+    // Recompute the doc-06 fingerprint directly from the committed bytes.
+    // This deliberately does not call mmp_core::fingerprint: a production
+    // change to the fold, count encoding, or byte order must disagree with
+    // this specification-derived check instead of updating both paths.
+    let json = vector("rbsr_fingerprint.json");
+    let id_hex = json_array_strings(&json, "ids");
+    assert!(!id_hex.is_empty(), "RBSR vector must contain at least one ID");
+
+    let mut xor_fold = [0u8; 16];
+    for (index, encoded) in id_hex.iter().enumerate() {
+        let id = decode_hex("id", encoded);
+        assert_eq!(id.len(), 16, "RBSR ID {index} must be exactly 16 bytes");
+        for (fold_byte, id_byte) in xor_fold.iter_mut().zip(id) {
+            *fold_byte ^= id_byte;
+        }
+    }
+
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&xor_fold);
+    hasher.update(&(id_hex.len() as u32).to_le_bytes());
+    let digest = hasher.finalize();
+    let fingerprint_bytes = &digest.as_bytes()[..8];
+    let expected_bytes = decode_hex("fingerprint_hex", json_string(&json, "fingerprint_hex"));
+    assert_eq!(fingerprint_bytes, expected_bytes.as_slice());
+    let expected_u64 = json_u64(&json, "fingerprint_u64");
+    assert_eq!(u64::from_le_bytes(fingerprint_bytes.try_into().unwrap()), expected_u64);
 }
