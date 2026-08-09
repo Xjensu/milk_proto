@@ -62,8 +62,7 @@ Run the long, manual metric capture only when a measurement window is
 available:
 
 ```text
-cargo test -p mmp-sim social_clustered_mobility_measurement_is_reproducible \
-  -- --ignored --nocapture --test-threads=1
+cargo test -p mmp-sim social_clustered_mobility_measurement_is_reproducible -- --ignored --nocapture --test-threads=1
 ```
 
 The output is a reproducible toy-model observation, not a target or a
