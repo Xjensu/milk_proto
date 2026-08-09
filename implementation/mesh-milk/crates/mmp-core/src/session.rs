@@ -33,6 +33,11 @@ const MAX_PENDING_FRAMES: usize = 256;
 /// bounded request window lets a peer retry after a CREDIT grant without
 /// allowing repeated WANT/BLOB requests to grow memory without limit.
 const MAX_PENDING_HANDOFFS: usize = 256;
+/// Bound immediate wire frames retained by the sans-IO engine before the
+/// host drains [`SessionEngine::poll_out`]. Two reserved slots ensure a
+/// protocol-error path can still append ERROR+CLOSE before termination.
+const MAX_OUT_FRAMES: usize = 256;
+const OUT_CONTROL_RESERVE: usize = 2;
 
 const fn frame_payload_within_cap(len: usize) -> bool {
     len <= MAX_FRAME_PAYLOAD
@@ -219,7 +224,7 @@ impl SessionEngine {
         let (msg1, hs) = NoiseHandshake::initiator(identity, hello).map_err(|_| ())?;
         let mut s = SessionEngine::new(true, now_ms, hello.credits);
         s.hs = Some(hs);
-        s.out.push_back(write_envelope(FT_HS, &msg1));
+        s.queue_raw(write_envelope(FT_HS, &msg1));
         Ok(s)
     }
 
@@ -243,7 +248,7 @@ impl SessionEngine {
             peer_node: None,
             sent_proof: false,
             rx: Vec::with_capacity(MAX_ENVELOPE_PAYLOAD + 3),
-            out: VecDeque::new(),
+            out: VecDeque::with_capacity(MAX_OUT_FRAMES),
             pending_out: VecDeque::new(),
             pending_handoffs: VecDeque::new(),
             events: VecDeque::new(),
@@ -426,7 +431,7 @@ impl SessionEngine {
             return;
         };
         if let Some(reply) = outcome.reply {
-            self.out.push_back(write_envelope(FT_HS, &reply));
+            self.queue_raw(write_envelope(FT_HS, &reply));
         }
         if let Some(chan) = outcome.channel {
             self.hs = None;
@@ -699,8 +704,44 @@ impl SessionEngine {
         }
     }
 
+    /// Terminate locally when the host has not drained immediate wire output.
+    /// Clearing the queues before publishing `Closed` is fail-closed and
+    /// prevents a recursive ERROR/CLOSE attempt from exceeding the bound.
+    fn output_overflow(&mut self) {
+        self.out.clear();
+        self.pending_out.clear();
+        self.finish_closed();
+    }
+
+    /// Queue a pre-encoded envelope (the two Noise handshake messages) under
+    /// the same immediate-output bound as encrypted frames.
+    fn queue_raw(&mut self, bytes: Vec<u8>) {
+        if self.phase == Phase::Closed {
+            return;
+        }
+        if self.out.len() >= MAX_OUT_FRAMES {
+            self.output_overflow();
+            return;
+        }
+        self.out.push_back(bytes);
+    }
+
     fn send_frame(&mut self, f: &Frame) {
+        if self.phase == Phase::Closed {
+            return;
+        }
         let control = matches!(f, Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close);
+        if self.out.len() >= MAX_OUT_FRAMES {
+            self.output_overflow();
+            return;
+        }
+        // Keep two slots available for a protocol-error ERROR+CLOSE pair.
+        // Data that would consume the reserve fails closed instead of
+        // allowing a later control response to grow the queue past its cap.
+        if !control && self.out.len().saturating_add(OUT_CONTROL_RESERVE) >= MAX_OUT_FRAMES {
+            self.protocol_error(errcode::PROTOCOL);
+            return;
+        }
         if !control && self.tx_credits == 0 {
             if self.pending_out.len() >= MAX_PENDING_FRAMES {
                 self.pending_out.clear();
@@ -714,6 +755,17 @@ impl SessionEngine {
     }
 
     fn emit_frame(&mut self, f: &Frame, control: bool) {
+        if self.phase == Phase::Closed {
+            return;
+        }
+        if self.out.len() >= MAX_OUT_FRAMES {
+            self.output_overflow();
+            return;
+        }
+        if !control && self.out.len().saturating_add(OUT_CONTROL_RESERVE) >= MAX_OUT_FRAMES {
+            self.protocol_error(errcode::PROTOCOL);
+            return;
+        }
         let payload = f.encode_payload();
         if !frame_payload_within_cap(payload.len()) {
             self.protocol_error(errcode::OVERSIZE);
@@ -724,7 +776,7 @@ impl SessionEngine {
         };
         if let Ok(ct) = chan.encrypt(&payload) {
             if envelope_payload_within_cap(ct.len()) {
-                self.out.push_back(write_envelope(f.typ(), &ct));
+                self.queue_raw(write_envelope(f.typ(), &ct));
                 if !control {
                     self.tx_credits = self.tx_credits.saturating_sub(1);
                 }
@@ -788,6 +840,9 @@ impl SessionEngine {
     }
 
     fn finish_closed(&mut self) {
+        if self.phase == Phase::Closed {
+            return;
+        }
         self.phase = Phase::Closed;
         self.hs = None;
         self.recon = None;
@@ -1172,6 +1227,53 @@ mod rx_bound_tests {
     }
 
     #[test]
+    fn aggregate_input_cannot_grow_outbound_queue_without_bound() {
+        let ia = identity(21);
+        let ib = identity(22);
+        let mut ha = host();
+        let mut hb = host();
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        // Build one bounded transport callback containing many valid,
+        // independently encrypted frames. The receiver sends CREDIT replies
+        // while consuming them; without an intrinsic `out` cap those replies
+        // accumulated until the callback returned to the host.
+        let mut aggregate = Vec::new();
+        for _ in 0..8 {
+            b.tx_credits = u8::MAX;
+            for _ in 0..200 {
+                b.send_frame(&Frame::Summary(Summary::default()));
+            }
+            while let Some(bytes) = b.poll_out() {
+                aggregate.extend_from_slice(&bytes);
+            }
+        }
+        a.on_wire(&aggregate, 2000, &ia, &mut ha);
+
+        assert_eq!(a.phase, Phase::Closed, "output saturation must fail closed");
+        assert!(a.out.len() <= MAX_OUT_FRAMES);
+        assert!(a.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+    }
+
+    #[test]
     fn aggregate_frames_are_processed_without_growing_rx() {
         let ia = identity(1);
         let ib = identity(2);
@@ -1197,8 +1299,9 @@ mod rx_bound_tests {
         assert_eq!(a.phase, Phase::Established);
         assert_eq!(b.phase, Phase::Established);
 
-        for _ in 0..300 {
-            a.send_frame(&Frame::Credit(1));
+        a.tx_credits = u8::MAX;
+        for _ in 0..200 {
+            a.send_frame(&Frame::Summary(Summary::default()));
         }
         let mut aggregate = Vec::new();
         while let Some(bytes) = a.poll_out() {

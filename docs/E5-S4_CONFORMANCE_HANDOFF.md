@@ -1763,3 +1763,30 @@ tests and the focused FFI saturation test passes. This bound protects process
 memory but does not by itself provide transport-level backpressure or prove
 mobile callback scheduling; a future lossless-event design would need an
 explicit session admission/close policy and a reviewed API contract.
+
+## 2026-08-09 continuation: bounded SessionEngine immediate output
+
+The sans-IO `SessionEngine::out` FIFO was a second backlog boundary not
+covered by the node outbox cap. A single transport callback can contain many
+valid encrypted envelopes; receive-credit replenishment is emitted while that
+callback is being parsed, so a core-only host that does not poll until return
+could otherwise retain one output per response. `MAX_OUT_FRAMES` now bounds
+the immediate queue at 256 entries, preallocates no larger queue, and applies
+to both encrypted frames and the Noise handshake envelopes through one
+`queue_raw` seam. Deferred data remains bounded by the existing 256-frame
+`pending_out` cap.
+
+Data output reserves two slots for an `ERROR` + `CLOSE` response. If a data
+frame would consume that reserve, the engine emits the error/close pair and
+terminates. If a control/handshake path reaches the hard cap, the engine
+clears immediate and deferred queues and publishes one `Closed` event
+(`output_overflow`); it does not recurse trying to enqueue another terminal
+pair. This is a local fail-closed resource policy, not a wire-format change;
+the host must react to `Closed` and tear down the physical link. No queue entry
+can exceed the 256-frame bound.
+
+The regression constructs one bounded input containing 1,600 independently
+encrypted `SUMMARY` envelopes. Before this guard, the receiver's queued CREDIT
+responses could grow past the cap during one `on_wire` call. Now the session
+closes with `out.len() <= 256`. The full `mmp-core` matrix passes (61 unit + 5
+decoder-limit integration tests) and package Clippy passes with `-D warnings`.
