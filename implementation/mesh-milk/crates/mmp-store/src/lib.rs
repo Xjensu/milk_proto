@@ -1145,6 +1145,14 @@ mod tests {
         let _ = std::fs::remove_file(temp);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn case_insensitive_tmp_suffix_primary_uses_distinct_recovery_path() {
+        let path = PathBuf::from("snapshot.TMP");
+        assert_eq!(path.with_extension("tmp"), PathBuf::from("snapshot.tmp"));
+        assert_ne!(temporary_path(&path), path.with_extension("tmp"));
+    }
+
     #[test]
     fn complete_temp_recovers_only_when_primary_is_absent() {
         let dir = std::env::temp_dir().join("mmp-store-test");
