@@ -253,4 +253,50 @@ mod tests {
         let oversized = vec![0u8; MAX_PLAINTEXT_BYTES + 1];
         assert!(seal(KIND_NODE_SECRET_STATE, 1, 1_000, CONTEXT, &[7u8; 32], &mut rng, &oversized).is_err());
     }
+
+    #[test]
+    fn generation_metadata_is_authenticated_against_rollback() {
+        let mut rng = StdRng::seed_from_u64(10);
+        let original = seal(
+            KIND_NODE_SECRET_STATE,
+            9,
+            1_000,
+            CONTEXT,
+            &[7u8; 32],
+            &mut rng,
+            b"secret-state",
+        )
+        .unwrap();
+
+        // A valid envelope exposes its generation only after AEAD verification,
+        // and the provider must still reject a candidate at or below its
+        // durable floor. This is the rollback boundary from the dossier.
+        let (generation, _) = open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &original,
+            1_001,
+            DEFAULT_TTL_MS,
+        )
+        .unwrap();
+        assert_eq!(generation, 9);
+        assert!(validate_next_generation(8, generation).is_ok());
+        assert!(validate_next_generation(9, generation).is_err());
+
+        // The generation is authenticated as part of the header AAD. A stale
+        // writer cannot lower it in place and make the envelope look newer to
+        // a provider that has already committed generation 9.
+        let mut forged = original;
+        forged[6..14].copy_from_slice(&1u64.to_le_bytes());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &forged,
+            1_001,
+            DEFAULT_TTL_MS,
+        )
+        .is_err());
+    }
 }
