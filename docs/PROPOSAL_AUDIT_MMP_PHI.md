@@ -346,10 +346,40 @@ tree's pre-existing application/docs changes and audit scratch directories
 were intentionally not staged. No file under `specification/` changed.
 
 The latest serial rerun supersedes the earlier component inventory above: it
-listed 407 tests (401 active, 6 intentionally ignored) with zero failures.
-The Python harness now reports 66 tests (four platform-specific skips), while the
+listed 409 tests (403 active, 6 intentionally ignored) with zero failures.
+The Python harness now reports 76 tests (five platform-specific skips), while the
 44-seed fuzz check, compileall, layer-check, and CLI delivery/receipt smoke
 evidence remain green.
+
+### Security/release continuation (2026-08-09)
+
+The delegated pre-auth audit produced two related implementation commits. `d2a29f1`
+replaced attacker-sized Noise receive storage with a fixed 256-byte buffer and an
+early input bound. The follow-up initially explored a strict empty-payload rule
+for Noise message 1, but the frozen documents do not state that rule as a
+standalone MUST. `e17243e` therefore keeps interoperability broad: a bounded
+message-1 payload is consumed by Noise and ignored; only the encrypted message-2/
+message-3 introductions can populate the peer identity/HELLO. The regression
+injects an invalid cleartext payload and completes the handshake, proving that it
+cannot influence provisional identity state. This closes the unauthenticated
+provisional-HELLO injection path without changing the wire specification. The
+remaining Noise profile and ID_PROOF wording still require a reviewed normative
+erratum before independent implementations are called frozen.
+
+The release audit added `df0a92c` and `3d560d5`: CI now verifies strict signed
+artifact manifests against exact repository, commit, and ref values, with
+rejection of malformed JSON, schema drift, traversal/absolute paths, symlinks,
+duplicate entries, and digest/size mismatches. The BLE evidence gate `de8d68e`
+now requires distinct host seed fingerprints and role-specific advertising,
+dialing, establishment, and delivery markers. These are structural evidence
+guards; they do not claim a physical Linux/BlueZ exchange or authenticate
+operator-supplied logs.
+
+Focused verification after this continuation passed: `mmp-crypto` (39 tests),
+workspace tests (409 listed / 403 active / 6 ignored), workspace Clippy with all
+features, Python tests (76 / 5 skipped), compileall, 44 deterministic fuzz seeds,
+the embedded target check, and layer-check. No `specification/` file or
+pre-existing dirty path was staged.
 
 ## Source register
 
