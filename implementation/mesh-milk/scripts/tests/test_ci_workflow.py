@@ -30,6 +30,21 @@ class CIWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(test_steps), 1)
 
+    def test_no_std_gate_checks_embedded_shell_dependency_closure(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["no-std-size-gate"]["steps"]
+        checks = [
+            step.get("run", "")
+            for step in steps
+            if step.get("name") == "check embedded shell dependency closure (E7-S1)"
+        ]
+        self.assertEqual(
+            checks,
+            [
+                "cargo check -p mmp-node-embassy -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features"
+            ],
+        )
+
     def test_mobile_artifact_uploads_fail_on_missing_paths(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         jobs = workflow["jobs"]

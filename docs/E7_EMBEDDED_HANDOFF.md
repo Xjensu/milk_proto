@@ -200,3 +200,35 @@ optimizations as production claims.
 - `implementation/mesh-milk/crates/mmp-types/`: untouched (including existing
   user changes).
 
+## Dependency-fence correction and CI regression (2026-08-09)
+
+The first audit above captured the pre-fence state and is retained as an
+historical record. Commit `750c807` then changed only the empty Embassy shell's
+path dependency declarations to use `default-features = false`; it did not add
+an executor, a store backend, a TAL implementation, or a protocol transition.
+
+The current closure was rechecked after that change:
+
+```text
+cargo check -p mmp-node-embassy --target thumbv7em-none-eabihf --no-default-features
+Finished `dev` profile ...
+
+cargo check -p mmp-node-embassy -p mmp-tal-embedded \
+  --target thumbv7em-none-eabihf --no-default-features
+Finished `dev` profile ...
+```
+
+Both commands pass with the installed target. `mmp-node-embassy` therefore
+belongs in the no_std *compile-closure* regression, even though it remains a
+seven-line `#![no_std]` shell. The root CI `no-std-size-gate` now runs the
+combined check before the lower-crate rlib size proxy. A future reintroduction
+of a default `std` edge will fail this target check rather than waiting for a
+hardware build.
+
+This regression proves only that the declared dependency graph is target
+checkable. It does not close E7-S1's fixed-capacity flash store, E7-S2's radio
+backend, E7-S3's Embassy executor wiring, the linked-image flash/RAM budget,
+the OQ-7 benchmark, or phone-to-sensor HIL. Those acceptance gates and the
+historical failure explanation above remain valid as implementation work still
+outstanding; the stale sentence in the audit table should be read as
+pre-`750c807` evidence, not the current result.
