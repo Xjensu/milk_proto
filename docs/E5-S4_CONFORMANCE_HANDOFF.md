@@ -1805,7 +1805,7 @@ can exceed the 256-frame bound.
 The regression constructs one bounded input containing 1,600 independently
 encrypted `SUMMARY` envelopes. Before this guard, the receiver's queued CREDIT
 responses could grow past the cap during one `on_wire` call. Now the session
-closes with `out.len() <= 256`. The full `mmp-core` matrix passes (61 unit + 5
+closes with `out.len() <= 256`. The full `mmp-core` matrix passes (62 unit + 5
 decoder-limit integration tests) and package Clippy passes with `-D warnings`.
 
 ## 2026-08-09 continuation: authenticated-session map growth audit
