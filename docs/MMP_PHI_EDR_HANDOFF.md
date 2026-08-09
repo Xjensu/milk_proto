@@ -175,3 +175,24 @@ PCM, EWS, Channel Sounding, and DoF Spray remain separate research tracks.
 The next agent should add only a deterministic harness/input parser after the
 measurement schema and raw-log provenance are agreed. Do not add a production
 EDR scheduler or infer a 2× result from the analytical tests.
+
+## 2026-08-09 aggregate input schema
+
+`mmp_sim::energy` now provides the wire-neutral
+`RendezvousMeasurement`/`PairedRendezvousMeasurement` input seam and a
+`RendezvousComparison` summary. A host measurement harness supplies the
+baseline and candidate records; the crate does not invent platform readings,
+derive BLE timings, or alter `mmp-node` behavior. The records carry controller
+event counters, contact/discovery and delivery counts, latency sums plus sample
+counts, useful payload bytes, airtime, radio/host/whole-device energy, and host
+wakeups. Baseline and candidate must share a `trace_id`.
+
+Validation rejects non-finite or negative measurements, inconsistent success
+and sample counts, and mismatched traces. The summary deterministically reports
+discovery and delivery rates/deltas, absolute energy channels, candidate versus
+baseline whole-device energy when the baseline is non-zero, and optional mean
+latencies when samples exist. A zero baseline energy is represented as an
+undefined ratio rather than an infinity; an overflowing derived ratio is
+rejected. The focused tests cover valid paired output, count/trace rejection,
+and non-finite input rejection. This schema is an experimental data contract,
+not a production acceptance claim.

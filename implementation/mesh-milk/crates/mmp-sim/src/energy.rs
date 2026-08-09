@@ -20,6 +20,210 @@ pub struct RendezvousActivity {
     pub energy: f64,
 }
 
+/// A platform-provided, aggregate observation for one controlled rendezvous
+/// trace. This is input to the research harness only; none of these values are
+/// protocol fields or scheduler parameters.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RendezvousMeasurement {
+    /// Stable identifier shared by the baseline and candidate runs.
+    pub trace_id: u64,
+    /// Number of advertisement/transmit events emitted by the controller.
+    pub tx_events: u64,
+    /// Number of scan/receive windows requested or observed.
+    pub rx_windows: u64,
+    /// Number of contact opportunities in the replayed trace.
+    pub contact_attempts: u64,
+    /// Contact opportunities for which discovery completed.
+    pub discoveries: u64,
+    /// Number of bundles offered to the delivery workload.
+    pub offered_bundles: u64,
+    /// Number of offered bundles delivered to the destination.
+    pub delivered_bundles: u64,
+    /// Useful application payload bytes delivered.
+    pub useful_payload_bytes: u64,
+    /// Total measured radio airtime in milliseconds.
+    pub airtime_ms: f64,
+    /// Sum of discovery latencies for the recorded samples, in milliseconds.
+    pub discovery_latency_ms_sum: f64,
+    /// Number of discovery latency samples included in the sum.
+    pub discovery_latency_samples: u64,
+    /// Sum of delivery latencies for the recorded samples, in milliseconds.
+    pub delivery_latency_ms_sum: f64,
+    /// Number of delivery latency samples included in the sum.
+    pub delivery_latency_samples: u64,
+    /// Measured radio/controller energy in mWh.
+    pub radio_energy_mwh: f64,
+    /// Measured host/SoC energy in mWh.
+    pub host_energy_mwh: f64,
+    /// Measured whole-device energy in mWh. It is reported separately rather
+    /// than added to the radio and host channels, which may overlap.
+    pub whole_device_energy_mwh: f64,
+    /// Number of host wakeups attributed to the experiment.
+    pub host_wakeups: u64,
+}
+
+/// Validation failures for externally supplied research measurements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MeasurementError {
+    /// A floating-point measurement was NaN or infinite.
+    NonFiniteValue,
+    /// A floating-point measurement was negative.
+    NegativeValue,
+    /// A success/sample count exceeds its corresponding total.
+    InconsistentCounts,
+    /// Baseline and candidate observations do not describe one trace.
+    MismatchedTrace,
+    /// A derived summary value cannot be represented as a finite number.
+    SummaryOverflow,
+}
+
+impl RendezvousMeasurement {
+    /// Validate this externally supplied observation before comparison.
+    pub fn validate(&self) -> Result<(), MeasurementError> {
+        for value in [
+            self.airtime_ms,
+            self.discovery_latency_ms_sum,
+            self.delivery_latency_ms_sum,
+            self.radio_energy_mwh,
+            self.host_energy_mwh,
+            self.whole_device_energy_mwh,
+        ] {
+            if !value.is_finite() {
+                return Err(MeasurementError::NonFiniteValue);
+            }
+            if value < 0.0 {
+                return Err(MeasurementError::NegativeValue);
+            }
+        }
+        if self.discoveries > self.contact_attempts
+            || self.delivered_bundles > self.offered_bundles
+            || self.discovery_latency_samples > self.discoveries
+            || self.delivery_latency_samples > self.delivered_bundles
+        {
+            return Err(MeasurementError::InconsistentCounts);
+        }
+        Ok(())
+    }
+}
+
+/// A baseline/candidate pair collected from the same contact trace.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedRendezvousMeasurement {
+    baseline: RendezvousMeasurement,
+    candidate: RendezvousMeasurement,
+}
+
+impl PairedRendezvousMeasurement {
+    /// Validate and pair two observations without changing either one.
+    pub fn new(
+        baseline: RendezvousMeasurement,
+        candidate: RendezvousMeasurement,
+    ) -> Result<Self, MeasurementError> {
+        baseline.validate()?;
+        candidate.validate()?;
+        if baseline.trace_id != candidate.trace_id {
+            return Err(MeasurementError::MismatchedTrace);
+        }
+        Ok(Self { baseline, candidate })
+    }
+
+    /// Produce a deterministic comparison summary from the validated pair.
+    pub fn summary(&self) -> Result<RendezvousComparison, MeasurementError> {
+        let baseline_discovery_rate = rate(self.baseline.discoveries, self.baseline.contact_attempts);
+        let candidate_discovery_rate = rate(self.candidate.discoveries, self.candidate.contact_attempts);
+        let baseline_delivery_rate = rate(self.baseline.delivered_bundles, self.baseline.offered_bundles);
+        let candidate_delivery_rate = rate(self.candidate.delivered_bundles, self.candidate.offered_bundles);
+        let whole_device_energy_ratio = ratio(
+            self.candidate.whole_device_energy_mwh,
+            self.baseline.whole_device_energy_mwh,
+        )?;
+        Ok(RendezvousComparison {
+            trace_id: self.baseline.trace_id,
+            baseline_discovery_rate,
+            candidate_discovery_rate,
+            discovery_rate_delta: candidate_discovery_rate - baseline_discovery_rate,
+            baseline_delivery_rate,
+            candidate_delivery_rate,
+            delivery_rate_delta: candidate_delivery_rate - baseline_delivery_rate,
+            baseline_radio_energy_mwh: self.baseline.radio_energy_mwh,
+            candidate_radio_energy_mwh: self.candidate.radio_energy_mwh,
+            baseline_host_energy_mwh: self.baseline.host_energy_mwh,
+            candidate_host_energy_mwh: self.candidate.host_energy_mwh,
+            baseline_whole_device_energy_mwh: self.baseline.whole_device_energy_mwh,
+            candidate_whole_device_energy_mwh: self.candidate.whole_device_energy_mwh,
+            whole_device_energy_ratio,
+            baseline_discovery_latency_ms: mean(
+                self.baseline.discovery_latency_ms_sum,
+                self.baseline.discovery_latency_samples,
+            ),
+            candidate_discovery_latency_ms: mean(
+                self.candidate.discovery_latency_ms_sum,
+                self.candidate.discovery_latency_samples,
+            ),
+            baseline_delivery_latency_ms: mean(
+                self.baseline.delivery_latency_ms_sum,
+                self.baseline.delivery_latency_samples,
+            ),
+            candidate_delivery_latency_ms: mean(
+                self.candidate.delivery_latency_ms_sum,
+                self.candidate.delivery_latency_samples,
+            ),
+        })
+    }
+}
+
+/// Stable fields used to compare two validated rendezvous observations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RendezvousComparison {
+    pub trace_id: u64,
+    pub baseline_discovery_rate: f64,
+    pub candidate_discovery_rate: f64,
+    pub discovery_rate_delta: f64,
+    pub baseline_delivery_rate: f64,
+    pub candidate_delivery_rate: f64,
+    pub delivery_rate_delta: f64,
+    pub baseline_radio_energy_mwh: f64,
+    pub candidate_radio_energy_mwh: f64,
+    pub baseline_host_energy_mwh: f64,
+    pub candidate_host_energy_mwh: f64,
+    pub baseline_whole_device_energy_mwh: f64,
+    pub candidate_whole_device_energy_mwh: f64,
+    /// Candidate divided by baseline; `None` means the baseline reading was 0.
+    pub whole_device_energy_ratio: Option<f64>,
+    pub baseline_discovery_latency_ms: Option<f64>,
+    pub candidate_discovery_latency_ms: Option<f64>,
+    pub baseline_delivery_latency_ms: Option<f64>,
+    pub candidate_delivery_latency_ms: Option<f64>,
+}
+
+fn rate(successes: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        successes as f64 / total as f64
+    }
+}
+
+fn mean(sum: f64, samples: u64) -> Option<f64> {
+    if samples == 0 {
+        None
+    } else {
+        Some(sum / samples as f64)
+    }
+}
+
+fn ratio(numerator: f64, denominator: f64) -> Result<Option<f64>, MeasurementError> {
+    if denominator == 0.0 {
+        return Ok(None);
+    }
+    let result = numerator / denominator;
+    if result.is_finite() {
+        Ok(Some(result))
+    } else {
+        Err(MeasurementError::SummaryOverflow)
+    }
+}
+
 /// Controlled square-root optimum for the energy-dual rendezvous hypothesis.
 ///
 /// Activity values are normalized rates rather than BLE timings. The model is
@@ -165,5 +369,75 @@ mod tests {
         )
         .is_none());
         assert!(RendezvousEnergyModel::from_baseline(1.0, 1.0, f64::MAX, f64::MAX).is_none());
+    }
+
+    fn measurement(trace_id: u64, discoveries: u64, delivered: u64, energy: f64) -> RendezvousMeasurement {
+        RendezvousMeasurement {
+            trace_id,
+            tx_events: 40,
+            rx_windows: 20,
+            contact_attempts: 4,
+            discoveries,
+            offered_bundles: 4,
+            delivered_bundles: delivered,
+            useful_payload_bytes: 1_024,
+            airtime_ms: 80.0,
+            discovery_latency_ms_sum: 8.0,
+            discovery_latency_samples: discoveries,
+            delivery_latency_ms_sum: 12.0,
+            delivery_latency_samples: delivered,
+            radio_energy_mwh: energy / 2.0,
+            host_energy_mwh: energy / 4.0,
+            whole_device_energy_mwh: energy,
+            host_wakeups: 5,
+        }
+    }
+
+    #[test]
+    fn paired_edr_measurement_reports_reproducible_rates_energy_and_latency() {
+        let baseline = measurement(7, 2, 2, 100.0);
+        let candidate = measurement(7, 3, 3, 75.0);
+        let summary = PairedRendezvousMeasurement::new(baseline, candidate)
+            .unwrap()
+            .summary()
+            .unwrap();
+
+        assert_eq!(summary.trace_id, 7);
+        assert_eq!(summary.baseline_discovery_rate, 0.5);
+        assert_eq!(summary.candidate_discovery_rate, 0.75);
+        assert_eq!(summary.discovery_rate_delta, 0.25);
+        assert_eq!(summary.baseline_delivery_rate, 0.5);
+        assert_eq!(summary.candidate_delivery_rate, 0.75);
+        assert_eq!(summary.delivery_rate_delta, 0.25);
+        assert_eq!(summary.whole_device_energy_ratio, Some(0.75));
+        assert_eq!(summary.baseline_discovery_latency_ms, Some(4.0));
+        assert_eq!(summary.candidate_delivery_latency_ms, Some(4.0));
+    }
+
+    #[test]
+    fn paired_edr_measurement_rejects_mismatched_trace_and_bad_counts() {
+        let baseline = measurement(7, 2, 2, 100.0);
+        let mismatched = measurement(8, 3, 3, 75.0);
+        assert_eq!(
+            PairedRendezvousMeasurement::new(baseline, mismatched),
+            Err(MeasurementError::MismatchedTrace)
+        );
+
+        let mut invalid = measurement(7, 2, 2, 100.0);
+        invalid.discoveries = invalid.contact_attempts + 1;
+        assert_eq!(
+            PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
+            Err(MeasurementError::InconsistentCounts)
+        );
+    }
+
+    #[test]
+    fn paired_edr_measurement_rejects_nonfinite_energy() {
+        let mut invalid = measurement(7, 2, 2, 100.0);
+        invalid.whole_device_energy_mwh = f64::NAN;
+        assert_eq!(
+            PairedRendezvousMeasurement::new(invalid, measurement(7, 3, 3, 75.0)),
+            Err(MeasurementError::NonFiniteValue)
+        );
     }
 }
