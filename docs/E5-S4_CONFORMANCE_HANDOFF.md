@@ -2673,3 +2673,43 @@ equivalent Unicode seed-name collisions before any generated files are
 refreshed. Focused corpus tests (15, one expected skip) and the full Python
 script suite (146 passed, 10 skipped) pass. This is release-tooling hardening;
 the frozen specification and unrelated dirty paths remain untouched.
+
+## 2026-08-09 continuation: authority minting, group snapshot cursors, and API drift
+
+The authority/API audit closed the remaining local AuthCert provisioning seam
+without changing the wire format or trust model. Commits `d4c6d4f` and
+`5ae8928` add `Node::mint_auth_cert` and the FFI `mintAuthCert` method. The
+helper emits only v1 `AuthCert` bytes signed by the local identity; it rejects
+unsupported suites, reserved capability bits, inconsistent emergency
+capabilities, zero/past expiry, and malformed key/ID lengths. It accepts the
+normative full `u16` priority-budget range, including zero. It never pins the
+issuer, adopts the certificate, or persists secret material; receivers still
+need an explicit authority-root pin. Two FFI tests verify the signature,
+validation failures, and the no-auto-trust behavior. The mobile API manifest
+now includes `mintAuthCert`, and commit `738e9a1` adds a source-level equality
+test so exported Rust methods cannot silently drift from the binding manifest.
+
+The group-state audit found a local persistence invariant: a restored
+`next_tag` cursor could be rewound below a live or tombstoned OR-Set tag, and
+the unchecked increment could wrap at `u64::MAX`. Commit `d4c6d4f` adds
+`OrSet::max_tag`, rejects reused/invalid cursors, checks tag allocation before
+membership mutation, and returns `RatchetExhausted` before an invite can emit
+side effects when the finite tag domain is exhausted. No group wire or epoch
+semantics changed. Node/FFI tests pass (110/28); `mmp-core` OR-Set tests pass
+(83 unit tests plus 5 integration tests).
+
+Verification for this continuation:
+
+- `cargo test -p mmp-node -p mmp-ffi --all-targets -- --test-threads=1`:
+  110 node tests and 28 FFI tests passed.
+- `cargo clippy -p mmp-node -p mmp-ffi --all-targets --all-features -- -D warnings`:
+  passed.
+- `python -m unittest scripts.tests.test_mobile_api_surface`: 5 passed.
+- `git diff --check`: clean; no `specification/` path changed.
+
+Remaining external gates are unchanged: RBSR declared-priority partitioning,
+D3 subscribed-scope admission weighting, gossiped-root trust, physical
+Linux/BlueZ and Android/iOS exchange tests, platform keystore integration,
+calibrated EDR/EWS/contact-survival measurements, and the measured fuzz CPU
+hour campaign. The research-only EWS evaluator remains bounded and opt-in;
+it is not a Byzantine copy-budget primitive.
