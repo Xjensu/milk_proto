@@ -73,6 +73,11 @@ const fn envelope_payload_within_cap(len: usize) -> bool {
     len <= MAX_ENVELOPE_PAYLOAD
 }
 
+/// ChaChaPoly's fixed Noise transport tag, included in the frozen envelope
+/// payload cap. The crypto layer rejects plaintext that cannot fit after this
+/// tag is added.
+const NOISE_TAG_LEN: usize = 16;
+
 fn valid_recon_domain(domain: u8, allow_reply_flag: bool) -> bool {
     let base = domain & !DOMAIN_REPLY_FLAG;
     DOMAINS.contains(&base) && (allow_reply_flag || domain & DOMAIN_REPLY_FLAG == 0)
@@ -807,14 +812,26 @@ impl SessionEngine {
         let Some(chan) = self.chan.as_mut() else {
             return; // pre-channel non-HS send is a programming error; drop
         };
-        if let Ok(ct) = chan.encrypt(&payload) {
-            if envelope_payload_within_cap(ct.len()) {
+        let encrypted = chan.encrypt(&payload);
+        match encrypted {
+            Ok(ct) if envelope_payload_within_cap(ct.len()) => {
                 self.queue_raw(write_envelope(f.typ(), &ct));
                 if !control {
                     self.tx_credits = self.tx_credits.saturating_sub(1);
                 }
-            } else {
-                self.protocol_error(errcode::OVERSIZE);
+            }
+            Ok(_) => self.protocol_error(errcode::OVERSIZE),
+            Err(_) => {
+                // `NoiseChannel` rejects plaintext that would exceed the
+                // envelope after its tag, before advancing its nonce. Keep
+                // that boundary fail-closed here; other transport failures
+                // are protocol errors rather than silently dropped frames.
+                let code = if payload.len().saturating_add(NOISE_TAG_LEN) > MAX_ENVELOPE_PAYLOAD {
+                    errcode::OVERSIZE
+                } else {
+                    errcode::PROTOCOL
+                };
+                self.protocol_error(code);
             }
         }
     }
