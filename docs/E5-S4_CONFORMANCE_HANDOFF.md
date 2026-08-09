@@ -2713,3 +2713,45 @@ Linux/BlueZ and Android/iOS exchange tests, platform keystore integration,
 calibrated EDR/EWS/contact-survival measurements, and the measured fuzz CPU
 hour campaign. The research-only EWS evaluator remains bounded and opt-in;
 it is not a Byzantine copy-budget primitive.
+
+## 2026-08-09 continuation: bounded release preflight and RBSR/D3 boundary audit
+
+The release-tooling audit found that repository-side Git checks could block
+indefinitely if a malformed or unavailable worktree caused `git` to hang.
+Commit `676226e` bounds every `_run_git` invocation to 30 seconds and converts
+`TimeoutExpired` into deterministic return code `124` with an actionable
+diagnostic. The focused preflight tests pass, and this change does not alter
+protocol, specification, or release-manifest semantics.
+
+The RBSR/D3 audit deliberately made no wire change. `mmp-core::rbsr` currently
+maps all non-D0/D1/D2 inventory to D3, and `RECON_INIT`/`RECON_RANGE`/
+`RECON_IDS` carry no declared-priority partition selector. Existing tests
+(`d3_transcript_keeps_one_wire_domain_without_priority_partition` and
+`recon_init_for_later_domain_closes_without_priority_partition`) lock that
+compatibility boundary. Reusing domain values or `effective_priority` would
+make independent implementations disagree and break legacy peers. Likewise,
+`mmp-router::transfer_order` correctly uses signed declared priority while
+`eviction_order` uses receiver-local effective priority; adding subscribed-
+scope weighting without a normative function and vectors would alter admission
+or ordering semantics. Both roadmap items remain blocked pending a
+specification erratum defining a wire-compatible partition signal and a
+precise local admission algorithm.
+
+The platform audit confirms that the existing manual PC/mobile runbooks and
+artifact validators are already complete. The remaining evidence gap is
+external: a Linux/BlueZ peripheral plus second PC for a real exchange, and
+native Android/iOS builds, callbacks, permissions, background behavior, and
+physical devices. No duplicate guide or unsupported hardware claim was added.
+
+Verification for this continuation:
+
+- `cargo test -p mmp-core -p mmp-router --all-targets -- --test-threads=1`:
+  88 core tests and 14 router tests passed.
+- `python -m unittest discover -s scripts/tests -p 'test_*.py'`: 148 passed,
+  10 expected skips.
+- Strict Clippy for `mmp-core`/`mmp-router`, `layer-check`, and
+  `check_spec_status.py --repo ../..`: passed.
+- Full simulator regression: 36 passed and 6 intentionally ignored; the
+  quota-abuse scenario is intentionally expensive (~31 seconds alone), so the
+  complete suite requires a longer bounded timeout.
+- `git diff --check`: clean; no `specification/` path changed.
