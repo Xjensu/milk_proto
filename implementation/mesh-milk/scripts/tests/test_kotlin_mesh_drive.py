@@ -62,6 +62,20 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertLess(guard, node_tick)
         self.assertIn("advance(clock.nowMs(), emit = true)", self.source)
 
+    def test_rotating_beacon_has_an_explicit_refresh_hook(self) -> None:
+        """Long-lived mobile hosts must be able to replace the startup beacon."""
+
+        start = self.source.index("public fun refreshBeacon(nowMs: Long)")
+        end = self.source.index("public fun setForegroundRelayCapable", start)
+        body = self.source[start:end]
+        self.assertIn("node.beacon(nowMs)", body)
+        self.assertIn("advertiser.start(beacon.copyOf())", body)
+        self.assertIn("advertisedBeacon?.contentEquals(beacon) == true", body)
+        self.assertIn("advertisedBeacon = beacon.copyOf()", body)
+        self.assertIn("nowMs >= (previous ?: Long.MIN_VALUE)", body)
+        self.assertNotIn("node.tick(nowMs)", body)
+        self.assertIn("refreshBeacon(nowMs)", self.readme)
+
     def test_poll_send_is_pull_based_and_backpressure_is_retained(self) -> None:
         self.assertIn("node.pollSend()", self.source)
         self.assertIn("pending.addLast(pendingFrame)", self.source)

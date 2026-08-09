@@ -2289,3 +2289,28 @@ Focused verification: the three `mmp-node` secret-state tests pass after the
 zeroization change, and existing snapshot/vault tests cover malformed lengths,
 context binding, freshness, rollback, and atomic restore. No specification or
 pre-existing dirty path was modified.
+
+## 2026-08-09 continuation: persistence revalidation and beacon rotation
+
+The next delegated security pass closed two checksum-only persistence gaps.
+`mmp-store` now rejects noncanonical restored metadata before it influences
+routing or eviction: class bytes above the reserved 4-bit domain, budgets above
+`L_MAX`, noncanonical `own_origin`, reversed or overlong lifetimes, and invalid
+metadata on persist. Classes `6..=15` remain accepted for forward-compatible
+store-and-forward.
+
+`NodeCore` now revalidates persisted bundle bytes before forwarding by checking
+canonical decoding, content-derived ID, immutable metadata binding, and the
+Ed25519 bundle signature. Invalid records are removed and never emitted.
+Startup blob-index rebuild applies the same checks and verifies Merkle
+membership for class-4 symbols before indexing them, preventing a locally
+rewritten snapshot checksum from creating a servable invalid symbol. Tests
+cover tampered handoff bytes and signed-but-Merkle-invalid startup state.
+
+The Android-SDK-free Kotlin coordinator now has `refreshBeacon(nowMs)`, which
+lets a long-lived host replace a rotated ephemeral advertisement without a
+second protocol tick. It enforces monotonic time, suppresses unchanged payload
+restarts, and copies byte arrays across the native adapter boundary. Kotlin
+compilation and physical mobile exchange remain external gates.
+
+No specification or pre-existing dirty path was modified.

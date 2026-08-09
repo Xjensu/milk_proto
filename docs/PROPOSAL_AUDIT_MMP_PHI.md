@@ -1420,6 +1420,32 @@ context binding, freshness, generation rollback, and atomic restore. No
 specification file, AI-specific artifact, or pre-existing dirty path was
 modified.
 
+### Orchestration continuation XXXVII (2026-08-09)
+
+The next delegated security pass found two distinct checksum-only persistence
+risks and one mobile lifecycle gap. `mmp-store` now canonicalizes restored
+metadata before it can affect routing or eviction: class bytes above the
+reserved 4-bit domain, spray budgets above `L_MAX`, noncanonical boolean bytes,
+reversed/overlong lifetimes, and invalid metadata on persist are rejected
+before replacement. Forward-compatible classes `6..=15` remain relayable.
+
+At the node boundary, persisted bundle bytes are now canonical-decoded,
+content-address checked, bound to their persisted metadata, and signature-
+verified before forwarding. Invalid records are removed rather than emitted.
+Startup blob-index rebuild applies the same checks and additionally verifies
+Merkle membership for symbols, so a locally rewritten checksum cannot create a
+servable invalid symbol after restart. Regression coverage includes tampered
+handoff bytes and signed-but-Merkle-invalid startup state.
+
+The Android-SDK-free Kotlin coordinator now exposes `refreshBeacon(nowMs)`.
+Long-lived hosts can replace a rotated ephemeral advertisement without a
+second protocol tick; timestamps remain monotonic, unchanged payloads avoid
+redundant restarts, and defensive byte-array copies protect the native adapter
+boundary. Kotlin compilation and physical mobile tests remain external gates.
+
+No wire field or frozen specification text changed. Existing user-owned dirty
+integration documents and temporary artifacts were not touched.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

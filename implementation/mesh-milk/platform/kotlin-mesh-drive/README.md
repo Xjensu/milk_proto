@@ -8,6 +8,8 @@ generated `MmpNode` bindings.
 `MeshDrive` owns only deterministic drive-loop policy:
 
 - monotonic `pump()`/`pumpAt()`; backwards timestamps fail before `MeshNode.tick`;
+- explicit `refreshBeacon(nowMs)` hook so long-lived hosts replace the rotating
+  ephemeral advertisement instead of leaving the startup payload stale;
 - transport-local `pollClose()` actions are drained before `pollSend()`;
 - pull-only `pollSend()` and `pollEvent()` draining;
 - link-up/data/down forwarding with stale-link input ignored;
@@ -26,7 +28,13 @@ The Android foreground service should adapt these interfaces to
 `BluetoothGattServer`. `GattAdapter.close(link)` requests native teardown; the
 adapter must call `MeshDrive.onLinkDown(link)` after the platform reports the
 physical disconnect. The adapters remain responsible for permissions,
-background policy, connection establishment, and platform callbacks.
+background policy, connection establishment, platform callbacks, and treating
+`Advertiser.start(serviceData)` as a replace/update operation when
+`refreshBeacon(nowMs)` is called. The coordinator suppresses a redundant
+restart when the payload has not changed. Refresh the beacon on the platform's
+advertising cadence (or at least once per protocol beacon slot) using the same
+monotonic timestamp supplied to the drive loop; never substitute a wall-clock
+value.
 
 ## Evidence boundary
 

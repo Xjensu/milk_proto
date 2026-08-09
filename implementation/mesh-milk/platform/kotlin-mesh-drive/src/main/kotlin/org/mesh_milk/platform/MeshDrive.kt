@@ -103,6 +103,7 @@ public class MeshDrive(
     private var running: Boolean = false
     private var relayCapable: Boolean = foregroundRelayCapable
     private var lastTickMs: Long? = null
+    private var advertisedBeacon: ByteArray? = null
     private val activeLinks = LinkedHashSet<Long>()
     private val pending = java.util.ArrayDeque<PendingFrame>()
 
@@ -131,7 +132,11 @@ public class MeshDrive(
             val now = clock.nowMs()
             advance(now, emit = false)
             try {
-                advertiser.start(node.beacon(now))
+                val beacon = node.beacon(now)
+                // Do not let a native adapter retain or mutate the coordinator's
+                // cached payload; ownership crosses the platform boundary here.
+                advertiser.start(beacon.copyOf())
+                advertisedBeacon = beacon.copyOf()
                 advertiserStarted = true
             } catch (error: Throwable) {
                 // A platform may have allocated radio state before reporting a
@@ -172,6 +177,7 @@ public class MeshDrive(
         pending.clear()
         scanner.stop()
         advertiser.stop()
+        advertisedBeacon = null
         running = false
     }
 
@@ -189,6 +195,36 @@ public class MeshDrive(
     public fun pumpAt(nowMs: Long) {
         requireRunning()
         advance(nowMs, emit = true)
+    }
+
+    /**
+     * Publish the current rotating beacon payload again.
+     *
+     * `MmpNode.beacon()` derives the ephemeral identifier from the supplied
+     * monotonic time (the protocol rotates it every beacon slot).  Starting
+     * an advertiser once at service creation therefore leaves a long-lived
+     * process advertising a stale identifier.  Native adapters should treat
+     * [Advertiser.start] as an idempotent replace/update operation; this
+     * method gives a host an explicit hook to call at each platform beacon
+     * refresh or wakeup without advancing protocol timers a second time.
+     *
+     * The same monotonic ordering guard as [pump] is applied before the
+     * payload is generated.  The method deliberately does not call
+     * `MeshNode.tick`: hosts may refresh an advertisement between drive-loop
+     * ticks, while all protocol state changes remain owned by [pump].
+     */
+    public fun refreshBeacon(nowMs: Long) {
+        requireRunning()
+        val previous = lastTickMs
+        require(nowMs >= (previous ?: Long.MIN_VALUE)) {
+            "monotonic clock moved backwards: $nowMs < $previous"
+        }
+        val beacon = node.beacon(nowMs)
+        if (advertisedBeacon?.contentEquals(beacon) == true) return
+        // The adapter may retain the array while the platform advertiser is
+        // active; give it a private copy so the cache remains authoritative.
+        advertiser.start(beacon.copyOf())
+        advertisedBeacon = beacon.copyOf()
     }
 
     /**
