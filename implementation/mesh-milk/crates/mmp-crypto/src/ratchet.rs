@@ -117,6 +117,7 @@ impl SendChain {
         self.ck.zeroize();
         self.ck = new;
         self.epoch = next_epoch;
+        self.exhausted = false;
         self.next_index = 0;
         Ok(())
     }
@@ -180,18 +181,18 @@ impl RecvChain {
     /// Message key for (epoch, index). Old-epoch or already-consumed keys only
     /// exist in the skipped store; everything else advances the chain.
     pub fn key_for(&mut self, epoch: u16, index: u32) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
-        // Once the final representable index has been consumed, no later
-        // message key exists. Before that point `u32::MAX` remains a valid
-        // wire index and is accepted exactly once.
-        if self.exhausted {
-            return Err(CryptoError::Ratchet);
-        }
         if epoch < self.epoch || (epoch == self.epoch && index < self.next_index) {
             return self
                 .skipped
                 .remove(&(epoch, index))
                 .map(Zeroizing::new)
                 .ok_or(CryptoError::Ratchet);
+        }
+        // Once the final representable index has been consumed, no later
+        // message key exists. Already-stored skipped keys above remain valid
+        // and must still be released for out-of-order delivery.
+        if self.exhausted {
+            return Err(CryptoError::Ratchet);
         }
         if epoch > self.epoch {
             // The chain only crosses epochs via bump_epoch (a live session);
@@ -235,6 +236,7 @@ impl RecvChain {
         self.ck.zeroize();
         self.ck = new;
         self.epoch = next_epoch;
+        self.exhausted = false;
         self.next_index = 0;
         Ok(())
     }
@@ -389,5 +391,25 @@ mod tests {
         let expected = msg_key(&recv.ck);
         assert_eq!(*recv.key_for(0, u32::MAX).unwrap(), expected);
         assert_eq!(recv.key_for(0, u32::MAX), Err(CryptoError::Ratchet));
+    }
+
+    #[test]
+    fn receive_epoch_bump_reopens_exhausted_index_space() {
+        let mut recv = RecvChain::new([0x12; 32], 3, 8);
+        recv.next_index = u32::MAX;
+        recv.key_for(3, u32::MAX).unwrap();
+        assert_eq!(recv.key_for(3, u32::MAX), Err(CryptoError::Ratchet));
+        recv.try_bump_epoch(&[0x42; 32]).unwrap();
+        assert!(recv.key_for(4, 0).is_ok());
+    }
+
+    #[test]
+    fn final_index_does_not_discard_an_older_skipped_key() {
+        let mut recv = RecvChain::new([0x23; 32], 0, 8);
+        recv.next_index = u32::MAX - 2;
+        let skipped = msg_key(&recv.ck);
+        recv.key_for(0, u32::MAX - 1).unwrap();
+        recv.key_for(0, u32::MAX).unwrap();
+        assert_eq!(*recv.key_for(0, u32::MAX - 2).unwrap(), skipped);
     }
 }
