@@ -110,6 +110,7 @@ fn sync_view_keeps_current_base_domains_without_priority_partition() {
         // different from its signed byte, but remains in the existing D3
         // relay-spray domain until a partition decision is approved.
         (Id16([0x70; 16]), class::ANNOUNCEMENT, other, 0, 2),
+        (Id16([0x71; 16]), class::ANNOUNCEMENT, other, 1, 2),
     ];
     for (id, bundle_class, dest, priority, effective_priority) in entries {
         n.core.store.put(
@@ -140,7 +141,7 @@ fn sync_view_keeps_current_base_domains_without_priority_partition() {
     assert_eq!(view.ids_in(2, &Id16::MIN, &Id16::MAX), vec![Id16([0x40; 16])]);
     assert_eq!(
         view.ids_in(3, &Id16::MIN, &Id16::MAX),
-        vec![Id16([0x50; 16]), Id16([0x60; 16]), Id16([0x70; 16])],
+        vec![Id16([0x50; 16]), Id16([0x60; 16]), Id16([0x70; 16]), Id16([0x71; 16])],
     );
 }
 

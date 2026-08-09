@@ -320,3 +320,21 @@ to reuse D3. Until an approved erratum states whether priority is advisory or
 wire-partitioned (and defines legacy-peer behavior, D3 admission weighting,
 starvation and abuse bounds, and golden transcripts), no further production
 RBSR/D3 implementation is justified.
+
+## Current-tree invariant test (2026-08-09)
+
+The re-audit adds no production behavior. The `mmp-node` regression
+`sync_view_keeps_current_base_domains_without_priority_partition` now seeds
+two class-5 announcements with different **declared** priorities (0 and 1)
+and the same receiver-local effective priority (NORMAL). Both IDs are still
+returned by `SyncView::ids_in(3, ...)`, alongside the ordinary relay inventory.
+This is the executable invariant for the current wire-preserving subset:
+declared/effective priority does not silently become a new RBSR domain key,
+and class-5 traffic remains in D3 as required by doc 18 §4.
+
+The test is deliberately negative evidence, not a claim that the full doc 03
+§5.2 priority-class partition is implemented. The current `SessionEngine` and
+`Reconciler` still carry only the base `domain` byte; no frame encodes a
+priority partition. A future implementation must replace this invariant only
+after the reopening checklist above is answered in an approved erratum and
+legacy/upgraded transcript vectors are available.
