@@ -98,6 +98,17 @@ class VerifyReleaseManifestTests(unittest.TestCase):
             errors = VERIFY.verify_manifest(manifest, directory=root)
             self.assertTrue(any("manifest root has invalid members" in error for error in errors))
 
+    def test_oversized_manifest_is_rejected_before_json_parse(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "release.json"
+            manifest.write_bytes(b"{" + b"x" * VERIFY.MAX_MANIFEST_BYTES + b"}")
+            errors = VERIFY.verify_manifest(manifest, directory=root)
+            self.assertEqual(
+                errors,
+                [f"manifest exceeds maximum size of {VERIFY.MAX_MANIFEST_BYTES} bytes"],
+            )
+
     def test_manifest_path_traversal_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

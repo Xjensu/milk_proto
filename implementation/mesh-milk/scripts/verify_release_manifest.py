@@ -36,6 +36,7 @@ FORMAT = "mesh-milk-release-manifest-v1"
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
 _FILE_KINDS = ("artifact", "certificate", "signature")
+MAX_MANIFEST_BYTES = 1 << 20
 _ROOT_KEYS = frozenset(("format", "source", "files"))
 _SOURCE_KEYS = frozenset(("repository", "commit", "ref"))
 _FILE_KEYS = frozenset(("name", "size", "sha256"))
@@ -62,8 +63,15 @@ def _load_json(path: Path) -> Any:
     if not path.is_file():
         raise ValueError(f"manifest is not a regular file: {path}")
     try:
-        text = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_MANIFEST_BYTES + 1)
+    except OSError as exc:
+        raise ValueError(f"manifest cannot be read as UTF-8: {exc}") from exc
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise ValueError(f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes")
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeError as exc:
         raise ValueError(f"manifest cannot be read as UTF-8: {exc}") from exc
 
     def reject_constant(value: str) -> None:
