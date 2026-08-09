@@ -1236,6 +1236,41 @@ the current toolchain lacks the `rustfmt` component. No file under
 `specification/`, no AI-specific artifact, and no pre-existing dirty path was
 modified by this continuation.
 
+### Orchestration continuation XXXI (2026-08-09)
+
+The delegated blob lifecycle track closed the remaining terminal assembly leak
+without introducing a wire field or changing holder behavior. `BlobAssembly`
+now records a monotonic `terminal_at` when it becomes `Abandoned` or
+`Assembled`. `NodeCore::sweep_blob_ttl` retains terminal progress for one
+additional `BLOB_INTEREST_TTL_MS` window, then removes only the requester-side
+in-memory assembly. Verified partial symbols remain in `blob_index` and the
+bundle store, so they remain eligible for normal serving and repair. Active
+`Wanted`/`Fetching` assemblies are not evicted by this cleanup. A regression
+covers active-state retention, terminal aging, and preservation of the holder
+index.
+
+The independent group-state review confirmed that no arbitrary local cap is
+safe yet: authenticated future epochs and delayed older epochs can legitimately
+cross partitions, while `SenderKeyDist` has no authenticated floor or expiry.
+The required next gate is an authenticated `(gid, floor_epoch)` retention
+anchor, conservative merge rule, tombstone/floor persistence, and only then a
+measured future-epoch budget plus safe pruning. `sent_dists` can be bounded as a
+retransmission cache only after that anchor is available.
+
+The mobile review found one remaining consumer-facing contradiction in the
+pre-existing dirty `docs/API_REFERENCE.md`: an illustrative `Date.now()` tick
+snippet conflicts with the authoritative same-boot monotonic tick contract.
+That file was deliberately not edited; the correction remains a handoff item
+for the owner of the existing change. The committed manual procedure already
+contains the mandatory initial tick ordering.
+
+Focused evidence for this continuation is the new terminal-GC regression plus
+strict `mmp-node` Clippy. The post-change full gates are green: workspace tests
+and Clippy, 124 Python tests (8 skipped), 46 deterministic fuzz seeds, the
+embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
+demo, and six transactional-store tests. No file under `specification/`, no
+AI-specific artifact, and no pre-existing dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

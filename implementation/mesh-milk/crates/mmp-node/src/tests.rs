@@ -11,7 +11,8 @@ use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOA
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
-    FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE, OFFER_MIN_LIFETIME_MS,
+    BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
+    OFFER_MIN_LIFETIME_MS,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
@@ -2188,4 +2189,71 @@ fn cancel_fetch_abandons_and_fires_event() {
     );
 
     let _ = std::fs::remove_file(&dest);
+}
+
+/// Terminal blob progress is retained for one interest window, then only the
+/// requester-side assembly is reclaimed. Partial holder symbols remain
+/// indexed and therefore servable after that cleanup; an unrelated active
+/// assembly must not be aged out by the same sweep.
+#[test]
+fn blob_terminal_gc_preserves_active_and_partial_holder_state() {
+    let mut b = node(3);
+    let active_root = Id16([43; 16]);
+    let abandoned_root = Id16([44; 16]);
+    for root in [active_root, abandoned_root] {
+        b.core.offers.insert(
+            root,
+            crate::blob::FileOfferInfo {
+                size: 1000,
+                full_hash: [0; 32],
+                sharer: Key32([1; 32]),
+            },
+        );
+    }
+
+    let active_dest = std::env::temp_dir().join(format!("mmp-node-active-{}.bin", std::process::id()));
+    let abandoned_dest =
+        std::env::temp_dir().join(format!("mmp-node-abandoned-{}.bin", std::process::id()));
+    b.fetch_file(&active_root, &active_dest).unwrap();
+    b.fetch_file(&abandoned_root, &abandoned_dest).unwrap();
+    b.cancel_fetch(&abandoned_root);
+    assert_eq!(
+        b.core.assemblies.get(&abandoned_root).and_then(|a| a.terminal_at),
+        Some(0)
+    );
+
+    // Model one verified partial symbol that the holder still serves even
+    // after the requester gives up. No durable bytes are needed to exercise
+    // the index-lifetime invariant here.
+    let symbol_id = Id16([45; 16]);
+    b.core
+        .blob_index
+        .insert(abandoned_root, BTreeMap::from([(0, symbol_id)]));
+    b.core.symbol_of.insert(symbol_id, (abandoned_root, 0));
+
+    b.tick(BLOB_INTEREST_TTL_MS - 1);
+    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Wanted);
+    assert_eq!(b.file_progress(&abandoned_root).unwrap().state, crate::BlobState::Abandoned);
+    assert!(b.core.blob_index.contains_key(&abandoned_root));
+
+    // At the retention boundary the terminal record is gone, but the active
+    // request is still within its original interest lifetime and the holder
+    // index is untouched.
+    b.tick(BLOB_INTEREST_TTL_MS);
+    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Wanted);
+    assert!(b.file_progress(&abandoned_root).is_none());
+    assert_eq!(b.core.blob_index.get(&abandoned_root).and_then(|idx| idx.get(&0)), Some(&symbol_id));
+    assert_eq!(b.core.symbol_of.get(&symbol_id), Some(&(abandoned_root, 0)));
+
+    // The active request transitions normally once its own TTL lapses and is
+    // retained as terminal progress for a fresh window.
+    b.tick(BLOB_INTEREST_TTL_MS + 1);
+    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Abandoned);
+    assert_eq!(
+        b.core.assemblies.get(&active_root).and_then(|a| a.terminal_at),
+        Some(BLOB_INTEREST_TTL_MS + 1)
+    );
+
+    let _ = std::fs::remove_file(&active_dest);
+    let _ = std::fs::remove_file(&abandoned_dest);
 }

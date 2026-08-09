@@ -62,6 +62,12 @@ pub(crate) struct BlobAssembly {
     pub(crate) part: Option<File>,
     /// `BLOB_INTEREST_TTL_MS` clock (monotonic `now_ms`).
     pub(crate) started_at: u64,
+    /// Monotonic timestamp at which the assembly entered a terminal state.
+    /// Terminal progress remains queryable for one further interest window,
+    /// then `NodeCore::sweep_blob_ttl` drops only this in-memory record. The
+    /// holder-side symbol index/store is deliberately independent and keeps
+    /// serving verified partial symbols.
+    pub(crate) terminal_at: Option<u64>,
     /// Merkle-verification-failure counter (doc 11 §6 "blacklist sender
     /// count++") — diagnostic only in this MVP, see decision D3 residual 2.
     pub(crate) bad_symbols: u32,
@@ -101,6 +107,7 @@ impl BlobAssembly {
             dest_path,
             part: None,
             started_at,
+            terminal_at: None,
             bad_symbols: 0,
             sharer,
         }

@@ -2124,3 +2124,33 @@ embedded `thumbv7em-none-eabihf` closure, layer-check, release CLI delivery
 demo, and six transactional-store tests. Native
 keystore/Keychain/DPAPI providers, physical BLE exchange, Android/iOS build and
 lifecycle evidence, and the group retention-anchor design remain open gates.
+
+## 2026-08-09 continuation: terminal blob-assembly collection
+
+`BlobAssembly` now records a monotonic terminal timestamp. `Wanted` and
+`Fetching` entries still transition to `Abandoned` only after the existing
+`BLOB_INTEREST_TTL_MS`; `Assembled` and `Abandoned` progress remains queryable
+for one additional interest window. After that retention period, the sweep
+removes only the requester-side assembly record. Verified partial symbols and
+their holder-side `blob_index`/store entries are intentionally untouched, so
+repair and serving semantics remain unchanged. A regression verifies that an
+active assembly survives a terminal cleanup pass and that a partial holder
+symbol remains indexed.
+
+The group-state review remains a no-change result. `remotes`, `dists`, and
+`sent_dists` cannot be arbitrarily capped while valid future-epoch
+distributions and delayed older epochs may cross partitions. An authenticated
+epoch floor/retention anchor, merge rule, tombstone persistence, and reference-
+aware pruning are required before implementing that bound.
+
+The mobile audit also identified a stale illustrative `Date.now()` tick in the
+pre-existing dirty API reference. It was not modified in this cycle; the
+authoritative FFI contract and committed manual procedure require same-boot
+monotonic time and an initial tick before sends.
+
+Focused verification is the new terminal-GC regression and strict `mmp-node`
+Clippy. The post-change full gates are green: workspace tests and Clippy, 124
+Python tests (8 skipped), 46 deterministic fuzz seeds, the embedded
+`thumbv7em-none-eabihf` closure, layer-check, release CLI delivery demo, and
+six transactional-store tests. Native platform and physical BLE gates remain
+open.

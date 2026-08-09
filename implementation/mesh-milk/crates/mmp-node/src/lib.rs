@@ -2663,19 +2663,47 @@ impl NodeCore {
 
     /// TTL sweep for blob assemblies (doc 11 §6 "lifetime of interest",
     /// decision D3) — `Wanted`/`Fetching` past `BLOB_INTEREST_TTL_MS` become
-    /// `Abandoned`; partial symbols stay servable via `blob_index`.
+    /// `Abandoned`; terminal progress is retained for one further interest
+    /// window, then only the in-memory assembly is reclaimed. Partial symbols
+    /// stay servable via `blob_index`.
     fn sweep_blob_ttl(&mut self, now_ms: u64) {
         let mut failed = Vec::new();
+        let mut collect_terminal = Vec::new();
         for (root, a) in self.assemblies.iter_mut() {
             if matches!(a.state, BlobState::Wanted | BlobState::Fetching)
                 && now_ms.saturating_sub(a.started_at) > BLOB_INTEREST_TTL_MS
             {
                 a.state = BlobState::Abandoned;
+                a.terminal_at = Some(now_ms);
                 failed.push(*root);
+            } else if matches!(a.state, BlobState::Assembled | BlobState::Abandoned) {
+                // Assemblies are runtime UI/progress state, not durable blob
+                // inventory. Keep terminal progress visible for one more
+                // interest window, then reclaim only this entry. Partial
+                // symbols remain in `blob_index`/the store and therefore keep
+                // their normal holder-side serving behavior.
+                match a.terminal_at {
+                    None => {
+                        // Defensive repair for a terminal state created by an
+                        // older in-memory layout or a future transition that
+                        // did not stamp its timestamp: start retention now
+                        // rather than deleting progress immediately.
+                        a.terminal_at = Some(now_ms);
+                    }
+                    Some(terminal_at)
+                        if now_ms.saturating_sub(terminal_at) >= BLOB_INTEREST_TTL_MS =>
+                    {
+                        collect_terminal.push(*root);
+                    }
+                    Some(_) => {}
+                }
             }
         }
         for root in failed {
             self.enqueue_event(Event::FileFailed { root, reason: FileFailReason::Abandoned });
+        }
+        for root in collect_terminal {
+            self.assemblies.remove(&root);
         }
     }
 
@@ -2866,6 +2894,7 @@ impl NodeCore {
         if let Some(a) = self.assemblies.get_mut(root) {
             if !matches!(a.state, BlobState::Assembled) {
                 a.state = BlobState::Abandoned;
+                a.terminal_at = Some(self.now);
                 self.enqueue_event(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
             }
         }
@@ -2968,6 +2997,7 @@ impl NodeCore {
                 let renamed = std::fs::rename(&part_path, &dest_path).is_ok();
                 if let Some(a) = self.assemblies.get_mut(root) {
                     a.state = if renamed { BlobState::Assembled } else { BlobState::Abandoned };
+                    a.terminal_at = Some(self.now);
                 }
                 if renamed {
                     self.enqueue_event(Event::FileReady { root: *root, path: dest_path });
@@ -2982,6 +3012,7 @@ impl NodeCore {
                 let _ = std::fs::remove_file(&part_path);
                 if let Some(a) = self.assemblies.get_mut(root) {
                     a.state = BlobState::Abandoned;
+                    a.terminal_at = Some(self.now);
                 }
                 self.enqueue_event(Event::FileFailed {
                     root: *root,
@@ -2991,6 +3022,7 @@ impl NodeCore {
             Err(_) => {
                 if let Some(a) = self.assemblies.get_mut(root) {
                     a.state = BlobState::Abandoned;
+                    a.terminal_at = Some(self.now);
                 }
                 self.enqueue_event(Event::FileFailed {
                     root: *root,
