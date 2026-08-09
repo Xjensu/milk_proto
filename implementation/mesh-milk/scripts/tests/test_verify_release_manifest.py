@@ -78,12 +78,21 @@ class VerifyReleaseManifestTests(unittest.TestCase):
             errors = VERIFY.verify_manifest(manifest, directory=root, commit="b" * 40)
             self.assertEqual(errors, ["source.commit does not match expected value"])
 
-    def test_manifest_format_and_schema_are_strict(self) -> None:
+    def test_manifest_format_is_strict(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             manifest = self._package(root)
             document = self._document(manifest)
             document["format"] = "mesh-milk-release-manifest-v0"
+            self._write_document(manifest, document)
+            errors = VERIFY.verify_manifest(manifest, directory=root)
+            self.assertEqual(errors, ["manifest format must be mesh-milk-release-manifest-v1"])
+
+    def test_manifest_schema_is_strict(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = self._package(root)
+            document = self._document(manifest)
             document["unexpected"] = True
             self._write_document(manifest, document)
             errors = VERIFY.verify_manifest(manifest, directory=root)
