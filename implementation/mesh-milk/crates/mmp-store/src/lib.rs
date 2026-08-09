@@ -527,8 +527,18 @@ fn validate_complete_snapshot(bytes: &[u8]) -> bool {
     pos == bytes.len()
 }
 
+fn checked_record_len(len: usize) -> std::io::Result<u32> {
+    u32::try_from(len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "snapshot record exceeds the u32 framing limit",
+        )
+    })
+}
+
 fn write_record(f: &mut std::fs::File, record: &[u8]) -> std::io::Result<()> {
-    f.write_all(&(record.len() as u32).to_le_bytes())?;
+    let len = checked_record_len(record.len())?;
+    f.write_all(&len.to_le_bytes())?;
     f.write_all(record)?;
     f.write_all(blake3::hash(record).as_bytes())?;
     Ok(())
@@ -593,7 +603,16 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
         own_origin: *r.get(71)? != 0,
         slot: SlotState::Stored,
     };
-    Some((meta, r.get(HDR..)?.to_vec()))
+    let body = r.get(HDR..)?;
+    // `BundleMeta::size` is the stored wire-byte length and feeds host-side
+    // quota/transfer accounting.  A checksummed record with a mismatched
+    // length is still malformed: accepting it would restore metadata that
+    // disagrees with the bytes the store actually holds.  Reject the record
+    // rather than allowing inconsistent state to influence scheduling.
+    if body.len() != usize::try_from(meta.size).ok()? {
+        return None;
+    }
+    Some((meta, body.to_vec()))
 }
 
 impl BundleStore for SnapshotStore {
@@ -632,6 +651,33 @@ impl BundleStore for SnapshotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checked_record_length_rejects_u32_overflow() {
+        assert_eq!(checked_record_len(u32::MAX as usize).unwrap(), u32::MAX);
+        #[cfg(target_pointer_width = "64")]
+        assert!(checked_record_len(u32::MAX as usize + 1).is_err());
+    }
+
+    #[test]
+    fn decode_record_rejects_metadata_body_size_mismatch() {
+        let meta = BundleMeta {
+            id: Id16([1; 16]),
+            class: class::DIRECT,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: 4,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        };
+        let encoded = encode_record(&meta, b"hello");
+        assert!(decode_record(&encoded).is_none());
+    }
 
     #[test]
     fn snapshot_roundtrip_and_corruption_drop() {
