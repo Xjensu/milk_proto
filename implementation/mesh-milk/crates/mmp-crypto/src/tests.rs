@@ -369,7 +369,7 @@ fn send_chain_snapshot_restore_replays_uncommitted_key_after_rejection() {
     let expected = chain.next();
 
     // Model a provider rejecting the candidate after the ratchet was used to
-    // construct its ciphertext. Restoring the authenticated, zeroizing
+    // construct its ciphertext. Restoring the same-chain, zeroizing
     // checkpoint must make the next committed send derive exactly the same
     // key, epoch, and index rather than skipping a message key.
     let mut rolled_back = SendChain::restore(&checkpoint).expect("checkpoint restores");
