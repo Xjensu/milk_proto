@@ -2241,3 +2241,28 @@ decoder rejection.
 Verification: the three focused regressions pass and strict Clippy passes for
 `mmp-node`, `mmp-store`, and `mmp-ffi`. Frozen specification files and
 pre-existing dirty documentation remain untouched.
+
+## 2026-08-09 continuation: group epoch, vault, and blob verification
+
+The ratchet-vault review confirms that the Rust seam is already fail-closed:
+secret state is AEAD-sealed before provider access, context is checked before
+DEK unwrap, trusted-clock TTL and generation floors are enforced before and
+after open, and restore is atomic. Native keystore/Keychain/DPAPI adapters,
+durable high-water storage, and consuming mobile shells remain external gates.
+
+Group-state retention maps remain without an arbitrary cap because delayed
+older epochs and authenticated future epochs require an authenticated floor and
+merge rule. Two local canonicality/lifecycle gaps are now closed: group
+snapshot decode rejects epoch zero and noncanonical admin bytes, and epoch
+rotation fails closed at `u16::MAX` via `RatchetExhausted` without mutating
+membership.
+
+The blob receive path now verifies Merkle proofs even when no local assembly is
+active. Invalid shape-valid symbols are removed from storage and both holder
+indices before they can be advertised or served; only active fetches increment
+the bad-symbol counter. Unsolicited and active invalid-symbol regressions are
+included.
+
+Verification: `mmp-node` 99 tests, `mmp-ffi` 22 tests, and the store suites
+(16 unit, 3 bounded, 1 hostile, 6 transactional) pass; strict Clippy passes
+for touched crates. Specification and unrelated dirty files remain untouched.

@@ -1367,6 +1367,34 @@ Focused evidence: mmp-node, mmp-store, and mmp-ffi regressions pass; strict
 Clippy is green for all three crates. No specification file or pre-existing
 dirty path was modified.
 
+### Orchestration continuation XXXV (2026-08-09)
+
+The delegated group, vault, and blob audits produced one native-platform
+boundary confirmation and two concrete wire-neutral hardenings. The ratchet
+vault seam is already complete inside Rust: it seals the typed secret aggregate
+before provider access, validates identity/context before unwrapping, enforces
+trusted-clock TTL and durable generation fences, and swaps state atomically.
+Native Android Keystore, iOS Keychain, and DPAPI providers remain the real
+integration gate; no plaintext persistence path was invented.
+
+Group retention maps remain intentionally uncapped until the protocol defines
+authenticated epoch floors and partition-merge semantics. However, malformed
+local group snapshots are now rejected when `epoch == 0` or the admin byte is
+not canonical `0/1`. Group epoch rotation also uses checked arithmetic and
+returns `RatchetExhausted` at `u16::MAX`, preventing wraparound key reuse and
+leaving membership unchanged on failure.
+
+The blob audit found that shape-valid but Merkle-invalid class-4 bundles were
+indexed before verification when no local fetch was active. Such entries could
+later be served through `BLOB_HAVE/BLOB_REQ` without another proof check. The
+receive path now verifies every symbol before it remains in the holder index,
+removes invalid durable entries, and counts failures only for active fetches.
+Two regressions cover unsolicited and active invalid symbols.
+
+Focused evidence: 99 `mmp-node` tests, 22 FFI tests, and 16 + 3 + 1 + 6
+store tests pass; strict Clippy is green. No specification file or protected
+pre-existing dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

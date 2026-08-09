@@ -1200,7 +1200,9 @@ impl Node {
             if !gs.is_admin {
                 return Err(SendError::UnknownPeer);
             }
-            let epoch = gs.remove_member(&mut self.core.rng, member);
+            let epoch = gs
+                .remove_member(&mut self.core.rng, member)
+                .ok_or(SendError::RatchetExhausted)?;
             (epoch, gs.members.members())
         };
         let me = self.core.node_id;

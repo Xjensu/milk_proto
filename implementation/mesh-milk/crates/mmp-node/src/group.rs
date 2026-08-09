@@ -63,14 +63,16 @@ impl GroupState {
     /// removed member, doc 08 §6.3). Returns the new epoch. Removal takes
     /// effect as the network reconverges — never claim instant removal
     /// (doc 06 §8.6).
-    pub fn remove_member(&mut self, rng: &mut impl CryptoRngCore, member: &NodeId) -> u16 {
+    /// Returns `None` when the finite `u16` epoch domain is exhausted.
+    pub fn remove_member(&mut self, rng: &mut impl CryptoRngCore, member: &NodeId) -> Option<u16> {
+        let next_epoch = self.epoch.checked_add(1)?;
         let tags = self.members.tags_of(member);
         self.members.apply(&MembershipOp::Remove { tags });
-        self.epoch += 1;
+        self.epoch = next_epoch;
         self.local = LocalSenderKey::generate(rng, self.gid, self.epoch);
         // Old-epoch remote keys stay valid for in-flight traffic; new-epoch
         // keys arrive via fresh dists.
-        self.epoch
+        Some(self.epoch)
     }
 
     /// Learn a sender-key distribution once. Replacing an existing receiver
@@ -127,7 +129,14 @@ impl GroupState {
         gid.copy_from_slice(&bytes[0..16]);
         let gid = Id16(gid);
         let epoch = u16::from_le_bytes(bytes[16..18].try_into().ok()?);
-        let is_admin = bytes[18] != 0;
+        if epoch == 0 {
+            return None;
+        }
+        let is_admin = match bytes[18] {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let next_tag = u64::from_le_bytes(bytes[19..27].try_into().ok()?);
         let orset_len = u32::from_le_bytes(bytes[27..31].try_into().ok()?) as usize;
         let end = 31usize.checked_add(orset_len)?;
@@ -205,5 +214,37 @@ mod tests {
         let first = restored.local.encrypt(restored.members.members()[0], &[], b"first");
         assert_eq!(first.epoch, restored.epoch);
         assert_eq!(first.chain_index, 0, "fresh local chain starts at index zero");
+    }
+
+    #[test]
+    fn decode_rejects_zero_epoch_and_noncanonical_admin() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let original = GroupState::create(
+            &mut rng,
+            mmp_types::ids::Id16([9; 16]),
+            mmp_types::ids::Id16([10; 16]),
+            true,
+        );
+        let mut zero_epoch = original.encode();
+        zero_epoch[16..18].fill(0);
+        assert!(GroupState::decode(&mut rng, &zero_epoch).is_none());
+
+        let mut bad_admin = original.encode();
+        bad_admin[18] = 2;
+        assert!(GroupState::decode(&mut rng, &bad_admin).is_none());
+    }
+
+    #[test]
+    fn remove_member_fails_closed_at_epoch_limit() {
+        let mut rng = StdRng::seed_from_u64(4);
+        let me = mmp_types::ids::Id16([11; 16]);
+        let member = mmp_types::ids::Id16([12; 16]);
+        let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([13; 16]), me, true);
+        group.add_member(member);
+        group.epoch = u16::MAX;
+        let before = group.members.encode();
+        assert!(group.remove_member(&mut rng, &member).is_none());
+        assert_eq!(group.epoch, u16::MAX);
+        assert_eq!(group.members.encode(), before, "failed rotation must not mutate membership");
     }
 }
