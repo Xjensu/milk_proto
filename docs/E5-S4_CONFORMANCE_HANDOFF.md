@@ -1963,3 +1963,34 @@ This is provider-capability behavior only; it does not implement or claim
 Android Keystore, iOS Keychain, native lock/invalidation, crash-injection, or
 platform lifecycle behavior. Those remain external gates before a production
 keystore provider can be enabled.
+
+## 2026-08-09 continuation: group-state growth audit (no safe v1 cap)
+
+The remaining group-state growth path was audited against the retention-anchor
+gap above. `MAX_GROUPS = 256` bounds only the top-level `NodeCore::groups` map;
+it is enforced for network bootstrap and snapshot restore. Within an admitted
+group, `GroupState::remotes` and `GroupState::dists` retain one entry per
+`(member, epoch)`, and `NodeCore::sent_dists` retains one entry per
+`(gid, member, epoch)` after a successful distribution send. None of these
+maps has an expiry or authenticated floor. Group snapshots intentionally omit
+the sender-key maps, so this is a live-runtime admission issue rather than a
+new persisted-secret surface.
+
+No wire-neutral fail-closed cap is safe to add at this stage. A currently
+admitted member can present a valid pairwise-authenticated distribution for a
+future epoch, and the current protocol permits delayed traffic from older
+epochs while partitions reconverge. Rejecting a fixed epoch delta, imposing an
+arbitrary map-size limit, or pruning old entries would therefore change which
+valid delayed messages can decrypt and could reset/lose replay-window state.
+Adding only a diagnostic counter would not be a mitigation: it would observe
+growth after the attacker had already consumed the unbounded allocation.
+
+The required implementation gate remains normative: define an authenticated
+`(gid, floor_epoch)` retention anchor with issuance/validity and a conservative
+partition-merge rule; then add a measured future-epoch admission budget and
+fail-closed diagnostic, prune only unreferenced entries below the accepted
+floor, and bound `sent_dists` as a retransmission cache without resetting any
+sender/receiver chain. Until that anchor exists, no code change was justified
+by this audit and the existing behavior is intentionally left unchanged.
+The focused group unit tests pass 2 tests, and
+`cargo clippy -p mmp-node --all-targets --all-features -- -D warnings` passes.
