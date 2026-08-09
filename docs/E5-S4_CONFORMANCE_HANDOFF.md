@@ -2519,3 +2519,36 @@ overwrite files on Windows while appearing distinct on Linux. Commit
 fuzz suite passes 13 tests (one intentionally skipped), and the complete Python
 script suite passes 134 tests (nine intentionally skipped). This is tooling
 hardening only; it does not change protocol bytes.
+
+## 2026-08-09 continuation: P0 conformance, lifecycle, and release gates
+
+The session audit found that an inbound `BUDGET` frame was accepted whenever
+the session was established, even if no immediately preceding `BUNDLE` existed.
+Commit `067fb24` tracks the canonical ID of the last received bundle and rejects
+orphan, mismatched, or intervening-frame budgets while preserving the ordered
+same-stream `BUNDLE`→`BUDGET` pair. Terminal `ERROR`/`CLOSE` frames remain valid
+termination paths. The new regression was observed failing before the fix and
+passes afterward. A residual API boundary remains: `SessionHost::on_bundle`
+returns no admission result, so the engine cannot distinguish a syntactically
+valid but signature-rejected bundle from an admitted one; NodeCore safely ignores
+budgets for absent records, but an explicit host-result contract is still needed
+for complete conformance to the “unheld ID is ERROR” wording.
+
+The mobile lifecycle audit found that a saturated Rust close-action queue could
+leave physical links alive if the host treated the counter as diagnostic only.
+Commit `0659a66` makes `MeshDrive` latch overload, stop admitting work, release
+logical links, clear pending fragments, request native teardown, and reject late
+callbacks. Tracked physical links are independently capped. Commit `3f703fe`
+keeps the existing source contract, retries failed native close requests, and
+preserves normal drain errors while allowing overload cleanup to continue. The
+focused Kotlin source suite passes 17 tests and the full Python suite passes 140
+tests (nine intentionally skipped); mmp-node passes 105 tests.
+
+Release governance now has a machine-readable, hash-pinned status manifest in
+`docs/SPEC_STATUS_MANIFEST.json`. Commit `23062ae` records all 18 top-level
+specification documents, their declared status markers, and publication anchors;
+`7dc9d97` requires this check before keyless signing; `5406dba` treats a dangling
+historical `AUDIT.md` symlink as present rather than silently converting it to an
+absent file. The checker passes from the repository root, and the focused
+status/CI tests pass 18 tests. This is publication metadata only and does not
+alter specification bytes.
