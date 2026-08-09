@@ -111,7 +111,7 @@ impl UtilityState {
     }
 
     /// Flag `peer` as out-of-band verified (e.g. QR bootstrap), creating a
-    /// ContactGraph entry if none exists yet.
+    /// ContactGraph entry if none exists and the fixed graph budget permits.
     pub fn mark_verified(&mut self, peer: &NodeId) {
         if !self.admit_contact_slot(peer) {
             // Every retained entry is already verified and the fixed

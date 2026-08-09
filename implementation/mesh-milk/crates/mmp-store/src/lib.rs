@@ -72,10 +72,11 @@ pub struct SnapshotStore {
     mem: MemStore,
     path: PathBuf,
     limits: Option<SnapshotLimits>,
-    /// Set when an explicitly bounded open rejected the primary image (or
-    /// its crash-recovery candidate) for exceeding the host's file limit.
-    /// Refusing a later `persist` avoids replacing an unreadable image with an
-    /// empty in-memory store and silently losing state.
+    /// Set when opening the primary image (or its crash-recovery candidate)
+    /// failed closed — for example because it exceeded an explicit host limit
+    /// or returned a non-`NotFound` I/O error. Refusing a later `persist` avoids
+    /// replacing an unreadable image with an empty in-memory store and silently
+    /// losing state.
     load_rejected: bool,
     /// Claims to write on the next [`SnapshotStore::persist`] (staged by the
     /// caller via [`SnapshotStore::set_claims`]) — after [`SnapshotStore::open`]
@@ -132,9 +133,10 @@ impl SnapshotStore {
     ///
     /// An image larger than `limits.max_file_bytes()` is rejected before its
     /// bytes are read into memory. The primary image still wins over a `.tmp`
-    /// candidate, including when it is rejected for size. A later `persist`
-    /// returns an error while that rejection is recorded, preventing silent
-    /// replacement of state the host chose not to load.
+    /// candidate, including when it is rejected for size or another read
+    /// error. A later `persist` returns an error while that rejection is
+    /// recorded, preventing silent replacement of state the host chose not to
+    /// load.
     pub fn open_with_limits(path: impl Into<PathBuf>, limits: SnapshotLimits) -> SnapshotStore {
         Self::open_internal(path.into(), Some(limits))
     }
@@ -185,7 +187,14 @@ impl SnapshotStore {
                 }
                 temp_bytes
             }
-            Err(_) => return,
+            Err(_) => {
+                // A primary that exists but cannot be read is authoritative:
+                // do not fall back to a candidate or later replace it with an
+                // empty in-memory store. `NotFound` is the only condition that
+                // enters the crash-recovery branch above.
+                self.load_rejected = true;
+                return;
+            }
         };
         self.load_bytes(&bytes);
     }
@@ -301,7 +310,7 @@ impl SnapshotStore {
         if self.load_rejected {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                "snapshot exceeded configured file limit and was not loaded",
+                "snapshot was not loaded safely and cannot be replaced",
             ));
         }
         // `decode_record` rejects a metadata/body length mismatch on restart.
@@ -445,9 +454,9 @@ impl SnapshotStore {
         &self.path
     }
 
-    /// Whether an explicitly bounded open rejected the existing image before
-    /// parsing. A rejected store cannot be persisted until the host chooses a
-    /// different path or removes the oversized image.
+    /// Whether opening the existing image failed closed before parsing. A
+    /// rejected store cannot be persisted until the host chooses a different
+    /// path or repairs/removes the unreadable image.
     pub fn load_rejected(&self) -> bool {
         self.load_rejected
     }
@@ -1195,6 +1204,24 @@ mod tests {
         let path = PathBuf::from("snapshot.TMP");
         assert_eq!(path.with_extension("tmp"), PathBuf::from("snapshot.tmp"));
         assert_ne!(temporary_path(&path), path.with_extension("tmp"));
+    }
+
+    #[test]
+    fn primary_read_error_fails_closed_before_persist() {
+        let dir = std::env::temp_dir().join("mmp-store-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("read-error-directory");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).unwrap();
+
+        let store = SnapshotStore::open(&path);
+        assert!(store.load_rejected(), "a non-file primary must not load as an empty store");
+        let error = store.persist().expect_err("an unreadable primary must not be replaced");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(path.is_dir(), "the original primary path remains intact");
+
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]
