@@ -282,3 +282,28 @@ The release decision remains **blocked on the protocol decision and the
 Linux/BlueZ hardware evidence independently**. A successful hardware run may
 close only the radio row above; it cannot authorize a guessed RBSR partition or
 D3 weighting rule.
+
+## Wire-neutral negative-test audit (2026-08-09)
+
+The current session fencing was rechecked after the D3 transcript regression.
+One missing executable boundary was found and added as
+`session::rx_bound_tests::recon_init_for_later_domain_closes_without_priority_partition`.
+It drives an established responder with an unresolved D0 reconciler, injects a
+syntactically valid `RECON_INIT` for D3, and asserts a protocol close. This
+prevents an implementation from treating a later base domain as an implicit
+declared-priority partition while D0 is unresolved. It does not add a domain,
+priority field, or negotiation capability and therefore changes no wire bytes.
+
+The companion test `recon_init_is_role_and_order_fenced` still verifies that a
+later base domain is accepted only after the current reconciler reports done;
+the existing RBSR D3 transcript test verifies that generated D3 frames retain
+base domain `3` and vary only by the existing reply flag. Focused mmp-core tests
+and Clippy pass for this checkpoint.
+
+The normative blocker is unchanged: the frozen documents require RBSR per
+declared priority class but do not define a byte-level partition key or
+negotiation, while the authority-announcement document requires class-5 traffic
+to reuse D3. Until an approved erratum states whether priority is advisory or
+wire-partitioned (and defines legacy-peer behavior, D3 admission weighting,
+starvation and abuse bounds, and golden transcripts), no further production
+RBSR/D3 implementation is justified.

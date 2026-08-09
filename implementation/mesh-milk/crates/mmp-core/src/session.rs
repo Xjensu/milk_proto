@@ -991,6 +991,35 @@ mod rx_bound_tests {
     }
 
     #[test]
+    fn recon_init_for_later_domain_closes_without_priority_partition() {
+        let local = identity(7);
+        let peer = identity(8);
+        let mut session = SessionEngine::responder(&local, &hello(), 1000).unwrap();
+        session.phase = Phase::Established;
+        session.peer_node = Some(peer.node_id());
+
+        // A responder must finish the active D0 reconciliation before it can
+        // accept the next base domain.  In particular, a peer cannot use a
+        // later domain as an implicit declared-priority partition: the frozen
+        // executable wire has no such negotiation or key.
+        let mut active = Reconciler::new(DOMAINS[0]);
+        active.open = 1;
+        session.recon = Some(active);
+        let mut host = host();
+        session.on_established(
+            Frame::ReconInit {
+                domain: DOMAINS[3],
+                window: 4,
+                range: Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 },
+            },
+            &mut host,
+        );
+
+        assert_eq!(session.phase, Phase::Closed);
+        assert!(matches!(session.poll_event(), Some(SessionEvent::Closed)));
+    }
+
+    #[test]
     fn session_waits_for_terminal_child_before_advancing_domain() {
         let local = identity(3);
         let peer = identity(4);
