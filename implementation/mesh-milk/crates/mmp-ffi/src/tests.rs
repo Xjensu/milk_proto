@@ -661,3 +661,11 @@ fn ffi_maps_local_lifecycle_failures_to_internal() {
         super::FfiError::Internal
     );
 }
+
+#[test]
+fn ffi_maps_invalid_priority_to_bad_argument() {
+    assert_eq!(
+        super::map_send_error(mmp_node::SendError::InvalidPriority),
+        super::FfiError::BadArg
+    );
+}

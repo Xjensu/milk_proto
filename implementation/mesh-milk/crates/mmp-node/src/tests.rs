@@ -1581,6 +1581,19 @@ fn unauthenticated_announcement_clamps_to_normal_but_still_reaches_subscribers()
 }
 
 #[test]
+fn announcement_rejects_invalid_priority_before_storing() {
+    let mut alice = node(30);
+    let scope = Id16([0x31; 16]);
+    let before = alice.core.store.len();
+
+    assert_eq!(
+        alice.publish_announcement(scope, 1, prio::BULK + 1, b"invalid", None),
+        Err(SendError::InvalidPriority)
+    );
+    assert_eq!(alice.core.store.len(), before, "invalid input must not create a bundle");
+}
+
+#[test]
 fn unknown_announcement_suite_is_relay_only_and_not_rendered() {
     let alice = node(31);
     let mut bob = node(32);

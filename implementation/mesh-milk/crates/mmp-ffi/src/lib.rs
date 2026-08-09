@@ -89,6 +89,8 @@ fn map_send_error(e: SendError) -> FfiError {
         // "Too large" is caller-controlled input, not a protocol-unknown
         // condition — surface it as a bad argument.
         SendError::TooLarge => FfiError::BadArg,
+        // Priority is a caller-controlled wire-domain value.
+        SendError::InvalidPriority => FfiError::BadArg,
         // Deliberately folded into `UnknownPeer` rather than growing the
         // (deliberately coarse, see `FfiError`'s own doc comment) FFI error
         // enum: from the host's point of view a revoked peer is exactly as

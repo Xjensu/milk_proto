@@ -695,6 +695,12 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
     let u64le = |o: usize| -> Option<u64> { Some(u64::from_le_bytes(r.get(o..o + 8)?.try_into().unwrap())) };
     let class_byte = *r.get(16)?;
     let priority = *r.get(49)?;
+    // Snapshot bytes are local input, not an authenticated wire bundle. Keep
+    // restored metadata inside the same priority domain enforced by the
+    // canonical bundle decoder.
+    if priority > prio::BULK {
+        return None;
+    }
     let meta = BundleMeta {
         id: id16(0)?,
         class: class_byte,
@@ -807,6 +813,26 @@ mod tests {
             slot: SlotState::Stored,
         };
         let encoded = encode_record(&meta, b"hello");
+        assert!(decode_record(&encoded).is_none());
+    }
+
+    #[test]
+    fn decode_record_rejects_unrepresentable_priority() {
+        let meta = BundleMeta {
+            id: Id16([4; 16]),
+            class: class::DIRECT,
+            origin: Id16([5; 16]),
+            dest: Id16([6; 16]),
+            priority: prio::BULK + 1,
+            effective_priority: prio::BULK + 1,
+            size: 0,
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        };
+        let encoded = encode_record(&meta, &[]);
         assert!(decode_record(&encoded).is_none());
     }
 

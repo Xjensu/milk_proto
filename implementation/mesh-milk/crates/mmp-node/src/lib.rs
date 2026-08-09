@@ -415,6 +415,8 @@ pub enum SendError {
     ConversationPending,
     /// Body exceeds MAX_BUNDLE after framing.
     TooLarge,
+    /// Announcement priority is outside the wire-defined range `0..=3`.
+    InvalidPriority,
     /// `peer` has published a valid identity revocation (handbook §4.6) —
     /// refuse to open a new conversation or use their prekey batch, even if
     /// one is still on file from before the revocation.
@@ -1768,6 +1770,12 @@ impl NodeCore {
         text: &[u8],
         cert: Option<&AuthCert>,
     ) -> Result<Id16, SendError> {
+        // `Bundle::decode_canonical` rejects priorities above BULK. Validate
+        // local API input before signing or storing so release builds cannot
+        // mint a bundle that this node (or any peer) will reject.
+        if priority > prio::BULK {
+            return Err(SendError::InvalidPriority);
+        }
         let mut body = AnnouncementBody {
             suite: 1,
             ann_type,

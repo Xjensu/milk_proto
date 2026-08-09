@@ -1340,6 +1340,33 @@ Focused evidence: `mmp-core` 79 tests, `mmp-tal-btleplug` 23 tests,
 green for the touched crates. No file under `specification/` or AI-specific
 artifact was modified.
 
+### Orchestration continuation XXXIV (2026-08-09)
+
+The store, blob, and routing audits were re-run against the current tree. The
+store's explicit `open_with_limits` path remains bounded and fail-closed, but
+`open()` cannot receive a safe default cap because snapshots combine bundles,
+claims, groups, indexes, authority state, and blocklists while standard and
+anchor tiers have different policies. The blob plane already caps per-contact
+symbols, peer counters, offers, sessions, and output; streaming send and group
+file payload preservation remain cross-surface work. Priority-aware transfer
+ordering is intentionally split between signed declared priority and
+receiver-local effective priority; RBSR/D3 ordering is still a normative
+ambiguity and was not guessed.
+
+One concrete implementation defect was found and fixed. The local
+`publish_announcement` API accepted priority values above the wire-defined
+`0..=3` domain, allowing release builds to sign/store a bundle that every
+canonical decoder would reject. The API now rejects this input before signing
+or storage with `SendError::InvalidPriority`, and the FFI maps it to the
+existing `BadArg` variant. Snapshot restore also rejects raw priority bytes
+outside the same domain, preventing a tampered-but-checksummed local image
+from influencing ordering with an unrepresentable value. Regression tests
+cover both admission paths and prove no bundle is stored on invalid input.
+
+Focused evidence: mmp-node, mmp-store, and mmp-ffi regressions pass; strict
+Clippy is green for all three crates. No specification file or pre-existing
+dirty path was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

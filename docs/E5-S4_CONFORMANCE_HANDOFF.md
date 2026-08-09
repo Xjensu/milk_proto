@@ -2217,3 +2217,27 @@ Verification: `cargo test -p mmp-core --all-targets -- --test-threads=1`
 `cargo test -p mmp-ffi --all-features -- --test-threads=1` (21 passed), with
 strict Clippy green for the touched crates. Specification files and
 AI-specific artifacts remain unchanged.
+
+## 2026-08-09 continuation: priority-domain and residual-plane audit
+
+The store audit found no safe default-cap change: `open_with_limits` already
+rejects oversized images before retention, while `open` lacks tier context and
+an arbitrary bound could reject valid anchor snapshots. The blob audit found
+the existing per-contact symbol, peer-counter, offer, session, and output
+caps; whole-file streaming and group-file application-type preservation need
+cross-surface API decisions. The router audit confirmed that declared-priority
+transfer ordering and effective-priority eviction are intentionally distinct;
+RBSR/D3 priority ordering remains deferred until its normative partition rule
+exists.
+
+The audits did identify a local invalid-input bug. `Node::publish_announcement`
+now rejects priorities above `prio::BULK` before signing or storing, returning
+`SendError::InvalidPriority`; the FFI maps that caller error to `BadArg`. The
+snapshot decoder applies the same bound to restored metadata, so a
+tampered-but-checksummed image cannot inject an unrepresentable priority into
+local scheduling. Tests cover the node admission, FFI mapping, and snapshot
+decoder rejection.
+
+Verification: the three focused regressions pass and strict Clippy passes for
+`mmp-node`, `mmp-store`, and `mmp-ffi`. Frozen specification files and
+pre-existing dirty documentation remain untouched.
