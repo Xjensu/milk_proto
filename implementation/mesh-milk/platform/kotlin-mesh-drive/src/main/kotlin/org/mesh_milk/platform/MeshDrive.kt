@@ -353,7 +353,16 @@ public class MeshDrive(
      */
     private fun requestPhysicalClose(link: Long) {
         if (closeRequested.add(link)) {
-            runCatching { gatt.close(link) }
+            try {
+                gatt.close(link)
+            } catch (error: Throwable) {
+                // Do not permanently suppress a retry after a transient
+                // adapter failure.  Callers decide whether this close is part
+                // of normal draining (propagate) or fail-closed cleanup
+                // (contain and continue with the remaining links).
+                closeRequested.remove(link)
+                throw error
+            }
         }
     }
 
@@ -382,7 +391,7 @@ public class MeshDrive(
         links.forEach { runCatching { node.linkDown(it) } }
         activeLinks.clear()
         pending.clear()
-        links.forEach { requestPhysicalClose(it) }
+        links.forEach { runCatching { requestPhysicalClose(it) } }
         runCatching { scanner.stop() }
         runCatching { advertiser.stop() }
         advertisedBeacon = null
