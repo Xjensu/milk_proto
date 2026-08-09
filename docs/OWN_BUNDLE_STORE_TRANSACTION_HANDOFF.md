@@ -31,7 +31,7 @@ The own-origin producers do not all have the same rollback surface:
 | `gossip_claim`, `emit_receipt` | Claim/receipt bookkeeping is already updated or intentionally fire-and-forget | A rejected auxiliary bundle may be silently lost; changing the return type would alter internal callback contracts. |
 | `publish_announcement` | No ratchet, but public API currently returns an ID after `store_own` | Must return a storage error and avoid `Created`/SeenIndex state on rejection. |
 | `send_sealed` | Stores first, then creates `Conv` and `pending_first_contact` | Can be made transactional with a returned error, provided the store contract is explicit. |
-| `send_app` | `SendChain::next()` advances before `store_own`; `pending_async` is removed before the write; DAG/pending state follows it | A write rejection after encryption requires restoring the consumed send key/index and the pending async marker. `SendChain` has a snapshot reader but no in-place rollback transaction. |
+| `send_app` | `SendChain::next()` advances before `store_own`; `pending_async` is removed before the write; DAG/pending state follows it | A write rejection after encryption requires restoring the consumed send key/index and the pending async marker. `SendChain` now has a tested snapshot/restore checkpoint seam, but no in-place transaction guard that coordinates the other NodeCore fields. |
 | `send_group` | `LocalSenderKey::encrypt_with_ad` advances its private chain before `store_own` | A rejection would consume a group message index. The group sender key has no rollback/snapshot seam. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 
@@ -89,6 +89,22 @@ Until one of those contracts is approved, keep `store_own` on the legacy
 `put` seam and treat fixed-capacity own-origin persistence as an explicit
 provider limitation. Do not claim that `BundleStore::try_put` protects local
 send APIs.
+
+## Transaction-readiness follow-up
+
+The mmp-crypto audit (commit `be61df4`, wording correction `07b57ed`) proves
+that a pairwise `SendChain` can be checkpointed before `next()` and restored
+after a simulated rejected write without skipping a key. This is useful
+building material, but it is not a complete storage transaction: group
+`LocalSenderKey`, pending async markers, conversation DAG state, delivery
+tracking, and file-symbol indexes still need coordinated commit/rollback.
+
+No additional `BundleStore` preflight method was added. A read-only
+`total_bytes`/`meta` check cannot reserve the final ciphertext/BundleID and
+would be advisory for providers with different capacity or eviction rules;
+adding it would create a false fail-closed claim. The smallest safe next API is
+therefore an explicitly transactional provider reservation/commit seam, with
+producer-specific staged state, rather than an unreviewed preflight boolean.
 
 ## Verification performed
 
