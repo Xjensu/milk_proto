@@ -1715,3 +1715,23 @@ proves dependency injection, monotonic ordering, MTU-minus-three
 fragmentation, back-pressure retention, and link/tier lifecycle rules. It does
 not prove Kotlin compilation, Android background execution, GATT behavior, or
 radio interoperability; those remain external gates.
+
+## 2026-08-09 release binding verification
+
+After the additive FFI constructor landed, the release library and both
+generated mobile surfaces were exercised locally:
+
+```text
+cargo build -p mmp-ffi --release --features cli                         PASS
+uniffi-bindgen generate ... --language kotlin                            PASS
+uniffi-bindgen generate ... --language swift                             PASS
+python scripts/check_mobile_binding.py kotlin <generated-dir>             PASS
+python scripts/check_mobile_binding.py swift <generated-dir>              PASS
+python scripts/check_mobile_api_surface.py <kotlin-dir> <swift-dir>       PASS
+```
+
+The generator could not auto-format because `ktlint` and `swift-format` are
+not installed on this Windows host; this is a formatting-tool warning, not a
+binding-generation failure. The checks prove generated API/secret-surface
+coverage only. They do not prove Kotlin or Swift compilation, Android/iOS
+background scheduling, keystore/keychain behavior, or physical BLE exchange.
