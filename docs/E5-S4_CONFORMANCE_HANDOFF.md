@@ -2025,3 +2025,8 @@ snapshots continue to reject terminal states, so a provider must persist or
 re-key before reaching the final counter. This is a local lifecycle residual,
 not a claim that a peer can be forced to send 2³² messages; external review
 should still define graceful application recovery and provider migration.
+
+`b8d7dfc` also keeps exhaustion checks after the old-index/skipped-key branch:
+if the final index arrives before an earlier message from the bounded reorder
+window, that already-derived skipped key remains decryptable. The regression
+drives `MAX-1`, then `MAX`, then releases the stored `MAX-2` key.
