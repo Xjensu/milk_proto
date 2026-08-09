@@ -235,6 +235,11 @@ class CIWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(checks), 1)
         self.assertEqual(checks[0]["run"], "python scripts/check_spec_status.py --repo ../..")
+        names = [step.get("name") for step in steps]
+        self.assertLess(
+            names.index("validate specification status manifest"),
+            names.index("verify keyless artifact signature"),
+        )
 
     def test_release_job_builds_from_the_locked_dependency_graph(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
