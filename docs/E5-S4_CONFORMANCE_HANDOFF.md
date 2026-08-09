@@ -2906,6 +2906,58 @@ Verification for this continuation:
 
 Follow-up before claiming the mobile API is production-ready: update the
 checked-in Kotlin/Swift/TypeScript integration documentation and regenerated
-bindings for the new `setNickname` error result, then give direct Rust
-`Node::set_nickname` an explicit reviewed failure contract. Do not hide either
-compatibility issue by silently truncating or dropping a nickname.
+bindings for the new `setNickname` error result. Do not hide compatibility
+issues by silently truncating a nickname; the legacy Rust setter now rejects
+oversized input without side effects, while `try_set_nickname` exposes the
+explicit error.
+
+## 2026-08-09 continuation: nickname, beacon-ingress, and binding ABI hardening
+
+Commit `4ca76a2` closes the remaining direct-Rust nickname emission path
+without breaking the existing unit-returning `Node::set_nickname` signature.
+The additive `try_set_nickname` returns `SendError::TooLarge`, measured in
+UTF-8 bytes against `NICKNAME_MAX`; the legacy method delegates to it and
+therefore becomes fail-closed rather than signing, adopting, or gossiping an
+invalid claim. Boundary tests cover rejection, no side effects, an exact
+multi-byte UTF-8 limit, and a valid legacy update.
+
+Commit `56df0d1` bounds malformed beacon ingress in `mmp-tal-btleplug` before
+the event queue admits the platform-owned `Vec<u8>`. Service Data larger than
+the fixed v1 `BEACON_LEN` is rejected as a data-lane overflow, preventing an
+extended/malformed advertisement from consuming a bounded queue slot with an
+arbitrarily large allocation. The peripheral lifecycle audit found no equally
+certain local defect; MTU and BlueZ behavior still require Linux hardware
+validation.
+
+Commits `1adffd3` and `1bf6401` strengthen the mobile API gate. The checker
+now verifies Kotlin `@Throws(FfiException::class)` and Swift `throws` for all
+21 exported `Result<_, FfiError>` methods, and a source-derived test asserts
+that this throwing manifest exactly matches the current Rust exports. Freshly
+generated bindings pass; stale pre-`343cbc5` bindings fail as intended. The
+repository's mobile/React-Native/API reference documents remain user-owned
+dirty paths and were not modified; they still need a deliberate update for
+`setNickname` error handling.
+
+Verification for this continuation:
+
+- `cargo test --workspace --all-targets -- --test-threads=1` with bounded
+  debug metadata: passed on the post-commit tree, including simulator and all
+  integration targets.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`:
+  passed after workspace build artifacts were recreated.
+- Affected post-commit tests: 113 `mmp-node`, 29 `mmp-ffi`, 25
+  `mmp-tal-btleplug`, and 47 mobile API/script tests (4 expected skips).
+- Full Python tooling suite: 151 passed, 10 expected skips.
+- `check_spec_status.py`, `layer-check`, and `git diff --check`: passed.
+- The generated Cargo `target` directory was removed with `cargo clean`,
+  reclaiming 11.5 GiB after the disk reached zero free bytes; only build
+  artifacts were removed and the source tree was preserved.
+- No path under `specification/` changed. Existing user-owned dirty files,
+  generated binding documentation, and temporary audit directories remain
+  unstaged.
+
+Remaining production gates are external or deliberately deferred: native
+Android/iOS binding regeneration and host error handling, Linux/BlueZ physical
+exchange, platform keystore providers, calibrated radio measurements, and
+the external cryptographic review. No wire or specification change was
+introduced in this continuation.
