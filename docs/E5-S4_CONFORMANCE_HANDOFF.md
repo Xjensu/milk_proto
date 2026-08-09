@@ -2314,3 +2314,28 @@ restarts, and copies byte arrays across the native adapter boundary. Kotlin
 compilation and physical mobile exchange remain external gates.
 
 No specification or pre-existing dirty path was modified.
+
+## 2026-08-09 continuation: recovery-path and startup-lifecycle hardening
+
+The persistence audit closed a filename collision in crash recovery. If the
+primary snapshot path ended in `.tmp`, the historical `with_extension("tmp")`
+candidate could equal the primary and a failed persist could truncate or remove
+the only complete image. The store now selects a distinct `.part` sibling for
+that case, including Windows case-insensitive `.TMP` aliases, while retaining
+the normal `.tmp` recovery name for ordinary paths. Regressions cover bounded
+failure preservation and the Windows alias.
+
+The group audit found a concrete memory-growth path: `sent_dists` retained
+historical `(group, peer, epoch)` markers indefinitely. Successful epoch
+rotation now prunes stale markers for the rotated group while retaining the
+current epoch; failed current-epoch sends remain retryable. Remote distribution
+maps remain uncapped pending an authenticated epoch-floor and partition-merge
+contract.
+
+The mobile coordinator now rolls back links admitted synchronously during a
+failed scanner startup or initial drain. It sends protocol `linkDown`, clears
+coordinator ownership before native GATT close callbacks, closes each link, and
+clears pending output/cache state. Source-level regression coverage passes;
+Kotlin compilation and physical devices remain external gates.
+
+No specification or pre-existing dirty path was modified.

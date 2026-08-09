@@ -40,10 +40,22 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("var scannerStarted = false", body)
         self.assertIn("runCatching { advertiser.stop() }", body)
         self.assertIn("runCatching { scanner.stop() }", body)
+        self.assertIn("rollbackStartLinks()", body)
         self.assertIn("running = false", body)
         self.assertIn("throw error", body)
         self.assertLess(body.index("advertiser.start"), body.index("scanner.start"))
         self.assertLess(body.index("scanner.start"), body.index("running = false"))
+
+    def test_failed_start_releases_links_admitted_during_native_startup(self) -> None:
+        """A failed native start must not poison the next start with stale links."""
+
+        helper = self.source[self.source.index("private fun rollbackStartLinks()") :]
+        self.assertIn("val links = activeLinks.toList()", helper)
+        self.assertIn("links.forEach { runCatching { node.linkDown(it) } }", helper)
+        self.assertIn("activeLinks.clear()", helper)
+        self.assertIn("links.forEach { runCatching { gatt.close(it) } }", helper)
+        self.assertIn("pending.clear()", helper)
+        self.assertLess(helper.index("activeLinks.clear()"), helper.index("gatt.close(it)"))
 
     def test_stop_requests_native_teardown_after_releasing_protocol_links(self) -> None:
         start = self.source.index("public fun stop()")

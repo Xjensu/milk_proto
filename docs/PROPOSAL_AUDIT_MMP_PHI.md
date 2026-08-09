@@ -1446,6 +1446,32 @@ boundary. Kotlin compilation and physical mobile tests remain external gates.
 No wire field or frozen specification text changed. Existing user-owned dirty
 integration documents and temporary artifacts were not touched.
 
+### Orchestration continuation XXXVIII (2026-08-09)
+
+The persistence audit found a crash-recovery filename edge case. When the
+primary snapshot path itself ended in `.tmp`, `Path::with_extension("tmp")`
+could select the primary image as its own temporary replacement. The store now
+uses a distinct `.part` sibling in that case, including Windows' case-
+insensitive `.TMP` alias, while preserving the historical `.tmp` recovery name
+for ordinary paths. Regressions prove failed bounded writes preserve the last
+complete image and remove only the candidate.
+
+The group audit found a real local memory-growth path rather than guessing a
+cap for authenticated remote epochs: `sent_dists` retained every historical
+`(group, peer, epoch)` marker. Successful epoch rotation now prunes stale
+markers for that group while retaining the new epoch; failed sends remain
+retryable. Remote distribution maps remain intentionally uncapped pending an
+authenticated epoch-floor/partition-merge design.
+
+The mobile lifecycle audit found that callbacks can admit links synchronously
+while scanner startup or the initial drain later fails. `MeshDrive` startup
+rollback now sends protocol `linkDown`, clears ownership before native GATT
+close callbacks, closes admitted links, and clears pending frames/cache. A
+source-level regression covers the failure ordering. Kotlin compilation and
+physical device tests remain external gates.
+
+No wire field or frozen specification text changed.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

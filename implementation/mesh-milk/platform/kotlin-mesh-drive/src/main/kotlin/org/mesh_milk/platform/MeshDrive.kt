@@ -159,6 +159,7 @@ public class MeshDrive(
         } catch (error: Throwable) {
             if (scannerStarted) runCatching { scanner.stop() }
             if (advertiserStarted) runCatching { advertiser.stop() }
+            rollbackStartLinks()
             running = false
             throw error
         }
@@ -179,6 +180,23 @@ public class MeshDrive(
         advertiser.stop()
         advertisedBeacon = null
         running = false
+    }
+
+    /**
+     * Undo callbacks that may have arrived while a native scanner was
+     * starting.  A platform callback can be delivered synchronously from
+     * `Scanner.start`, or the initial drain can fail after a link was
+     * admitted.  Leaving those links in [activeLinks] would poison the next
+     * `start()` call and could retain native GATT resources after startup has
+     * already reported failure.
+     */
+    private fun rollbackStartLinks() {
+        val links = activeLinks.toList()
+        links.forEach { runCatching { node.linkDown(it) } }
+        activeLinks.clear()
+        links.forEach { runCatching { gatt.close(it) } }
+        pending.clear()
+        advertisedBeacon = null
     }
 
     /**
