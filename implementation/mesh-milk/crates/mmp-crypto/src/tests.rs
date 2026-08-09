@@ -400,6 +400,19 @@ fn ratchet_terminal_index_is_not_emitted_or_accepted() {
 
     let mut recv = RecvChain::new([0x55; 32], 0, 8);
     assert!(recv.key_for(0, u32::MAX).is_err());
+
+    // The compatibility wrapper must fail closed in release builds too; it
+    // must never silently wrap the public counter back to zero.
+    let mut legacy = SendChain::new([0x66; 32], 0);
+    legacy.next_index = u32::MAX;
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| legacy.next()));
+    assert!(panic.is_err());
+    assert_eq!(legacy.next_index, u32::MAX);
+
+    let mut legacy_epoch = SendChain::new([0x77; 32], u16::MAX);
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| legacy_epoch.bump_epoch(&[0x88; 32])));
+    assert!(panic.is_err());
+    assert_eq!(legacy_epoch.epoch, u16::MAX);
 }
 
 #[test]
