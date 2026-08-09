@@ -678,6 +678,35 @@ meaningful gates remain real Linux/BlueZ exchange, native Android/iOS runtime
 and keystore validation, a fixed-capacity transaction API, external crypto
 review, and an approved RBSR/D3 normative decision.
 
+### Orchestration continuation XII (2026-08-09)
+
+The fuzz-input audit produced `55acf0d`. The deterministic seed recipe now
+rejects symlinked vector files, caps each supplied JSON file at 1 MiB, caps
+decoded seed wires at the CI/libFuzzer `-max_len=8192` boundary, and limits
+frame/bundle/negative-case arrays to 512 entries before iterating them. This
+is a tooling/resource hardening boundary, not a protocol-wire limit. The
+recipe still reproduces 46 seeds and its focused hostile-input tests pass.
+
+The E7 storage audit produced `96da3bd` and the new
+[`E7_FIXED_STORE_DESIGN.md`](./E7_FIXED_STORE_DESIGN.md). It defines an
+additive, provider-local reservation/commit/abort seam, replacement-delta
+accounting, batch reservations for files, producer rollback invariants, and
+host/embedded/HIL acceptance criteria. It deliberately leaves the current
+`BundleStore` behavior unchanged until a provider can prove atomicity; no
+specification or wire behavior was guessed.
+
+The release audit produced `f241ea8`: iOS XCFramework verification now rejects
+symlinked `Info.plist` metadata instead of reading outside the artifact root,
+with a regression fixture. The script suite remains green, and the focused
+fuzz suite is 12 tests with one Windows symlink skip. These changes close a
+concrete artifact-boundary issue without claiming a successful Xcode or device
+build.
+
+The MMP-Φ proposals remain research hypotheses. No EDR, proof-carrying
+mobility, channel-sounding scheduler, or DoF coding change has been promoted
+into v1 implementation or specification without measurements and an approved
+wire contract.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
