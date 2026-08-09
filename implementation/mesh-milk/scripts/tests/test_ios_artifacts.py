@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import plistlib
 import tempfile
 import unittest
@@ -103,6 +104,38 @@ class IOSArtifactTests(unittest.TestCase):
                 plistlib.dump(plist, stream)
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("escapes its slice" in item for item in violations))
+
+    def test_symlinked_library_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            xcframework, bindings = _write_fixture(directory)
+            target = directory / "outside.a"
+            target.write_bytes(b"not part of the slice")
+            library = xcframework / "ios-arm64" / "libmmp_ffi.a"
+            library.unlink()
+            try:
+                os.symlink(target, library)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("must not traverse a symbolic link" in item for item in violations))
+
+    def test_symlinked_header_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            xcframework, bindings = _write_fixture(directory)
+            target = directory / "outside.h"
+            target.write_text("void outside(void);\n", encoding="utf-8")
+            header = xcframework / "ios-arm64" / "Headers" / "mmp_ffi.h"
+            header.unlink()
+            try:
+                os.symlink(target, header)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links unavailable: {exc}")
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("headers directory contains a symbolic link" in item for item in violations))
 
     def test_duplicate_slice_identifier_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:

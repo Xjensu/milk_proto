@@ -1,8 +1,9 @@
 import importlib.util
+import stat
 import tempfile
 import unittest
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 
 SCRIPT = Path(__file__).parents[1] / "verify_android_artifacts.py"
@@ -99,6 +100,24 @@ class MobileArtifactTests(unittest.TestCase):
 
             violations = VERIFY.verify_artifacts(aar, bindings)
             self.assertTrue(any("path traversal" in item for item in violations))
+
+    def test_zip_symbolic_link_member_is_rejected_before_reading(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            aar = directory / "mmp-ffi.aar"
+            bindings = directory / "bindings.zip"
+            members = _valid_aar_members()
+            del members["jni/arm64-v8a/libmmp_ffi.so"]
+            _write_zip(aar, members)
+            with ZipFile(aar, "a", ZIP_DEFLATED) as archive:
+                info = ZipInfo("jni/arm64-v8a/libmmp_ffi.so")
+                info.create_system = 3
+                info.external_attr = (stat.S_IFLNK | 0o777) << 16
+                archive.writestr(info, b"../../outside/libmmp_ffi.so")
+            _write_zip(bindings, {"mmp_ffi.kt": _kotlin()})
+
+            violations = VERIFY.verify_artifacts(aar, bindings)
+            self.assertTrue(any("symbolic-link ZIP member" in item for item in violations))
 
     def test_absolute_kotlin_zip_path_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:

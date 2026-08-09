@@ -50,6 +50,53 @@ def _safe_relative_path(value: Any, *, field: str, violations: list[str]) -> Pat
     return Path(*path.parts)
 
 
+def _safe_slice_path(
+    slice_root: Path,
+    relative: Path,
+    *,
+    field: str,
+    violations: list[str],
+) -> Path | None:
+    """Resolve a plist path without following symlinks out of its slice.
+
+    An XCFramework is a build artifact, so a symlink is never needed for the
+    library or headers.  Rejecting links is stronger than merely checking the
+    lexical ``..`` rule: ``slice/libmmp_ffi.a`` could otherwise be a link to an
+    arbitrary file outside the slice and still pass ``Path.is_file()``.  The
+    resolved containment check also catches Windows junctions, which are not
+    always reported as POSIX-style symlinks.
+    """
+
+    candidate = slice_root.joinpath(relative)
+    current = slice_root
+    try:
+        if current.is_symlink():
+            violations.append(f"{field} slice root must not be a symbolic link")
+            return None
+        for component in relative.parts:
+            current = current / component
+            if current.is_symlink():
+                violations.append(f"{field} must not traverse a symbolic link: {relative}")
+                return None
+
+        root_resolved = slice_root.resolve(strict=True)
+        candidate_resolved = candidate.resolve(strict=False)
+        candidate_resolved.relative_to(root_resolved)
+    except (OSError, ValueError) as exc:
+        violations.append(f"{field} escapes its slice: {relative!s} ({exc})")
+        return None
+    return candidate
+
+
+def _first_symlink(path: Path) -> Path | None:
+    """Return the first symlink below ``path`` in deterministic order."""
+
+    for descendant in sorted(path.rglob("*")):
+        if descendant.is_symlink():
+            return descendant
+    return None
+
+
 def _verify_plist(xcframework: Path, violations: list[str]) -> list[dict[str, Any]]:
     plist_path = xcframework / "Info.plist"
     if not plist_path.is_file():
@@ -86,6 +133,9 @@ def _verify_slice(
     if expected is None:
         return
     slice_root = xcframework / identifier
+    if slice_root.is_symlink():
+        violations.append(f"XCFramework slice must not be a symbolic link: {identifier}")
+        return
     if not slice_root.is_dir():
         violations.append(f"missing XCFramework slice directory: {identifier}")
         return
@@ -106,22 +156,42 @@ def _verify_slice(
 
     library = _safe_relative_path(item.get("LibraryPath"), field=f"{identifier}.LibraryPath", violations=violations)
     if library is not None:
-        library_path = slice_root / library
-        if not library_path.is_file():
+        library_path = _safe_slice_path(
+            slice_root,
+            library,
+            field=f"{identifier}.LibraryPath",
+            violations=violations,
+        )
+        if library_path is None:
+            pass
+        elif not library_path.is_file():
             violations.append(f"slice {identifier} is missing static library: {library}")
         elif library_path.stat().st_size == 0:
             violations.append(f"slice {identifier} static library is empty: {library}")
 
     headers = _safe_relative_path(item.get("HeadersPath"), field=f"{identifier}.HeadersPath", violations=violations)
     if headers is not None:
-        headers_path = slice_root / headers
-        if not headers_path.is_dir():
+        headers_path = _safe_slice_path(
+            slice_root,
+            headers,
+            field=f"{identifier}.HeadersPath",
+            violations=violations,
+        )
+        if headers_path is None:
+            pass
+        elif not headers_path.is_dir():
             violations.append(f"slice {identifier} is missing headers directory: {headers}")
-        elif not any(
-            path.is_file() and path.suffix.lower() in {".h", ".modulemap"}
-            for path in headers_path.rglob("*")
-        ):
-            violations.append(f"slice {identifier} headers directory has no header/module map")
+        else:
+            symlink = _first_symlink(headers_path)
+            if symlink is not None:
+                violations.append(
+                    f"slice {identifier} headers directory contains a symbolic link: {symlink}"
+                )
+            elif not any(
+                path.is_file() and path.suffix.lower() in {".h", ".modulemap"}
+                for path in headers_path.rglob("*")
+            ):
+                violations.append(f"slice {identifier} headers directory has no header/module map")
 
 
 def _verify_swift_bindings(bindings: Path, violations: list[str]) -> None:

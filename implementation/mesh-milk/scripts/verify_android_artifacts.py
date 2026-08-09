@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import stat
 import sys
 import tempfile
 from pathlib import Path, PurePosixPath
@@ -80,6 +81,9 @@ def _index_zip(archive_path: Path, kind: str) -> tuple[ZipFile | None, dict[str,
     members: dict[str, object] = {}
     violations: list[str] = []
     for info in archive.infolist():
+        if _is_symlink(info):
+            violations.append(f"symbolic-link ZIP member is not permitted: {info.filename}")
+            continue
         normalized, violation = _normalised_member_name(info.filename)
         if violation:
             violations.append(violation)
@@ -94,6 +98,23 @@ def _index_zip(archive_path: Path, kind: str) -> tuple[ZipFile | None, dict[str,
 
 def _is_directory(info: object) -> bool:
     return bool(getattr(info, "is_dir")())
+
+
+def _is_symlink(info: object) -> bool:
+    """Return whether a ZIP member carries a Unix symbolic-link mode.
+
+    ``zipfile`` treats symlink entries as ordinary files, so relying on
+    ``is_dir()`` alone would allow a consumer that honours the external mode
+    bits to materialize a link during extraction.  Artifact inputs are build
+    outputs, not source archives; links are unnecessary and are rejected
+    before any member is read.
+    """
+
+    external_attr = getattr(info, "external_attr", 0)
+    if not isinstance(external_attr, int):
+        return False
+    mode = (external_attr >> 16) & 0xFFFF
+    return stat.S_IFMT(mode) == stat.S_IFLNK
 
 
 def _verify_aar(archive_path: Path) -> list[str]:
