@@ -435,6 +435,28 @@ and `specification/` remains unchanged. These are host-side or structural
 results only. Physical BlueZ exchange, native mobile radio behavior, linked
 embedded images, and normative RBSR/D3 decisions remain separate gates.
 
+### Orchestration continuation III (2026-08-09)
+
+The next security-focused cycle converted the E7 design blocker into an
+additive API seam. `5a85b7b` adds `BundleStore::try_put` with explicit
+insert/replacement outcomes and capacity rejection; `ingest` now returns
+`DropReason::StoreRejected` instead of reporting delivery when a future fixed
+store refuses a write. Existing `put` implementations and wire behavior remain
+unchanged. `bcdfa8c` bounds direct `NoiseChannel` transport allocations to the
+frozen 4096-byte envelope cap, rejects oversized inputs before nonce/state
+advance, and preserves valid v1 behavior. `3a434fc` closes the corresponding
+session path on encryption errors; the pre-existing envelope-boundary
+regression caught this integration issue before release. `4b451e3` adds a
+checked mobile ATT chunk helper (`23`-byte minimum MTU, 3-byte ATT header)
+while preserving the saturating compatibility helper.
+
+The post-fix workspace lists 418 Rust tests (412 active, 6 intentionally
+ignored), the Python suite remains 90 tests with 6 skips, and focused mmp-core
+(68), mmp-crypto (40), and mobile TAL (3) suites pass. Target/layer checks
+remain required before the next handoff; physical native-platform behavior,
+embedded fixed-store implementation, and external cryptographic review remain
+open.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
