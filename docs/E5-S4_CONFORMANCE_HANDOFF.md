@@ -2411,3 +2411,29 @@ unrelated worktree changes and to enforce a clean frozen `specification/`
 tree. Documentation and regression tests cover the new gate. This protects
 evidence integrity but remains separate from physical BLE/mobile validation,
 which is unavailable on the current Windows host.
+
+## 2026-08-09 continuation: group restore/invite and RBSR terminal obligations
+
+The group lifecycle audit found two local state bugs and fixed them in
+`3bf47cb`. `Node::restore_group` now rejects a duplicate `GroupID` instead of
+replacing live membership/epoch state and minting a fresh local sender key from
+an appended or stale snapshot record. `group_invite` is idempotent for an
+already-live member, preventing redundant OR-Set tags and unbounded local tag
+growth; a removed member is still re-invited with a new tag. Remote sender-key
+distribution retention remains intentionally uncapped pending an authenticated
+epoch-floor/partition-merge contract.
+
+The RBSR audit found a wire-neutral correctness gap and fixed it in `c88d780`:
+when a responder has emitted `RECON_IDS`, its `await_terminal` obligation may
+only be retired by the corresponding ID-list or split response. A forged
+reply-flagged `RECON_RANGE` with the same descriptor can no longer shortcut the
+obligation and advance reconciliation with an unresolved set difference. The
+new regression covers this path; D3 `window` and priority-partition semantics
+remain normative blockers.
+
+The same commit contains the independently reviewed BLE evidence validator
+hardening: command checks now parse shell tokens, reject echo-text lookalikes,
+and accept documented direct, Cargo, quoted-Windows, and PowerShell forms. The
+validator and release/manual suites pass. This validates evidence structure,
+not physical radio execution; the Windows host still lacks a runnable
+Linux/BlueZ and Android/iOS end-to-end environment.
