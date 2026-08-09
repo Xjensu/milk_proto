@@ -2488,3 +2488,34 @@ the clustered research runners) before mutating simulation state. The complete
 simulator suite passes with 30 active tests and 6 intentionally ignored scale/
 deployment tests. This improves experiment validity without affecting routing
 or wire behavior.
+
+## 2026-08-09 continuation: group ratchet, TAL queue, and fuzz-release gates
+
+The group-crypto audit found that a malformed authenticated group frame could
+consume a receiver sender-key index before AEAD verification completed. Commit
+`4560b20` adds a non-mutating receive-chain derivation (`peek_key_for`) and
+commits the index only after signature, associated-data, and ciphertext checks
+succeed. The mmp-crypto suite passes 51 tests and the mmp-node suite passes 105
+tests. Future sender-key epochs remain an explicit normative blocker: the
+current distribution message has no authenticated membership/epoch anchor, so
+accepting future epochs is not Byzantine-resistant and rejecting them would
+break partitioned convergence. The quarantined control-schema work must not be
+promoted without an approved wire contract.
+
+The BLE/TAL lifecycle audit found that bounded event queues accepted raw
+`LinkData` records larger than the maximum envelope they can ever deliver.
+Commit `2551914` rejects records above `MAX_ENVELOPE_PAYLOAD + 3` (length
+prefix plus type byte) before queue insertion, returning the existing
+`DataEnqueueError::Full` fail-closed path. Symmetric btleplug and peripheral
+tests cover the bound; all-target suites pass (24 and 41 tests respectively),
+mobile TAL tests pass (3), and strict clippy passes. A Linux peripheral check
+remains an environment gate because this Windows host has no `libdbus` sysroot;
+this is not treated as a Rust defect. The unbounded `MemLink` remains confined
+to simulator/test seams.
+
+The fuzz/release audit found case-insensitive seed-name collisions that would
+overwrite files on Windows while appearing distinct on Linux. Commit
+`554b37f` makes build, write, and verify reject those collisions. The focused
+fuzz suite passes 13 tests (one intentionally skipped), and the complete Python
+script suite passes 134 tests (nine intentionally skipped). This is tooling
+hardening only; it does not change protocol bytes.
