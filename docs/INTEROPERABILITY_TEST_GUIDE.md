@@ -163,7 +163,8 @@ success from a process that merely stayed alive.
 
 Keep a small directory containing the manifest, the two distinct host logs,
 and the two distinct store-inspection files. Paths in the manifest are
-relative to the manifest and may not escape that directory. The schema is
+relative to the manifest, may not escape that directory, and must not use
+symbolic links (including symlinked parent directories). The schema is
 `mmp-ble-evidence-v1`.
 
 The manifest must contain exactly two hosts (one `peripheral`, one `central`),

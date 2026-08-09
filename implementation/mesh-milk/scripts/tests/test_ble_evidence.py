@@ -241,6 +241,31 @@ class BleEvidenceTests(unittest.TestCase):
                 errors,
             )
 
+    def test_evidence_symlink_is_rejected_even_when_target_stays_inside_package(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._manifest(root)
+            source = root / "unreferenced.log"
+            source.write_text("dialed\nEstablished\nDelivered\n", encoding="utf-8")
+            alias = root / "central-alias.log"
+            try:
+                alias.symlink_to(source)
+            except (OSError, NotImplementedError):
+                self.skipTest("symbolic links unavailable on this platform")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][1]["log"] = alias.name
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[1].log must not use symbolic links: central-alias.log",
+                errors,
+            )
+
     def test_oversized_host_log_is_rejected_before_read(self) -> None:
         import sys
 

@@ -152,6 +152,21 @@ def _relative_file(root: Path, value: object, label: str, errors: list[str]) -> 
     if candidate.is_absolute():
         errors.append(f"{label} must be relative to the manifest")
         return None
+    # Keep an evidence package self-contained and reproducible. Resolving a
+    # symlink that happens to point inside the package would otherwise make
+    # the accepted path depend on mutable filesystem state (and archivers may
+    # preserve or dereference that link differently). Check every component,
+    # not just the leaf, so a symlinked subdirectory cannot bypass the guard.
+    unresolved = root
+    try:
+        for component in candidate.parts:
+            unresolved /= component
+            if unresolved.is_symlink():
+                errors.append(f"{label} must not use symbolic links: {value}")
+                return None
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
+        return None
     try:
         resolved = (root / candidate).resolve()
         resolved.relative_to(root.resolve())
