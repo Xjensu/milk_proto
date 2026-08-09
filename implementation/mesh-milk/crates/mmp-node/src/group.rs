@@ -65,6 +65,9 @@ impl GroupState {
     /// (doc 06 §8.6).
     /// Returns `None` when the finite `u16` epoch domain is exhausted.
     pub fn remove_member(&mut self, rng: &mut impl CryptoRngCore, member: &NodeId) -> Option<u16> {
+        if !self.members.contains(member) {
+            return None;
+        }
         let next_epoch = self.epoch.checked_add(1)?;
         let tags = self.members.tags_of(member);
         self.members.apply(&MembershipOp::Remove { tags });
@@ -246,5 +249,21 @@ mod tests {
         assert!(group.remove_member(&mut rng, &member).is_none());
         assert_eq!(group.epoch, u16::MAX);
         assert_eq!(group.members.encode(), before, "failed rotation must not mutate membership");
+    }
+
+    #[test]
+    fn remove_unknown_member_does_not_rotate_epoch() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let me = mmp_types::ids::Id16([21; 16]);
+        let unknown = mmp_types::ids::Id16([22; 16]);
+        let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([23; 16]), me, true);
+        let before_epoch = group.epoch;
+        let before_dist = group.local.dist().clone();
+        let before_members = group.members.encode();
+
+        assert!(group.remove_member(&mut rng, &unknown).is_none());
+        assert_eq!(group.epoch, before_epoch);
+        assert_eq!(group.local.dist(), &before_dist);
+        assert_eq!(group.members.encode(), before_members);
     }
 }
