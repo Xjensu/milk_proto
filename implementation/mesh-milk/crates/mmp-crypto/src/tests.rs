@@ -363,6 +363,20 @@ fn send_chain_snapshot_roundtrip_preserves_future_keys() {
 }
 
 #[test]
+fn send_chain_snapshot_restore_replays_uncommitted_key_after_rejection() {
+    let mut chain = SendChain::new([0x37; 32], 4);
+    let checkpoint = chain.snapshot().expect("pre-send checkpoint is valid");
+    let expected = chain.next();
+
+    // Model a provider rejecting the candidate after the ratchet was used to
+    // construct its ciphertext. Restoring the authenticated, zeroizing
+    // checkpoint must make the next committed send derive exactly the same
+    // key, epoch, and index rather than skipping a message key.
+    let mut rolled_back = SendChain::restore(&checkpoint).expect("checkpoint restores");
+    assert_eq!(rolled_back.next(), expected);
+}
+
+#[test]
 fn recv_chain_snapshot_roundtrip_preserves_skipped_keys() {
     let seed = [8; 32];
     let mut sender = SendChain::new(seed, 2);
