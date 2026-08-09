@@ -105,7 +105,16 @@ public class MeshDrive(
     private var lastTickMs: Long? = null
     private var advertisedBeacon: ByteArray? = null
     private val activeLinks = LinkedHashSet<Long>()
+    // A physical link remains in this set until the native disconnect
+    // callback arrives.  Bound it independently of the Rust session cap:
+    // denied LinkUp attempts can otherwise accumulate here when a broken
+    // adapter never reports teardown.
+    private val maxTrackedLinks: Int = 64
+    private val closeRequested = LinkedHashSet<Long>()
     private val pending = java.util.ArrayDeque<PendingFrame>()
+    private var overloadLatched: Boolean = false
+    private var observedCloseDrops: Long = 0
+    private var observedEventDrops: Long = 0
 
     public val isRunning: Boolean
         get() = running
@@ -121,8 +130,13 @@ public class MeshDrive(
     public val eventQueueDropped: Long
         get() = node.eventQueueDropped()
 
+    /** True after a sticky transport/event overflow forced fail-closed mode. */
+    public val isOverloaded: Boolean
+        get() = overloadLatched
+
     public fun start() {
         check(!running) { "MeshDrive is already running" }
+        check(!overloadLatched) { "MeshDrive is latched after host overload; recreate the node" }
         running = true
         var advertiserStarted = false
         var scannerStarted = false
@@ -156,6 +170,7 @@ public class MeshDrive(
 
             // Startup remains pull-based: only this drain calls pollSend/pollEvent.
             drain()
+            check(running) { "MeshDrive failed closed during startup" }
         } catch (error: Throwable) {
             if (scannerStarted) runCatching { scanner.stop() }
             if (advertiserStarted) runCatching { advertiser.stop() }
@@ -174,7 +189,8 @@ public class MeshDrive(
         val links = activeLinks.toList()
         links.forEach { node.linkDown(it) }
         activeLinks.clear()
-        links.forEach { gatt.close(it) }
+        links.forEach { requestPhysicalClose(it) }
+        closeRequested.clear()
         pending.clear()
         scanner.stop()
         advertiser.stop()
@@ -194,7 +210,8 @@ public class MeshDrive(
         val links = activeLinks.toList()
         links.forEach { runCatching { node.linkDown(it) } }
         activeLinks.clear()
-        links.forEach { runCatching { gatt.close(it) } }
+        links.forEach { runCatching { requestPhysicalClose(it) } }
+        closeRequested.clear()
         pending.clear()
         advertisedBeacon = null
     }
@@ -263,14 +280,27 @@ public class MeshDrive(
     }
 
     public fun onLinkUp(link: Long, initiator: Boolean) {
-        requireRunning()
+        // A callback can race with fail-closed shutdown.  It must never leave
+        // a newly-created native link alive merely because the coordinator is
+        // no longer accepting protocol work.
+        if (!running || overloadLatched) {
+            runCatching { gatt.close(link) }
+            return
+        }
+        if (activeLinks.size >= maxTrackedLinks) {
+            latchOverload()
+            runCatching { gatt.close(link) }
+            return
+        }
         check(activeLinks.add(link)) { "link is already up: $link" }
         node.linkUp(link, initiator)
         drain()
     }
 
     public fun onLinkData(link: Long, bytes: ByteArray) {
-        requireRunning()
+        // Late native callbacks after a fail-closed stop are stale input, not
+        // a reason to resurrect protocol state or throw on the drive thread.
+        if (!running || overloadLatched) return
         if (link !in activeLinks) return
         if (bytes.isEmpty()) return
         node.linkData(link, bytes.copyOf())
@@ -278,6 +308,7 @@ public class MeshDrive(
     }
 
     public fun onLinkDown(link: Long) {
+        closeRequested.remove(link)
         if (!running || !activeLinks.remove(link)) return
         pending.removeIf { it.link == link }
         node.linkDown(link)
@@ -296,6 +327,7 @@ public class MeshDrive(
 
     private fun drain() {
         drainClose()
+        observeHostDiagnostics()
         drainSend()
         drainEvents()
     }
@@ -309,8 +341,52 @@ public class MeshDrive(
         while (true) {
             val link = node.pollClose() ?: return
             pending.removeIf { it.link == link }
-            gatt.close(link)
+            requestPhysicalClose(link)
         }
+    }
+
+    /**
+     * Issue one native close request per link.  Some platform callbacks are
+     * synchronous while others are delayed; the de-duplication set keeps both
+     * paths from issuing repeated teardown requests and remains bounded by
+     * [maxTrackedLinks].
+     */
+    private fun requestPhysicalClose(link: Long) {
+        if (closeRequested.add(link)) {
+            runCatching { gatt.close(link) }
+        }
+    }
+
+    /** Observe sticky Rust backpressure counters and fail closed on deltas. */
+    private fun observeHostDiagnostics() {
+        val closeDrops = node.closeActionsDropped()
+        val eventDrops = node.eventQueueDropped()
+        val closeDelta = closeDrops > observedCloseDrops
+        val eventDelta = eventDrops > observedEventDrops
+        observedCloseDrops = maxOf(observedCloseDrops, closeDrops)
+        observedEventDrops = maxOf(observedEventDrops, eventDrops)
+        if (closeDelta || eventDelta) latchOverload()
+    }
+
+    /**
+     * Stop admitting links and tear down every locally tracked physical link.
+     * The Rust node is told about the logical teardown before ownership is
+     * released; the native adapter then receives the physical close request.
+     * This is the bounded recovery path when a host-facing queue overflow
+     * means individual close actions can no longer be trusted.
+     */
+    private fun latchOverload() {
+        if (overloadLatched) return
+        overloadLatched = true
+        val links = activeLinks.toList()
+        links.forEach { runCatching { node.linkDown(it) } }
+        activeLinks.clear()
+        pending.clear()
+        links.forEach { requestPhysicalClose(it) }
+        runCatching { scanner.stop() }
+        runCatching { advertiser.stop() }
+        advertisedBeacon = null
+        running = false
     }
 
     private fun drainSend() {

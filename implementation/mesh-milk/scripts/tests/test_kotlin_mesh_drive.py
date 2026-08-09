@@ -53,9 +53,9 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("val links = activeLinks.toList()", helper)
         self.assertIn("links.forEach { runCatching { node.linkDown(it) } }", helper)
         self.assertIn("activeLinks.clear()", helper)
-        self.assertIn("links.forEach { runCatching { gatt.close(it) } }", helper)
+        self.assertIn("links.forEach { runCatching { requestPhysicalClose(it) } }", helper)
         self.assertIn("pending.clear()", helper)
-        self.assertLess(helper.index("activeLinks.clear()"), helper.index("gatt.close(it)"))
+        self.assertLess(helper.index("activeLinks.clear()"), helper.index("requestPhysicalClose(it)"))
 
     def test_stop_requests_native_teardown_after_releasing_protocol_links(self) -> None:
         start = self.source.index("public fun stop()")
@@ -63,9 +63,9 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         body = self.source[start:end]
         self.assertIn("val links = activeLinks.toList()", body)
         self.assertIn("links.forEach { node.linkDown(it) }", body)
-        self.assertIn("links.forEach { gatt.close(it) }", body)
+        self.assertIn("links.forEach { requestPhysicalClose(it) }", body)
         self.assertLess(body.index("node.linkDown(it)"), body.index("activeLinks.clear()"))
-        self.assertLess(body.index("activeLinks.clear()"), body.index("gatt.close(it)"))
+        self.assertLess(body.index("activeLinks.clear()"), body.index("requestPhysicalClose(it)"))
 
     def test_monotonic_tick_is_checked_before_node_tick(self) -> None:
         self.assertIn("nowMs >= (previous ?: Long.MIN_VALUE)", self.source)
@@ -116,9 +116,31 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("fun eventQueueDropped(): Long", self.source)
         self.assertIn("node.closeActionsDropped()", self.source)
         self.assertIn("node.eventQueueDropped()", self.source)
+        self.assertIn("observeHostDiagnostics()", self.source)
+        self.assertIn("latchOverload()", self.source)
+        self.assertIn("overloadLatched", self.source)
         link_down = self.source.index("public fun onLinkDown")
         advance = self.source.index("private fun advance", link_down)
         self.assertIn("drain()", self.source[link_down:advance])
+
+    def test_admission_and_overload_paths_close_native_links_and_bound_tracking(self) -> None:
+        """A denied or saturated callback must not grow host-side link state."""
+
+        self.assertIn("private val maxTrackedLinks: Int = 64", self.source)
+        self.assertIn("if (activeLinks.size >= maxTrackedLinks)", self.source)
+        self.assertIn("if (!running || overloadLatched)", self.source)
+        self.assertIn("runCatching { gatt.close(link) }", self.source)
+        self.assertIn("if (!running || overloadLatched) return", self.source)
+        self.assertIn("activeLinks.clear()", self.source)
+        self.assertIn("pending.clear()", self.source)
+        self.assertIn("runCatching { node.linkDown(it) }", self.source)
+        self.assertIn("runCatching { requestPhysicalClose(it) }", self.source)
+
+    def test_close_requests_are_deduplicated_until_disconnect_callback(self) -> None:
+        self.assertIn("private val closeRequested = LinkedHashSet<Long>()", self.source)
+        self.assertIn("if (closeRequested.add(link))", self.source)
+        self.assertIn("closeRequested.remove(link)", self.source)
+        self.assertLess(self.source.index("requestPhysicalClose(link)"), self.source.index("private fun requestPhysicalClose"))
 
     def test_mtu_three_fragmentation_is_explicit(self) -> None:
         self.assertIn("ATT_HEADER_BYTES: Int = 3", self.source)

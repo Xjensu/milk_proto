@@ -15,7 +15,11 @@ generated `MmpNode` bindings.
 - link-up/data/down forwarding with stale-link input ignored;
 - notification fragmentation at `negotiated ATT MTU - 3`, with adapter
   back-pressure retained for the next pump;
-- close/event saturation diagnostics are exposed so a host can fail closed;
+- close/event saturation diagnostics are observed after every drain; any
+  counter increase latches fail-closed mode, stops discovery, and closes all
+  tracked links;
+- native links awaiting a disconnect callback are capped at 64, and late
+  callbacks are idempotently ignored after logical teardown;
 - foreground relay capability demotion to `MeshTier.LEAF` when unavailable;
 - atomic startup rollback: a failed clock/radio/initial drain leaves
   `isRunning == false`, stops any advertiser/scanner that started, and
@@ -36,6 +40,10 @@ restart when the payload has not changed. Refresh the beacon on the platform's
 advertising cadence (or at least once per protocol beacon slot) using the same
 monotonic timestamp supplied to the drive loop; never substitute a wall-clock
 value.
+Once `closeActionsDropped()` or `eventQueueDropped()` increases, the
+coordinator stops admitting links and requires a recreated node for recovery;
+the adapter should still deliver any eventual disconnect callbacks, which are
+safe to repeat.
 
 ## Evidence boundary
 
