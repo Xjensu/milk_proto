@@ -55,6 +55,19 @@ Normative boundaries checked:
 9. **High — bootstrap completeness is not enforced.** Initial state, grant
    uniqueness/coverage, coordinator selection, previous-anchor rules, and one
    sender key per member are not validated.
+10. **High — future-epoch distributions are not authenticated.** The current
+    sender-key handler rejects stale epochs but accepts `dist.epoch > gs.epoch`
+    from any current member. This is needed by the existing post-removal
+    re-key path, yet the 0x02 body carries no admin anchor or operation proof;
+    a malicious member can therefore advance receiver state without the
+    checkpoint required by doc 06 §8.3. A strict equality guard was tested and
+    rejected as an incomplete fix because it breaks legitimate convergence.
+11. **High — effective membership changes are not uniformly epoch-bound.**
+    `group_invite` adds a member without rotating the epoch, while
+    `remove_member` rotates even when the target has no live OR-Set tags. The
+    implementation therefore diverges from the “every effective change” rule
+    until authenticated anchor/control semantics define ordering and key
+    distribution.
 
 ## Safe remediation boundary
 
@@ -92,6 +105,11 @@ candidate control schema:
 - removed/non-member origins and stale epochs are rejected; and
 - a `(member, epoch)` distribution is accepted once, preventing receiver-chain
   reset on duplicate delivery.
+
+Future-epoch acceptance and invite/remove epoch transitions remain explicitly
+open: they cannot be hardened safely by a local comparison without either
+breaking the existing re-key convergence path or inventing the missing admin
+anchor/control wire semantics.
 
 Admin-signed membership authorization and a bounded unknown-group admission
 policy remain open protocol work. They require a normative control envelope and

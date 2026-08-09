@@ -1498,6 +1498,34 @@ time; regressions cover direct and concurrent calls.
 
 No wire field or frozen specification text changed.
 
+### Orchestration continuation XL (2026-08-09)
+
+The platform audit closed two operational/security edges. `mmp-cli keygen`
+now creates identity seed files exclusively, refuses to overwrite an existing
+credential, uses owner-only `0600` permissions on Unix, and flushes the file
+before success. The PC interoperability guide now passes snapshot **file**
+paths rather than pre-created directories, matching `SnapshotStore`'s atomic
+primary/`.tmp` recovery contract; structural documentation tests cover both
+mistakes.
+
+The routing audit wired the existing `mmp-router::transfer_order` into the
+session engine through a backwards-compatible `SessionHost` hook. NodeCore
+orders known requested bundles by control/destination/declared priority/size/
+lifetime while leaving IDs that expired between reconciliation and WANT at the
+end. This is local scheduling only: no RBSR priority partition or wire field
+was introduced. Session-level and NodeCore ordering regressions pass.
+
+The group-control security audit found that future sender-key epochs are still
+accepted by the current 0x02 path so legitimate post-removal re-key convergence
+continues. A strict equality guard was deliberately rejected after it broke the
+existing group delivery path: the message carries no admin anchor proving that
+the future epoch is authorized. The gap, along with invite/remove epoch
+transition asymmetry and unbounded historical remote distributions, is now
+recorded as a high-risk control-schema gate; the quarantined candidate codec
+remains uncommitted.
+
+No wire field or frozen specification text changed.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

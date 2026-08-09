@@ -2362,3 +2362,29 @@ Focused regressions cover duplicate singleton records, unreadable primary and
 recovery paths, all-trusted ContactGraph capacity, counter saturation, direct
 Rust ticks, and concurrent UniFFI tick callbacks. No specification or
 pre-existing dirty path was modified.
+
+## 2026-08-09 continuation: credential provisioning and transfer scheduling
+
+The platform gate audit found a real CLI credential hazard: `keygen` previously
+used truncating file creation. Commit `4517df1` now uses exclusive creation,
+Unix owner-only `0600` permissions, and `sync_all()` before reporting success;
+existing identities cannot be silently replaced. The same audit corrected the
+PC interoperability guide to use snapshot file paths rather than directories
+(`92ad7b2`), with a two-case documentation regression. Windows still cannot
+exercise the Linux/BlueZ peripheral or two-host radio gate.
+
+Commit `7b0b35b` wires the already-defined `mmp-router::transfer_order` into
+`SessionEngine` through a default-compatible `SessionHost::order_handoffs`
+hook. `NodeCore` applies control/destination/declared-priority/size/lifetime
+ordering to known WANT and blob requests, while unknown IDs remain last. A
+session-level spy and NodeCore ordering regression prove the hook runs before
+loading bytes. This remains wire-neutral and does not claim RBSR priority
+partitioning.
+
+The group-control audit also records an unresolved high-risk epoch boundary:
+future sender-key distributions are accepted for current post-removal
+convergence because the existing 0x02 message has no admin anchor. Rejecting
+all future epochs breaks legitimate group delivery; accepting them without an
+anchor is not Byzantine-resistant. The candidate control codec remains
+quarantined pending a normative schema, replay state, aggregate limits, and
+anchor semantics. No specification or pre-existing dirty path was modified.

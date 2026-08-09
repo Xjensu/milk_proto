@@ -338,3 +338,19 @@ The test is deliberately negative evidence, not a claim that the full doc 03
 priority partition. A future implementation must replace this invariant only
 after the reopening checklist above is answered in an approved erratum and
 legacy/upgraded transcript vectors are available.
+
+## Wire-neutral transfer-order continuation (2026-08-09)
+
+The existing local `mmp-router::transfer_order` was previously not invoked by
+the session engine: WANT and blob requests were loaded in arrival order. Commit
+`7b0b35b` adds a default-compatible `SessionHost::order_handoffs` hook and
+invokes it before serving WANT, BLOB_REQ, BLOB_HAVE, and final DAG-repair
+requests. `NodeCore` applies control/destination/declared-priority/size/
+lifetime ordering to metadata it still has and leaves expired/unknown IDs at
+the end. Session-spy and NodeCore tests prove the ordering occurs before byte
+loading.
+
+This closes only the local serving-order omission. It does not implement the
+frozen specification's unresolved per-priority RBSR partition key or doc 18 D3
+subscribed-scope weighting; the normative blocker and external hardware gates
+remain unchanged.
