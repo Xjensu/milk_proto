@@ -2651,3 +2651,25 @@ orchestrator reran the affected gates from a shared worktree:
 The worktree still contains the previously identified user-owned dirty docs,
 the quarantined `mmp-types` candidate files, and audit temporary directories;
 none were staged by this cycle.
+
+## 2026-08-09 continuation: mobile clock state, friendship timestamp units, and seed portability
+
+The mobile/FFI audit found that `MmpNode::tick` updated the FFI monotonic
+guard only when a file-backed snapshot existed. Commit `0979e26` now records
+`last_seen_now_ms` for memory-backed nodes as well, while keeping persistence
+due-checks conditional on a snapshot. The in-memory stale-callback regression
+passes; no keystore or wire behavior changed. Android Keystore/iOS Keychain
+providers remain platform gates.
+
+The friendship audit corrected an API-contract mismatch in `6ca2537`:
+friendship `since` values are supplied by the host's monotonic `Node::tick`
+clock in milliseconds, not Unix seconds. Rust Node/FFI documentation now says
+so, and a two-peer FFI regression verifies `since == 10_000` for a 10,000 ms
+contact. TTL/state semantics are unchanged.
+
+The fuzz tooling audit committed `250fd87`. Corpus generation now rejects
+Windows-forbidden characters, C0 controls, trailing dots/spaces, and NFC-
+equivalent Unicode seed-name collisions before any generated files are
+refreshed. Focused corpus tests (15, one expected skip) and the full Python
+script suite (146 passed, 10 skipped) pass. This is release-tooling hardening;
+the frozen specification and unrelated dirty paths remain untouched.
