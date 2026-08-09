@@ -590,6 +590,32 @@ Physical Linux/BlueZ exchange, native mobile radio and keystore behavior,
 fixed-capacity embedded storage, external cryptographic review, and the
 normative RBSR/D3 decision remain open.
 
+### Orchestration continuation IX (2026-08-09)
+
+The storage audit produced `ffe4975`, a fail-closed snapshot-integrity fix.
+`SnapshotStore` now rejects checksummed bundle records whose persisted
+`BundleMeta::size` disagrees with the body length, preventing inconsistent
+quota/transfer accounting. Snapshot framing also checks the `usize` to `u32`
+conversion rather than truncating an oversized record. The mmp-store unit and
+integration suites pass, including malformed-record and boundary regressions;
+its no-default dependency-fence check remains green.
+
+The peripheral audit produced `e8ded79`: after `shutdown_all`, advertising is
+terminally fenced with `PeriphError::ShuttingDown`, and the Linux backend drops
+a newly registered handle if shutdown wins during the asynchronous BlueZ
+registration race. This is host-side lifecycle evidence only; Linux/pkg-config,
+BlueZ, and physical-adapter validation remain external.
+
+The release audit produced `b3a442c`, pinning every Cargo build/run invocation
+in the Android AAR and iOS XCFramework scripts to `Cargo.lock`, with a Python
+regression covering all invocations. The full matrix now passes at 432 Rust
+tests listed (426 active, 6 intentionally ignored); the Python suite and
+focused Clippy/embedded checks are green. A separate SnapshotStore
+remove-before-rename crash window remains documented in
+`docs/OWN_BUNDLE_STORE_TRANSACTION_HANDOFF.md` and requires platform-specific
+atomic-replace design. No file under `specification/` was modified, and all
+pre-existing dirty paths remain protected.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

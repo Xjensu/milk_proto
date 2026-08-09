@@ -66,6 +66,12 @@ capacity remains stable between a check and the write.
 - File sends now preflight a revoked destination before minting class-4 symbols,
   preventing durable symbol/index residue on that deterministic rejection. This
   does not solve provider-capacity failure after symbol minting.
+- `ffe4975` hardens the host snapshot format independently of the provider
+  transaction problem: loading rejects a checksummed bundle record whose
+  `BundleMeta::size` disagrees with the persisted body, and persistence rejects
+  record lengths that cannot fit the u32 framing field instead of truncating
+  them. These checks protect quota/transfer accounting but do not reserve space
+  for a future own-origin write.
 
 ## Safe follow-up gate
 
@@ -89,6 +95,14 @@ Until one of those contracts is approved, keep `store_own` on the legacy
 `put` seam and treat fixed-capacity own-origin persistence as an explicit
 provider limitation. Do not claim that `BundleStore::try_put` protects local
 send APIs.
+
+The audit also identified a separate crash-consistency residual in the current
+host implementation: `SnapshotStore::persist` fsyncs the temporary image, then
+removes the destination before renaming it. A process kill between those calls
+can leave no primary; recovery handles a complete `.tmp` image, but not a
+missing temporary file. A Unix-specific atomic-replace plus parent-directory
+fsync design and a Windows-compatible replacement strategy require a separate
+platform review; they are intentionally not approximated here.
 
 ## Transaction-readiness follow-up
 

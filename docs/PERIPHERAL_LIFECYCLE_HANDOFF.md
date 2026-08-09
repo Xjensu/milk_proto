@@ -73,3 +73,16 @@ real BlueZ exchange remain unverified on this Windows host because the required
 libdbus/pkg-config sysroot and physical adapter are unavailable. The new test
 therefore proves only pre-registration validation, not D-Bus registration,
 advertising, ATT negotiation, or two-machine delivery.
+
+## 2026-08-09 terminal advertisement fence
+
+`e8ded79` adds a terminal `PeriphError::ShuttingDown` fence. After
+`shutdown_all()` has begun, a later `advertise()` call is rejected before
+registration. The Linux path checks the flag before and after the asynchronous
+BlueZ registration; if shutdown wins that race, the newly-created handle is
+dropped instead of being published into the role. The regression is
+hardware-independent and the peripheral suite now has 40 passing tests.
+
+This proves only local admission and handle-publication ordering. It does not
+prove that BlueZ unregisters an advertisement, closes D-Bus objects, or behaves
+identically on a real adapter; those remain the external Linux/BlueZ gate.
