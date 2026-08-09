@@ -244,6 +244,8 @@ def verify_artifacts(xcframework: Path, swift_bindings: Path) -> list[str]:
                 violations.append(f"Info.plist contains duplicate slice: {identifier}")
                 continue
             by_id[identifier] = item
+        for identifier in sorted(set(by_id) - set(EXPECTED_SLICES)):
+            violations.append(f"Info.plist contains unexpected slice: {identifier}")
         for identifier in EXPECTED_SLICES:
             item = by_id.get(identifier)
             if item is None:

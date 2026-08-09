@@ -165,6 +165,27 @@ class IOSArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("duplicate slice: ios-arm64" in item for item in violations))
 
+    def test_unexpected_slice_identifier_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            xcframework, bindings = _write_fixture(Path(root))
+            plist_path = xcframework / "Info.plist"
+            with plist_path.open("rb") as stream:
+                plist = plistlib.load(stream)
+            extra = {
+                "LibraryIdentifier": "ios-x86_64-simulator",
+                "LibraryPath": "libmmp_ffi.a",
+                "HeadersPath": "Headers",
+                "SupportedArchitectures": ["x86_64"],
+                "SupportedPlatform": "ios",
+                "SupportedPlatformVariant": "simulator",
+            }
+            plist["AvailableLibraries"].append(extra)
+            with plist_path.open("wb") as stream:
+                plistlib.dump(plist, stream)
+
+            violations = VERIFY.verify_artifacts(xcframework, bindings)
+            self.assertTrue(any("unexpected slice: ios-x86_64-simulator" in item for item in violations))
+
     def test_empty_swift_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             xcframework, bindings = _write_fixture(Path(root))
