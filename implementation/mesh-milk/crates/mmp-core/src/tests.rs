@@ -735,6 +735,9 @@ impl SessionHost for TestHost {
             self.refresh();
         }
     }
+    fn bundle_admitted(&mut self, id: &Id16) -> bool {
+        self.store.meta(id).is_some()
+    }
     fn on_budget(&mut self, _peer: &NodeId, id: &Id16, granted: u8) {
         assert!(granted <= L_MAX, "engine must clamp before the host sees it");
         self.budgets.push((*id, granted));

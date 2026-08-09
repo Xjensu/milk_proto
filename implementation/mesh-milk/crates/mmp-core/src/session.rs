@@ -119,6 +119,13 @@ pub trait SessionHost {
     fn load_for_handoff(&mut self, peer: &NodeId, id: &Id16) -> Option<(Vec<u8>, u8)>;
     /// Ingest a received bundle (full doc 03 §4.1.2 pipeline inside).
     fn on_bundle(&mut self, peer: &NodeId, bytes: &[u8]);
+    /// Report whether the just-delivered canonical BUNDLE is held after the
+    /// host's verify-before-store/admission pipeline.  Existing hosts retain
+    /// their historical behavior through the permissive default; stateful
+    /// hosts should override this to reject a BUDGET for a dropped bundle.
+    fn bundle_admitted(&mut self, _id: &Id16) -> bool {
+        true
+    }
     /// Budget grant for a bundle we just received. Clamp to L_MAX inside.
     fn on_budget(&mut self, peer: &NodeId, id: &Id16, granted: u8);
     /// Outstanding WANTs beyond reconciliation (DAG gap repair, doc 06 §5.3).
@@ -248,6 +255,7 @@ pub struct SessionEngine {
     /// attach a grant to a different bundle in the same session.
     pending_budget: bool,
     pending_bundle_id: Option<Id16>,
+    pending_bundle_admitted: bool,
     recon: Option<Reconciler>,
     domain_cursor: usize,
     started_at: u64,
@@ -300,6 +308,7 @@ impl SessionEngine {
             rx_credits: local_credits.min(FRAME_CREDIT_WINDOW),
             pending_budget: false,
             pending_bundle_id: None,
+            pending_bundle_admitted: false,
             recon: None,
             domain_cursor: 0,
             started_at: now_ms,
@@ -650,12 +659,22 @@ impl SessionEngine {
                 self.pending_budget = true;
                 self.pending_bundle_id = Bundle::decode_canonical(&bytes).ok().map(|bundle| bundle.id());
                 host.on_bundle(&peer, &bytes);
+                self.pending_bundle_admitted = self
+                    .pending_bundle_id
+                    .is_some_and(|id| host.bundle_admitted(&id));
             }
             Frame::Budget { id, granted } => {
                 // Receive-side clamp (AUDIT F3) — silent, never an error.
+                // A canonical BUNDLE that the host dropped (e.g. a SeenIndex
+                // duplicate or local quota rejection) still consumes its
+                // paired grant, but must not mutate host routing state.
+                let admitted = self.pending_bundle_admitted;
                 self.pending_budget = false;
                 self.pending_bundle_id = None;
-                host.on_budget(&peer, &id, granted.min(L_MAX));
+                self.pending_bundle_admitted = false;
+                if admitted {
+                    host.on_budget(&peer, &id, granted.min(L_MAX));
+                }
             }
             Frame::BlobReq { root, block, bitmap } => {
                 let mut ids = host.on_blob_req(&peer, &root, block, &bitmap);
@@ -1050,7 +1069,9 @@ mod wire_budget_tests {
 mod rx_bound_tests {
     use super::*;
     use alloc::vec;
+    use mmp_types::bundle::Bundle;
     use mmp_types::frame::{FT_CREDIT, FT_HS, FT_ID_PROOF, FT_SUMMARY};
+    use mmp_types::ids::Sig64;
 
     struct EmptyIds {
         ids: Vec<Id16>,
@@ -1073,6 +1094,8 @@ mod rx_bound_tests {
         load_bytes: Option<Vec<u8>>,
         wants_calls: usize,
         reverse_handoffs: bool,
+        admit_bundles: bool,
+        budget_calls: usize,
     }
 
     impl SessionHost for EmptyHost {
@@ -1096,7 +1119,13 @@ mod rx_bound_tests {
 
         fn on_bundle(&mut self, _peer: &NodeId, _bytes: &[u8]) {}
 
-        fn on_budget(&mut self, _peer: &NodeId, _id: &Id16, _granted: u8) {}
+        fn bundle_admitted(&mut self, _id: &Id16) -> bool {
+            self.admit_bundles
+        }
+
+        fn on_budget(&mut self, _peer: &NodeId, _id: &Id16, _granted: u8) {
+            self.budget_calls += 1;
+        }
 
         fn wants(&mut self, _peer: &NodeId) -> Vec<Id16> {
             self.wants_calls += 1;
@@ -1130,6 +1159,8 @@ mod rx_bound_tests {
             load_bytes: None,
             wants_calls: 0,
             reverse_handoffs: false,
+            admit_bundles: true,
+            budget_calls: 0,
         }
     }
 
@@ -1141,6 +1172,8 @@ mod rx_bound_tests {
             load_bytes: None,
             wants_calls: 0,
             reverse_handoffs: false,
+            admit_bundles: true,
+            budget_calls: 0,
         }
     }
 
@@ -1443,6 +1476,63 @@ mod rx_bound_tests {
 
         assert_eq!(b.phase, Phase::Closed);
         assert!(b.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+    }
+
+    fn admitted_bundle_fixture() -> (Vec<u8>, Id16) {
+        let bundle = Bundle {
+            class: 1,
+            flags: 0,
+            origin: Key32([0x31; 32]),
+            dest: Id16([0x32; 16]),
+            lifetime_ms: 60_000,
+            priority: 1,
+            exts: Vec::new(),
+            payload: vec![0x33],
+            signature: Sig64([0x34; 64]),
+        };
+        (bundle.encode(), bundle.id())
+    }
+
+    #[test]
+    fn budget_for_dropped_bundle_is_ignored_without_closing_session() {
+        let ia = identity(19);
+        let ib = identity(20);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        hb.admit_bundles = false;
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        let (bundle, id) = admitted_bundle_fixture();
+        a.tx_credits = FRAME_CREDIT_WINDOW;
+        b.rx_credits = FRAME_CREDIT_WINDOW;
+        a.send_frame(&Frame::Bundle(bundle));
+        a.send_frame(&Frame::Budget { id, granted: 1 });
+        let bundle_wire = a.poll_out().expect("bundle");
+        let budget_wire = a.poll_out().expect("budget");
+        b.on_wire(&bundle_wire, 2000, &ib, &mut hb);
+        b.on_wire(&budget_wire, 2000, &ib, &mut hb);
+
+        assert_eq!(b.phase, Phase::Established);
+        assert_eq!(hb.budget_calls, 0, "a dropped bundle cannot receive a budget grant");
     }
 
     #[test]

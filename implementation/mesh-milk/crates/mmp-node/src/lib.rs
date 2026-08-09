@@ -3418,6 +3418,10 @@ impl SessionHost for NodeCore {
         }
     }
 
+    fn bundle_admitted(&mut self, id: &Id16) -> bool {
+        self.store.meta(id).is_some()
+    }
+
     fn on_budget(&mut self, _peer: &NodeId, id: &Id16, granted: u8) {
         // Engine already clamped to L_MAX (AUDIT F3); adopt for our copy.
         if let Some(mut meta) = self.store.meta(id) {
