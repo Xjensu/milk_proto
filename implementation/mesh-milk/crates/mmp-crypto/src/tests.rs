@@ -11,7 +11,7 @@ use mmp_types::ids::{Id16, Key32};
 use crate::group::{LocalSenderKey, RemoteSenderKey, SenderKeyDist};
 use crate::identity::{verify, Identity};
 use crate::merkle;
-use crate::noise::{NoiseHandshake, MAX_HANDSHAKE_MESSAGE};
+use crate::noise::{NoiseHandshake, MAX_HANDSHAKE_MESSAGE, MAX_TRANSPORT_CIPHERTEXT, MAX_TRANSPORT_PLAINTEXT};
 use crate::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use crate::ratchet::{direction_chain, RecvChain, SendChain};
 use crate::receipt::{mac_eq, receipt_key, receipt_mac};
@@ -83,6 +83,29 @@ fn noise_xx_handshake_agrees_and_binds() {
     assert_eq!(chan_b.decrypt(&ct).unwrap(), b"ping");
     let ct = chan_b.encrypt(b"pong").unwrap();
     assert_eq!(chan_a.decrypt(&ct).unwrap(), b"pong");
+}
+
+#[test]
+fn noise_transport_bounds_reject_oversized_input_without_advancing_nonce() {
+    let alice = id(1);
+    let bob = id(2);
+    let (msg1, mut a) = NoiseHandshake::initiator(&alice, &hello()).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
+    let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
+    let out_a = a.advance(&msg2).unwrap();
+    let msg3 = out_a.reply.unwrap();
+    let mut chan_a = out_a.channel.unwrap();
+    let mut chan_b = b.advance(&msg3).unwrap().channel.unwrap();
+
+    let oversized_plaintext = vec![0xa5; MAX_TRANSPORT_PLAINTEXT + 1];
+    assert_eq!(chan_a.encrypt(&oversized_plaintext), Err(CryptoError::Noise));
+    let ciphertext = chan_a.encrypt(b"after-oversized-plaintext").unwrap();
+    assert_eq!(chan_b.decrypt(&ciphertext).unwrap(), b"after-oversized-plaintext");
+
+    let oversized_ciphertext = vec![0x5a; MAX_TRANSPORT_CIPHERTEXT + 1];
+    assert_eq!(chan_b.decrypt(&oversized_ciphertext), Err(CryptoError::Noise));
+    let ciphertext = chan_a.encrypt(b"after-oversized-ciphertext").unwrap();
+    assert_eq!(chan_b.decrypt(&ciphertext).unwrap(), b"after-oversized-ciphertext");
 }
 
 #[test]

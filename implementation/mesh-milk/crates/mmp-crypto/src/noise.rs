@@ -13,7 +13,7 @@
 use alloc::vec::Vec;
 
 use mmp_types::domain::SigDomain;
-use mmp_types::frame::Hello;
+use mmp_types::frame::{Hello, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::ids::{Key32, Sig64};
 
 use crate::error::CryptoError;
@@ -37,6 +37,17 @@ const HS_OVERHEAD: usize = 128;
 /// `snow`; no current HELLO-bearing handshake emitted by this crate exceeds
 /// it.
 pub(crate) const MAX_HANDSHAKE_MESSAGE: usize = 256;
+
+/// Noise transport ciphertext bound imposed by the frozen envelope cap.
+///
+/// The clear envelope length is checked by `mmp-core`, but `NoiseChannel` is
+/// also a public crypto-layer API. Keeping the same bound here prevents a
+/// direct caller from turning an unauthenticated ciphertext slice into an
+/// attacker-sized output allocation.
+pub(crate) const MAX_TRANSPORT_CIPHERTEXT: usize = MAX_ENVELOPE_PAYLOAD;
+/// Largest post-handshake plaintext that can fit in one v1 encrypted envelope
+/// after adding Noise's 16-byte ChaChaPoly tag.
+pub(crate) const MAX_TRANSPORT_PLAINTEXT: usize = MAX_TRANSPORT_CIPHERTEXT - 16;
 
 /// Cipher suites this build can speak (doc 03 §8: 1-byte registry pinned in
 /// the handshake). Only 0x01 has a real construction; 0x02 (hybrid ML-KEM)
@@ -223,6 +234,13 @@ pub struct NoiseChannel {
 impl NoiseChannel {
     /// Encrypt one transport message (adds the Noise AEAD tag).
     pub fn encrypt(&mut self, plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        // Keep the public crypto-layer API aligned with the frozen envelope
+        // cap before allocating output or advancing the Noise nonce. The
+        // session engine performs the same check at its frame boundary; this
+        // guard closes the direct-call allocation path as well.
+        if plaintext.len() > MAX_TRANSPORT_PLAINTEXT {
+            return Err(CryptoError::Noise);
+        }
         let mut out = alloc::vec![0u8; plaintext.len() + 16];
         let n = self.transport.write_message(plaintext, &mut out).map_err(|_| CryptoError::Noise)?;
         out.truncate(n);
@@ -231,6 +249,12 @@ impl NoiseChannel {
 
     /// Decrypt one transport message.
     pub fn decrypt(&mut self, ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+        // `snow` writes plaintext into the caller-provided buffer. Reject the
+        // unauthenticated length before allocating that buffer and before
+        // consuming the transport nonce.
+        if ciphertext.len() > MAX_TRANSPORT_CIPHERTEXT {
+            return Err(CryptoError::Noise);
+        }
         let mut out = alloc::vec![0u8; ciphertext.len()];
         let n = self.transport.read_message(ciphertext, &mut out).map_err(|_| CryptoError::Noise)?;
         out.truncate(n);

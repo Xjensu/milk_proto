@@ -88,6 +88,16 @@ repository-wide security certification or an external cryptographic review.
    the guarded branches without changing the frame bytes accepted from valid
    callers.
 
+9. **Direct Noise transport allocation bound.** `mmp-core` already rejects an
+   envelope payload above 4096 bytes, but `NoiseChannel` is also a public
+   crypto-layer API. It now rejects plaintext above 4080 bytes (4096 minus the
+   Noise tag) and ciphertext above 4096 bytes before allocating an output
+   buffer or advancing the transport nonce. These checks preserve all valid
+   v1 encrypted envelopes and close the direct-call path that could otherwise
+   allocate from an unauthenticated ciphertext length. The regression
+   `noise_transport_bounds_reject_oversized_input_without_advancing_nonce`
+   proves both rejection and subsequent nonce/state continuity.
+
 ## Residual gaps requiring a reviewed follow-up
 
 ### Clear envelope type is not authenticated by Noise
