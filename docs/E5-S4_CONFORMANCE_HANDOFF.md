@@ -2813,3 +2813,43 @@ gossiped authority roots, platform-keystore ratchet persistence, native
 Android/iOS integration, physical Linux/BlueZ exchange, calibrated radio
 energy/contact-survival measurements, SLAW mobility validation, and the
 external cryptographic review.
+
+## 2026-08-09 continuation: blob stripe boundary hardening and delegated audits
+
+The blob lifecycle audit identified a concrete local integrity boundary in
+`mmp-node::BlobAssembly::write_stripe`. Before this change, an invalid stripe
+index or a truncated decoded buffer could reach `ensure_part`, creating or
+resizing the `.part` file before the caller observed failure. Commit `c874272`
+now validates both the stripe index and the exact `STRIPE_DATA_BYTES` decoded
+shape before any filesystem side effect. Invalid input returns
+`io::ErrorKind::InvalidInput`; a regression test covers both a missing partial
+file and an existing sentinel partial file. The normal Reed--Solomon decode
+path still produces one full padded stripe and remains unchanged on the wire.
+
+Two parallel audits produced no safe local code change. The simulator already
+has deterministic clustered/social mobility, bridge/streak metrics, paired
+comparisons, and reproducibility checks; trace-calibrated human/SLAW mobility
+remains an evidence task rather than a guessed model change. The ratchet and
+keystore boundary already fail closed for zeroized CK0 handling, strict
+snapshot validation, AEAD/context binding, freshness/generation checks,
+atomic restore, and post-restore epoch bumps. Native Android Keystore,
+iOS Keychain, Windows DPAPI, trusted clocks, durable CAS, and crash-atomic
+provider behavior remain platform integration gates.
+
+Verification for this continuation:
+
+- `cargo test -p mmp-core -p mmp-node -p mmp-ffi --all-targets -- --test-threads=1`:
+  87 core unit tests + 5 persistence tests, 111 node tests, and 28 FFI tests
+  passed.
+- Strict Clippy for `mmp-core`, `mmp-router`, `mmp-node`, and `mmp-ffi` with
+  `-D warnings`: passed.
+- Full Python tooling suite: 149 passed, 10 expected platform-specific skips.
+- `check_spec_status.py --repo ../..`, `layer-check`, and `git diff --check`:
+  passed (the latter reports only existing CRLF normalization warnings).
+- No path under `specification/` changed. Existing user-owned dirty paths and
+  temporary audit directories remain unstaged.
+
+The next implementation-safe step is to continue only at boundaries with
+explicit local invariants (for example, additional store/blob crash tests).
+Do not infer wire changes for RBSR/D3, mobility proofs, or platform keystore
+semantics until the corresponding normative contract and test vectors exist.
