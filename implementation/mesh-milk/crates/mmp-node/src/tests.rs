@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use mmp_core::store::{BundleMeta, SlotState};
+use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_core::{MemStore, SessionHost};
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
@@ -18,6 +18,57 @@ use crate::{DeliveryState, Event, Node, SendError, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
+}
+
+/// Provider fixture that refuses every durable write. This exercises the
+/// node-level boundary after `mmp-core::ingest` has authenticated a bundle,
+/// without making quota eviction or provider I/O part of the test.
+struct CapacityRejectStore;
+
+impl BundleStore for CapacityRejectStore {
+    fn put(&mut self, _meta: BundleMeta, _bytes: &[u8]) {}
+
+    fn try_put(
+        &mut self,
+        _meta: BundleMeta,
+        _bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
+        Err(StorePutError::Capacity)
+    }
+
+    fn get(&self, _id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        None
+    }
+
+    fn meta(&self, _id: &Id16) -> Option<BundleMeta> {
+        None
+    }
+
+    fn update_meta(&mut self, _meta: BundleMeta) {}
+
+    fn remove(&mut self, _id: &Id16) -> bool {
+        false
+    }
+
+    fn ids_range(&self, _lo: &Id16, _hi: &Id16) -> Vec<Id16> {
+        Vec::new()
+    }
+
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        Vec::new()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        0
+    }
+
+    fn len(&self) -> usize {
+        0
+    }
+
+    fn expire(&mut self, _now_ms: u64) -> Vec<Id16> {
+        Vec::new()
+    }
 }
 
 #[test]
@@ -46,6 +97,28 @@ fn callback_event_queue_is_bounded_when_host_does_not_poll() {
 
     assert_eq!(n.core.events.len(), super::EVENT_QUEUE_CAPACITY);
     assert_eq!(n.core.event_queue_dropped, super::EVENT_QUEUE_CAPACITY as u64);
+}
+
+#[test]
+fn node_store_rejection_prevents_delivery_and_post_store_side_effects() {
+    let mut alice = node(255);
+    let mut bob = Node::new([254; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let message_id = alice.send_text(&bob.node_id(), "provider capacity").unwrap();
+    let (_, raw) = alice.core.store.get(&message_id).expect("source bundle stored");
+
+    bob.core.on_bundle(&alice.node_id(), &raw);
+
+    assert_eq!(bob.core.store.len(), 0, "provider rejection must not retain bytes");
+    assert_eq!(bob.core.diag.drops, 1, "rejected ingest must be visible as a local drop");
+    assert!(bob.core.seen.contains(&message_id), "first-sight dedup still prevents replay loops");
+    assert!(
+        !bob.core.events.iter().any(|event| matches!(event, Event::MessageReceived { id, .. } if *id == message_id)),
+        "delivery must not run before a durable store accepts the bundle"
+    );
 }
 
 #[test]
