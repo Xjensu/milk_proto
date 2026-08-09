@@ -539,6 +539,29 @@ suite, Clippy, the exact embedded target check including `mmp-store`, fuzz
 seed validation, and the prior full workspace matrix all pass. No file under
 `specification/` and no pre-existing dirty path was modified or staged.
 
+### Orchestration continuation VII (2026-08-09)
+
+The transaction-readiness audit added three bounded, wire-neutral safeguards.
+`be61df4` and `07b57ed` document and test the existing zeroizing
+`SendChain::snapshot`/`restore` seam: a rejected candidate can replay the same
+message key, epoch, and index, but only for the same in-memory chain and only
+as provider-local material. `230d80b` rejects a revoked file recipient before
+class-4 symbols are minted or indexed, closing a deterministic partial-state
+path. `864833a` performs an exact placeholder `Bundle` width check before a
+group sender chain advances and proves that a rejected oversized group send
+does not consume index zero; it deliberately does not add a group-key rollback
+API because duplicating chain and signing-key state would risk key reuse.
+
+These changes do not make own-origin storage transactional. A provider-capacity
+failure after encryption or symbol minting still requires the reserve/commit
+contract recorded in `docs/OWN_BUNDLE_STORE_TRANSACTION_HANDOFF.md`. The full
+workspace matrix is green at 426 listed tests (420 active, 6 intentionally
+ignored); focused crypto/node suites, Clippy, the embedded no-default target
+check, and layer-check also pass. Physical BlueZ exchange, native mobile radio
+and keystore behavior, fixed-capacity embedded storage, external cryptographic
+review, and the normative RBSR/D3 decision remain open. No file under
+`specification/` was modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html

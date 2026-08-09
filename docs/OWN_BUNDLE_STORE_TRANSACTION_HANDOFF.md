@@ -54,6 +54,18 @@ capacity remains stable between a check and the write.
   and currently cannot provide a fixed-capacity rejection contract.
 - Existing oversized local-input tests prove that wire-size rejection does not
   poison first-contact state; they do not prove provider-capacity rejection.
+- `mmp-crypto::SendChain::snapshot`/`restore` is now covered by a regression
+  that replays the exact key, epoch, and index after a simulated rejected
+  candidate. The checkpoint is zeroizing and provider-local; it is not an
+  authenticated arbitrary-input rollback API.
+- Group sends now perform an exact placeholder `Bundle` width check before
+  `LocalSenderKey::encrypt_with_ad`; an oversized rejection therefore does not
+  consume a group sender index. No group-key rollback API was added because
+  duplicating the chain seed and private signing key would create key-reuse and
+  persistence hazards.
+- File sends now preflight a revoked destination before minting class-4 symbols,
+  preventing durable symbol/index residue on that deterministic rejection. This
+  does not solve provider-capacity failure after symbol minting.
 
 ## Safe follow-up gate
 
@@ -81,8 +93,10 @@ send APIs.
 ## Verification performed
 
 ```text
-cargo test -p mmp-node --lib -- --test-threads=1  # 80 passed
-cargo clippy -p mmp-node --all-targets -- -D warnings  # passed
+cargo test -p mmp-node --lib -- --test-threads=1  # 82 passed
+cargo test -p mmp-crypto --all-targets -- --test-threads=1  # 41 passed
+cargo test --workspace --all-targets -- --test-threads=1  # 426 listed, 420 active, 6 ignored
+cargo clippy -p mmp-crypto -p mmp-node --all-targets --all-features -- -D warnings  # passed
 ```
 
 The audit made no protocol, specification, routing, or FFI wire changes.
