@@ -188,6 +188,10 @@ impl OrSet {
             return None;
         }
         let mut adds = BTreeMap::new();
+        // A tag identifies one logical ADD operation.  Keep a second index
+        // while decoding so a corrupt snapshot cannot assign one tag to two
+        // members; the normal apply/encode path never produces that state.
+        let mut seen_add_tags = BTreeSet::new();
         for _ in 0..member_count {
             let member_end = pos.checked_add(16)?;
             let member_bytes = bytes.get(pos..member_end)?;
@@ -195,13 +199,22 @@ impl OrSet {
             let mut arr = [0u8; 16];
             arr.copy_from_slice(member_bytes);
             let member: NodeId = Id16(arr);
+            if adds.contains_key(&member) {
+                return None; // non-canonical duplicate member record
+            }
             let tag_count = u32_at(bytes, &mut pos)?;
+            if tag_count == 0 {
+                return None; // live members always have at least one tag
+            }
             if tag_count as usize > bytes.len().saturating_sub(pos) / 8 {
                 return None;
             }
             let mut tags = BTreeSet::new();
             for _ in 0..tag_count {
-                tags.insert(u64_at(bytes, &mut pos)?);
+                let tag = u64_at(bytes, &mut pos)?;
+                if !tags.insert(tag) || !seen_add_tags.insert(tag) {
+                    return None; // duplicate tag within/across member records
+                }
             }
             adds.insert(member, tags);
         }
@@ -211,7 +224,10 @@ impl OrSet {
         }
         let mut tombstones = BTreeSet::new();
         for _ in 0..tombstone_count {
-            tombstones.insert(u64_at(bytes, &mut pos)?);
+            let tag = u64_at(bytes, &mut pos)?;
+            if !tombstones.insert(tag) || seen_add_tags.contains(&tag) {
+                return None; // duplicate tombstone or live/tombstone overlap
+            }
         }
         if pos != bytes.len() {
             return None; // trailing garbage: treat as corrupt, not forward-compat
@@ -223,6 +239,21 @@ impl OrSet {
 #[cfg(test)]
 mod tests {
     use super::OrSet;
+
+    fn member_record(out: &mut Vec<u8>, id: u8, tags: &[u64]) {
+        out.extend_from_slice(&[id; 16]);
+        out.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+        for tag in tags {
+            out.extend_from_slice(&tag.to_le_bytes());
+        }
+    }
+
+    fn tombstone_records(out: &mut Vec<u8>, tags: &[u64]) {
+        out.extend_from_slice(&(tags.len() as u32).to_le_bytes());
+        for tag in tags {
+            out.extend_from_slice(&tag.to_le_bytes());
+        }
+    }
 
     #[test]
     fn decode_rejects_hostile_member_tag_and_tombstone_counts() {
@@ -243,5 +274,57 @@ mod tests {
         tombstones.extend_from_slice(&0u32.to_le_bytes()); // member_count
         tombstones.extend_from_slice(&u32::MAX.to_le_bytes());
         assert!(OrSet::decode(&tombstones).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_duplicate_live_tags() {
+        // The same ADD tag cannot belong to two members.  A decoder that
+        // accepts this snapshot would make a later REMOVE ambiguous.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        member_record(&mut bytes, 1, &[7]);
+        member_record(&mut bytes, 2, &[7]);
+        tombstone_records(&mut bytes, &[]);
+        assert!(OrSet::decode(&bytes).is_none());
+
+        // Duplicate tags within one member are non-canonical as well; the
+        // in-memory BTreeSet would otherwise silently discard one copy.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        member_record(&mut bytes, 3, &[8, 8]);
+        tombstone_records(&mut bytes, &[]);
+        assert!(OrSet::decode(&bytes).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_live_tombstone_overlap_and_duplicate_tombstones() {
+        // A tag cannot be live and tombstoned in a valid encoded OR-Set.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        member_record(&mut bytes, 4, &[9]);
+        tombstone_records(&mut bytes, &[9]);
+        assert!(OrSet::decode(&bytes).is_none());
+
+        // Tombstone records are canonical BTreeSet output and cannot repeat.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        tombstone_records(&mut bytes, &[10, 10]);
+        assert!(OrSet::decode(&bytes).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_duplicate_member_and_empty_live_records() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        member_record(&mut bytes, 5, &[11]);
+        member_record(&mut bytes, 5, &[12]);
+        tombstone_records(&mut bytes, &[]);
+        assert!(OrSet::decode(&bytes).is_none());
+
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        member_record(&mut bytes, 6, &[]);
+        tombstone_records(&mut bytes, &[]);
+        assert!(OrSet::decode(&bytes).is_none());
     }
 }
