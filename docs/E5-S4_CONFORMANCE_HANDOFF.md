@@ -2755,3 +2755,36 @@ Verification for this continuation:
   quota-abuse scenario is intentionally expensive (~31 seconds alone), so the
   complete suite requires a longer bounded timeout.
 - `git diff --check`: clean; no `specification/` path changed.
+
+## 2026-08-09 continuation: snapshot canonicality, RBSR obligation integrity, and fuzz bounds
+
+The persistence audit found that `OrSet::decode` silently deduplicated
+corrupted records because `BTreeMap`/`BTreeSet` insertion erased duplicate
+members and tags. Commit `b0fb953` now rejects duplicate member records, empty
+live records, duplicate tags within or across members, duplicate tombstones,
+and live/tombstone overlap. These states cannot be emitted by normal
+`apply`/`encode`; the change is a fail-closed snapshot-integrity check with no
+wire-format change. Raw malformed-snapshot regressions cover each case.
+
+The RBSR audit found a terminal-list state-machine shortcut: while a local
+`RECON_IDS` obligation was pending, a peer could send a matching non-reply
+`RECON_RANGE` and advance reconciliation without supplying the required ID
+list. Commit `3efea1e` rejects that path and marks the reconciler exhausted;
+reply-flagged behavior remains unchanged. The regression preserves the
+existing transcript and resource-bound semantics.
+
+The fuzz audit hardened the CI smoke campaign in commit `426f7d0`: each
+libFuzzer input is capped at 10 seconds and 2 GiB RSS in addition to the
+existing total-time and input-length bounds. CI tests assert all four limits;
+the comment explicitly separates smoke safety bounds from performance claims.
+
+Verification for this continuation:
+
+- `cargo test -p mmp-core -p mmp-node -p mmp-ffi --all-targets -- --test-threads=1`:
+  87 core unit tests + 5 persistence tests, 110 node tests, and 28 FFI tests
+  passed.
+- `cargo clippy -p mmp-core -p mmp-router -p mmp-node -p mmp-ffi --all-targets --all-features -- -D warnings`: passed.
+- Full Python tooling suite: 149 passed, 10 expected skips.
+- `check_spec_status.py`, `layer-check`, and `git diff --check`: passed.
+- No path under `specification/` changed; pre-existing user-owned dirty paths
+  remain unstaged.
