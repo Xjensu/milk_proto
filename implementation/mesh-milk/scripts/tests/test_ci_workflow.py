@@ -225,6 +225,17 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("--repo ../..", run)
         self.assertIn('--commit "${{ github.sha }}"', run)
 
+    def test_release_job_checks_specification_status_manifest(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["release"]["steps"]
+        checks = [
+            step
+            for step in steps
+            if step.get("name") == "validate specification status manifest"
+        ]
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0]["run"], "python scripts/check_spec_status.py --repo ../..")
+
     def test_release_job_builds_from_the_locked_dependency_graph(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         release = workflow["jobs"]["release"]

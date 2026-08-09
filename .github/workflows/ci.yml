@@ -369,6 +369,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: validate specification status manifest
+        run: python scripts/check_spec_status.py --repo ../..
       - name: validate publication governance artifacts
         run: >
           python scripts/check_release_governance.py
