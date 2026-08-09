@@ -1177,6 +1177,13 @@ impl Node {
 
     /// Send a text into the group under our sender key (doc 08 §6.2).
     pub fn group_send(&mut self, gid: &Id16, text: &str) -> Result<Id16, SendError> {
+        // This is an application/FFI boundary: reject a payload that cannot
+        // fit in any v1 bundle before copying attacker-sized host input into
+        // a temporary body buffer. The exact placeholder preflight below
+        // still handles the fixed group-envelope overhead for smaller bodies.
+        if text.len() >= MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
         let me = self.core.node_id;
         let needs_distribution = self.core.groups.get(gid).is_some_and(GroupState::needs_distribution);
         if needs_distribution {
@@ -2032,9 +2039,36 @@ impl NodeCore {
         let mut body = Vec::with_capacity(1 + text.len());
         body.push(apptype::TEXT);
         body.extend_from_slice(text);
+        let epoch = self.groups.get(gid).ok_or(SendError::UnknownPeer)?.epoch;
+        // Group encryption advances the local sender chain. Construct an
+        // exact-size placeholder first so an oversized application body is
+        // rejected before consuming a chain index or signing key operation.
+        // The ciphertext and member signature lengths are fixed, so the
+        // placeholder has the same canonical wire width as the live payload.
+        let placeholder = GroupPayload {
+            gid: *gid,
+            epoch,
+            member: me,
+            chain_index: 0,
+            ct: vec![0u8; body.len() + 16],
+            member_sig: Sig64::ZERO,
+        };
+        let candidate = Bundle {
+            class: class::GROUP,
+            flags: 0,
+            origin,
+            dest,
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: 1,
+            exts: vec![Ext::GroupEpoch(epoch)],
+            payload: placeholder.encode(),
+            signature: Sig64::ZERO,
+        };
+        if bundle_wire_len(&candidate) > MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
         let (epoch, gp) = {
             let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
-            let epoch = gs.epoch;
             let gp = gs.local.encrypt_with_ad(me, &body, |placeholder| {
                 Bundle {
                     class: class::GROUP,

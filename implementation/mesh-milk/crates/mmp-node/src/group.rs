@@ -191,7 +191,19 @@ mod tests {
     fn restored_group_requires_one_local_key_regossip() {
         let mut rng = StdRng::seed_from_u64(2);
         let original = GroupState::create(&mut rng, mmp_types::ids::Id16([7; 16]), mmp_types::ids::Id16([8; 16]), true);
-        let restored = GroupState::decode(&mut rng, &original.encode()).expect("valid group snapshot");
+        let encoded = original.encode();
+        let expected_len = 31 + original.members.encode().len();
+        assert_eq!(encoded.len(), expected_len, "group snapshot contains metadata only");
+
+        let original_dist = original.local.dist().clone();
+        let mut restored = GroupState::decode(&mut rng, &encoded).expect("valid group snapshot");
         assert!(restored.needs_distribution());
+        assert!(restored.remotes.is_empty());
+        assert!(restored.dists.is_empty());
+        assert_ne!(restored.local.dist(), &original_dist, "restore must mint a fresh chain and signing key");
+
+        let first = restored.local.encrypt(restored.members.members()[0], &[], b"first");
+        assert_eq!(first.epoch, restored.epoch);
+        assert_eq!(first.chain_index, 0, "fresh local chain starts at index zero");
     }
 }

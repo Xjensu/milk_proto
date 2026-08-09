@@ -12,7 +12,7 @@ use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{FRIENDSHIP_TTL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE};
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::{apptype, AsyncPayload};
+use mmp_types::payload::{apptype, AsyncPayload, GroupPayload};
 
 use crate::{DeliveryState, Event, Node, SendError, Tier};
 
@@ -1026,6 +1026,20 @@ fn group_create_invite_and_message() {
             .any(|e| matches!(e, Event::GroupMessage { body, .. } if body == b"carol is out")),
         "carol must NOT read the new epoch: {c2:?}"
     );
+}
+
+#[test]
+fn oversized_group_send_does_not_consume_sender_chain_index() {
+    let mut alice = node(61);
+    let gid = alice.create_group();
+
+    assert_eq!(alice.group_send(&gid, &"x".repeat(MAX_BUNDLE)), Err(SendError::TooLarge));
+
+    let id = alice.group_send(&gid, "after rejection").expect("valid group retry");
+    let (_, raw) = alice.core.store.get(&id).expect("group bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).expect("well-formed group bundle");
+    let payload = GroupPayload::decode(&bundle.payload).expect("well-formed group payload");
+    assert_eq!(payload.chain_index, 0, "rejected send must not consume index 0");
 }
 
 #[test]
