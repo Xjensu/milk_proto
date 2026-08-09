@@ -31,6 +31,20 @@ class InteropGuideTests(unittest.TestCase):
             guide,
         )
 
+    def test_pc_ble_guide_passes_snapshot_files_not_directories(self) -> None:
+        guide = (REPO_ROOT / "docs" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
+            encoding="utf-8"
+        )
+
+        # SnapshotStore::persist replaces a file and its sibling .tmp recovery
+        # candidate. Creating the --store path as a directory makes the run
+        # fail closed on shutdown, so the manual procedure must use file paths.
+        self.assertIn("--store /tmp/mmp-alice.snapshot", guide)
+        self.assertIn("--store /tmp/mmp-bob.snapshot", guide)
+        self.assertIn("`--store` is not a directory", guide)
+        self.assertNotIn("mkdir -p /tmp/mmp-alice.store", guide)
+        self.assertNotIn("mkdir -p /tmp/mmp-bob.store", guide)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -87,12 +87,15 @@ provides one; never put the seed bytes in an evidence package.
 
 ### Host A: peripheral
 
-Create a new store directory and capture the complete stdout/stderr stream:
+Choose a snapshot **file** path whose parent directory already exists and
+capture the complete stdout/stderr stream. `--store` is not a directory
+argument: `SnapshotStore` atomically replaces the file and its sibling `.tmp`
+recovery candidate. Passing a pre-created directory makes persistence fail
+closed at shutdown.
 
 ```bash
-mkdir -p /tmp/mmp-alice.store
 target/release/mmp-cli listen /secure/path/alice.seed \
-  --store /tmp/mmp-alice.store 2>&1 | tee /tmp/mmp-alice-listen.log
+  --store /tmp/mmp-alice.snapshot 2>&1 | tee /tmp/mmp-alice-listen.log
 ```
 
 Leave this process running. The log must show at least `advertising`, then
@@ -102,12 +105,11 @@ are the gates that make the peer usable.
 
 ### Host B: central bootstrap (Linux, Windows, or macOS)
 
-Use a different store directory. Capture the bootstrap connection separately:
+Use a different snapshot file. Capture the bootstrap connection separately:
 
 ```bash
-mkdir -p /tmp/mmp-bob.store
 target/release/mmp-cli connect /secure/path/bob.seed \
-  --store /tmp/mmp-bob.store 2>&1 | tee /tmp/mmp-bob-connect.log
+  --store /tmp/mmp-bob.snapshot 2>&1 | tee /tmp/mmp-bob-connect.log
 ```
 
 Wait for the connection to establish and for claims/state to be exchanged.
@@ -122,7 +124,7 @@ peripheral or otherwise recorded during the bootstrap:
 ```bash
 target/release/mmp-cli send /secure/path/bob.seed <alice-node-id> \
   "BLE interoperability smoke test" \
-  --store /tmp/mmp-bob.store 2>&1 | tee /tmp/mmp-bob-send.log
+  --store /tmp/mmp-bob.snapshot 2>&1 | tee /tmp/mmp-bob-send.log
 ```
 
 For the release manifest, concatenate the two central logs in chronological
@@ -145,8 +147,8 @@ brings them back into range and verifies that the stored bundle is delivered
 after reconnection. Keep the resulting logs and both `inspect` outputs:
 
 ```bash
-target/release/mmp-cli inspect /tmp/mmp-alice.store > /tmp/mmp-alice.inspect
-target/release/mmp-cli inspect /tmp/mmp-bob.store   > /tmp/mmp-bob.inspect
+target/release/mmp-cli inspect /tmp/mmp-alice.snapshot > /tmp/mmp-alice.inspect
+target/release/mmp-cli inspect /tmp/mmp-bob.snapshot   > /tmp/mmp-bob.inspect
 ```
 
 The minimum physical gates are:
