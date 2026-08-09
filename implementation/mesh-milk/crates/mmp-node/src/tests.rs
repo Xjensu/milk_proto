@@ -2422,6 +2422,70 @@ fn stripes_for_size_padding_edges() {
     );
 }
 
+/// A malformed decoded stripe must not create or modify the on-disk partial
+/// assembly.  `write_stripe` is an internal boundary, but keeping these
+/// checks here prevents a future caller from turning an invalid index or
+/// truncated buffer into an out-of-range file write.
+#[test]
+fn blob_write_stripe_rejects_invalid_shape_without_touching_part() {
+    use crate::blob::BlobAssembly;
+    use mmp_types::consts::STRIPE_DATA_BYTES;
+
+    let dest_path = std::env::temp_dir().join(format!(
+        "mmp-node-blob-stripe-validation-{}-{}.bin",
+        std::process::id(),
+        line!()
+    ));
+    let part_path = {
+        let mut name = dest_path.file_name().expect("test destination name").to_os_string();
+        name.push(".part");
+        dest_path.with_file_name(name)
+    };
+    let _ = std::fs::remove_file(&dest_path);
+    let _ = std::fs::remove_file(&part_path);
+
+    let mut assembly = BlobAssembly::new(
+        Id16([0x31; 16]),
+        STRIPE_DATA_BYTES as u32,
+        [0x32; 32],
+        Key32([0x33; 32]),
+        dest_path.clone(),
+        0,
+    );
+
+    let full_stripe = vec![0u8; STRIPE_DATA_BYTES];
+    let err = assembly
+        .write_stripe(assembly.stripes, &full_stripe)
+        .expect_err("out-of-range stripe must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(assembly.part.is_none(), "invalid input must not open the partial file");
+    assert!(!part_path.exists(), "invalid input must not create the partial file");
+
+    drop(assembly);
+    let sentinel = b"existing partial bytes";
+    std::fs::write(&part_path, sentinel).expect("seed partial assembly");
+    let mut assembly = BlobAssembly::new(
+        Id16([0x31; 16]),
+        STRIPE_DATA_BYTES as u32,
+        [0x32; 32],
+        Key32([0x33; 32]),
+        dest_path.clone(),
+        0,
+    );
+
+    let short_stripe = vec![0u8; STRIPE_DATA_BYTES - 1];
+    let err = assembly
+        .write_stripe(0, &short_stripe)
+        .expect_err("short stripe must be rejected");
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(assembly.part.is_none(), "invalid input must not open the partial file");
+    assert_eq!(std::fs::read(&part_path).expect("read partial assembly"), sentinel);
+
+    drop(assembly);
+    let _ = std::fs::remove_file(dest_path);
+    let _ = std::fs::remove_file(part_path);
+}
+
 /// E5-S1 acceptance (decision D8): `send_file` → the manifest arrives as a
 /// verified `FileOffered` → `fetch_file` absorbs the already-delivered
 /// symbols and reassembles bit-exact bytes on disk → a second `send_file` of

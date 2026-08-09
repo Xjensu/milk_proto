@@ -183,6 +183,21 @@ impl BlobAssembly {
     /// D2): the caller holds one stripe (≤ 64 KiB) at a time, never the whole
     /// file.
     pub(crate) fn write_stripe(&mut self, stripe_no: u16, data: &[u8]) -> std::io::Result<()> {
+        // Validate before opening/creating the partial file. Besides keeping
+        // malformed internal calls from writing outside this assembly, this
+        // ensures a bad stripe cannot create filesystem state as a side effect.
+        if stripe_no >= self.stripes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "stripe index outside assembly",
+            ));
+        }
+        if data.len() != STRIPE_DATA_BYTES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "decoded stripe has unexpected length",
+            ));
+        }
         let offset = stripe_no as u64 * STRIPE_DATA_BYTES as u64;
         let f = self.ensure_part()?;
         f.seek(SeekFrom::Start(offset))?;
