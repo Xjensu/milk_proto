@@ -52,12 +52,35 @@ impl RendezvousEnergyModel {
         {
             return None;
         }
+        let hazard_product = tx_activity * rx_activity;
+        let tx_energy = tx_activity * tx_cost_per_activity;
+        let rx_energy = rx_activity * rx_cost_per_activity;
+        let optimum_tx_activity = hazard_product * rx_cost_per_activity / tx_cost_per_activity;
+        let optimum_rx_activity = hazard_product * tx_cost_per_activity / rx_cost_per_activity;
+        let optimum_tx_energy = optimum_tx_activity.sqrt() * tx_cost_per_activity;
+        let optimum_rx_energy = optimum_rx_activity.sqrt() * rx_cost_per_activity;
+        if [
+            hazard_product,
+            tx_energy,
+            rx_energy,
+            tx_energy + rx_energy,
+            optimum_tx_activity,
+            optimum_rx_activity,
+            optimum_tx_energy,
+            optimum_rx_energy,
+            optimum_tx_energy + optimum_rx_energy,
+        ]
+        .iter()
+        .any(|value| !value.is_finite() || *value <= 0.0)
+        {
+            return None;
+        }
         Some(Self {
             baseline_tx_activity: tx_activity,
             baseline_rx_activity: rx_activity,
             tx_cost_per_activity,
             rx_cost_per_activity,
-            hazard_product: tx_activity * rx_activity,
+            hazard_product,
         })
     }
 
@@ -129,5 +152,18 @@ mod tests {
         let gain = model.idealized_gain();
 
         assert!(gain > 3.0 && gain < 3.3);
+    }
+
+    #[test]
+    fn edr_rejects_nonrepresentable_baseline_terms() {
+        assert!(RendezvousEnergyModel::from_baseline(f64::MAX, f64::MAX, 1.0, 1.0).is_none());
+        assert!(RendezvousEnergyModel::from_baseline(
+            f64::MIN_POSITIVE,
+            f64::MIN_POSITIVE,
+            1.0,
+            1.0,
+        )
+        .is_none());
+        assert!(RendezvousEnergyModel::from_baseline(1.0, 1.0, f64::MAX, f64::MAX).is_none());
     }
 }
