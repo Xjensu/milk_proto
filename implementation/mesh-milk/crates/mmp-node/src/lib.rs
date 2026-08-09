@@ -113,6 +113,12 @@ const MAX_PROXY_HINT_PEERS: usize = 256;
 /// peer beyond this local policy cap is served nothing until an existing
 /// counter entry is released by policy.
 const MAX_BLOB_SERVE_PEERS: usize = 256;
+/// Limit the number of BLOB_HAVE advertisements emitted when a contact is
+/// established.  A host may have many active fetches; sending every bitmap in
+/// the bootstrap burst would consume the bounded per-link outbox before
+/// control/direct traffic gets a turn.  The cursor below rotates roots across
+/// later contacts without changing the existing BLOB_HAVE wire frame.
+const MAX_BLOB_HAVE_FRAMES_PER_CONTACT: usize = 4;
 /// Local persistence cap for explicit user blocklist entries. This is a host
 /// policy bound, not a wire limit.
 const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
@@ -408,7 +414,8 @@ struct SentMessage {
 /// Why a send (`Node::send_text`/`send_body`/`send_file`/`group_send`/…) failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SendError {
-    /// We lack the peer's exchange-key / prekey-batch claim (or group key).
+    /// The destination/group member is unknown locally, or we lack the
+    /// peer's exchange-key / prekey-batch claim (or group key).
     UnknownPeer,
     /// The first-contact async bundle is still awaiting an authenticated
     /// receipt; emitting a direct bundle now could arrive before the peer has
@@ -567,6 +574,10 @@ struct NodeCore {
     /// Per-peer-per-contact serve counter (decision D4/D5), reset in
     /// `accept_peer`.
     blob_served: HashMap<NodeId, u32>,
+    /// Last root advertised to each peer.  This is a bounded, local fairness
+    /// cursor for the capped BLOB_HAVE bootstrap burst; it is reset when a new
+    /// authenticated contact is accepted and never appears on the wire.
+    blob_have_cursor: HashMap<NodeId, Id16>,
 }
 
 /// The driveable node: session lifecycle, claims gossip, direct messaging,
@@ -640,6 +651,7 @@ impl Node {
             offers: HashMap::new(),
             offer_order: VecDeque::new(),
             blob_served: HashMap::new(),
+            blob_have_cursor: HashMap::new(),
         };
         // Handbook §4.4 D2: rebuild the holder-side symbol index from
         // whatever the store already holds (a restored `SnapshotStore`, or —
@@ -1214,6 +1226,9 @@ impl Node {
         let (epoch, members) = {
             let gs = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
             if !gs.is_admin {
+                return Err(SendError::UnknownPeer);
+            }
+            if !gs.members.contains(member) {
                 return Err(SendError::UnknownPeer);
             }
             let epoch = gs
@@ -3516,6 +3531,7 @@ impl SessionHost for NodeCore {
         // Decision D4/D5: per-contact blob serve budget resets on every new
         // contact with this peer.
         self.blob_served.remove(node);
+        self.blob_have_cursor.remove(node);
         true
     }
 
@@ -3609,16 +3625,48 @@ impl SessionHost for NodeCore {
         self.blob_serve_candidates(peer, root, block, bitmap, true)
     }
 
-    /// MVP requesters emit only BLOB_HAVE, one per active (`Wanted`/`Fetching`)
-    /// assembly — the requester's in-RAM `have` vec is byte-identical to the
-    /// wire bitmap form (decision D4), so this is a straight copy. BLOB_REQ
-    /// send-side is receive-only in this MVP (decision D4 residual).
+    /// MVP requesters emit only BLOB_HAVE for active (`Wanted`/`Fetching`)
+    /// assemblies — the requester's in-RAM `have` vec is byte-identical to the
+    /// wire bitmap form (decision D4), so this is a straight copy.  At most
+    /// [`MAX_BLOB_HAVE_FRAMES_PER_CONTACT`] roots are advertised per contact;
+    /// a local cursor rotates the bounded burst across later contacts.  This
+    /// is a scheduling bound only: BLOB_REQ remains receive-only in the MVP
+    /// (decision D4 residual), and no wire field or origin-targeting claim is
+    /// inferred.
     fn blob_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
-        let _ = peer;
-        self.assemblies
+        let mut roots: Vec<Id16> = self
+            .assemblies
             .values()
             .filter(|a| matches!(a.state, BlobState::Wanted | BlobState::Fetching))
-            .map(|a| Frame::BlobHave { root: a.root, block: 0, bitmap: a.have.clone() })
+            .map(|a| a.root)
+            .collect();
+        roots.sort_unstable();
+        if roots.is_empty() {
+            return Vec::new();
+        }
+
+        let start = self
+            .blob_have_cursor
+            .get(peer)
+            .and_then(|last| roots.iter().position(|root| root > last))
+            .unwrap_or(0);
+        let count = roots.len().min(MAX_BLOB_HAVE_FRAMES_PER_CONTACT);
+        let selected: Vec<Id16> = (0..count).map(|offset| roots[(start + offset) % roots.len()]).collect();
+        if let Some(last) = selected.last().copied() {
+            if self.blob_have_cursor.contains_key(peer) || self.blob_have_cursor.len() < MAX_BLOB_SERVE_PEERS {
+                self.blob_have_cursor.insert(*peer, last);
+            }
+        }
+
+        selected
+            .into_iter()
+            .filter_map(|root| {
+                self.assemblies.get(&root).map(|a| Frame::BlobHave {
+                    root: a.root,
+                    block: 0,
+                    bitmap: a.have.clone(),
+                })
+            })
             .collect()
     }
 }

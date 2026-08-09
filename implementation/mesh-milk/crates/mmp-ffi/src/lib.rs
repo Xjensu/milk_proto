@@ -56,9 +56,10 @@ pub enum FfiError {
     /// A byte slice had the wrong length (NodeId/Id16 must be exactly 16
     /// bytes, a seed exactly 32) or a claim/body failed to decode.
     BadArg,
-    /// We don't hold the peer's exchange key (and, for group operations, the
-    /// required group key) yet. A prekey batch is optional: direct messaging
-    /// falls back to the sealed-box baseline when only the exchange key exists.
+    /// The destination/group member is unknown locally, or we don't hold the
+    /// peer's exchange key (and, for group operations, the required group key)
+    /// yet. A prekey batch is optional: direct messaging falls back to the
+    /// sealed-box baseline when only the exchange key exists.
     UnknownPeer,
     /// The first-contact async bundle is awaiting an authenticated receipt;
     /// retry after delivery is confirmed rather than creating an unsafe direct
@@ -73,7 +74,7 @@ impl std::fmt::Display for FfiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             FfiError::BadArg => write!(f, "bad argument: wrong length or malformed encoding"),
-            FfiError::UnknownPeer => write!(f, "unknown peer: no exchange key on file"),
+            FfiError::UnknownPeer => write!(f, "unknown peer or group member"),
             FfiError::ConversationPending => write!(f, "conversation pending: await first-contact receipt"),
             FfiError::Internal => write!(f, "internal error"),
         }

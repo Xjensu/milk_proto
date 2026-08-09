@@ -406,6 +406,42 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
     assert_eq!(n.core.blob_served.len(), super::MAX_BLOB_SERVE_PEERS);
 }
 
+#[test]
+fn blob_have_advertisements_are_bounded_and_rotated_per_peer() {
+    let mut n = node(254);
+    let peer = Id16([0xabu8; 16]);
+    for value in 0..(super::MAX_BLOB_HAVE_FRAMES_PER_CONTACT * 3) {
+        let root = Id16([value as u8; 16]);
+        n.core.assemblies.insert(
+            root,
+            crate::blob::BlobAssembly::new(root, 0, [value as u8; 32], Key32([value as u8; 32]), std::path::PathBuf::from("unused"), 0),
+        );
+    }
+
+    let roots = |frames: Vec<mmp_types::frame::Frame>| {
+        frames
+            .into_iter()
+            .map(|frame| match frame {
+                mmp_types::frame::Frame::BlobHave { root, .. } => root,
+                other => panic!("unexpected blob frame: {other:?}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    let first = roots(n.core.blob_frames(&peer));
+    let second = roots(n.core.blob_frames(&peer));
+    let third = roots(n.core.blob_frames(&peer));
+    assert_eq!(first.len(), super::MAX_BLOB_HAVE_FRAMES_PER_CONTACT);
+    assert_eq!(second.len(), super::MAX_BLOB_HAVE_FRAMES_PER_CONTACT);
+    assert_eq!(third.len(), super::MAX_BLOB_HAVE_FRAMES_PER_CONTACT);
+    assert!(first.iter().all(|root| !second.contains(root)));
+    assert!(second.iter().all(|root| !third.contains(root)));
+
+    // A new authenticated contact starts the local fairness cursor over; this
+    // is not persisted or transmitted and does not alter the BLOB_HAVE frame.
+    assert!(n.core.accept_peer(&Key32([0x55; 32]), &peer));
+    assert_eq!(roots(n.core.blob_frames(&peer)), first);
+}
+
 /// A shape-valid class-4 bundle with a malformed Merkle payload must not be
 /// retained in the holder index merely because no local fetch is active.  If
 /// it were indexed first, a later BLOB_HAVE/BLOB_REQ could serve the bytes to
@@ -1509,6 +1545,17 @@ fn removed_member_cannot_reintroduce_stale_sender_key() {
 
     contact(&mut bob, &mut alice, 93, 930_000);
     assert!(!alice.group_members(&gid).contains(&bob.node_id()));
+}
+
+#[test]
+fn removing_unknown_group_member_reports_unknown_peer_without_rotation() {
+    let mut alice = node(14);
+    let gid = alice.create_group();
+    let unknown = Id16([0xd4; 16]);
+    let before_epoch = alice.core.groups.get(&gid).expect("group").epoch;
+
+    assert_eq!(alice.group_remove(&gid, &unknown), Err(SendError::UnknownPeer));
+    assert_eq!(alice.core.groups.get(&gid).expect("group").epoch, before_epoch);
 }
 
 #[test]

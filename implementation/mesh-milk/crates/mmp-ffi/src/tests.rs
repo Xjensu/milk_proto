@@ -625,6 +625,16 @@ fn group_remove_and_set_tier_roundtrip() {
     assert_eq!(pk.len(), 32, "identity public key is exactly 32 bytes");
 }
 
+#[test]
+fn group_remove_unknown_member_maps_to_unknown_peer() {
+    let alice = node(4);
+    let gid = alice.create_group();
+    let unknown = vec![0xd5; 16];
+
+    let err = alice.group_remove(gid, unknown).expect_err("unknown member must be rejected");
+    assert_eq!(err, super::FfiError::UnknownPeer);
+}
+
 /// Handbook §4.5 (E5-S2), FFI surface: a friendship handshake driven purely
 /// through `requestFriendship`/`allowFriendshipFrom` produces
 /// `FfiEvent::FriendshipEstablished` on both sides after one contact.
