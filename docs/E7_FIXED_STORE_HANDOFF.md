@@ -103,3 +103,21 @@ The six tests pass locally and the command is now a named CI step
 provider-design preflight only: the test double is not exposed as a public
 store implementation, does not choose board capacities, and does not close
 the fixed-capacity backend, linked-image, or hardware-in-the-loop gates above.
+
+## Current API checkpoint (2026-08-09)
+
+The original blocker list above predates the receive-side bounded-write seam.
+The current tree now contains `mmp_core::BundleStore::try_put`,
+`StorePutOutcome`, and `StorePutError::Capacity`; `mmp_core::ingest` maps a
+rejected write to `DropReason::StoreRejected` without reporting the bundle as
+stored. `mmp-store`'s bounded `SnapshotStore::try_put` accounts for complete
+snapshot framing and replacement deltas, with host coverage in
+`tests/bounded_snapshot.rs`.
+
+This checkpoint is deliberately narrower than the proposed transactional
+producer API: `try_put` is a receive-side admission result and does not reserve
+space while an own-origin ratchet or file operation is being prepared. The
+no-default-features profile still exports no flash-backed provider, and no
+board capacity or allocator policy is selected here. Future work must not
+interpret the current target check or acceptance double as closing those
+remaining E7-S1 requirements.
