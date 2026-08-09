@@ -81,6 +81,7 @@ def _index_zip(archive_path: Path, kind: str) -> tuple[ZipFile | None, dict[str,
         return None, {}, [f"{kind} archive is not a valid ZIP: {archive_path} ({exc})"]
 
     members: dict[str, object] = {}
+    members_casefold: dict[str, str] = {}
     violations: list[str] = []
     for info in archive.infolist():
         if _is_symlink(info):
@@ -94,7 +95,20 @@ def _index_zip(archive_path: Path, kind: str) -> tuple[ZipFile | None, dict[str,
         if normalized in members:
             violations.append(f"duplicate ZIP member after normalization: {normalized}")
             continue
+        folded = normalized.casefold()
+        previous = members_casefold.get(folded)
+        if previous is not None:
+            # A case-sensitive ZIP can carry both spellings, but Android
+            # tooling and Windows extraction can map them to one path. Reject
+            # the ambiguity before Kotlin sources are materialized so the
+            # validator has identical behavior across build hosts.
+            violations.append(
+                "case-insensitive duplicate ZIP member: "
+                f"{normalized} conflicts with {previous}"
+            )
+            continue
         members[normalized] = info
+        members_casefold[folded] = normalized
     return archive, members, violations
 
 

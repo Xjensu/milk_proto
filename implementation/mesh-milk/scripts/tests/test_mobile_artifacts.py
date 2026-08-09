@@ -156,6 +156,20 @@ class MobileArtifactTests(unittest.TestCase):
             violations = VERIFY.verify_artifacts(aar, bindings)
             self.assertTrue(any("absolute path" in item for item in violations))
 
+    def test_case_insensitive_kotlin_member_collision_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root)
+            aar = directory / "mmp-ffi.aar"
+            bindings = directory / "bindings.zip"
+            _write_zip(aar, _valid_aar_members())
+            source = _kotlin()
+            _write_zip(bindings, {"Mmp_ffi.kt": source, "mmp_ffi.kt": source})
+
+            violations = VERIFY.verify_artifacts(aar, bindings)
+            self.assertTrue(
+                any("case-insensitive duplicate ZIP member" in item for item in violations)
+            )
+
     def test_kotlin_secret_surface_failure_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             directory = Path(root)
