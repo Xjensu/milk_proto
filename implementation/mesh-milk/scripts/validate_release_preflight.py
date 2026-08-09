@@ -27,7 +27,7 @@ from typing import Callable, Sequence
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from validate_ble_evidence import validate_manifest  # type: ignore[import-not-found]
+from validate_ble_evidence import MAX_MANIFEST_BYTES, validate_manifest  # type: ignore[import-not-found]
 
 
 GitRunner = Callable[[Path, Sequence[str]], tuple[int, str, str]]
@@ -78,6 +78,8 @@ def validate_repository(repo: Path, commit: str, runner: GitRunner = _run_git) -
 
 def _manifest_commit(path: Path) -> str:
     try:
+        if path.stat().st_size > MAX_MANIFEST_BYTES:
+            return ""
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return ""

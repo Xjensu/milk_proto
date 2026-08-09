@@ -54,6 +54,17 @@ class ReleasePreflightTests(unittest.TestCase):
             errors = validate_repository(repo, "deadbeef", self._runner(cat_file_code=1))
             self.assertTrue(any("recorded commit does not exist" in error for error in errors))
 
+    def test_oversized_manifest_commit_lookup_is_bounded(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_release_preflight import MAX_MANIFEST_BYTES, _manifest_commit
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "evidence.json"
+            path.write_bytes(b"{" + b"x" * MAX_MANIFEST_BYTES + b"}")
+            self.assertEqual(_manifest_commit(path), "")
+
 
 if __name__ == "__main__":
     unittest.main()
