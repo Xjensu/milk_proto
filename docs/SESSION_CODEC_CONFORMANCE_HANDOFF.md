@@ -72,6 +72,10 @@ repository-wide security certification or an external cryptographic review.
    proves the malformed shape is rejected before state consumption and that a
    subsequent valid msg1 still progresses the responder. This is a grammar
    check over existing v1 bytes; no new field or frame allocation is added.
+   The frozen documents describe the HELLO payload placement but do not state
+   the empty-msg1 rule as a standalone MUST; therefore this remains an
+   implementation-profile restriction until an independently reviewed
+   conformance erratum records the rule. No specification file was changed.
 
 ## Residual gaps requiring a reviewed follow-up
 
