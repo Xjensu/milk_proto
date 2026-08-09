@@ -132,6 +132,23 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("--certificate ${{ matrix.artifact_name }}.pem", run)
         self.assertIn("--output ${{ matrix.artifact_name }}.manifest.json", run)
 
+    def test_release_job_verifies_keyless_signature_before_manifest(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["release"]["steps"]
+        names = [step.get("name") for step in steps]
+        verify_index = names.index("verify keyless artifact signature")
+        manifest_index = names.index("record signed artifact digest manifest")
+        self.assertLess(verify_index, manifest_index)
+        run = steps[verify_index]["run"]
+        self.assertIn("cosign verify-blob ${{ matrix.artifact_name }}", run)
+        self.assertIn("--signature ${{ matrix.artifact_name }}.sig", run)
+        self.assertIn("--certificate ${{ matrix.artifact_name }}.pem", run)
+        self.assertIn(
+            'https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.ref }}',
+            run,
+        )
+        self.assertIn("--certificate-oidc-issuer https://token.actions.githubusercontent.com", run)
+
     def test_release_job_verifies_manifest_against_source_and_files(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["release"]["steps"]

@@ -367,6 +367,14 @@ jobs:
           cosign sign-blob --yes ${{ matrix.artifact_name }}
           --output-signature ${{ matrix.artifact_name }}.sig
           --output-certificate ${{ matrix.artifact_name }}.pem
+      - name: verify keyless artifact signature
+        run: >
+          cosign verify-blob ${{ matrix.artifact_name }}
+          --signature ${{ matrix.artifact_name }}.sig
+          --certificate ${{ matrix.artifact_name }}.pem
+          --certificate-identity
+          "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.ref }}"
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
       - name: record signed artifact digest manifest
         run: >
           python scripts/create_release_manifest.py
