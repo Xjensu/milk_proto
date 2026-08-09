@@ -92,6 +92,12 @@ The current production plan is amended in this order:
    back-pressure, stale-link filtering, and foreground relay demotion. Mark
    source-only validation separately from Kotlin compilation and physical BLE
    evidence.
+10. **Callback backpressure P0:** bound every application-event producer behind
+    one FIFO helper and expose saturation to FFI hosts. The current safe
+    interim policy preserves queued FIFO entries and drops newest callbacks;
+    it must remain an explicitly documented overload condition, not a claim of
+    lossless user-event delivery. A future lossless design requires a reviewed
+    admission/close contract rather than an arbitrary queue enlargement.
 
 ### Implemented from the amended plan
 
@@ -116,6 +122,15 @@ source-level tests. `5aa2626` updates the manual PC/mobile procedure with
 these boundaries. The full workspace test/clippy gates and 41 Python tests pass,
 but Kotlin/JVM compilation, Android/iOS background behavior, and Linux/BlueZ
 two-PC exchange remain external gates.
+
+The latest delegated audits extend the evidence without changing the v1 wire
+contract: `766a741` rejects non-representable EDR model inputs and records a
+platform-measurement handoff; `4f11d5d` reopens the RBSR/D3 gate with exact
+missing normative decisions; and `09629bb` bounds the application callback
+FIFO with a sticky Rust/FFI saturation counter. These changes deliberately
+preserve the distinction between protocol delivery state and host callback
+delivery: a saturated callback queue can lose a user-visible event, so hosts
+must poll promptly and treat the counter as an operational failure signal.
 
 ## Source register
 
