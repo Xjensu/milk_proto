@@ -42,6 +42,9 @@ pub enum CertReject {
     /// The `(subject, scope)` pair is on the sticky revocation list as of
     /// `now_unix_s`.
     Revoked,
+    /// The receiver's local certificate map is at capacity. Existing
+    /// `(subject, scope)` entries may still be refreshed.
+    Capacity,
 }
 
 /// Doc 18 §2.2: two trust levels for an operator root. Only `Pinned` is wired
@@ -190,7 +193,11 @@ impl AuthorityStore {
 
     /// Doc 18 §4: a local filter only, never transmitted.
     pub fn subscribe(&mut self, scope: Id16) {
-        self.subscribed.insert(scope);
+        // Local operator policy still needs a hard bound in the no_std+alloc
+        // profile. Re-subscribing an existing scope remains a no-op.
+        if self.subscribed.contains(&scope) || self.subscribed.len() < MAX_AUTH_SUBSCRIPTIONS {
+            self.subscribed.insert(scope);
+        }
     }
 
     /// Reverses [`AuthorityStore::subscribe`]: `scope` no longer passes the
@@ -207,7 +214,12 @@ impl AuthorityStore {
 
     /// Pin a trusted issuer for `scope` (doc 18 §2.2 QR-ceremony entry point).
     pub fn pin_root(&mut self, scope: Id16, issuer: Key32) {
-        self.roots.insert(scope, (issuer, RootTrust::Pinned));
+        // Re-pinning an existing scope is allowed; a new scope is ignored once
+        // the local trust-root budget is full. This is fail-closed: it cannot
+        // widen authority.
+        if self.roots.contains_key(&scope) || self.roots.len() < MAX_AUTH_ROOTS {
+            self.roots.insert(scope, (issuer, RootTrust::Pinned));
+        }
     }
 
     fn revoked_at(&self, subject: &Key32, scope: &Id16, now_unix_s: u32) -> bool {
@@ -240,6 +252,9 @@ impl AuthorityStore {
         }
         if self.revoked_at(&cert.subject, &cert.scope, now_unix_s) {
             return Err(CertReject::Revoked);
+        }
+        if !self.certs.contains_key(&(cert.subject, cert.scope)) && self.certs.len() >= MAX_AUTH_CERTS {
+            return Err(CertReject::Capacity);
         }
         self.certs.insert((cert.subject, cert.scope), *cert);
         Ok(())
@@ -310,6 +325,7 @@ impl AuthorityStore {
     /// doc 18 §6's REVLIST_MAX discipline — bounded state).
     pub fn expire(&mut self, now_unix_s: u32) {
         self.certs.retain(|_, c| now_unix_s <= c.not_after.saturating_add(NOT_AFTER_SKEW_S));
+        self.revoked.retain(|_, not_after| now_unix_s <= not_after.saturating_add(NOT_AFTER_SKEW_S));
     }
 }
 
@@ -536,5 +552,71 @@ mod tests {
         // proportional allocation from untrusted disk bytes.
         let bytes = [1u8, 0xff, 0xff, 0, 0, 0, 0, 0, 0];
         assert!(AuthorityStore::decode(&bytes).is_none());
+    }
+
+    #[test]
+    fn local_subscription_and_root_state_fail_closed_at_capacity() {
+        let mut store = AuthorityStore::new();
+        for n in 0..MAX_AUTH_SUBSCRIPTIONS {
+            let mut scope = [0u8; 16];
+            scope[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            store.subscribe(Id16(scope));
+        }
+        let extra_scope = Id16([0xee; 16]);
+        store.subscribe(extra_scope);
+        assert!(!store.is_subscribed(&extra_scope));
+
+        let mut root_store = AuthorityStore::new();
+        for n in 0..MAX_AUTH_ROOTS {
+            let mut scope = [0u8; 16];
+            scope[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            let mut issuer = [0u8; 32];
+            issuer[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            root_store.pin_root(Id16(scope), Key32(issuer));
+        }
+        let extra_issuer = Identity::from_seed(&[0xabu8; 32]);
+        let extra_cert = signed_cert(&extra_issuer, Key32([0xacu8; 32]), extra_scope, CAP_ANNOUNCE, 1000);
+        root_store.pin_root(extra_scope, extra_issuer.public());
+        assert_eq!(root_store.consider_cert(&extra_cert, 0), Err(CertReject::UntrustedIssuer));
+    }
+
+    #[test]
+    fn certificate_admission_rejects_new_entries_at_capacity() {
+        let issuer = Identity::from_seed(&[0xadu8; 32]);
+        let scope = Id16([0xadu8; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, issuer.public());
+
+        for n in 0..MAX_AUTH_CERTS {
+            let mut subject = [0u8; 32];
+            subject[..8].copy_from_slice(&(n as u64).to_le_bytes());
+            let cert = signed_cert(&issuer, Key32(subject), scope, CAP_ANNOUNCE, 10_000);
+            assert_eq!(store.consider_cert(&cert, 0), Ok(()));
+        }
+
+        let mut subject = [0u8; 32];
+        subject[..8].copy_from_slice(&(MAX_AUTH_CERTS as u64).to_le_bytes());
+        let cert = signed_cert(&issuer, Key32(subject), scope, CAP_ANNOUNCE, 10_000);
+        assert_eq!(store.consider_cert(&cert, 0), Err(CertReject::Capacity));
+    }
+
+    #[test]
+    fn expire_prunes_revocations_after_their_own_horizon() {
+        let issuer = Identity::from_seed(&[0xaeu8; 32]);
+        let subject = Key32([0xafu8; 32]);
+        let scope = Id16([0xb0u8; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, issuer.public());
+        let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 10_000);
+        store.consider_cert(&cert, 0).unwrap();
+        let revoke = RevocationList {
+            suite: 1,
+            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 1000 }],
+        };
+        store.merge_revocation_list(&issuer.public(), &revoke);
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 1000).is_none());
+
+        store.expire(1000 + NOT_AFTER_SKEW_S + 1);
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 1000 + NOT_AFTER_SKEW_S + 1).is_some());
     }
 }
