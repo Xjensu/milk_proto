@@ -73,23 +73,43 @@ impl SendChain {
     // being consumed. Renaming would change the public API surface.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> (Zeroizing<[u8; 32]>, u16, u32) {
+        self.try_next().expect("ratchet send counter exhausted")
+    }
+
+    /// Fallible form of [`SendChain::next`]. The maximum wire index is
+    /// reserved as an exhausted-state sentinel: emitting it and then wrapping
+    /// to zero would reuse `(epoch, index)` and make the AEAD context
+    /// ambiguous. Existing callers retain [`SendChain::next`] for source
+    /// compatibility; new provider integrations should use this method to
+    /// fail closed instead of panicking at the terminal counter.
+    pub fn try_next(&mut self) -> Result<(Zeroizing<[u8; 32]>, u16, u32), CryptoError> {
+        let next_index = self.next_index.checked_add(1).ok_or(CryptoError::Ratchet)?;
         let key = Zeroizing::new(msg_key(&self.ck));
         let (epoch, index) = (self.epoch, self.next_index);
         let new = next_ck(&self.ck);
         self.ck.zeroize();
         self.ck = new;
-        self.next_index += 1;
-        (key, epoch, index)
+        self.next_index = next_index;
+        Ok((key, epoch, index))
     }
 
     /// Bump the epoch at live contact (doc 08 §5.2): folds `session_material`
     /// into the chain key, resets the index to 0, and increments `epoch`.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
+        self.try_bump_epoch(session_material).expect("ratchet epoch exhausted");
+    }
+
+    /// Fallible form of [`SendChain::bump_epoch`]. Epoch exhaustion must not
+    /// wrap to zero because `(epoch, index)` is part of the authenticated
+    /// message context and a wrap would permit state/key reuse.
+    pub fn try_bump_epoch(&mut self, session_material: &[u8; 32]) -> Result<(), CryptoError> {
+        let next_epoch = self.epoch.checked_add(1).ok_or(CryptoError::Ratchet)?;
         let new = bumped(&self.ck, session_material);
         self.ck.zeroize();
         self.ck = new;
-        self.epoch += 1;
+        self.epoch = next_epoch;
         self.next_index = 0;
+        Ok(())
     }
 
     /// Encode this chain as a canonical provider-local keystore payload.
@@ -149,6 +169,12 @@ impl RecvChain {
     /// Message key for (epoch, index). Old-epoch or already-consumed keys only
     /// exist in the skipped store; everything else advances the chain.
     pub fn key_for(&mut self, epoch: u16, index: u32) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
+        // `u32::MAX` is reserved as the terminal counter state. Reject it
+        // before any subtraction or chain advancement so a forged terminal
+        // record cannot drive the receive side into an index wrap.
+        if index == u32::MAX || self.next_index == u32::MAX {
+            return Err(CryptoError::Ratchet);
+        }
         if epoch < self.epoch || (epoch == self.epoch && index < self.next_index) {
             return self
                 .skipped
@@ -169,24 +195,33 @@ impl RecvChain {
             let new = next_ck(&self.ck);
             self.ck.zeroize();
             self.ck = new;
-            self.next_index += 1;
+            self.next_index = self.next_index.checked_add(1).ok_or(CryptoError::Ratchet)?;
         }
         let key = Zeroizing::new(msg_key(&self.ck));
         let new = next_ck(&self.ck);
         self.ck.zeroize();
         self.ck = new;
-        self.next_index += 1;
+        self.next_index = self.next_index.checked_add(1).ok_or(CryptoError::Ratchet)?;
         Ok(key)
     }
 
     /// Bump the epoch at live contact (doc 08 §5.2), mirroring
     /// [`SendChain::bump_epoch`] on the receive side.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
+        self.try_bump_epoch(session_material).expect("ratchet epoch exhausted");
+    }
+
+    /// Fallible form of [`RecvChain::bump_epoch`]. Epoch exhaustion must not
+    /// wrap to zero because `(epoch, index)` is part of the authenticated
+    /// message context and a wrap would permit state/key reuse.
+    pub fn try_bump_epoch(&mut self, session_material: &[u8; 32]) -> Result<(), CryptoError> {
+        let next_epoch = self.epoch.checked_add(1).ok_or(CryptoError::Ratchet)?;
         let new = bumped(&self.ck, session_material);
         self.ck.zeroize();
         self.ck = new;
-        self.epoch += 1;
+        self.epoch = next_epoch;
         self.next_index = 0;
+        Ok(())
     }
 
     /// The current epoch.

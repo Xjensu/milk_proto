@@ -1994,3 +1994,32 @@ sender/receiver chain. Until that anchor exists, no code change was justified
 by this audit and the existing behavior is intentionally left unchanged.
 The focused group unit tests pass 2 tests, and
 `cargo clippy -p mmp-node --all-targets --all-features -- -D warnings` passes.
+
+## 2026-08-09 continuation: ratchet terminal-state and prekey composition audit
+
+The focused crypto audit compared `mmp-crypto::ratchet` and `prekey` with
+specification/08 §4.2 and §5.1–§5.3 and found no safe wire-format change. The
+prekey construction remains intentionally serverless and bespoke: it derives
+`CK₀` from `eph×SPK`, optional `eph×OTK`, `sender-static×SPK`, and both identity
+public keys. The implementation now has a regression proving that changing the
+sender identity, sender exchange key, or omitting the OTK changes the derived
+root; the existing low-order-point and signed-batch tests remain green. This
+does not replace the required external review of the non-standard X3DH
+composition, especially its omission of the full X3DH sender-static×OTK term
+and its replay/suppression semantics.
+
+Live ratchet counters previously used unchecked `u32`/`u16` increments even
+though provider-local snapshots already rejected terminal values. The
+wire-neutral hardening adds fallible `try_next` and `try_bump_epoch` methods,
+uses checked arithmetic, rejects terminal receive indexes, and keeps the
+existing `next`/`bump_epoch` methods as compatibility wrappers. The wrappers
+fail closed with an explicit panic at exhaustion instead of wrapping and
+reusing `(epoch, index)`; new providers should use the fallible methods to
+surface `CryptoError::Ratchet` without panicking. Existing mmp-node/group
+callers still use the compatibility wrappers because adding a new public node
+error would be an API change; their normal output is byte-for-byte unchanged.
+The terminal boundary tests verify no key/counter mutation on the fallible
+failure path and reject an exhausted receive chain. This is a local terminal
+counter policy, not a claim that a peer can be forced to send 2³² messages;
+the external-review residual is graceful application-level recovery and
+provider migration before a production counter can exhaust.

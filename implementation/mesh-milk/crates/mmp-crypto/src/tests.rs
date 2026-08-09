@@ -276,6 +276,44 @@ fn prekey_agreement_matches_both_sides() {
 }
 
 #[test]
+fn prekey_agreement_binds_all_identity_and_dh_context() {
+    let alice = id(1);
+    let bob = id(2);
+    let mallory = id(3);
+    let mut r = rng();
+    let store = PrekeyStore::generate(&mut r, 4);
+    let batch = store.batch(&bob);
+    let agreement = sender_agree(&mut r, &alice, &bob.public(), &batch, Some(2)).unwrap();
+    let expected = *agreement.ck0;
+
+    // The KDF transcript must bind both identity keys and the sender static
+    // exchange key, not only the DH outputs. Any substituted context must
+    // therefore derive a different conversation root.
+    let wrong_sender = recipient_agree(
+        &store,
+        &bob,
+        &mallory.public(),
+        &alice.exchange_public(),
+        &agreement.eph_pub,
+        agreement.prekey_id,
+    )
+    .unwrap();
+    let wrong_sender_exchange = recipient_agree(
+        &store,
+        &bob,
+        &alice.public(),
+        &mallory.exchange_public(),
+        &agreement.eph_pub,
+        agreement.prekey_id,
+    )
+    .unwrap();
+    let signed_only = sender_agree(&mut r, &alice, &bob.public(), &batch, None).unwrap();
+    assert_ne!(expected, *wrong_sender);
+    assert_ne!(expected, *wrong_sender_exchange);
+    assert_ne!(expected, *signed_only.ck0);
+}
+
+#[test]
 fn prekey_and_sealed_open_reject_low_order_points() {
     let alice = id(1);
     let bob = id(2);
@@ -334,6 +372,34 @@ fn ratchet_epoch_bump_stays_in_sync() {
     let (k, e, i) = send.next();
     assert_eq!(e, 1);
     assert_eq!(*recv.key_for(e, i).unwrap(), *k);
+}
+
+#[test]
+fn ratchet_counter_and_epoch_exhaustion_fail_closed_without_mutation() {
+    let mut send = SendChain::new([0x11; 32], u16::MAX);
+    send.next_index = u32::MAX;
+    let send_snapshot = send.snapshot();
+    assert_eq!(send.try_next(), Err(CryptoError::Ratchet));
+    assert_eq!(send.snapshot(), send_snapshot);
+    assert_eq!(send.try_bump_epoch(&[0x22; 32]), Err(CryptoError::Ratchet));
+    assert_eq!(send.snapshot(), send_snapshot);
+
+    let mut recv = RecvChain::new([0x33; 32], u16::MAX, 8);
+    assert_eq!(recv.key_for(u16::MAX, u32::MAX), Err(CryptoError::Ratchet));
+    assert_eq!(recv.try_bump_epoch(&[0x44; 32]), Err(CryptoError::Ratchet));
+    assert!(recv.snapshot().is_err());
+}
+
+#[test]
+fn ratchet_terminal_index_is_not_emitted_or_accepted() {
+    let mut send = SendChain::new([0x55; 32], 0);
+    send.next_index = u32::MAX - 1;
+    let (_, epoch, index) = send.try_next().unwrap();
+    assert_eq!((epoch, index), (0, u32::MAX - 1));
+    assert_eq!(send.try_next(), Err(CryptoError::Ratchet));
+
+    let mut recv = RecvChain::new([0x55; 32], 0, 8);
+    assert!(recv.key_for(0, u32::MAX).is_err());
 }
 
 #[test]
