@@ -59,7 +59,11 @@ impl OriginBuckets {
         let burst = ORIGIN_BUCKET_BURST * 1000 * mult;
         // Refill: rate/h → milli-bytes per ms.
         let elapsed = now_ms.saturating_sub(bucket.last_refill);
-        bucket.level = (bucket.level + elapsed * ORIGIN_BUCKET_RATE_PER_H * mult / 3600).min(burst);
+        let refill = elapsed
+            .saturating_mul(ORIGIN_BUCKET_RATE_PER_H)
+            .saturating_mul(mult)
+            / 3600;
+        bucket.level = bucket.level.saturating_add(refill).min(burst);
         bucket.last_refill = now_ms;
 
         let cost = u64::from(size) * 1000;
@@ -118,5 +122,15 @@ mod tests {
         assert_eq!(b.len(), 1);
         b.compact(100, 100);
         assert!(b.is_empty());
+    }
+
+    #[test]
+    fn huge_clock_jump_saturates_refill_without_overflow() {
+        let mut b = OriginBuckets::new();
+        let origin = Id16([8; 16]);
+
+        assert!(b.admit(&origin, 1, 0, false));
+        assert!(b.admit(&origin, ORIGIN_BUCKET_BURST as u32, u64::MAX, false));
+        assert!(!b.admit(&origin, 1, u64::MAX, false));
     }
 }
