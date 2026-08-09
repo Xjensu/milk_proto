@@ -25,6 +25,17 @@ use crate::identity::{verify, Identity};
 pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 /// Snow message overhead headroom (two AEAD tags + two public keys).
 const HS_OVERHEAD: usize = 128;
+/// Fixed receive storage for one Noise XX handshake message.
+///
+/// The v1 HELLO decoder caps the suite vector at 16 bytes.  Together with the
+/// 32-byte identity key, the largest v1 handshake payload is therefore 56
+/// bytes; the largest XX message (the responder's `e, ee, s, es, payload`)
+/// is 152 bytes after the two public-key/DH tokens and two AEAD tags.  A
+/// 256-byte buffer leaves margin for the framing headroom while keeping
+/// pre-auth receive memory independent of attacker-controlled input length.
+/// Inputs above this bound are not valid v1 handshake messages and are
+/// rejected before calling into `snow`.
+pub(crate) const MAX_HANDSHAKE_MESSAGE: usize = 256;
 
 /// Cipher suites this build can speak (doc 03 §8: 1-byte registry pinned in
 /// the handshake). Only 0x01 has a real construction; 0x02 (hybrid ML-KEM)
@@ -47,6 +58,10 @@ pub struct NoiseHandshake {
     hs: Option<snow::HandshakeState>,
     initiator: bool,
     local_payload: Vec<u8>,
+    /// Reused fixed-size output for `snow::HandshakeState::read_message`.
+    /// This must not be resized from the received message length: handshake
+    /// input is unauthenticated and can be supplied by an active peer.
+    read_buf: Vec<u8>,
     remote_intro: Option<(Key32, Hello)>,
 }
 
@@ -98,6 +113,7 @@ impl NoiseHandshake {
                 hs: Some(hs),
                 initiator: true,
                 local_payload: payload_of(identity, hello),
+                read_buf: alloc::vec![0u8; MAX_HANDSHAKE_MESSAGE],
                 remote_intro: None,
             },
         ))
@@ -114,18 +130,28 @@ impl NoiseHandshake {
             hs: Some(hs),
             initiator: false,
             local_payload: payload_of(identity, hello),
+            read_buf: alloc::vec![0u8; MAX_HANDSHAKE_MESSAGE],
             remote_intro: None,
         })
     }
 
     /// Drive one inbound HS message. Read → (maybe) write → (maybe) complete.
     pub fn advance(&mut self, incoming: &[u8]) -> Result<HandshakeOutcome, CryptoError> {
+        // Do this check before taking the state or invoking Snow.  The input
+        // is still unauthenticated at this point; accepting arbitrary Noise
+        // message lengths would otherwise force a receive allocation tied to
+        // attacker input (the session envelope cap is larger than the valid
+        // v1 XX message bound).
+        if incoming.len() > MAX_HANDSHAKE_MESSAGE {
+            return Err(CryptoError::Noise);
+        }
         let mut hs = self.hs.take().ok_or(CryptoError::Noise)?;
 
-        let mut payload = alloc::vec![0u8; incoming.len().max(HS_OVERHEAD)];
-        let n = hs.read_message(incoming, &mut payload).map_err(|_| CryptoError::Noise)?;
+        let n = hs
+            .read_message(incoming, &mut self.read_buf)
+            .map_err(|_| CryptoError::Noise)?;
         if n > 0 {
-            let (peer_pk, hello) = parse_payload(&payload[..n])?;
+            let (peer_pk, hello) = parse_payload(&self.read_buf[..n])?;
             // Cipher-agility gate (doc 03 §8): refuse rather than silently
             // fall back if the peer names no suite this build can speak.
             if !hello.suites.iter().any(|s| SUPPORTED_SUITES.contains(s)) {

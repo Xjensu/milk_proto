@@ -11,7 +11,7 @@ use mmp_types::ids::{Id16, Key32};
 use crate::group::{LocalSenderKey, RemoteSenderKey, SenderKeyDist};
 use crate::identity::{verify, Identity};
 use crate::merkle;
-use crate::noise::NoiseHandshake;
+use crate::noise::{NoiseHandshake, MAX_HANDSHAKE_MESSAGE};
 use crate::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use crate::ratchet::{direction_chain, RecvChain, SendChain};
 use crate::receipt::{mac_eq, receipt_key, receipt_mac};
@@ -83,6 +83,24 @@ fn noise_xx_handshake_agrees_and_binds() {
     assert_eq!(chan_b.decrypt(&ct).unwrap(), b"ping");
     let ct = chan_b.encrypt(b"pong").unwrap();
     assert_eq!(chan_a.decrypt(&ct).unwrap(), b"pong");
+}
+
+#[test]
+fn noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state() {
+    let alice = id(1);
+    let bob = id(2);
+    let (msg1, _a) = NoiseHandshake::initiator(&alice, &hello()).unwrap();
+    let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
+
+    // A hostile peer can reach this path before any identity is authenticated.
+    // The fixed bound must be checked before Snow is called or the handshake
+    // state is taken, and the normal first message must remain usable after a
+    // rejected oversized attempt.
+    let oversized = vec![0xa5; MAX_HANDSHAKE_MESSAGE + 1];
+    assert!(matches!(b.advance(&oversized), Err(CryptoError::Noise)));
+    let out_b = b.advance(&msg1).unwrap();
+    assert!(out_b.reply.is_some());
+    assert!(out_b.reply.as_ref().is_some_and(|m| m.len() <= MAX_HANDSHAKE_MESSAGE));
 }
 
 #[test]

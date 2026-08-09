@@ -50,6 +50,19 @@ repository-wide security certification or an external cryptographic review.
    reserving vectors for the reconciliation/request paths. The focused
    `mmp-core` suite passed with 64 tests after the boundary regression.
 
+6. **Pre-auth Noise receive storage.** `NoiseHandshake::advance` now rejects
+   an HS input above `MAX_HANDSHAKE_MESSAGE = 256` before taking the Noise
+   state or calling `snow`. Each handshake allocates one fixed 256-byte
+   receive buffer and reuses it for every `read_message` call; the buffer is
+   never resized from attacker input. The bound is wire-neutral for the
+   current v1 profile: `Hello::decode` caps suites at 16 bytes, so the largest
+   identity-plus-HELLO payload is 56 bytes, and the largest standard Noise XX
+   message carrying that payload is 152 bytes. The remaining margin is for
+   framing/implementation headroom, not an extension to the wire format.
+   `noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state` covers
+   early rejection and confirms that a subsequent valid first message still
+   progresses the handshake.
+
 ## Residual gaps requiring a reviewed follow-up
 
 ### Clear envelope type is not authenticated by Noise
@@ -82,15 +95,23 @@ non-canonical or truncated value in a release build. A future API hardening
 should add a fallible `try_encode_payload`/`try_encode` seam (or enforce
 constructor invariants) without changing any accepted v1 bytes.
 
-### Pre-auth Noise parsing allocates with input length
+### Pre-auth Noise parser residual caveats
 
-The session reassembly buffer is bounded, but `NoiseHandshake::advance` creates
-an output `Vec` sized to the received handshake message (up to the 4096-byte
-envelope cap). This is bounded per session, yet it does not literally satisfy
-the frozen parser guidance that pre-auth parsing use fixed-size/streaming
-storage rather than allocation proportional to attacker input. The fix needs a
-review of the `snow` API and the embedded allocation budget; do not claim the
-pre-auth zero-allocation requirement is closed from the current tests.
+The reference `mmp-crypto`/`snow` path no longer allocates a receive buffer
+proportional to unauthenticated input: the fixed 256-byte buffer is allocated
+once when the handshake object is created. This closes that specific
+allocation-shape gap without changing any accepted current v1 handshake bytes.
+It does **not** claim zero total allocation: `Hello::decode` still creates a
+bounded suite vector (maximum 16 bytes), and outbound reply buffers are
+allocated from the locally supplied HELLO. `Hello::encode` remains an
+infallible local API, so callers should validate their own HELLO before
+construction; non-conforming oversized suite lists are rejected by the peer.
+
+The cap is enforced in the standard-library `snow` implementation only. The
+planned embedded/no-std Noise fallback has a separate allocation and parser
+review gate; this handoff must not be read as evidence that that future path is
+closed. A future `snow` upgrade or cipher-suite revision must re-derive the
+bound and rerun the handshake vectors before changing it.
 
 ## Verification run
 
@@ -99,10 +120,11 @@ cargo test -p mmp-core --lib -- --test-threads=1
   64 passed
 cargo test -p mmp-core --lib noise_tag_is_counted_at_envelope_boundary -- --test-threads=1
   1 passed
+cargo test -p mmp-crypto --lib noise_xx -- --test-threads=1
+  5 passed
 ```
 
 The full workspace matrix and release gates remain the orchestrator's
 responsibility. Native Android/iOS radio and background behavior, Linux/BlueZ
 two-device exchange, MCU linked-image/HIL behavior, and independent RBSR
 priority-domain conformance remain external gates.
-
