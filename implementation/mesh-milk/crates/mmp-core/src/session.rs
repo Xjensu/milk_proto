@@ -43,6 +43,32 @@ const fn frame_payload_within_cap(len: usize) -> bool {
     len <= MAX_FRAME_PAYLOAD
 }
 
+/// Check collection widths before calling the public infallible frame encoder.
+///
+/// `Frame::encode_payload` is intentionally kept as the existing API, but it
+/// serializes several collection lengths with `u8`/`u16` casts.  A local host
+/// (or a compromised host callback) must not be able to turn those casts into
+/// a different wire value in an otherwise live session.  The aggregate byte
+/// cap is checked after encoding; these checks cover only the narrower field
+/// widths that could truncate before that cap is observed.
+fn frame_wire_widths_valid(frame: &Frame) -> bool {
+    match frame {
+        Frame::Summary(summary) => {
+            summary.receipt_buckets.len() <= u8::MAX as usize
+                && summary.claim_digest.len() <= u8::MAX as usize
+                && summary.group_hints.len() <= u8::MAX as usize
+                && summary.want_heads.len() <= u8::MAX as usize
+                && summary.receipt_buckets.iter().all(|bucket| bucket.bloom.len() <= u16::MAX as usize)
+                && summary.want_heads.iter().all(|heads| heads.heads.len() <= u8::MAX as usize)
+        }
+        Frame::ReconRange { ranges, .. } => ranges.len() <= u8::MAX as usize,
+        Frame::ReconIds { ids, .. } | Frame::Want(ids) => ids.len() <= u16::MAX as usize,
+        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => bitmap.len() <= u16::MAX as usize,
+        Frame::Error { detail, .. } => detail.len() <= 256,
+        _ => true,
+    }
+}
+
 const fn envelope_payload_within_cap(len: usize) -> bool {
     len <= MAX_ENVELOPE_PAYLOAD
 }
@@ -766,6 +792,13 @@ impl SessionEngine {
             self.protocol_error(errcode::PROTOCOL);
             return;
         }
+        if !frame_wire_widths_valid(f) {
+            // The public encoder is infallible for API compatibility, so
+            // reject values whose collection lengths would truncate before
+            // any bytes are encrypted or queued.
+            self.protocol_error(errcode::PROTOCOL);
+            return;
+        }
         let payload = f.encode_payload();
         if !frame_payload_within_cap(payload.len()) {
             self.protocol_error(errcode::OVERSIZE);
@@ -852,9 +885,13 @@ impl SessionEngine {
 
 #[cfg(test)]
 mod wire_budget_tests {
-    use super::{envelope_payload_within_cap, frame_payload_within_cap, valid_recon_domain};
+    use super::{
+        envelope_payload_within_cap, frame_payload_within_cap, frame_wire_widths_valid, valid_recon_domain, Phase,
+        SessionEngine, SessionEvent,
+    };
     use mmp_types::consts::MAX_FRAME_PAYLOAD;
-    use mmp_types::frame::{read_envelope, Frame, MAX_ENVELOPE_PAYLOAD, FT_BUNDLE, FT_FRIEND_OFFER};
+    use mmp_types::frame::{read_envelope, Frame, Hello, Range, MAX_ENVELOPE_PAYLOAD, FT_BUNDLE, FT_FRIEND_OFFER};
+    use mmp_types::ids::Id16;
     use mmp_types::WireError;
 
     #[test]
@@ -883,6 +920,47 @@ mod wire_budget_tests {
     fn receive_caps_reject_aggregate_plaintext_before_frame_decode() {
         let payload = vec![0u8; MAX_FRAME_PAYLOAD + 1];
         assert_eq!(Frame::decode_payload(FT_FRIEND_OFFER, &payload), Err(WireError::Oversize));
+    }
+
+    #[test]
+    fn outbound_encoder_width_guard_rejects_truncating_lengths() {
+        let ranges = Frame::ReconRange {
+            domain: 0,
+            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 256],
+        };
+        assert!(!frame_wire_widths_valid(&ranges));
+
+        let ids = vec![Id16::MIN; u16::MAX as usize + 1];
+        assert!(!frame_wire_widths_valid(&Frame::ReconIds {
+            domain: 0,
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            ids: ids.clone(),
+        }));
+        assert!(!frame_wire_widths_valid(&Frame::Want(ids)));
+        assert!(!frame_wire_widths_valid(&Frame::BlobReq {
+            root: Id16::MIN,
+            block: 0,
+            bitmap: vec![0u8; u16::MAX as usize + 1],
+        }));
+        assert!(!frame_wire_widths_valid(&Frame::Error { code: 1, detail: vec![0u8; 257] }));
+    }
+
+    #[test]
+    fn outbound_encoder_width_guard_closes_before_queueing_truncated_frame() {
+        let local = mmp_crypto::Identity::from_seed(&[7u8; 32]);
+        let hello = Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 };
+        let mut session = SessionEngine::responder(&local, &hello, 0).unwrap();
+        session.phase = Phase::Established;
+        session.tx_credits = 8;
+        session.send_frame(&Frame::ReconRange {
+            domain: 0,
+            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 256],
+        });
+
+        assert_eq!(session.phase, Phase::Closed);
+        assert!(matches!(session.poll_event(), Some(SessionEvent::Closed)));
+        assert!(session.poll_out().is_none());
     }
 
     #[test]

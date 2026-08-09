@@ -78,6 +78,16 @@ repository-wide security certification or an external cryptographic review.
    that use a bounded msg1 payload while preventing unauthenticated HELLO or
    identity state from influencing the session. No specification file changed.
 
+8. **Outbound frame-width guard.** Before calling the public infallible
+   `Frame::encode_payload()` API, `SessionEngine` now checks every `u8`/`u16`
+   collection width that the encoder serializes by cast (SUMMARY counts and
+   heads, RBSR ranges/IDs, WANT IDs, blob bitmaps, and ERROR detail). A value
+   outside its wire width fails closed with `PROTOCOL` before encryption or
+   queueing. The aggregate 4096-byte check remains after encoding. The focused
+   `outbound_encoder_width_guard_rejects_truncating_lengths` regression covers
+   the guarded branches without changing the frame bytes accepted from valid
+   callers.
+
 ## Residual gaps requiring a reviewed follow-up
 
 ### Clear envelope type is not authenticated by Noise
@@ -103,10 +113,11 @@ frame as untrusted input and perform their own semantic validation.
 
 `Frame::encode_payload()` and `Frame::encode()` use debug assertions for the
 aggregate 4096-byte cap and cast collection lengths to wire-width integers.
-`SessionEngine` validates the encoded plaintext and post-Noise ciphertext
-before transmission, so the network path fails closed. Other local callers
-that invoke the public infallible encoders directly can still construct a
-non-canonical or truncated value in a release build. A future API hardening
+`SessionEngine` now validates those field widths before encoding, then checks
+the encoded plaintext and post-Noise ciphertext before transmission, so its
+network path fails closed without emitting a truncated value. Other local
+callers that invoke the public infallible encoders directly can still construct
+a non-canonical or truncated value in a release build. A future API hardening
 should add a fallible `try_encode_payload`/`try_encode` seam (or enforce
 constructor invariants) without changing any accepted v1 bytes.
 
