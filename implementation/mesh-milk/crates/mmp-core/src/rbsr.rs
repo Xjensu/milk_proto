@@ -535,6 +535,27 @@ mod tests {
         assert!(replies.iter().all(|frame| {
             recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)
         }));
+
+        // The terminal-list and echo branches must preserve the same base
+        // domain as the split branch.  This is deliberately a transcript
+        // invariant only: declared priority is not a key until an approved
+        // erratum defines a partition identifier and legacy behavior.
+        let mut empty = FixedIds { ids: Vec::new() };
+        let mut terminal = Reconciler::new(3);
+        let terminal_range = Range { lo: Id16::MIN, hi: Id16::MAX, count: 1, fp: 1 };
+        let terminal_frames = terminal.on_range(&terminal_range, false, &mut empty);
+        assert!(terminal_frames.iter().all(|frame| {
+            recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)
+        }));
+
+        let mut echo_source = FixedIds { ids: Vec::new() };
+        let mut echo = Reconciler::new(3);
+        let _ = echo.init_frame(&mut echo_source);
+        let matching = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: fingerprint(&[]) };
+        let echo_frames = echo.on_range(&matching, false, &mut echo_source);
+        assert!(echo_frames.iter().all(|frame| {
+            recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)
+        }));
     }
 
     fn recon_frame_domain(frame: &Frame) -> Option<u8> {
