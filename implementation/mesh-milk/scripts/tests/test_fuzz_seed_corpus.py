@@ -104,6 +104,22 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "case-insensitive duplicate seed name"):
                 CORPUS.write_corpus(Path(root) / "corpus", {"fuzz_bundle": seeds})
 
+    def test_write_rejects_windows_invalid_seed_filename_components(self) -> None:
+        for name in ("contains:colon", "contains*glob", "contains\ncontrol", "trailing.", "trailing "):
+            seed = CORPUS.Seed(target="fuzz_bundle", name=name, data=b"seed", source="test")
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as root:
+                with self.assertRaisesRegex(ValueError, "invalid corpus seed filename"):
+                    CORPUS.write_corpus(Path(root) / "corpus", {"fuzz_bundle": (seed,)})
+
+    def test_write_rejects_unicode_normalization_seed_name_collisions(self) -> None:
+        seeds = (
+            CORPUS.Seed(target="fuzz_bundle", name="café", data=b"one", source="test"),
+            CORPUS.Seed(target="fuzz_bundle", name="cafe\u0301", data=b"two", source="test"),
+        )
+        with tempfile.TemporaryDirectory() as root:
+            with self.assertRaisesRegex(ValueError, "case-insensitive duplicate seed name"):
+                CORPUS.write_corpus(Path(root) / "corpus", {"fuzz_bundle": seeds})
+
     def test_write_rejects_symlinked_target_when_supported(self) -> None:
         if not hasattr(os, "symlink"):
             self.skipTest("symlink support is unavailable")

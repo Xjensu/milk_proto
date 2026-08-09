@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -29,6 +30,7 @@ GENERATED_PREFIX = "mmp-seed-"
 MAX_VECTOR_FILE_BYTES = 1 << 20
 MAX_VECTOR_ENTRIES = 512
 MAX_SEED_BYTES = 8192
+_WINDOWS_FORBIDDEN_FILENAME_CHARS = frozenset('<>:"/\\|?*')
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,7 @@ def _hex(value: Any, *, source: str) -> bytes:
 
 
 def _seed(target: str, name: str, data: bytes, source: str) -> Seed:
-    if not name or "/" in name or "\\" in name or name in {".", ".."}:
+    if not _safe_filename_component(name):
         raise ValueError(f"invalid seed name {name!r}")
     # Empty corpus files are silently discarded by some libFuzzer versions;
     # use one-byte truncations where an empty parser input is relevant.
@@ -288,17 +290,38 @@ def _seed_path(target_dir: Path, seed: Seed) -> Path:
     """Return one safe generated filename below a validated target directory."""
 
     filename = seed.filename
-    if not filename or filename in {".", ".."} or Path(filename).name != filename or "/" in filename or "\\" in filename:
+    if (
+        not _safe_filename_component(seed.name)
+        or not _safe_filename_component(filename)
+        or Path(filename).name != filename
+    ):
         raise ValueError(f"invalid corpus seed filename: {filename!r}")
     return target_dir / filename
 
 
+def _safe_filename_component(value: Any) -> bool:
+    """Return whether a generated component is portable across host filesystems."""
+
+    return (
+        isinstance(value, str)
+        and bool(value)
+        and value not in {".", ".."}
+        and not value.endswith((".", " "))
+        and all(
+            ord(character) >= 0x20 and character not in _WINDOWS_FORBIDDEN_FILENAME_CHARS
+            for character in value
+        )
+    )
+
+
 def _validate_seed_names(target: str, seeds: Iterable[Seed]) -> None:
-    """Reject generated filenames that collide on case-insensitive filesystems."""
+    """Reject generated names that collide on case-insensitive filesystems."""
 
     seen: dict[str, str] = {}
     for seed in seeds:
-        folded = seed.name.casefold()
+        if not _safe_filename_component(seed.name):
+            raise ValueError(f"invalid corpus seed filename: {seed.name!r}")
+        folded = unicodedata.normalize("NFC", seed.name).casefold()
         previous = seen.get(folded)
         if previous is not None:
             raise ValueError(
