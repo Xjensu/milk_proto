@@ -170,6 +170,24 @@ slot, so a Sybil stream cannot exhaust the 256-peer table without causing any
 blob work. Matching requests remain subject to the same per-contact budget and
 the focused node suite remains green.
 
+### Continuation cycle (2026-08-09)
+
+Three delegated follow-up audits produced two implementation-only safeguards
+and one explicit research boundary. `473c298` adds an RBSR regression that
+locks the current D3 transcript to base domain `3` (with only the existing
+reply flag variation); it prevents an implementation from inventing priority
+partitioning before an approved normative erratum. `daca0ad` adds a bounded,
+deterministic EDR experiment matrix with transmit multipliers `0.25, 0.50,
+0.75, 1, 2, 4, 8`; it preserves the toy hazard product and labels the `1.0`
+point as the unchanged baseline, but does not alter routing or scheduling.
+Finally, `5a50e43` makes `known_identities` session-scoped: entries are
+released when the peer's last live link is removed and retained across
+multiple concurrent links. This closes the process-lifetime map-growth issue
+without arbitrary TTLs or delayed-FRIEND_ACK breakage. Group epoch maps remain
+uncapped because their retention semantics still require a normative anchor;
+the handoff now records the exact conformance tests needed before such a policy
+can be enabled.
+
 ### Verification checkpoint (2026-08-09)
 
 The post-audit implementation gate is green on the Windows host: the complete
