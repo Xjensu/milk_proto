@@ -2605,6 +2605,9 @@ impl NodeCore {
     /// and groups restore from a persisted snapshot.
     fn rebuild_blob_index(&mut self) {
         for meta in self.store.all_meta() {
+            if meta.class != class::SYMBOL {
+                continue;
+            }
             let Some((_, bytes)) = self.store.get(&meta.id) else { continue };
             // Snapshot checksums detect accidental corruption, not an
             // attacker who can rewrite the local image.  Re-apply the same
@@ -2613,9 +2616,6 @@ impl NodeCore {
             if !stored_bundle_is_valid(&meta, &bytes) {
                 self.store.remove(&meta.id);
                 self.deindex_symbol(&meta.id);
-                continue;
-            }
-            if meta.class != class::SYMBOL {
                 continue;
             }
             let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
