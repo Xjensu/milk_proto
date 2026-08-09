@@ -204,6 +204,35 @@ pub struct Counters {
     pub meetings_run: u64,
 }
 
+/// Contact-generator labels for research-only paired comparisons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactGeneratorKind {
+    UniformRandom,
+    PeriodicClustered,
+    SocialClustered,
+}
+
+/// Comparable simulator metrics captured after one contact-generator run.
+///
+/// This is an observation bundle for experiment reports, not a protocol or
+/// routing input. The optional bridge count is populated only by generators
+/// that expose bridge transitions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContactScenarioMetrics {
+    pub generator: ContactGeneratorKind,
+    pub meetings: u64,
+    pub bridge_meetings: Option<usize>,
+    pub simulated_elapsed_ms: u64,
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub messages_delivered: u64,
+    pub delivery_ratio: f64,
+    pub p50_latency_ms: Option<u64>,
+    pub p90_latency_ms: Option<u64>,
+    pub store_high_water_bytes: u64,
+    pub quota_ok: bool,
+}
+
 /// The simulator: N nodes, a virtual clock, and a contact schedule.
 pub struct Sim {
     nodes: Vec<Node>,
@@ -627,6 +656,30 @@ impl Sim {
             let quota = if n.tier() == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
             (n.store_len() as u64) * (MAX_BUNDLE as u64) <= quota
         })
+    }
+
+    /// Capture a deterministic, comparable metric block for a research run.
+    /// `bridge_meetings` is supplied by a generator such as
+    /// [`SocialClusteredMobility`] and is otherwise `None`.
+    pub fn research_metrics(
+        &self,
+        generator: ContactGeneratorKind,
+        bridge_meetings: Option<usize>,
+    ) -> ContactScenarioMetrics {
+        ContactScenarioMetrics {
+            generator,
+            meetings: self.counters.meetings_run,
+            bridge_meetings,
+            simulated_elapsed_ms: self.now_ms,
+            messages_sent: self.counters.messages_sent,
+            messages_received: self.counters.messages_received,
+            messages_delivered: self.counters.messages_delivered,
+            delivery_ratio: self.delivery_ratio(),
+            p50_latency_ms: self.latency_percentile_ms(0.50),
+            p90_latency_ms: self.latency_percentile_ms(0.90),
+            store_high_water_bytes: self.store_high_water_bytes,
+            quota_ok: self.quota_ok(),
+        }
     }
 }
 

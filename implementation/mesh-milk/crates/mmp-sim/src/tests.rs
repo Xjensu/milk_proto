@@ -76,6 +76,60 @@ fn social_clustered_run_reports_only_contact_generator_metrics() {
     assert_eq!(sim.counters().meetings_run, 40);
 }
 
+fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {
+    const MEETINGS: usize = 12;
+
+    fn setup(seed: u64) -> Sim {
+        let mut sim = Sim::new(12, seed);
+        for k in 0..4 {
+            let from = k;
+            let to = 11 - k;
+            sim.introduce(from, to);
+            sim.send_text(from, to, "paired contact model measurement");
+        }
+        sim
+    }
+
+    let mut random = setup(seed);
+    random.run_random_meetings(MEETINGS, 1_000, 2_000);
+    let random_metrics = random.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+
+    let mut periodic = setup(seed);
+    assert!(periodic.run_clustered_meetings(MEETINGS, 1_000, 2_000, 3, 4));
+    let periodic_metrics = periodic.research_metrics(crate::ContactGeneratorKind::PeriodicClustered, None);
+
+    let mut social = setup(seed);
+    let social_run = social
+        .run_social_clustered_meetings(MEETINGS, 1_000, 2_000, 3, 500)
+        .expect("valid social profile");
+    let social_metrics = social.research_metrics(
+        crate::ContactGeneratorKind::SocialClustered,
+        Some(social_run.bridge_meetings),
+    );
+
+    [random_metrics, periodic_metrics, social_metrics]
+}
+
+#[test]
+fn contact_model_matrix_is_reproducible_and_reports_comparable_metrics() {
+    let first = contact_model_matrix(0x0510_C1A1);
+    let second = contact_model_matrix(0x0510_C1A1);
+    assert_eq!(first, second, "paired contact models must be reproducible");
+    assert_eq!(first[0].generator, crate::ContactGeneratorKind::UniformRandom);
+    assert_eq!(first[1].generator, crate::ContactGeneratorKind::PeriodicClustered);
+    assert_eq!(first[2].generator, crate::ContactGeneratorKind::SocialClustered);
+    assert_eq!(first[0].meetings, first[1].meetings);
+    assert_eq!(first[1].meetings, first[2].meetings);
+    assert_eq!(first[0].bridge_meetings, None);
+    assert_eq!(first[1].bridge_meetings, None);
+    assert!(first[2].bridge_meetings.is_some());
+    for metrics in first {
+        assert!(metrics.quota_ok, "contact model must preserve store quota safety");
+        assert_eq!(metrics.messages_sent, 4);
+    }
+    eprintln!("contact_model_matrix: {first:?}");
+}
+
 #[test]
 fn ten_node_random_mesh_delivers_and_receipts() {
     const N: usize = 10;

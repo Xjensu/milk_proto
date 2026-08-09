@@ -168,3 +168,22 @@ new knob should be promoted without trace evidence and reproducible metrics.
 - `implementation/mesh-milk/crates/mmp-sim/src/tests_scale.rs`: ignored manual
   metric capture.
 - `specification/`: unchanged.
+
+## 2026-08-09 paired contact-model comparison
+
+The research-only `ContactScenarioMetrics` seam and the active
+`contact_model_matrix_is_reproducible_and_reports_comparable_metrics` test now
+run the same small workload through three generators: uniform-random,
+periodic-clustered, and social-clustered. Each run uses an independent
+`Sim::new` with the same seed, node count, message setup, meeting count, and
+gap bounds. The matrix records the generator label, meeting count, simulated
+elapsed time, sent/received/delivered counts, delivery ratio, p50/p90 latency,
+store high-water bytes, quota status, and (for social clustering) realized
+bridge count.
+
+The test asserts exact repeatability and comparable workload/quota fields; it
+does not require one generator to deliver more than another. Short paired runs
+can legitimately report zero delivery or missing latency percentiles, so the
+printed metrics are regression evidence and input validation, not a mobility
+or performance claim. Long trace-replay runs must retain the same metric block
+and add confidence intervals before any OQ-4 interpretation.
