@@ -195,10 +195,32 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_release_job_builds_from_the_locked_dependency_graph(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-        steps = workflow["jobs"]["release"]["steps"]
+        release = workflow["jobs"]["release"]
+        steps = release["steps"]
         build = next(step for step in steps if step.get("run", "").startswith("cargo build -p mmp-cli"))
         self.assertIn("--release", build["run"])
         self.assertIn("--locked", build["run"])
+
+        targets = {
+            entry["artifact_name"]: entry["target"]
+            for entry in release["strategy"]["matrix"]["include"]
+        }
+        self.assertEqual(
+            targets,
+            {
+                "mmp-cli-linux-x86_64": "x86_64-unknown-linux-gnu",
+                "mmp-cli-windows-x86_64.exe": "x86_64-pc-windows-msvc",
+                "mmp-cli-macos-x86_64": "x86_64-apple-darwin",
+            },
+        )
+        toolchain = next(
+            step for step in steps if step.get("uses") == "dtolnay/rust-toolchain@stable"
+        )
+        self.assertEqual(toolchain["with"]["targets"], "${{ matrix.target }}")
+        self.assertIn("--target ${{ matrix.target }}", build["run"])
+
+        copy = next(step for step in steps if step.get("run", "").startswith("cp target/"))
+        self.assertIn("target/${{ matrix.target }}/release/${{ matrix.bin }}", copy["run"])
 
     def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
         """Keep fuzz commands relative to the workflow's default directory."""

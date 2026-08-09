@@ -348,12 +348,15 @@ jobs:
           - os: ubuntu-latest
             bin: mmp-cli
             artifact_name: mmp-cli-linux-x86_64
+            target: x86_64-unknown-linux-gnu
           - os: windows-latest
             bin: mmp-cli.exe
             artifact_name: mmp-cli-windows-x86_64.exe
+            target: x86_64-pc-windows-msvc
           - os: macos-latest
             bin: mmp-cli
             artifact_name: mmp-cli-macos-x86_64
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -363,8 +366,10 @@ jobs:
           --repo ../..
           --commit "${{ github.sha }}"
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build -p mmp-cli --release --locked
-      - run: cp target/release/${{ matrix.bin }} ${{ matrix.artifact_name }}
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build -p mmp-cli --release --locked --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.artifact_name }}
       - uses: sigstore/cosign-installer@v3
       - run: >
           cosign sign-blob --yes ${{ matrix.artifact_name }}
