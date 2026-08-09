@@ -237,8 +237,12 @@ impl Hello {
     /// Strict decode of the wire form produced by [`Hello::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Hello, WireError> {
         let mut r = Reader::new(bytes);
+        let ver = r.u8()?;
+        if ver != crate::bundle::WIRE_VERSION {
+            return Err(WireError::BadVersion);
+        }
         let hello = Hello {
-            ver: r.u8()?,
+            ver,
             suites: r.varbytes(16)?.to_vec(),
             tier: r.u8()?,
             flags: r.u16()?,
@@ -641,6 +645,8 @@ pub fn write_envelope(typ: u8, payload: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
+
     use super::*;
 
     #[test]
@@ -648,5 +654,14 @@ mod tests {
         // `Range` is 44 bytes on the wire. A maximum count with no records
         // must fail before reserving 255 `Range` values.
         assert_eq!(Frame::decode_payload(FT_RECON_RANGE, &[0, 255]), Err(WireError::Truncated));
+    }
+
+    #[test]
+    fn hello_rejects_wrong_wire_version() {
+        let hello = Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 };
+        let mut encoded = hello.encode();
+        encoded[0] = 2;
+
+        assert_eq!(Hello::decode(&encoded), Err(WireError::BadVersion));
     }
 }
