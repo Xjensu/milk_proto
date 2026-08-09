@@ -810,6 +810,31 @@ manifest, and (b) require an external cryptographic/provider review plus
 platform measurements before any MMP/Φ mechanism can alter routing, timing, or
 wire semantics. No file under `specification/` was modified.
 
+### Orchestration continuation XVI (2026-08-09)
+
+The mobile-artifact audit produced `c887492`. The iOS XCFramework verifier now
+rejects any `AvailableLibraries` slice outside the two explicitly built
+arm64 targets. This prevents an untested architecture from being accepted as
+release evidence. The validator regression and related mobile artifact/API
+tests pass; macOS/Xcode, native bindings, and physical-device interoperability
+remain external.
+
+The storage audit produced `6fa7700`. `SnapshotStore::persist` now validates
+every in-memory record's declared `BundleMeta::size` against its actual body
+before creating a replacement image. The legacy infallible `BundleStore::put`
+surface can still receive inconsistent metadata, but persistence now fails
+closed with `InvalidData`, leaves the last primary image intact, and creates no
+temporary replacement. This closes a concrete false-durability path without
+pretending to implement the E7 reservation/commit API.
+
+The embedded/no-std audit made no code change. The target dependency closure
+and layer checks pass, while the following remain genuinely external: a
+fixed-capacity flash-log store, Embassy executor integration, nRF52/ESP32 TAL
+backends, board/linker configuration, stripped-image RAM/flash measurements,
+Reed–Solomon target benchmarking, and phone-to-sensor hardware-in-the-loop
+recovery tests. No file under `specification/` or any protected dirty path was
+modified.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
