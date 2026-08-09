@@ -363,7 +363,7 @@ jobs:
           --repo ../..
           --commit "${{ github.sha }}"
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo build -p mmp-cli --release
+      - run: cargo build -p mmp-cli --release --locked
       - run: cp target/release/${{ matrix.bin }} ${{ matrix.artifact_name }}
       - uses: sigstore/cosign-installer@v3
       - run: >
