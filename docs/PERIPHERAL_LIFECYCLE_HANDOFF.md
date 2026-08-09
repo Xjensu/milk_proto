@@ -58,3 +58,18 @@ presented as physical BLE evidence.
 - No `specification/` file was touched.
 - A successful host test proves only the writer-generation invariant, not a
   performance, battery, or reconnect guarantee.
+
+## 2026-08-09 beacon-advertisement boundary
+
+The Linux peripheral path now validates the fixed v1 beacon length before
+registering an advertisement with BlueZ (`a6250ff`). Payloads of 23 or 25
+bytes are rejected with `PeriphError::InvalidBeaconLength`; the 24-byte shape
+is accepted. This closes a host-side interoperability gap where BlueZ could
+advertise bytes that every MMP decoder would reject. The check is wire-neutral
+and reuses `mmp_types::beacon::BEACON_LEN` rather than duplicating a literal.
+
+The regression suite now has 39 peripheral tests. A Linux target build and a
+real BlueZ exchange remain unverified on this Windows host because the required
+libdbus/pkg-config sysroot and physical adapter are unavailable. The new test
+therefore proves only pre-registration validation, not D-Bus registration,
+advertising, ATT negotiation, or two-machine delivery.

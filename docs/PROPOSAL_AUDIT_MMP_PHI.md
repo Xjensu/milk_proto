@@ -562,6 +562,34 @@ and keystore behavior, fixed-capacity embedded storage, external cryptographic
 review, and the normative RBSR/D3 decision remain open. No file under
 `specification/` was modified.
 
+### Orchestration continuation VIII (2026-08-09)
+
+The next delegated audit found two state-ordering hazards in group admission.
+`40dcc11` sends the authenticated sender-key distribution before mutating the
+membership OR-Set, so `UnknownPeer` and `ConversationPending` failures leave
+membership unchanged. It also extracts a pure, exact group-size preflight and
+runs it before restored-group distribution; an oversized request therefore
+does not queue a distribution, clear `needs_distribution`, or consume a group
+sender index. The node suite now has 84 passing tests.
+
+The Linux/peripheral audit added `a6250ff`: the BlueZ advertiser rejects any
+payload other than the shared 24-byte v1 beacon shape before registration. This
+is host-side wire-shape validation, not a physical BlueZ result; the Linux
+pkg-config/sysroot and real adapter gate remain external. The release audit
+also made the tagged artifact build use `cargo build -p mmp-cli --release
+--locked`, with a Python regression protecting that reproducibility invariant
+(`6def96b`). The storage audit deliberately added no advisory capacity check:
+the reserve/commit provider contract remains required because `total_bytes`
+cannot reserve an unknown final ciphertext or BundleID.
+
+The post-cycle matrix is green: 429 Rust tests listed (423 active, 6
+intentionally ignored), 94 Python tests with 6 skips, focused Clippy, the
+embedded no-default target check, and the full workspace test run. No file under
+`specification/` was modified, and pre-existing dirty paths remain unstaged.
+Physical Linux/BlueZ exchange, native mobile radio and keystore behavior,
+fixed-capacity embedded storage, external cryptographic review, and the
+normative RBSR/D3 decision remain open.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
