@@ -227,6 +227,14 @@ pub(crate) fn restore_from_vault(
     // a newer generation between provider calls; checking the latest floor
     // fences the stale record instead of accepting it under an older floor.
     let generation_floor = vault.generation_floor()?;
+    // The floor is a durable high-water mark, not merely a best-effort hint.
+    // A provider that returns a record newer than its reported floor is
+    // internally inconsistent and could otherwise make rollback-unsafe state
+    // reach the native unwrap path. Fail closed before asking the provider for
+    // any opaque key material.
+    if record.generation > generation_floor {
+        return Err(VaultError::Generation);
+    }
     // Validate the bounded identity/node/conversation context before asking a
     // provider to unwrap any key material.  The provider receives this context
     // as an authenticated lookup input; malformed or cross-node records must
@@ -304,6 +312,7 @@ mod tests {
     struct ReferenceSnapshotVault {
         available: bool,
         high_water: u64,
+        reported_floor: Option<u64>,
         trusted_now_ms: u64,
         record: Option<SealedRecord>,
         unwrap_calls: usize,
@@ -313,7 +322,14 @@ mod tests {
         /// This is a test-only provider. Its wrapped DEK is deliberately raw
         /// test material; no production or FFI path may use this type.
         fn new() -> Self {
-            Self { available: true, high_water: 0, trusted_now_ms: 100_000, record: None, unwrap_calls: 0 }
+            Self {
+                available: true,
+                high_water: 0,
+                reported_floor: None,
+                trusted_now_ms: 100_000,
+                record: None,
+                unwrap_calls: 0,
+            }
         }
 
         fn set_available(&mut self, available: bool) {
@@ -322,6 +338,10 @@ mod tests {
 
         fn high_water_generation(&self) -> u64 {
             self.high_water
+        }
+
+        fn set_reported_floor(&mut self, floor: Option<u64>) {
+            self.reported_floor = floor;
         }
 
         fn simulate_record_loss(&mut self) {
@@ -339,7 +359,7 @@ mod tests {
 
         fn generation_floor(&mut self) -> Result<u64, VaultError> {
             if !self.available { return Err(VaultError::Unavailable); }
-            Ok(self.high_water)
+            Ok(self.reported_floor.unwrap_or(self.high_water))
         }
 
         fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
@@ -740,6 +760,21 @@ mod tests {
             Err(VaultError::Invalid)
         ));
         assert_eq!(vault.unwrap_calls, 0, "invalid context must not reach provider key unwrap");
+    }
+
+    #[test]
+    fn restore_rejects_record_newer_than_provider_floor_before_unwrap() {
+        let node = Node::new([118; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(29);
+        assert_eq!(save_core_from_vault(&mut vault, &node.core, &mut rng).unwrap(), 1);
+        vault.set_reported_floor(Some(0));
+
+        assert!(matches!(
+            restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
+            Err(VaultError::Generation)
+        ));
+        assert_eq!(vault.unwrap_calls, 0, "an inconsistent floor must not reach provider key unwrap");
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
