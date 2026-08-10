@@ -19,6 +19,9 @@ that violates this is a real bug in that class.
 
 ## Running
 
+The seed-corpus recipe requires Python 3.11 or newer because it validates the
+standalone fuzz manifest with the standard-library `tomllib` module.
+
 ```sh
 cargo install cargo-fuzz --locked   # once
 cd fuzz

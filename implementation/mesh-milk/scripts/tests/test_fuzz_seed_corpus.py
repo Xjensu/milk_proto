@@ -16,6 +16,13 @@ SPEC.loader.exec_module(CORPUS)
 
 
 class FuzzSeedCorpusTests(unittest.TestCase):
+    def test_cargo_target_inventory_matches_seed_mapping(self) -> None:
+        inventory = CORPUS.validate_target_inventory()
+        self.assertEqual(tuple(inventory), CORPUS.TARGETS)
+        self.assertEqual(set(CORPUS.build_seed_sets()), set(inventory))
+        for target, source in inventory.items():
+            self.assertEqual(source, f"fuzz_targets/{target}.rs")
+
     def test_vector_recipe_is_stable_and_covers_all_targets(self) -> None:
         first = CORPUS.build_seed_sets()
         second = CORPUS.build_seed_sets()
@@ -37,6 +44,21 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             (CORPUS.DEFAULT_VECTORS / "reserved_bits_negative.json").read_text(encoding="utf-8")
         )["wire"]
         self.assertEqual(reserved[0].data, bytes.fromhex(expected))
+
+    def test_corpus_fingerprint_is_stable_and_content_sensitive(self) -> None:
+        seeds = CORPUS.build_seed_sets()
+        self.assertEqual(CORPUS.corpus_fingerprint(seeds), CORPUS.corpus_fingerprint(seeds))
+        changed = dict(seeds)
+        first = list(changed[CORPUS.TARGETS[0]])
+        original = first[0]
+        first[0] = CORPUS.Seed(
+            target=original.target,
+            name=original.name,
+            data=original.data + b"\x00",
+            source=original.source,
+        )
+        changed[CORPUS.TARGETS[0]] = tuple(first)
+        self.assertNotEqual(CORPUS.corpus_fingerprint(seeds), CORPUS.corpus_fingerprint(changed))
 
     def test_write_and_verify_round_trip(self) -> None:
         seeds = CORPUS.build_seed_sets()

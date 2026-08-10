@@ -10,7 +10,9 @@ silently drifting away from the committed wire vectors.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import struct
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +23,17 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_VECTORS = SCRIPT_DIR.parent / "vectors"
 DEFAULT_OUTPUT = SCRIPT_DIR / "corpus"
 GENERATED_PREFIX = "mmp-seed-"
+# Keep the parser/seed mapping in one place.  ``validate_target_inventory``
+# below compares this inventory with Cargo.toml and the checked-in harness
+# files, so adding a target without adding its deterministic seed set cannot
+# silently pass the CI build gate.
+TARGETS: tuple[str, ...] = (
+    "fuzz_beacon",
+    "fuzz_envelope",
+    "fuzz_bundle",
+    "fuzz_hs",
+)
+TARGET_SOURCES = {target: f"fuzz_targets/{target}.rs" for target in TARGETS}
 # The vectors are repository inputs, but ``--vectors`` also permits a caller
 # supplied directory.  Keep malformed or hostile inputs from turning the
 # deterministic recipe into an unbounded JSON/hex allocator.  The current
@@ -134,12 +147,7 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
 
     reserved_bits = _vector_wire(vectors, "reserved_bits_negative.json")
 
-    result: dict[str, list[Seed]] = {
-        "fuzz_beacon": [],
-        "fuzz_envelope": [],
-        "fuzz_bundle": [],
-        "fuzz_hs": [],
-    }
+    result: dict[str, list[Seed]] = {target: [] for target in TARGETS}
 
     # Beacon: valid, boundary-truncated, and reserved/all-zero input.
     result["fuzz_beacon"].extend(
@@ -262,6 +270,61 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
         _validate_seed_names(target, seeds)
         frozen[target] = tuple(seeds)
     return frozen
+
+
+def validate_target_inventory(manifest: Path = SCRIPT_DIR / "Cargo.toml") -> dict[str, str]:
+    """Verify Cargo's fuzz binaries match the deterministic target inventory.
+
+    This is intentionally a host-side metadata check.  It does not build or
+    execute sanitizer-linked binaries, and therefore cannot be mistaken for
+    the nightly CPU-hour fuzzing gate.
+    """
+
+    try:
+        import tomllib
+    except ModuleNotFoundError as exc:  # pragma: no cover - unsupported Python
+        raise ValueError("Python 3.11+ is required to inspect fuzz/Cargo.toml") from exc
+
+    manifest = Path(manifest).resolve()
+    try:
+        with manifest.open("rb") as handle:
+            document = tomllib.load(handle)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ValueError(f"cannot load fuzz manifest {manifest}: {exc}") from exc
+
+    binaries = document.get("bin")
+    if not isinstance(binaries, list):
+        raise ValueError(f"fuzz manifest {manifest} has no [[bin]] target list")
+    actual: dict[str, str] = {}
+    for binary in binaries:
+        if not isinstance(binary, dict):
+            raise ValueError(f"fuzz manifest {manifest} contains a malformed [[bin]] entry")
+        name, path = binary.get("name"), binary.get("path")
+        if not isinstance(name, str) or not isinstance(path, str):
+            raise ValueError(f"fuzz manifest {manifest} target entries require name and path")
+        if name in actual:
+            raise ValueError(f"duplicate fuzz target in {manifest}: {name}")
+        actual[name] = path.replace("\\", "/")
+
+    expected = dict(TARGET_SOURCES)
+    if actual != expected:
+        raise ValueError(f"fuzz target inventory mismatch: expected {expected}, found {actual}")
+    for target, relative_source in expected.items():
+        source = manifest.parent / relative_source
+        if source.is_symlink() or not source.is_file():
+            raise ValueError(f"missing or symlinked fuzz target source: {source}")
+    return actual
+
+
+def corpus_fingerprint(seed_sets: dict[str, tuple[Seed, ...]]) -> str:
+    """Return a stable digest of target/name/data, independent of filesystem order."""
+
+    digest = hashlib.sha256()
+    for seed in iter_seeds(seed_sets):
+        for field in (seed.target.encode("utf-8"), seed.filename.encode("utf-8"), seed.data):
+            digest.update(struct.pack(">Q", len(field)))
+            digest.update(field)
+    return f"sha256:{digest.hexdigest()}"
 
 
 def iter_seeds(seed_sets: dict[str, tuple[Seed, ...]]) -> Iterable[Seed]:
@@ -410,16 +473,18 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
+    validate_target_inventory()
     seed_sets = build_seed_sets(args.vectors)
     count = sum(len(seeds) for seeds in seed_sets.values())
+    fingerprint = corpus_fingerprint(seed_sets)
     if args.command == "check":
-        print(f"validated {count} deterministic fuzz seeds")
+        print(f"validated {count} deterministic fuzz seeds across {len(TARGETS)} targets ({fingerprint})")
     elif args.command == "write":
         write_corpus(args.output, seed_sets)
-        print(f"wrote {count} deterministic fuzz seeds to {args.output.resolve()}")
+        print(f"wrote {count} deterministic fuzz seeds to {args.output.resolve()} ({fingerprint})")
     else:
         verify_corpus(args.output, seed_sets)
-        print(f"verified {count} deterministic fuzz seeds in {args.output.resolve()}")
+        print(f"verified {count} deterministic fuzz seeds in {args.output.resolve()} ({fingerprint})")
     return 0
 
 
