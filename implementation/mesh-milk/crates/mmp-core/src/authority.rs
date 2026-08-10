@@ -357,6 +357,12 @@ impl AuthorityStore {
     /// `CAP_ANNOUNCE`.
     pub fn grant_for(&self, subject: &Key32, scope: &Id16, declared: u8, now_unix_s: u32) -> Option<&AuthCert> {
         let cert = self.certs.get(&(*subject, *scope))?;
+        // Re-pinning a scope is the recovery mechanism for a compromised
+        // operator root. Cached certificates signed by the former issuer must
+        // stop granting immediately, even before their original expiry.
+        if self.roots.get(scope).map(|(issuer, _)| issuer) != Some(&cert.issuer) {
+            return None;
+        }
         if now_unix_s > cert.not_after.saturating_add(NOT_AFTER_SKEW_S) {
             return None;
         }
@@ -375,7 +381,8 @@ impl AuthorityStore {
     /// bucket, independent of declared priority.
     pub fn official(&self, subject: &Key32, scope: &Id16, now_unix_s: u32) -> bool {
         self.certs.get(&(*subject, *scope)).is_some_and(|cert| {
-            now_unix_s <= cert.not_after.saturating_add(NOT_AFTER_SKEW_S)
+            self.roots.get(scope).map(|(issuer, _)| issuer) == Some(&cert.issuer)
+                && now_unix_s <= cert.not_after.saturating_add(NOT_AFTER_SKEW_S)
                 && !self.revoked_at(subject, scope, now_unix_s)
                 && cert.caps & CAP_ANNOUNCE != 0
         })
@@ -457,6 +464,30 @@ mod tests {
         assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
         // EMERGENCY (0) additionally needs CAP_PRIORITY_EMERGENCY, absent here.
         assert!(store.grant_for(&subject, &scope, prio::EMERGENCY, 0).is_none());
+        assert!(store.official(&subject, &scope, 0));
+    }
+
+    #[test]
+    fn repinning_scope_invalidates_cached_certificate_from_old_root() {
+        let old_issuer = Identity::from_seed(&[1; 32]);
+        let new_issuer = Identity::from_seed(&[4; 32]);
+        let subject = Key32([2; 32]);
+        let scope = Id16([3; 16]);
+        let mut store = AuthorityStore::new();
+        store.pin_root(scope, old_issuer.public());
+        let old_cert = signed_cert(&old_issuer, subject, scope, CAP_ANNOUNCE, 1000);
+        store.consider_cert(&old_cert, 0).unwrap();
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store.official(&subject, &scope, 0));
+
+        store.pin_root(scope, new_issuer.public());
+
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none());
+        assert!(!store.official(&subject, &scope, 0));
+
+        let new_cert = signed_cert(&new_issuer, subject, scope, CAP_ANNOUNCE, 1000);
+        store.consider_cert(&new_cert, 0).unwrap();
+        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
         assert!(store.official(&subject, &scope, 0));
     }
 

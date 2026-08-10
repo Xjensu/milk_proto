@@ -62,8 +62,8 @@ use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS,
     FILE_MAX, FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA,
     LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE, MAX_PATRONS, MIME_MAX,
-    NAME_MAX, NICKNAME_MAX, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD,
-    RS_DATA_K, RS_TOTAL_N, STRIPE_DATA_BYTES,
+    NAME_MAX, NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR,
+    QUOTA_STANDARD, RS_DATA_K, RS_TOTAL_N, STRIPE_DATA_BYTES,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
@@ -293,8 +293,8 @@ pub enum Event {
         scope: Id16,
         /// Application-defined announcement type.
         ann_type: u8,
-        /// Display-validity cutoff (unix seconds); no policy enforces this
-        /// yet, see the `⚠` note at its construction in `publish_announcement`.
+        /// Display-validity cutoff (unix seconds); `0` means no display expiry.
+        /// Nonzero values are enforced against the host wall-clock sample.
         not_after: u32,
         /// The announcement's plaintext body.
         text: Vec<u8>,
@@ -1788,6 +1788,14 @@ impl Node {
         self.core.seen.rotate(now_ms);
         self.core.receipts.rotate(now_ms);
         self.core.claims.expire(now_ms);
+        // Authority certificates and sticky revocation entries use the host
+        // supplied monotonic-non-decreasing wall-clock sample, not the
+        // protocol monotonic clock.  Prune them whenever that sample is
+        // available so expired entries cannot pin bounded authority maps and
+        // deny admission of otherwise valid future certificates.
+        if let Some(now_unix_s) = self.core.wall_unix_s {
+            self.core.authority.expire(now_unix_s);
+        }
         // Admission buckets are RAM-only accounting state. Compact idle
         // origins/authority subjects so a Sybil stream cannot leave one map
         // entry per pseudonymous key forever. The idle horizon matches the
@@ -2048,7 +2056,10 @@ impl NodeCore {
             suite: 1,
             ann_type,
             scope,
-            not_after: 0, // ⚠ no display-validity policy yet; caller-set validity is future work
+            // The v1 local producer uses the explicit no-expiry sentinel. A
+            // future typed producer may set a nonzero cutoff, which receivers
+            // enforce before rendering while still relaying the bundle.
+            not_after: 0,
             text: text.to_vec(),
             sig: Sig64::ZERO,
         };
@@ -2097,6 +2108,18 @@ impl NodeCore {
         // Doc 18 §3: scope is redundant with dest, explicit for standalone
         // re-verification — a mismatch is fail-closed (no render, relay only).
         if body.scope != bundle.dest {
+            return;
+        }
+
+        // Display validity is application semantics, not a transport
+        // admission rule: an expired or unclocked nonzero cutoff is retained
+        // for store-and-forward but must not reach the local event surface.
+        // `0` is the explicit v1 no-expiry sentinel used by the local producer.
+        if body.not_after != 0
+            && self.wall_unix_s.is_none_or(|now_unix_s| {
+                now_unix_s > body.not_after.saturating_add(NOT_AFTER_SKEW_S)
+            })
+        {
             return;
         }
 

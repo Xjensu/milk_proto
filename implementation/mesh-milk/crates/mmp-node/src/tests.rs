@@ -14,7 +14,7 @@ use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
-    NICKNAME_MAX, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
+    NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
@@ -222,7 +222,7 @@ fn persisted_handoff_revalidates_raw_bundle_before_mutation() {
         flags: 0,
         origin: signer.public(),
         dest: peer,
-        lifetime_ms: LIFETIME_MESSAGE_MS,
+        lifetime_ms: 60_000,
         priority: prio::NORMAL,
         exts: Vec::new(),
         payload: vec![apptype::TEXT, 1, 2, 3],
@@ -2743,6 +2743,82 @@ fn unknown_announcement_suite_is_relay_only_and_not_rendered() {
 }
 
 #[test]
+fn expired_announcement_is_relayed_but_not_rendered() {
+    let mut alice = node(33);
+    let mut bob = node(34);
+    let scope = bob.subscribe_scope(b"expiry/relay-only");
+    let mut body = AnnouncementBody {
+        suite: 1,
+        ann_type: 1,
+        scope,
+        not_after: 100,
+        text: b"expired safety notice".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    let mut bundle = Bundle {
+        class: mmp_types::bundle::class::ANNOUNCEMENT,
+        flags: 0,
+        origin: alice.public_key(),
+        dest: scope,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::OPERATIONAL,
+        exts: Vec::new(),
+        payload: body.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+    alice
+        .core
+        .try_store_own(bundle, 32)
+        .expect("source announcement is durably stored");
+
+    bob.set_wall_clock(100 + NOT_AFTER_SKEW_S + 1);
+    contact(&mut alice, &mut bob, 33, 33_000);
+
+    assert!(bob.core.store.get(&id).is_some(), "expired announcements remain relayable");
+    assert!(
+        !drain(&mut bob).iter().any(|event| matches!(event, Event::Announcement { .. })),
+        "expired announcements must not reach the local display/event surface"
+    );
+}
+
+#[test]
+fn unclocked_expiring_announcement_is_not_rendered() {
+    let alice = node(35);
+    let mut bob = node(36);
+    let scope = bob.subscribe_scope(b"expiry/clock-required");
+    let mut body = AnnouncementBody {
+        suite: 1,
+        ann_type: 1,
+        scope,
+        not_after: u32::MAX,
+        text: b"clock not ready".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    let mut bundle = Bundle {
+        class: mmp_types::bundle::class::ANNOUNCEMENT,
+        flags: 0,
+        origin: alice.public_key(),
+        dest: scope,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::OPERATIONAL,
+        exts: Vec::new(),
+        payload: body.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+
+    bob.core.handle_announcement(&bundle);
+    assert!(
+        !bob.core.events.iter().any(|event| matches!(event, Event::Announcement { .. })),
+        "nonzero display cutoffs require a ready wall clock"
+    );
+}
+
+#[test]
 fn unsubscribed_scope_gets_no_announcement_event() {
     let mut alice = node(1);
     let mut bob = node(2);
@@ -2869,6 +2945,36 @@ fn wall_clock_rollback_cannot_revalidate_expired_authority() {
         _ => None,
     });
     assert_eq!(second, Some((prio::NORMAL, false)), "rollback must not restore authority");
+}
+
+#[test]
+fn tick_prunes_expired_authority_entries_for_capacity_recovery() {
+    let mut bob = node(19);
+    let authority = mmp_crypto::Identity::from_seed(&[20; 32]);
+    let scope = bob.subscribe_scope(b"capacity/recovery");
+    bob.pin_authority_root(scope, authority.public());
+    let cert = signed_cert(
+        &authority,
+        bob.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        1,
+        1,
+    );
+
+    bob.set_wall_clock(0);
+    bob.core
+        .authority
+        .consider_cert(&cert, 0)
+        .expect("valid certificate is admitted before expiry");
+    assert!(bob.core.authority.grant_for(&bob.public_key(), &scope, prio::OPERATIONAL, 0).is_some());
+    let before = bob.authority_snapshot();
+
+    bob.set_wall_clock(1 + NOT_AFTER_SKEW_S + 1);
+    bob.tick(1);
+
+    assert_ne!(bob.authority_snapshot(), before, "tick must prune expired authority state");
+    assert!(bob.core.authority.grant_for(&bob.public_key(), &scope, prio::OPERATIONAL, 1 + NOT_AFTER_SKEW_S + 1).is_none());
 }
 
 #[test]
