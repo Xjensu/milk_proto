@@ -199,6 +199,10 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("--certificate ${{ matrix.artifact_name }}.pem", run)
         self.assertIn("--output ${{ matrix.artifact_name }}.manifest.json", run)
 
+    def test_release_job_requires_host_and_fuzz_build_gates(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(workflow["jobs"]["release"]["needs"], ["host", "fuzz-build"])
+
     def test_release_job_verifies_keyless_signature_before_manifest(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["release"]["steps"]
