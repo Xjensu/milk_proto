@@ -28,6 +28,12 @@ const HEADER_LEN: usize = 4 + 1 + 1 + 8 + 8 + 4 + CONTEXT_HASH_LEN + NONCE_LEN;
 /// Maximum plaintext accepted in one sealed secret-state envelope.
 pub const MAX_PLAINTEXT_BYTES: usize = 256 * 1024;
 
+/// Maximum encoded envelope size accepted by [`open`].  Keeping this bound
+/// public lets persistence providers reject an oversized opaque record before
+/// passing it to a native key unwrap operation, instead of duplicating the
+/// private header/tag arithmetic in every adapter.
+pub const MAX_ENVELOPE_BYTES: usize = HEADER_LEN + MAX_PLAINTEXT_BYTES + TAG_LEN;
+
 /// Snapshot envelope kind for the complete node secret-state aggregate.
 pub const KIND_NODE_SECRET_STATE: u8 = 1;
 

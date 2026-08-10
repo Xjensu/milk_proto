@@ -67,6 +67,19 @@ pub(crate) struct SealedCandidate {
     pub(crate) envelope: Vec<u8>,
 }
 
+/// Reject provider records whose Rust-owned components exceed their exact
+/// resource contract. This runs before generation checks, context parsing, or
+/// native key unwrap, so a malformed record cannot force expensive provider
+/// work merely by claiming a valid generation. The wrapped-DEK handle is
+/// intentionally not bounded here: its encoding belongs to the native
+/// provider, which must enforce its own size/IPC limit before unwrapping.
+fn validate_record_bounds(record: &SealedRecord) -> Result<(), VaultError> {
+    if record.context.len() > MAX_CONTEXT_BYTES || record.envelope.len() > snapshot::MAX_ENVELOPE_BYTES {
+        return Err(VaultError::Invalid);
+    }
+    Ok(())
+}
+
 /// Native provider contract. Implementations must make `commit` a durable
 /// compare-and-swap: either the complete candidate record becomes visible, or
 /// the prior record remains intact. The provider must persist no plaintext.
@@ -223,6 +236,9 @@ pub(crate) fn restore_from_vault(
     node_id: &Id16,
 ) -> Result<(u64, RestoredState), VaultError> {
     let record = vault.load()?.ok_or(VaultError::Unavailable)?;
+    // Bound all provider-controlled byte vectors before consulting the durable
+    // floor or asking a native keystore to unwrap an opaque key handle.
+    validate_record_bounds(&record)?;
     // Read the floor after loading the record. A different process may commit
     // a newer generation between provider calls; checking the latest floor
     // fences the stale record instead of accepting it under an older floor.
@@ -965,7 +981,7 @@ mod tests {
         // authenticated envelope plaintext cap without attempting to decrypt
         // or parse the extra bytes.
         let mut oversized_envelope = vault.record.clone().expect("sealed fixture");
-        oversized_envelope.envelope.resize(snapshot::MAX_PLAINTEXT_BYTES + 1, 0);
+        oversized_envelope.envelope.resize(snapshot::MAX_ENVELOPE_BYTES + 1, 0);
         vault.record = Some(oversized_envelope);
         assert_eq!(
             restored.restore_secret_state_from_vault(&mut vault),
