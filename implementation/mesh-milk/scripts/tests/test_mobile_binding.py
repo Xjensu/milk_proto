@@ -38,29 +38,41 @@ class MobileBindingTests(unittest.TestCase):
             self.assertEqual(len(violations), 1)
             self.assertIn("SnapshotVault", violations[0])
 
-    def test_missing_kotlin_throwing_contract_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            directory = Path(root)
-            source = kotlin_surface(CHECK.EXPECTED_MMP_NODE_METHODS, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
-                "    @Throws(FfiException::class)\n    override fun `setNickname`",
-                "    override fun `setNickname`",
-            )
-            (directory / "mmp_ffi.kt").write_text(source, encoding="utf-8")
-            violations = CHECK.scan_binding("kotlin", directory)
-            self.assertEqual(len(violations), 1)
-            self.assertIn("throwing annotation for MmpNode.setNickname", violations[0])
-
-    def test_missing_swift_throwing_contract_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            directory = Path(root)
-            source = swift_surface(CHECK.EXPECTED_MMP_NODE_METHODS, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
-                "    func setNickname() throws",
-                "    func setNickname()",
-            )
-            (directory / "mmp_ffi.swift").write_text(source, encoding="utf-8")
-            violations = CHECK.scan_binding("swift", directory)
-            self.assertEqual(len(violations), 1)
-            self.assertIn("throws for MmpNode.setNickname", violations[0])
+    def test_missing_throwing_contract_is_rejected_for_each_language(self) -> None:
+        cases = (
+            (
+                "kotlin",
+                "mmp_ffi.kt",
+                kotlin_surface(
+                    CHECK.EXPECTED_MMP_NODE_METHODS,
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                ).replace(
+                    "    @Throws(FfiException::class)\n    override fun `setNickname`",
+                    "    override fun `setNickname`",
+                ),
+                "throwing annotation for MmpNode.setNickname",
+            ),
+            (
+                "swift",
+                "mmp_ffi.swift",
+                swift_surface(
+                    CHECK.EXPECTED_MMP_NODE_METHODS,
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                ).replace(
+                    "    func setNickname() throws",
+                    "    func setNickname()",
+                ),
+                "throws for MmpNode.setNickname",
+            ),
+        )
+        for language, filename, source, expected in cases:
+            with self.subTest(language=language):
+                with tempfile.TemporaryDirectory() as root:
+                    directory = Path(root)
+                    (directory / filename).write_text(source, encoding="utf-8")
+                    violations = CHECK.scan_binding(language, directory)
+                    self.assertEqual(len(violations), 1)
+                    self.assertIn(expected, violations[0])
 
     def test_missing_language_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as root:
