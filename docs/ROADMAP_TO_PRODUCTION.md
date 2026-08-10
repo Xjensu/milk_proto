@@ -45,9 +45,10 @@ explicitly refreshed by a current command run.
 
 The current continuation also adds an executable encrypted-`ID_PROOF` boundary
 regression in `mmp-core` and a Byzantine double-grant simulation that records
-the receiver-local, rather than global, copy-budget invariant. The focused
-`mmp-core` suite now passes 42 unit tests; `mmp-sim` passes 10 active tests and
-4 intentionally ignored deployment/scale cases.
+the receiver-local, rather than global, copy-budget invariant. The historical
+counts in this paragraph are retained as a dated snapshot; the current
+simulator evidence is 36 active tests and 6 intentionally ignored
+deployment/scale cases.
 
 The `a4ecfb8` transport lifecycle slice added 21 Windows-target peripheral
 tests (including endpoint-token replacement and stale opposite-direction
@@ -109,6 +110,15 @@ without adopting it, preserving the carried-copy `budget >= 1` invariant while
 keeping the ordered transfer session alive; `mmp-core` passes 97/97 including
 the new regression.
 
+**Addendum, 2026-08-10 (outbound frame preflight and simulator audit):** the
+session engine now computes checked canonical payload widths before calling the
+infallible frame encoder, rejecting oversized WANT/RECON/BLOB/summary inputs
+before a host-provided collection can create a multi-kilobyte intermediate.
+The focused `mmp-core` suite passes 93/93 plus 5 persistence-decoder tests, and
+strict Clippy is clean. The active simulator/security suite passes 36/36 with
+6 intentionally ignored deployment/scale cases; those six remain release/CI
+gates rather than local-loop tests. The specification remains unchanged.
+
 **Addendum, 2026-08-10 (blob requester follow-up):** `mmp-node` now emits a
 bounded origin-targeted `BLOB_REQ` burst for explicit `fetch_file` assemblies.
 Requests are limited to one five-byte Reed–Solomon stripe bitmap per frame,
@@ -137,7 +147,7 @@ request policy remain open.
 | `mmp-tal` + `mmp-tal-btleplug` + `mmp-tal-peripheral` | TAL vocabulary (`mmp-tal`, 0 tests — a trait/type crate). Central-role BLE in `mmp-tal-btleplug`: scan, dial, GATT write/notify shuttle, chunking, `LinkId` minting. **Peripheral role (M5b) is implemented in code** in the sibling crate `mmp-tal-peripheral`: Linux backend on `bluer` (BlueZ D-Bus GATT server), Windows/macOS are `PeriphError::Unsupported` stubs with a concrete design sketch for the WinRT path. The current stream-token and bounded-ingress hardening is hardware-independent tested on Windows; the Linux build/runtime and real BlueZ exchange remain environment- and hardware-gated. The development service and characteristic UUIDs have one source of truth in `mmp-tal`; the peripheral crate re-exports them with the central-role inversion made explicit. `mmp-cli` exposes both roles (`connect`=central, `listen`=peripheral). | `mmp-tal-btleplug`: 15 focused tests (including generation fencing, bounded ingress, and control-saturation retirement). `mmp-tal-peripheral`: 27 Windows-target tests (including stream fencing, bounded ingress, emergency-down ordering, retired-link draining, and the retired-endpoint cap); Linux/BlueZ execution is not current evidence. |
 | `mmp-ffi` | Complete UniFFI 0.29 surface: constructor takes seed + tier + optional `SnapshotStore` path, transport injection including `on_beacon`, polling (`poll_send`/`poll_event`), groups, claims, `flush()`/persistence policy. Secrets never cross the FFI boundary outward (the FFI type carries public keys, ciphertexts, and events only). | 6 tests: `bad_length_ids_are_rejected_at_the_ffi_boundary`, `unknown_peer_is_reported`, `beacon_is_accepted_with_no_observable_event`, `group_remove_and_set_tier_roundtrip`, `state_survives_restart`, `direct_message_delivery_via_ffi_surface`. |
 | `mmp-cli` | `keygen` / `demo` / `inspect` subcommands, plus **`connect`** (central-role drive loop over `mmp-tal-btleplug`) and **`listen`** (peripheral-role drive loop over `mmp-tal-peripheral`) and `send` (queue-and-wait-for-delivery over `connect`'s loop). Both radio subcommands verified error-clean on hosts without working BLE hardware/adapters (graceful exit 2, no panics); the actual two-machine radio exchange (Phase A's exit gate) still needs a real multi-host BLE test, not yet run. | Hand-rolled `std::env` arg parsing; exercised by the `demo` path plus manual no-hardware error-path runs of `connect`/`send`/`listen`, no dedicated unit tests (radio subcommands are inherently interactive/hardware-driven). |
-| `mmp-sim` | 10-node and 30-node meshes run in CI; adversarial replay, flood, quota, eclipse, Bloom-poison, and Byzantine double-grant scenarios are active; deployment/scale drills remain opt-in. | 10 active + 4 ignored: deterministic/random delivery, six adversarial scenarios, file transfer, and four ignored deployment/scale cases. |
+| `mmp-sim` | 10-node and 30-node meshes run in CI; adversarial replay, flood, quota, eclipse, Bloom-poison, and Byzantine double-grant scenarios are active; deployment/scale drills remain opt-in. | 36 active + 6 ignored: deterministic/random delivery, energy/EWS measurements, clustered mobility, six adversarial scenarios, file transfer, and six ignored deployment/scale cases. |
 | `mmp-tal-embedded`, `mmp-node-embassy` | Stubs only (11 and 7 lines respectively) — `no_std`-clean placeholders. `mmp-tal-embedded`'s doc comment records this as a deliberate scope decision ("keep the `no_std` discipline, ship no embedded TAL") with the acceptance gate spelled out: ≤256 KiB flash / ≤48 KiB RAM (doc 12 §7.6) plus the OQ-7 Reed-Solomon decode benchmark. | 0 tests — nothing to test yet. |
 | Docs | `MOBILE_INTEGRATION.md`, `REACT_NATIVE_INTEGRATION.md`, `V2_FEATURES.md` all present at `implementation/mesh-milk/`. | — |
 | Workspace-wide | **Historical baseline: 71 tests pass, 0 fail, 1 ignored.** The current checkpoint is recorded in the dated addendum above and in `docs/E5-S4_CONFORMANCE_HANDOFF.md`; this row is retained as the original audit baseline, not as current evidence. | Historical 2026-07-11 run. |
