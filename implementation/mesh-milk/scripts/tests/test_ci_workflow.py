@@ -77,9 +77,20 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(
             checks,
             [
-                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store --target thumbv7em-none-eabihf --no-default-features"
+                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked"
             ],
         )
+
+    def test_no_std_size_build_uses_locked_dependency_graph(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["no-std-size-gate"]["steps"]
+        build = next(
+            step["run"]
+            for step in steps
+            if isinstance(step.get("run"), str)
+            and "cargo build --release --target thumbv7em-none-eabihf" in step["run"]
+        )
+        self.assertIn("--locked", build)
 
     def test_embedded_manifests_fence_default_features(self) -> None:
         node_manifest = (WORKSPACE / "crates" / "mmp-node-embassy" / "Cargo.toml").read_text(
