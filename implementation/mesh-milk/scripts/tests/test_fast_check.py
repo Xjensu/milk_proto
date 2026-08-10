@@ -88,6 +88,19 @@ class FastCheckTests(unittest.TestCase):
         self.assertFalse(python_change)
         self.assertTrue(fuzz_change)
 
+    def test_generated_python_cache_files_do_not_trigger_python_tier(self) -> None:
+        packages, workspace, python_change, fuzz_change = _infer(
+            [
+                "implementation/mesh-milk/scripts/__pycache__/fast_check.cpython-314.pyc",
+                "implementation/mesh-milk/scripts/tests/__pycache__/test_fast_check.cpython-314.pyc",
+            ]
+        )
+
+        self.assertEqual(packages, set())
+        self.assertFalse(workspace)
+        self.assertFalse(python_change)
+        self.assertFalse(fuzz_change)
+
 
 if __name__ == "__main__":
     unittest.main()

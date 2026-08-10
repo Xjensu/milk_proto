@@ -74,6 +74,11 @@ def _infer(paths: list[str]) -> tuple[set[str], bool, bool, bool]:
     fuzz_change = False
     for path in paths:
         parts = Path(path).parts
+        # Python bytecode is an ignored build artefact, not a source change.
+        # Do not let an untracked interpreter cache expand an otherwise small
+        # automatic fast-check invocation into the complete Python tier.
+        if "__pycache__" in parts or Path(path).suffix == ".pyc":
+            continue
         if path == ".github/workflows/ci.yml":
             python_change = True
         elif path in {
