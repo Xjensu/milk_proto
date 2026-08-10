@@ -3045,6 +3045,22 @@ remain separate multi-object transaction work. The regression is intentionally
 bounded to those invariants; no wire field, frozen specification document, or
 MMP/Φ research hypothesis was changed.
 
+## 2026-08-10 continuation: group sender-chain staging
+
+The self-originated `send_group` path now derives the next group payload and an
+opaque `LocalSendCandidate` without advancing the live `LocalSenderKey`. It
+constructs and signs the complete class-2 bundle, calls `try_store_own`, and
+commits the candidate only after the provider accepts the bytes. Candidate
+commit is bound to the group identifier, signing public key, and pre-send
+epoch/index, so stale or cross-key tokens cannot rewind a chain.
+
+The node regression uses a rejecting provider, proves unchanged store,
+`SeenIndex`, events, and diagnostics, then restores a durable provider and
+confirms that the retry emits group chain index zero. This is a synchronous
+capacity-rejection boundary only: group-key distributions, membership rekeys,
+and `group_remove` retry semantics remain multi-object residuals, and no crash
+atomicity or wire/specification change is claimed.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

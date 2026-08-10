@@ -67,6 +67,17 @@ pub struct LocalSenderKey {
     dist: SenderKeyDist,
 }
 
+/// Provider-local candidate state for one staged group send. The chain is
+/// intentionally opaque so callers can commit only a candidate produced by
+/// the corresponding [`LocalSenderKey`]. It is not wire data.
+pub struct LocalSendCandidate {
+    chain: SendChain,
+    gid: Id16,
+    sig_pub: Key32,
+    base_epoch: u16,
+    base_index: u32,
+}
+
 impl LocalSenderKey {
     /// Mint a fresh sender key for (`gid`, `epoch`): a random chain seed and a
     /// new, identity-distinct Ed25519 group signing keypair.
@@ -157,6 +168,62 @@ impl LocalSenderKey {
         p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
         Ok(p)
     }
+
+    /// Stage one group message without advancing the live sender chain.
+    ///
+    /// The returned candidate must be committed only after the caller has
+    /// durably accepted the complete outer bundle. This prevents a provider
+    /// capacity rejection from consuming a group message index.
+    pub fn try_encrypt_with_ad_candidate<F>(
+        &self,
+        member: NodeId,
+        body: &[u8],
+        make_ad: F,
+    ) -> Result<(GroupPayload, LocalSendCandidate), CryptoError>
+    where
+        F: FnOnce(&GroupPayload) -> Vec<u8>,
+    {
+        let epoch = self.chain.epoch;
+        let index = self.chain.next_index;
+        let (key, chain) = self.chain.try_next_candidate()?;
+        let mut p = GroupPayload {
+            gid: self.dist.gid,
+            epoch,
+            member,
+            chain_index: index,
+            ct: vec![0u8; body.len() + 16],
+            member_sig: Sig64::ZERO,
+        };
+        let ad = make_ad(&p);
+        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
+        p.ct = aead::seal(&bound, &ad, body);
+        let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
+        p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
+        Ok((
+            p,
+            LocalSendCandidate {
+                chain,
+                gid: self.dist.gid,
+                sig_pub: self.dist.sig_pub,
+                base_epoch: epoch,
+                base_index: index,
+            },
+        ))
+    }
+
+    /// Commit a candidate returned by [`Self::try_encrypt_with_ad_candidate`]
+    /// after the enclosing bundle has been durably accepted.
+    pub fn commit_candidate(&mut self, candidate: LocalSendCandidate) -> Result<(), CryptoError> {
+        if candidate.gid != self.dist.gid
+            || candidate.sig_pub != self.dist.sig_pub
+            || candidate.base_epoch != self.chain.epoch
+            || candidate.base_index != self.chain.next_index
+        {
+            return Err(CryptoError::Ratchet);
+        }
+        self.chain = candidate.chain;
+        Ok(())
+    }
 }
 
 /// A remote member's sender key for (group, epoch).
@@ -228,5 +295,52 @@ mod tests {
             local.try_encrypt(member, b"ad", b"after"),
             Err(CryptoError::Ratchet)
         );
+    }
+
+    #[test]
+    fn staged_group_candidate_does_not_advance_live_chain() {
+        let gid = Id16([0x52; 16]);
+        let member = Id16([0x25; 16]);
+        let mut rng = StdRng::seed_from_u64(17);
+        let mut local = LocalSenderKey::generate(&mut rng, gid, 1);
+
+        let (payload, candidate) = local
+            .try_encrypt_with_ad_candidate(member, b"body", |_| b"ad".to_vec())
+            .expect("candidate");
+        assert_eq!(payload.chain_index, 0);
+        let live = local.try_encrypt(member, b"ad", b"next").expect("live send");
+        assert_eq!(live.chain_index, 0, "staging must not consume index zero");
+
+        // The candidate is still valid only for the pre-commit chain. Commit
+        // it on a fresh key to verify the explicit producer boundary without
+        // exposing chain internals to callers.
+        let mut committed = LocalSenderKey::generate(&mut StdRng::seed_from_u64(17), gid, 1);
+        committed.commit_candidate(candidate).expect("matching candidate");
+        let after = committed.try_encrypt(member, b"ad", b"after").expect("post-commit send");
+        assert_eq!(after.chain_index, 1);
+
+        let mut stale = LocalSenderKey::generate(&mut StdRng::seed_from_u64(17), gid, 1);
+        let (_, stale_candidate) = stale
+            .try_encrypt_with_ad_candidate(member, b"body", |_| b"ad".to_vec())
+            .expect("stale candidate");
+        stale.try_encrypt(member, b"ad", b"advance").expect("advance live chain");
+        assert_eq!(
+            stale.commit_candidate(stale_candidate),
+            Err(CryptoError::Ratchet),
+            "stale candidates must not rewind a sender chain"
+        );
+
+        let source = LocalSenderKey::generate(&mut StdRng::seed_from_u64(18), gid, 1);
+        let (_, foreign_candidate) = source
+            .try_encrypt_with_ad_candidate(member, b"body", |_| b"ad".to_vec())
+            .expect("foreign candidate");
+        let mut target = LocalSenderKey::generate(&mut StdRng::seed_from_u64(17), gid, 1);
+        assert_eq!(
+            target.commit_candidate(foreign_candidate),
+            Err(CryptoError::Ratchet),
+            "a candidate from another signing key must be rejected"
+        );
+        let target_next = target.try_encrypt(member, b"ad", b"target").expect("target remains live");
+        assert_eq!(target_next.chain_index, 0);
     }
 }

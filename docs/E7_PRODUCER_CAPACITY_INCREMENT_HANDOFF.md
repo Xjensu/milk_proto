@@ -18,6 +18,9 @@ This continuation adds narrow uses of the existing receive-side
   candidate sender chain, constructs the exact bundle, and calls
   `try_store_own` before committing the live sender chain, DAG head, and
   pending markers.
+- The self-originated `send_group` path now derives an opaque
+  `LocalSendCandidate`, calls `try_store_own`, and commits the group sender
+  chain only after the provider accepts the complete signed bundle.
 
 `try_store_own` inserts `SeenIndex` state and logs `JourneyEvent::Created` only
 after the provider accepts the complete encoded bundle. A capacity rejection
@@ -26,7 +29,8 @@ seen index, diagnostics, conversation map, and pending-first-contact map
 unchanged. Announcement and sealed producers perform no cryptographic state
 mutation before the write; the prekey first-contact producer keeps its
 conversation and sender-chain changes in local candidates until the write
-commits. The established direct producer follows the same candidate boundary.
+commits. The established direct and group producers follow the same candidate
+boundary.
 This narrow scope is safe for synchronous provider rejection without a new
 reservation/commit API, but it is not crash-atomic after provider acceptance.
 The mutable local `UtilityState::n_hat` estimator is sampled before the write;
@@ -52,7 +56,8 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 125 node tests, 37 CLI tests, and 31 FFI tests.
+The focused runs passed with 126 node tests, 37 CLI tests, and 31 FFI tests;
+the crypto suite passed 53 tests with the staged candidate API.
 New regressions cover:
 
 1. sealed first-contact capacity rejection;
@@ -63,7 +68,9 @@ New regressions cover:
    state and a successful retry after provider recovery; and
 6. established direct rejection with unchanged sender-chain, DAG, pending,
    SeenIndex, event, diagnostic, and sent-history state, followed by a retry
-   using the original epoch/index.
+   using the original epoch/index; and
+7. group rejection with unchanged `SeenIndex`, event, and diagnostic state,
+   followed by a retry that emits group chain index zero.
 
 ## Explicit non-claims
 
@@ -74,7 +81,7 @@ and require separate staging work:
 - constructor bootstrap claims keep a local discovery view when persistence is
   rejected, while legacy claim-returning wrappers swallow the provider error;
 - receipts and other fire-and-forget auxiliary bundles;
-- group sender-key messages and distributions; and
+- group-key distributions/rekey transitions and membership side effects; and
 - file symbols and manifests.
 
 `Node::new` retains fixed bootstrap claims in its local discovery view even
@@ -89,8 +96,8 @@ invariants are tested.
 1. Design and review an additive provider reservation/commit capability;
    include outstanding reservations, replacement deltas, failed-commit
    recovery, and restart semantics.
-2. Add candidate-state or batch semantics for group, receipt, and file
-   producers.
+2. Add candidate-state or batch semantics for group-key distributions/rekeys,
+   receipts, and file producers.
 3. Select a board-specific allocator/flash policy, then implement the
    `no_std` provider and linked-image/HIL gates.
 

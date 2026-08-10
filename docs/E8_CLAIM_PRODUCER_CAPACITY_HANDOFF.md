@@ -57,7 +57,10 @@ conditions.
   only after `try_store_own` succeeds. A rejecting provider leaves the live
   sender chain, DAG, pending markers, SeenIndex, events, diagnostics, and sent
   history unchanged, and a retry reuses the original epoch/index.
-- Group distributions, receipts, and file-symbol batches still need their own
+- The self-originated `send_group` path now stages an opaque local sender-key
+  candidate and commits it only after `try_store_own` succeeds. Stale or
+  cross-key candidates are rejected by the crypto API.
+- Group distributions/rekey membership transitions, receipts, and file-symbol batches still need their own
   reservation or batch-commit design; replacing every `store_own` call blindly
   would create new consistency bugs.
 - `SnapshotStore` admission covers the complete image, including auxiliary
@@ -72,7 +75,7 @@ rustfmt drift; `cargo fmt --all -- --check` may report that baseline debt even
 when the affected crates compile and their tests pass. No file under
 `specification/` was modified.
 
-Recommended next step: design and stage group sender-key, receipt, and file
-symbol producers separately. Their multi-object transaction boundaries remain
-different; do not infer full storage atomicity or exactly-once behavior from the
-pairwise direct result.
+Recommended next step: design and stage group-key distributions/rekeys,
+receipts, and file symbol producers separately. Their multi-object transaction
+boundaries remain different; do not infer full storage atomicity or exactly-once
+behavior from the pairwise/group message results.

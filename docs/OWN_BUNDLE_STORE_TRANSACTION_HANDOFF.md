@@ -33,7 +33,7 @@ The own-origin producers do not all have the same rollback surface:
 | `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
 | `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group, receipt, and file producers still require coordinated transaction semantics. |
-| `send_group` | `LocalSenderKey::encrypt_with_ad` advances its private chain before `store_own` | A rejection would consume a group message index. The group sender key has no rollback/snapshot seam. |
+| `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions/rekey membership changes still need coordinated semantics. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 
 Changing `store_own` to return `Result` without solving these transitions would
@@ -50,7 +50,8 @@ capacity remains stable between a check and the write.
   `node_store_rejection_prevents_delivery_and_post_store_side_effects`
   confirms that an inbound rejection does not deliver or index the bundle.
 - Most own-origin paths still call `store_own` at the producer sites listed
-  above; the staged pairwise direct branches are the deliberate exceptions.
+  above; the staged pairwise direct and self-originated group-ciphertext
+  branches are the deliberate exceptions.
 - Pairwise staging does not roll back the advisory `UtilityState::n_hat` EWMA
   sample used to derive the storage budget; that routing-accounting state is
   not durable producer state and remains a separate refinement.
@@ -63,11 +64,12 @@ capacity remains stable between a check and the write.
   proves key/epoch/index derivation without mutating the live chain. The
   candidate is zeroizing and provider-local; it is not an authenticated
   arbitrary-input rollback API.
-- Group sends now perform an exact placeholder `Bundle` width check before
-  `LocalSenderKey::encrypt_with_ad`; an oversized rejection therefore does not
-  consume a group sender index. No group-key rollback API was added because
-  duplicating the chain seed and private signing key would create key-reuse and
-  persistence hazards.
+- Group sends now perform an exact placeholder `Bundle` width check and stage an
+  opaque `LocalSendCandidate` before `try_store_own`; an oversized or capacity
+  rejection therefore does not consume a group sender index. Candidate commits
+  are bound to the group/signing key and pre-send epoch/index, rejecting stale
+  or cross-key tokens. Group distributions and membership rekeys remain
+  separate multi-object work.
 - File sends now preflight a revoked destination before minting class-4 symbols,
   preventing durable symbol/index residue on that deterministic rejection. This
   does not solve provider-capacity failure after symbol minting.
@@ -121,11 +123,12 @@ The mmp-crypto audit (commit `be61df4`, wording correction `07b57ed`) proved
 that a pairwise `SendChain` can be checkpointed before `next()` and restored
 after a simulated rejected write without skipping a key. The current
 candidate seam extends that result without mutating the live chain, and the
-node's prekey first-contact and established direct producers commit candidates
-only after `try_store_own` succeeds. This is still not a complete storage
-transaction: group `LocalSenderKey`, receipts, and file-symbol indexes need
-coordinated commit/rollback, and all paths remain crash-non-atomic after a
-provider accepts bytes but before process bookkeeping is persisted.
+node's prekey first-contact, established direct, and group-ciphertext
+producers commit candidates only after `try_store_own` succeeds. This is still
+not a complete storage transaction: group distributions/rekey membership
+state, receipts, and file-symbol indexes need coordinated commit/rollback, and
+all paths remain crash-non-atomic after a provider accepts bytes but before
+process bookkeeping is persisted.
 
 No additional `BundleStore` preflight method was added. A read-only
 `total_bytes`/`meta` check cannot reserve the final ciphertext/BundleID and

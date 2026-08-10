@@ -2014,6 +2014,30 @@ fn oversized_group_send_does_not_consume_sender_chain_index() {
 }
 
 #[test]
+fn group_store_rejection_is_side_effect_free_and_retryable() {
+    let mut alice = node(60);
+    let gid = alice.create_group();
+    alice.enable_diagnostics();
+    let seen_before = alice.core.seen.encode();
+    let events_before = alice.core.events.len();
+    let diag_before = alice.diagnostics().records().len();
+    alice.core.store = Box::new(CapacityRejectStore);
+
+    assert_eq!(alice.group_send(&gid, "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(alice.store_len(), 0);
+    assert_eq!(alice.core.seen.encode(), seen_before);
+    assert_eq!(alice.core.events.len(), events_before);
+    assert_eq!(alice.diagnostics().records().len(), diag_before);
+
+    alice.core.store = Box::new(MemStore::new());
+    let id = alice.group_send(&gid, "retry after capacity").expect("retry succeeds");
+    let (_, raw) = alice.core.store.get(&id).expect("group bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).expect("well-formed group bundle");
+    let payload = GroupPayload::decode(&bundle.payload).expect("well-formed group payload");
+    assert_eq!(payload.chain_index, 0, "rejected send must not consume index zero");
+}
+
+#[test]
 fn blocked_peer_is_silently_denied() {
     let mut alice = node(1);
     let mut bob = node(2);

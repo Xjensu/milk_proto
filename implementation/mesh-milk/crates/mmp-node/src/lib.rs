@@ -2529,12 +2529,12 @@ impl NodeCore {
         body.push(apptype::TEXT);
         body.extend_from_slice(text);
         self.preflight_group_size(gid, text.len())?;
-        let epoch = self.groups.get(gid).ok_or(SendError::UnknownPeer)?.epoch;
-        let (epoch, gp) = {
+        let (epoch, gp, local_candidate) = {
             let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+            let epoch = gs.epoch;
             let gp = gs
                 .local
-                .try_encrypt_with_ad(me, &body, |placeholder| {
+                .try_encrypt_with_ad_candidate(me, &body, |placeholder| {
                     Bundle {
                         class: class::GROUP,
                         flags: 0,
@@ -2549,7 +2549,7 @@ impl NodeCore {
                     .canonical_aead_ad()
                 })
                 .map_err(|_| SendError::RatchetExhausted)?;
-            (epoch, gp)
+            (epoch, gp.0, gp.1)
         };
         let mut bundle = Bundle {
             class: class::GROUP,
@@ -2567,7 +2567,14 @@ impl NodeCore {
             return Err(SendError::TooLarge);
         }
         let budget = origin_budget(self.utility.n_hat(self.now));
-        Ok(self.store_own(bundle, budget))
+        let id = self.try_store_own(bundle, budget)?;
+        self.groups
+            .get_mut(gid)
+            .expect("group remains while sending")
+            .local
+            .commit_candidate(local_candidate)
+            .expect("staged group candidate still matches live sender key");
+        Ok(id)
     }
 
     // ----------------------------------------------------------- delivery --
