@@ -48,7 +48,9 @@ on Windows, and use CI's `fuzz-build`/`fuzz-run` jobs (or a Linux/WSL box) to ac
 ## Deterministic seed corpus
 
 `seed_corpus.py` derives hand-picked inputs from public vectors (all registered frame types, every
-bundle class, strict-TLV negatives, oversize envelope prefixes, and malformed Noise lengths). The
+bundle class, strict-TLV and reserved-flag negatives, oversize envelope prefixes, and malformed
+Noise lengths). The reserved-flag seed preserves the full outer bundle bytes so the bundle target
+can exercise rejection before authentication.
 Noise set includes exact 256-byte and one-byte-over-256-byte inputs, covering the reference
 handshake receive bound and its fail-closed boundary.
 Run `python seed_corpus.py check` to validate the recipe, `python seed_corpus.py write` to

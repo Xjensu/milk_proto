@@ -30,6 +30,13 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         self.assertTrue(any(len(seed.data) > 4096 for seed in first["fuzz_envelope"]))
         self.assertTrue(any("recon-range-count-no-records" in seed.name for seed in first["fuzz_envelope"]))
         self.assertTrue(any("unknown_critical_tlv" in seed.name for seed in first["fuzz_bundle"]))
+        reserved = [seed for seed in first["fuzz_bundle"] if seed.name == "negative-reserved-bits"]
+        self.assertEqual(len(reserved), 1)
+        self.assertEqual(reserved[0].source, "reserved_bits_negative.json.wire")
+        expected = json.loads(
+            (CORPUS.DEFAULT_VECTORS / "reserved_bits_negative.json").read_text(encoding="utf-8")
+        )["wire"]
+        self.assertEqual(reserved[0].data, bytes.fromhex(expected))
 
     def test_write_and_verify_round_trip(self) -> None:
         seeds = CORPUS.build_seed_sets()
@@ -41,6 +48,11 @@ class FuzzSeedCorpusTests(unittest.TestCase):
             path.write_bytes(path.read_bytes() + b"\x00")
             with self.assertRaises(ValueError):
                 CORPUS.verify_corpus(output, seeds)
+            reserved = output / "fuzz_bundle" / "mmp-seed-negative-reserved-bits.bin"
+            self.assertEqual(
+                reserved.read_bytes(),
+                next(seed.data for seed in seeds["fuzz_bundle"] if seed.name == "negative-reserved-bits"),
+            )
 
     def test_verify_rejects_stale_generated_member(self) -> None:
         seeds = CORPUS.build_seed_sets()

@@ -494,8 +494,12 @@ rationale in the design record; summarized by file below.
   `load_for_handoff` → BUNDLE + BUDGET path `Frame::Want` already uses. Bitmap semantics pinned:
   stripe-major, `RS_TOTAL_N` = 40 bits = 5 B/stripe, LSB-first — a whole 8 MiB file's BLOB_HAVE is
   128 × 5 = 640 B, one frame, and the requester's in-RAM `have` vec is byte-identical to the wire
-  form. MVP requesters emit only BLOB_HAVE, one per active assembly, polled right after
-  `friend_frames`; BLOB_REQ send-side is receive-only (interoperability without a sender feature).
+ form. MVP requesters emit one bounded BLOB_HAVE per active assembly, polled right after
+ `friend_frames`, and may emit a bounded origin-targeted BLOB_REQ burst when the authenticated
+ peer is the manifest's verified sharer (up to four one-stripe requests per contact, with a
+ rotating local root cursor). BLOB_REQ still reuses the existing wire object; this is a local
+ scheduling policy, not a new wire field or RBSR partition. Requests to non-origin partial caches
+ remain deferred.
 - **D5 pacing (honest MVP substitute, no per-domain sub-budget exists anywhere in the session
   engine — a real gap, not faked):** class-4 already falls into RBSR domain 3 (relay inventory) via
   the existing `_ => 3` catch-all, so symbols structurally sync after control/direct/group/claims;
@@ -544,8 +548,9 @@ would not otherwise complete.
    auto-downloads (safe default).
 4. **Streaming sender.** `send_file` takes `&[u8]` (≤ 8 MiB in sender RAM); disk-streaming encode is
    follow-up work.
-5. **Origin-targeted BLOB_REQ emission and BlobHave gossip beyond active assemblies** — receive-side
-   is wired for interoperability, MVP requesters never send BLOB_REQ.
+5. **Non-origin partial-cache request policy and BlobHave gossip beyond active assemblies** —
+   receive-side serving and bounded origin-targeted BLOB_REQ emission are wired; an explicit
+   policy for requesting from partial caches remains deferred.
 
 **Spec-precision gaps found, recorded as `CHANGELOG.md` errata candidates rather than edited into
 the spec unilaterally:** doc 10 §4.5's payload-layout prose is superseded by D1's placement decision

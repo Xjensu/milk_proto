@@ -132,6 +132,8 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
             f"(maximum {MAX_VECTOR_ENTRIES})"
         )
 
+    reserved_bits = _vector_wire(vectors, "reserved_bits_negative.json")
+
     result: dict[str, list[Seed]] = {
         "fuzz_beacon": [],
         "fuzz_envelope": [],
@@ -207,6 +209,12 @@ def build_seed_sets(vectors: Path = DEFAULT_VECTORS) -> dict[str, tuple[Seed, ..
             _seed("fuzz_bundle", "legacy-valid", legacy_bundle, "bundle.json.wire"),
             _seed("fuzz_bundle", "legacy-truncated", legacy_bundle[:-1], "bundle.json.wire[:-1]"),
             _seed("fuzz_bundle", "legacy-prefix", legacy_bundle[:4], "bundle.json.wire[:4]"),
+            _seed(
+                "fuzz_bundle",
+                "negative-reserved-bits",
+                reserved_bits,
+                "reserved_bits_negative.json.wire",
+            ),
         )
     )
     for item in malformed:

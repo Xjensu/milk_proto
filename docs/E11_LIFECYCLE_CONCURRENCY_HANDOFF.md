@@ -92,6 +92,8 @@ legacy peers see the same wire messages and frame encodings.
    the Android/iOS platform gate.
 3. Reconcile the existing dirty FFI/mobile documentation before adding release
    documentation-enforcement checks.
-4. Keep RBSR priority partitioning, D3 weighting, origin-targeted blob
-   scheduling, and Bluetooth hardware exchange deferred until their contracts
-   and evidence are available.
+4. Keep RBSR priority partitioning, D3 weighting, non-origin partial-cache blob
+   requests, and Bluetooth hardware exchange deferred until their contracts and
+   evidence are available. Bounded origin-targeted blob scheduling is shipped as
+   local policy over the existing wire objects; it is not a new specification
+   primitive.

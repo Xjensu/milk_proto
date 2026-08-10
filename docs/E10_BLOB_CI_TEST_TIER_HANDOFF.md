@@ -86,7 +86,9 @@ the local loop. It only closes a normal-CI coverage hole.
 
 1. Reconcile the existing dirty API/mobile documentation with the committed typed FFI
    revocation surface before adding documentation-enforcement tests.
-2. Keep origin-targeted `BLOB_REQ` scheduling, airtime accounting, and streaming
-   symbols deferred until their normative and performance contracts are approved.
+2. The bounded origin-targeted `BLOB_REQ` scheduler is now shipped as local
+   policy over the existing wire object. Keep per-domain airtime accounting,
+   streaming symbol production, and non-origin partial-cache requests deferred
+   until their normative and performance contracts are approved.
 3. Obtain real Linux/BlueZ two-host, Android/iOS runtime, battery, and external crypto
    review evidence before claiming production readiness.

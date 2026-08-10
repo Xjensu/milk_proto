@@ -45,10 +45,10 @@ toolchain changes, the helper refuses to guess and requires an explicit
 
 The 10–30 second target is a budget for small changed crates and already-built
 dependency scopes. The complete serial `mmp-node` package check is currently
-about 40–45 seconds on the Windows reference host (149 tests plus Clippy), so
-that larger scope is an explicitly measured exception rather than a reason to
-remove lifecycle or security coverage. The normal CI workspace command remains
-serial for reproducibility.
+about 35–45 seconds on the Windows reference host (151 tests plus Clippy; a
+measured run completed in 35.6 seconds), so that larger scope is an explicitly
+measured exception rather than a reason to remove lifecycle or security
+coverage. The normal CI workspace command remains serial for reproducibility.
 
 The repository still has pre-existing rustfmt drift in several tracked Rust
 files. Package-scoped checks no longer report that unrelated drift; the `--all`
