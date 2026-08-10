@@ -48,6 +48,17 @@ impl Rng {
     }
 }
 
+/// Uniformly sample an inclusive `min..=max` range without overflowing when
+/// the caller intentionally asks for the full `u64` domain.
+fn sample_gap_inclusive(rng: &mut Rng, min: u64, max: u64) -> u64 {
+    let width = max - min;
+    if width == u64::MAX {
+        rng.next_u64()
+    } else {
+        min + rng.below(width + 1)
+    }
+}
+
 /// Deterministic clustered-contact model for simulation experiments.
 ///
 /// Nodes are partitioned into equal-sized communities. Most contacts stay
@@ -118,6 +129,185 @@ pub struct SocialClusteredMobility {
     bridge_probability_per_mille: u16,
     active_community: usize,
     bridge_count: usize,
+}
+
+/// Maximum dwell episode accepted by [`BoundedHeavyTailClusteredMobility`].
+///
+/// The cap is deliberately small enough that a research run cannot turn a
+/// malformed fixture into an unbounded generator cost.  Larger trace-driven
+/// campaigns should stream an external trace instead of increasing this
+/// bound silently.
+pub const MAX_CLUSTER_DWELL: usize = 4_096;
+
+/// A deterministic, bounded heavy-tail clustered contact model.
+///
+/// The active community remains selected for a pause episode, then the next
+/// episode starts with one inter-community bridge.  Episode lengths are drawn
+/// from a truncated harmonic distribution (`P(k) ∝ 1/k`) between
+/// `dwell_min` and `dwell_max`.  This captures the useful *long-tail dwell*
+/// property of human-mobility models while keeping every run finite and
+/// reproducible.  It is intentionally not labelled as a SLAW implementation:
+/// SLAW also models node-specific mobility regions, waypoint geometry, and
+/// flight/inter-contact distributions, none of which this pairwise simulator
+/// observes.
+pub struct BoundedHeavyTailClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    active_community: usize,
+    dwell_min: usize,
+    dwell_max: usize,
+    dwell_weight_total: u64,
+    remaining_intra: usize,
+    initialized: bool,
+    bridge_count: usize,
+    episode_count: usize,
+    intra_streak: usize,
+    max_intra_streak: usize,
+}
+
+impl BoundedHeavyTailClusteredMobility {
+    /// Build a balanced community partition with bounded heavy-tail dwell.
+    ///
+    /// `dwell_min..=dwell_max` counts intra-community contacts in each
+    /// episode.  `dwell_min` must be non-zero and `dwell_max` must not exceed
+    /// [`MAX_CLUSTER_DWELL`].
+    pub fn new(
+        node_count: usize,
+        community_count: usize,
+        dwell_min: usize,
+        dwell_max: usize,
+    ) -> Option<Self> {
+        if community_count < 2
+            || node_count < community_count.saturating_mul(2)
+            || dwell_min == 0
+            || dwell_min > dwell_max
+            || dwell_max > MAX_CLUSTER_DWELL
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        let dwell_weight_total = (dwell_min..=dwell_max)
+            .map(Self::dwell_weight)
+            .sum();
+        Some(Self {
+            communities,
+            active_community: 0,
+            dwell_min,
+            dwell_max,
+            dwell_weight_total,
+            remaining_intra: 0,
+            initialized: false,
+            bridge_count: 0,
+            episode_count: 0,
+            intra_streak: 0,
+            max_intra_streak: 0,
+        })
+    }
+
+    /// Number of bridge contacts emitted so far.
+    pub fn bridge_count(&self) -> usize {
+        self.bridge_count
+    }
+
+    /// Number of dwell episodes started, including an initial episode when a
+    /// first contact has been emitted.
+    pub fn episode_count(&self) -> usize {
+        self.episode_count
+    }
+
+    /// Longest observed run of intra-community contacts.
+    pub fn max_intra_streak(&self) -> usize {
+        self.max_intra_streak
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let (left, right, is_bridge) = if !self.initialized {
+            self.initialized = true;
+            self.start_episode(rng);
+            self.intra_pair(rng)
+        } else if self.remaining_intra == 0 {
+            let previous = self.active_community;
+            let offset = 1 + rng.below((self.communities.len() - 1) as u64) as usize;
+            self.active_community =
+                (self.active_community + offset) % self.communities.len();
+            self.bridge_count = self.bridge_count.saturating_add(1);
+            self.start_episode(rng);
+            self.bridge_pair(previous, rng)
+        } else {
+            self.intra_pair(rng)
+        };
+
+        if is_bridge {
+            self.intra_streak = 0;
+        } else {
+            self.intra_streak = self.intra_streak.saturating_add(1);
+            self.max_intra_streak = self.max_intra_streak.max(self.intra_streak);
+            self.remaining_intra = self.remaining_intra.saturating_sub(1);
+        }
+        (left, right, is_bridge)
+    }
+
+    fn start_episode(&mut self, rng: &mut Rng) {
+        self.remaining_intra = self.sample_dwell(rng);
+        self.episode_count = self.episode_count.saturating_add(1);
+    }
+
+    fn sample_dwell(&self, rng: &mut Rng) -> usize {
+        let mut target = rng.below(self.dwell_weight_total);
+        for dwell in self.dwell_min..=self.dwell_max {
+            let weight = Self::dwell_weight(dwell);
+            if target < weight {
+                return dwell;
+            }
+            target -= weight;
+        }
+        self.dwell_max
+    }
+
+    fn dwell_weight(dwell: usize) -> u64 {
+        // 1e6 keeps useful precision while remaining non-zero at the public
+        // 4,096-contact bound.
+        1_000_000 / dwell as u64
+    }
+
+    fn intra_pair(&self, rng: &mut Rng) -> (usize, usize, bool) {
+        let members = &self.communities[self.active_community];
+        let first = self.pick(members, rng);
+        let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+        let first_index = members
+            .iter()
+            .position(|node| *node == first)
+            .expect("picked member");
+        (first, members[(first_index + offset) % members.len()], false)
+    }
+
+    fn bridge_pair(&self, previous: usize, rng: &mut Rng) -> (usize, usize, bool) {
+        let left = self.pick(&self.communities[previous], rng);
+        let right = self.pick(&self.communities[self.active_community], rng);
+        (left, right, true)
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
+/// Metrics returned by one bounded heavy-tail clustered schedule run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundedHeavyTailRunMetrics {
+    pub meetings: usize,
+    pub bridge_meetings: usize,
+    pub intra_community_meetings: usize,
+    pub episodes: usize,
+    /// Longest observed intra-community dwell streak. This is a model metric,
+    /// not a calibrated human dwell-time estimate.
+    pub max_intra_community_streak: usize,
+    pub dwell_min: usize,
+    pub dwell_max: usize,
+    pub realized_bridge_probability_per_mille: u16,
 }
 
 impl SocialClusteredMobility {
@@ -800,6 +990,59 @@ impl Sim {
             intra_community_meetings,
             max_intra_community_streak,
             bridge_probability_per_mille: plan.bridge_probability_per_mille(),
+            realized_bridge_probability_per_mille,
+        })
+    }
+
+    /// Run a bounded heavy-tail clustered schedule and return generator
+    /// metrics. This research-only model leaves wire formats and routing
+    /// policy untouched; it does not claim to close the SLAW gate without
+    /// trace-derived parameters. Invalid parameters return `None` before the
+    /// simulator is mutated. Gap samples use the inclusive
+    /// `min_gap_ms..=max_gap_ms` interval.
+    pub fn run_bounded_heavy_tail_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        dwell_min: usize,
+        dwell_max: usize,
+    ) -> Option<BoundedHeavyTailRunMetrics> {
+        if min_gap_ms > max_gap_ms {
+            return None;
+        }
+        let mut plan = BoundedHeavyTailClusteredMobility::new(
+            self.nodes.len(),
+            community_count,
+            dwell_min,
+            dwell_max,
+        )?;
+        let mut bridge_meetings = 0usize;
+        let mut intra_community_meetings = 0usize;
+        for _ in 0..count {
+            let (i, j, is_bridge) = plan.next_pair(&mut self.rng);
+            let dt = sample_gap_inclusive(&mut self.rng, min_gap_ms, max_gap_ms);
+            self.meet(i, j, dt);
+            if is_bridge {
+                bridge_meetings = bridge_meetings.saturating_add(1);
+            } else {
+                intra_community_meetings = intra_community_meetings.saturating_add(1);
+            }
+        }
+        let realized_bridge_probability_per_mille = bridge_meetings
+            .saturating_mul(1_000)
+            .checked_div(count)
+            .unwrap_or(0)
+            .min(1_000) as u16;
+        Some(BoundedHeavyTailRunMetrics {
+            meetings: count,
+            bridge_meetings,
+            intra_community_meetings,
+            episodes: plan.episode_count(),
+            max_intra_community_streak: plan.max_intra_streak(),
+            dwell_min,
+            dwell_max,
             realized_bridge_probability_per_mille,
         })
     }

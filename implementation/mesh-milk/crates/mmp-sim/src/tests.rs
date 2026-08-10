@@ -126,6 +126,75 @@ fn social_clustered_empty_run_has_zero_realized_distribution() {
     assert_eq!(sim.counters().meetings_run, 0);
 }
 
+#[test]
+fn bounded_heavy_tail_mobility_is_deterministic_and_bounded() {
+    let mut first = crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16)
+        .expect("valid bounded profile");
+    let mut second = crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16)
+        .expect("valid bounded profile");
+    let mut rng_a = crate::Rng::new(0xB0AD_D3D0);
+    let mut rng_b = crate::Rng::new(0xB0AD_D3D0);
+    let mut bridge_count = 0;
+    for _ in 0..500 {
+        let first_pair = first.next_pair(&mut rng_a);
+        let second_pair = second.next_pair(&mut rng_b);
+        assert_eq!(first_pair, second_pair, "same seed must reproduce the plan");
+        assert_ne!(first_pair.0, first_pair.1, "a contact cannot contain itself");
+        bridge_count += usize::from(first_pair.2);
+    }
+    assert_eq!(bridge_count, first.bridge_count());
+    assert_eq!(bridge_count, second.bridge_count());
+    assert!(bridge_count > 0, "bounded dwell must eventually transition");
+    assert!(first.episode_count() <= 500);
+    assert!(first.max_intra_streak() <= 16);
+}
+
+#[test]
+fn bounded_heavy_tail_rejects_invalid_configuration() {
+    assert!(crate::BoundedHeavyTailClusteredMobility::new(8, 1, 1, 4).is_none());
+    assert!(crate::BoundedHeavyTailClusteredMobility::new(7, 4, 1, 4).is_none());
+    assert!(crate::BoundedHeavyTailClusteredMobility::new(8, 4, 0, 4).is_none());
+    assert!(crate::BoundedHeavyTailClusteredMobility::new(8, 4, 5, 4).is_none());
+    assert!(crate::BoundedHeavyTailClusteredMobility::new(
+        8,
+        4,
+        1,
+        crate::MAX_CLUSTER_DWELL + 1,
+    )
+    .is_none());
+}
+
+#[test]
+fn bounded_heavy_tail_run_reports_generator_metrics_without_wire_changes() {
+    let mut sim = Sim::new(24, 0xB0AD_D3D0);
+    let metrics = sim
+        .run_bounded_heavy_tail_clustered_meetings(120, 1_000, 2_000, 4, 1, 8)
+        .expect("valid bounded profile");
+    assert_eq!(metrics.meetings, 120);
+    assert_eq!(metrics.bridge_meetings + metrics.intra_community_meetings, 120);
+    assert_eq!(metrics.dwell_min, 1);
+    assert_eq!(metrics.dwell_max, 8);
+    assert!(metrics.episodes > 0);
+    assert!(metrics.max_intra_community_streak <= metrics.dwell_max);
+    assert_eq!(metrics.realized_bridge_probability_per_mille,
+        ((metrics.bridge_meetings * 1_000) / metrics.meetings) as u16);
+    assert_eq!(sim.counters().meetings_run, 120);
+    assert!(sim.quota_ok());
+}
+
+#[test]
+fn bounded_heavy_tail_run_rejects_invalid_inputs_without_mutation() {
+    let mut sim = Sim::new(8, 0xB0AD_D3D0);
+    assert!(sim
+        .run_bounded_heavy_tail_clustered_meetings(10, 2_000, 1_000, 4, 1, 4)
+        .is_none());
+    assert!(sim
+        .run_bounded_heavy_tail_clustered_meetings(10, 1_000, 2_000, 4, 5, 4)
+        .is_none());
+    assert_eq!(sim.now_ms(), 0);
+    assert_eq!(sim.counters().meetings_run, 0);
+}
+
 fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {
     const MEETINGS: usize = 12;
 
