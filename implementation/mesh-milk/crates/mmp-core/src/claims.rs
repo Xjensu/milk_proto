@@ -8,7 +8,10 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use mmp_types::claim::{field, friendship_signed_object, succession_signed_object, Claim, Friendship, Revocation};
+use mmp_types::claim::{
+    field, friendship_signed_object, succession_signed_object, Claim, EpochAnchor, Friendship, PrekeyBatch,
+    Revocation,
+};
 use mmp_types::consts::LIFETIME_CLAIM_MS;
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::ClaimDigestEntry;
@@ -52,6 +55,40 @@ impl ClaimStore {
         ClaimStore::default()
     }
 
+    /// Validate a claim body using the schemas implemented by this Rust
+    /// release, without mutating a store.  Authority pointer fields remain
+    /// opaque by design (doc 06 §4.1 / doc 18); their owner signature is the
+    /// only v1 relay-side requirement.  The Friendship body follows the
+    /// current Rust/handbook schema; the document-10 alternate schema remains
+    /// a tracked conformance discrepancy and is not silently normalized here.
+    pub fn validate_claim(claim: &Claim) -> bool {
+        if claim.validate_known_body().is_err() {
+            return false;
+        }
+        match claim.field {
+            field::EXCHANGE_KEY => claim.body.len() == 32,
+            field::PREKEY_BATCH => {
+                let Ok(batch) = PrekeyBatch::decode(&claim.body) else { return false };
+                mmp_crypto::verify(SigDomain::Prekey, &claim.owner, &batch.signed_object(), &batch.spk_sig).is_ok()
+            }
+            field::FRIENDSHIP => {
+                let Ok(body) = Friendship::decode(&claim.body) else { return false };
+                let preimage = friendship_signed_object(&claim.owner, &body.friend, body.since);
+                mmp_crypto::verify(SigDomain::Friend, &body.friend, &preimage, &body.countersig).is_ok()
+            }
+            field::GROUP_EPOCH_ANCHOR => EpochAnchor::decode(&claim.body).is_ok(),
+            field::REVOCATION => {
+                let Ok(body) = Revocation::decode(&claim.body) else { return false };
+                body.revoked_key == claim.owner
+            }
+            // AVATAR_ROOT has no complete body codec in the frozen suite;
+            // AUTHCERT and REVOCATION_LIST are explicit store-don't-interpret
+            // pointers.  Do not guess a new schema at this boundary.
+            field::AVATAR_ROOT | field::AUTHCERT | field::REVOCATION_LIST => true,
+            _ => true,
+        }
+    }
+
     /// Merge a signature-verified claim.
     ///
     /// Tombstone rule (doc 06 §4.6 / handbook §4.6): once a `REVOCATION`
@@ -66,33 +103,13 @@ impl ClaimStore {
             return ClaimMerge::Stale;
         }
 
-        // `Claim::decode` applies the same check to wire input.  Repeat it at
-        // the state boundary because callers may construct a Claim directly
-        // (out-of-band bootstrap, tests, or persistence adapters). Unknown
-        // fields remain opaque and are intentionally accepted here.
-        if claim.validate_known_body().is_err() {
+        // `Claim::decode` applies the same check to wire input.  Repeat the
+        // complete implemented-schema validation at the state boundary
+        // because callers may construct a Claim directly (out-of-band
+        // bootstrap, tests, or persistence adapters). Unknown and authority
+        // pointer fields remain opaque and are intentionally accepted here.
+        if !Self::validate_claim(&claim) {
             return ClaimMerge::Rejected;
-        }
-
-        if claim.field == field::REVOCATION {
-            let Ok(body) = Revocation::decode(&claim.body) else { return ClaimMerge::Rejected };
-            if body.revoked_key != claim.owner {
-                return ClaimMerge::Rejected;
-            }
-        }
-
-        // Friendship (field 0x05, doc 04 §4.1, handbook §4.5): the patron's
-        // countersig must verify against the claim's own owner (dependent)
-        // and the body's `friend`/`since` — an invalid or missing countersig
-        // means the "patron" never actually agreed, so the claim is rejected
-        // outright, same shape as a malformed/mismatched revocation above.
-        if claim.field == field::FRIENDSHIP {
-            let Ok(body) = Friendship::decode(&claim.body) else { return ClaimMerge::Rejected };
-            let preimage = friendship_signed_object(&claim.owner, &body.friend, body.since);
-            if mmp_crypto::verify(SigDomain::Friend, &body.friend, &preimage, &body.countersig).is_err()
-            {
-                return ClaimMerge::Rejected;
-            }
         }
 
         let key = (node, claim.field);
@@ -396,5 +413,21 @@ mod tests {
             vec![0xff; mmp_types::consts::NICKNAME_MAX + 1],
         );
         assert_eq!(store.merge(claim, 0, false), ClaimMerge::Adopted);
+    }
+
+    #[test]
+    fn prekey_claim_with_bad_signed_prekey_signature_is_rejected() {
+        let alice = identity(7);
+        let mut batch = mmp_types::claim::PrekeyBatch {
+            signed_prekey: Key32([8; 32]),
+            spk_sig: Sig64::ZERO,
+            prekeys: vec![Key32([9; 32])],
+        };
+        batch.spk_sig = alice.sign(SigDomain::Prekey, &batch.signed_object());
+        batch.spk_sig.0[0] ^= 0x80;
+        let claim = signed_claim(&alice, field::PREKEY_BATCH, 1, batch.encode());
+
+        let mut store = ClaimStore::new();
+        assert_eq!(store.merge(claim, 0, false), ClaimMerge::Rejected);
     }
 }

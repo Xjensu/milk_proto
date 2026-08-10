@@ -84,11 +84,42 @@ impl Claim {
     /// fail-closed rule, including callers that construct a [`Claim`] without
     /// going through [`Claim::decode`].
     pub fn validate_known_body(&self) -> Result<(), WireError> {
-        if self.field == field::NICKNAME {
-            if self.body.len() > NICKNAME_MAX {
-                return Err(WireError::Oversize);
+        match self.field {
+            field::NICKNAME => {
+                if self.body.len() > NICKNAME_MAX {
+                    return Err(WireError::Oversize);
+                }
+                core::str::from_utf8(&self.body)
+                    .map_err(|_| WireError::BadValue("claim.nickname.utf8"))?;
             }
-            core::str::from_utf8(&self.body).map_err(|_| WireError::BadValue("claim.nickname.utf8"))?;
+            field::EXCHANGE_KEY => {
+                if self.body.len() != 32 {
+                    return Err(WireError::BadValue("claim.exchange_key.len"));
+                }
+            }
+            field::PREKEY_BATCH => {
+                PrekeyBatch::decode(&self.body)?;
+            }
+            // Friendship is validated by mmp-core, where the current
+            // countersignature check is available.  The frozen documents
+            // disagree on its exact wire grammar (CONFORMANCE-002), so the
+            // value-layer parser must not silently choose one representation.
+            field::FRIENDSHIP => {}
+            field::GROUP_EPOCH_ANCHOR => {
+                EpochAnchor::decode(&self.body)?;
+            }
+            field::REVOCATION => {
+                Revocation::decode(&self.body)?;
+            }
+            // AVATAR_ROOT is intentionally not length-checked here: doc 06
+            // describes only a "blob hash", while the dormant blob-root
+            // helper carries additional size/RS metadata.  Until that
+            // conformance ambiguity is resolved, accepting the opaque bytes
+            // preserves forward compatibility and avoids inventing a wire
+            // constraint.
+            field::AVATAR_ROOT | field::AUTHCERT | field::REVOCATION_LIST => {}
+            // Unknown fields are explicitly store-and-forward opaque.
+            _ => {}
         }
         Ok(())
     }
@@ -366,6 +397,32 @@ mod tests {
             sig: Sig64::ZERO,
         };
         assert_eq!(Claim::decode(&claim.encode()).unwrap(), claim);
+    }
+
+    #[test]
+    fn claim_decode_rejects_structurally_malformed_recognized_bodies() {
+        let owner = Key32([3; 32]);
+        let mut revocation = vec![0u8; 32 + 1 + 1];
+        revocation[33] = 0x02;
+        let cases = [
+            (field::EXCHANGE_KEY, vec![0u8; 31]),
+            (field::PREKEY_BATCH, vec![0u8; 32 + 64]),
+            (field::GROUP_EPOCH_ANCHOR, vec![0u8; 16 + 2 + 32 - 1]),
+            (field::REVOCATION, revocation),
+        ];
+        for (field_id, body) in cases {
+            let claim = Claim { owner, field: field_id, seq: 1, body, sig: Sig64::ZERO };
+            assert!(Claim::decode(&claim.encode()).is_err(), "field {field_id:#x} must reject");
+        }
+    }
+
+    #[test]
+    fn claim_validation_leaves_authority_pointer_fields_opaque() {
+        let owner = Key32([4; 32]);
+        for field_id in [field::AUTHCERT, field::REVOCATION_LIST] {
+            let claim = Claim { owner, field: field_id, seq: 1, body: vec![0xff], sig: Sig64::ZERO };
+            assert!(claim.validate_known_body().is_ok(), "field {field_id:#x} is store-only");
+        }
     }
 
     fn revocation_no_successor() -> Revocation {

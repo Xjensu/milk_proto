@@ -19,7 +19,7 @@ use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::Ext;
 
-use crate::{DeliveryState, Event, Node, SendError, SentMessage, Tier};
+use crate::{ClaimPublishError, DeliveryState, Event, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
@@ -78,6 +78,33 @@ fn generic_nickname_publication_rejects_invalid_body_before_gossip() {
     assert!(n.publish_claim(mmp_types::claim::field::NICKNAME, 2, oversized).is_empty());
     assert_eq!(n.own_claims(), before_claims);
     assert_eq!(n.store_len(), before_store_len);
+}
+
+#[test]
+fn recognized_claim_publication_rejects_malformed_bodies_before_side_effects() {
+    let mut n = node(249);
+    let before_claims = n.own_claims();
+    let before_store_len = n.store_len();
+    let cases = [
+        (mmp_types::claim::field::EXCHANGE_KEY, vec![0u8; 31]),
+        (mmp_types::claim::field::PREKEY_BATCH, vec![0u8; 32 + 64 + 1]),
+        (mmp_types::claim::field::FRIENDSHIP, vec![0u8; 32 + 8 + 64]),
+        (mmp_types::claim::field::GROUP_EPOCH_ANCHOR, vec![0u8; 16 + 2 + 32 - 1]),
+        (mmp_types::claim::field::REVOCATION, vec![0u8; 32 + 1 + 1]),
+    ];
+
+    for (field_id, body) in cases {
+        assert_eq!(
+            n.try_publish_claim(field_id, 2, body),
+            Err(ClaimPublishError::InvalidBody),
+            "field {field_id:#x} must fail before signing",
+        );
+        assert_eq!(n.own_claims(), before_claims);
+        assert_eq!(n.store_len(), before_store_len);
+    }
+
+    // Forward-compatible fields are still accepted as opaque signed claims.
+    assert!(n.try_publish_claim(0xf0, 1, vec![0xff; 3]).is_ok());
 }
 
 #[test]

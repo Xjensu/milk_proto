@@ -443,6 +443,15 @@ pub enum SendError {
     ResourceLimit,
 }
 
+/// Why a locally-authored claim was rejected before signing or gossip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClaimPublishError {
+    /// The body does not satisfy the schema implemented for its recognized
+    /// claim field. Unknown fields remain opaque and are never rejected for
+    /// an internal format this node does not understand.
+    InvalidBody,
+}
+
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
 pub struct SyncView {
     /// Sorted by id: (id, domain).
@@ -952,7 +961,20 @@ impl Node {
     /// Unknown fields remain opaque and retain the forward-compatible
     /// store-and-forward behavior from doc 06 §4.1.
     pub fn publish_claim(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
-        self.core.publish_claim_now(field_id, seq, body)
+        self.try_publish_claim(field_id, seq, body).unwrap_or_default()
+    }
+
+    /// Fallible form of [`Node::publish_claim`]. The claim is validated before
+    /// signing, local adoption, or gossip, so malformed recognized bodies have
+    /// no observable state side effects. Unknown fields remain opaque for
+    /// forward compatibility.
+    pub fn try_publish_claim(
+        &mut self,
+        field_id: u8,
+        seq: u32,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, ClaimPublishError> {
+        self.core.try_publish_claim_now(field_id, seq, body)
     }
 
     /// Publish our nickname as a profile claim (doc 06 §4) — `seq` must
@@ -977,8 +999,9 @@ impl Node {
         if name.len() > NICKNAME_MAX {
             return Err(SendError::TooLarge);
         }
-        self.publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec());
-        Ok(())
+        self.try_publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec())
+            .map(|_| ())
+            .map_err(|_| SendError::TooLarge)
     }
 
     /// Publish a self-revocation claim (field `0x09`, handbook §4.6) —
@@ -1841,19 +1864,28 @@ impl NodeCore {
     /// (`on_friend_ack`, handbook §4.5), which only has `&mut NodeCore`, not
     /// the outer `Node`.
     fn publish_claim_now(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
+        self.try_publish_claim_now(field_id, seq, body).unwrap_or_default()
+    }
+
+    fn try_publish_claim_now(
+        &mut self,
+        field_id: u8,
+        seq: u32,
+        body: Vec<u8>,
+    ) -> Result<Vec<u8>, ClaimPublishError> {
         let mut claim = Claim { owner: self.public, field: field_id, seq, body, sig: Sig64::ZERO };
         // Keep the local publication path subject to the same field-specific
-        // semantic checks as wire decoding and ClaimStore::merge.  Without
-        // this guard a manually supplied nickname could be signed and
-        // gossiped even though receivers correctly reject it.
-        if claim.validate_known_body().is_err() {
-            return Vec::new();
+        // semantic checks as wire decoding and ClaimStore::merge. Without
+        // this guard a manually supplied claim could be signed and gossiped
+        // even though receivers correctly reject it.
+        if !ClaimStore::validate_claim(&claim) {
+            return Err(ClaimPublishError::InvalidBody);
         }
         claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
         let encoded = claim.encode();
         self.learn_claim(claim.clone(), true);
         self.gossip_claim(&claim);
-        encoded
+        Ok(encoded)
     }
 
     /// Wrap a claim in a class-3 bundle so it gossips through sync (D0).
