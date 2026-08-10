@@ -222,6 +222,13 @@ impl AuthorityStore {
         self.subscribed.contains(scope)
     }
 
+    /// Return the locally pinned issuer for `scope`, if any.  This is a
+    /// receiver-local root lookup used by bounded pending-certificate
+    /// reconstruction; it never exposes or changes wire state.
+    pub fn root_issuer(&self, scope: &Id16) -> Option<Key32> {
+        self.roots.get(scope).map(|(issuer, _)| *issuer)
+    }
+
     /// Pin a trusted issuer for `scope` (doc 18 §2.2 QR-ceremony entry point).
     pub fn pin_root(&mut self, scope: Id16, issuer: Key32) {
         // Re-pinning an existing scope is allowed; a new scope is ignored once

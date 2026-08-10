@@ -958,6 +958,16 @@ impl Node {
     /// entry point — the "pinned," not "gossiped," trust level).
     pub fn pin_authority_root(&mut self, scope: Id16, issuer: Key32) {
         self.core.authority.pin_root(scope, issuer);
+        if self.core.authority.root_issuer(&scope) == Some(issuer) {
+            // A root rotation invalidates every pending certificate from the
+            // former issuer for this scope.  Drop those entries before
+            // rebuilding from durable announcements so a shorter-lived
+            // replacement cannot be hidden behind a stale certificate.
+            self.core.pending_authcerts.retain(|(_, pending_scope), pending| {
+                *pending_scope != scope || pending.cert.issuer == issuer
+            });
+            self.core.rebuild_pending_authority_certs();
+        }
         self.core.reconsider_pending_authority_certs();
     }
 
@@ -1200,6 +1210,13 @@ impl Node {
     pub fn restore_authority(&mut self, bytes: &[u8]) -> bool {
         let Some(authority) = AuthorityStore::decode(bytes) else { return false };
         self.core.authority = authority;
+        self.core.pending_authcerts.retain(|(_, scope), pending| {
+            self.core
+                .authority
+                .root_issuer(scope)
+                .is_none_or(|issuer| issuer == pending.cert.issuer)
+        });
+        self.core.rebuild_pending_authority_certs();
         self.core.reconsider_pending_authority_certs();
         true
     }
@@ -2054,6 +2071,13 @@ impl NodeCore {
     /// checks pass.  Existing entries may be refreshed by a longer-lived
     /// certificate; a full map refuses new subjects (fail closed).
     fn retain_pending_authority_cert(&mut self, cert: AuthCert, display_not_after: u32) {
+        if self
+            .authority
+            .root_issuer(&cert.scope)
+            .is_some_and(|issuer| issuer != cert.issuer)
+        {
+            return;
+        }
         let key = (cert.subject, cert.scope);
         if let Some(existing) = self.pending_authcerts.get_mut(&key) {
             if cert.not_after > existing.cert.not_after {

@@ -21,6 +21,9 @@ announcement.
   may replace it. This is fail-closed under attachment flooding.
 - Re-evaluates pending certificates after a non-decreasing wall-clock sample,
   root pin, authority snapshot restore, and normal authority expiry.
+- Root rotation fences pending certificates from the former issuer for that
+  scope and rebuilds only certificates matching the new pinned root, so a
+  longer-lived stale grant cannot hide a shorter-lived valid replacement.
 - Drops malformed, expired, revoked, display-expired, and otherwise invalid
   entries; untrusted-root and authority-capacity cases remain pending.
 - Rebuilds the pending set from durable class-5 bundles at startup after
@@ -37,8 +40,10 @@ certificate without carrying it again.
 
 - `attached_authority_cert_received_before_clock_is_replayed_after_clock_ready`: passed.
 - `attached_authority_cert_is_reconstructed_from_store_after_restart`: passed.
-- Authority-focused node tests: 12 passed.
-- Full `mmp-node` library suite: 147 passed, 0 failed, serial execution.
+- `rotated_authority_root_accepts_shorter_lived_pending_certificate`: passed.
+- Authority-focused node tests: 13 passed.
+- Full `mmp-node` library suite: 148 passed, 0 failed, serial execution.
+- `mmp-core` authority suite: 16 passed.
 - Strict `mmp-node` Clippy: passed.
 - Focused nonzero display-cutoff regression: passed.
 - `git diff --check` for the scoped Rust files: passed.
