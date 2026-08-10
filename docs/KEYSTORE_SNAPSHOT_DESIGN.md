@@ -80,6 +80,16 @@ then applies the already validated aggregate in one in-memory swap. A busy
 node returns `VaultError::Busy` without touching state; no provider secret or
 plaintext crosses the FFI boundary.
 
+The follow-up vault hardening adds a required `SnapshotVault::with_restore_lock`
+callback and `restore_from_vault_into`. The provider must hold an
+identity-scoped exclusive transaction or lease from the first record read
+through the callback's in-memory state application; a default/no-op lock is
+not permitted. The reference provider and a lock-observing regression test
+prove the callback scope, but they do not provide a cross-process lock. Native
+Android Keystore, iOS Keychain, or equivalent adapters must still implement
+that guarantee transactionally before restart continuity can be claimed in
+production.
+
 The follow-up restore regression covers the lifecycle invariant that matters
 after a process restart: identity claims are reintroduced through the ordinary
 non-secret bootstrap path, the restored established conversation remains at
