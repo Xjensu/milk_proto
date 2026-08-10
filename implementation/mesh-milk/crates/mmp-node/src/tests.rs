@@ -830,6 +830,54 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
 }
 
 #[test]
+fn non_origin_partial_holder_serves_verified_symbols_via_blob_have() {
+    let mut origin = node(229);
+    let mut destination = node(228);
+    let mut relay = node(227);
+    introduce(&mut origin, &mut destination);
+    drain(&mut origin);
+    drain(&mut destination);
+
+    let sent = origin
+        .send_file(&destination.node_id(), "partial-cache.bin", "application/octet-stream", &[0x7a; 3000])
+        .expect("origin file is durable");
+    let symbol_id = *origin
+        .core
+        .blob_index
+        .get(&sent.root)
+        .and_then(|index| index.values().next())
+        .expect("origin has at least one symbol");
+    let (_, symbol_bytes) = origin.core.store.get(&symbol_id).expect("origin symbol is stored");
+
+    // The relay is a non-origin partial holder: it receives one verified
+    // symbol, but it has no local BlobAssembly for this root.
+    relay.core.on_bundle(&origin.node_id(), &symbol_bytes);
+    assert_eq!(relay.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(1));
+
+    let assembly = crate::blob::BlobAssembly::new(
+        sent.root,
+        3000,
+        *blake3::hash(&[0x7a; 3000]).as_bytes(),
+        origin.identity.public(),
+        std::path::PathBuf::from("partial-cache-destination"),
+        0,
+    );
+    // A real SessionHost callback is reached only after ID_PROOF. Register
+    // the destination as an authenticated peer before exercising the seam.
+    relay.core.accept_peer(&destination.identity.public(), &destination.node_id());
+    let destination_id = destination.node_id();
+    let root = sent.root;
+    relay.core.assemblies.insert(root, assembly);
+
+    // Destination has no verified symbols yet, so its BLOB_HAVE bitmap is
+    // all zeroes. The relay must answer with the symbol it already holds even
+    // though the bundle origin is the separate `origin` node.
+    let ids = relay.core.on_blob_have(&destination_id, &root, 0, &[0u8; 5]);
+    assert_eq!(ids, vec![symbol_id]);
+    assert_eq!(relay.core.blob_served.get(&destination_id), Some(&1));
+}
+
+#[test]
 fn blob_have_advertisements_are_bounded_and_rotated_per_peer() {
     let mut n = node(254);
     let peer = Id16([0xabu8; 16]);
