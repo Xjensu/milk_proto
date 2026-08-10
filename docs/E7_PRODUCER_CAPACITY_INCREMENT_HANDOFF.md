@@ -4,20 +4,25 @@ Status: bounded implementation increment; no wire or specification change.
 
 ## What changed
 
-This continuation adds two narrow uses of the existing receive-side
+This continuation adds narrow uses of the existing receive-side
 `BundleStore::try_put` seam:
 
 - `NodeCore::publish_announcement` now stores through `try_store_own`.
 - The sealed first-contact fallback (`send_sealed`) now stores through the
   same helper.
+- The valid-prekey first-contact branch of `send_app` now builds a candidate
+  conversation and sender ratchet, stores the complete bundle through
+  `try_store_own`, and commits conversation/pending/DAG state only after the
+  provider accepts it.
 
 `try_store_own` inserts `SeenIndex` state and logs `JourneyEvent::Created` only
 after the provider accepts the complete encoded bundle. A capacity rejection
 maps to the existing local `SendError::ResourceLimit` and leaves the store,
 seen index, diagnostics, conversation map, and pending-first-contact map
-unchanged. These two producers perform no ratchet or conversation mutation
-before the write, which is why this increment is safe without a new
-reservation/commit API.
+unchanged. Announcement and sealed producers perform no cryptographic state
+mutation before the write; the prekey first-contact producer keeps its
+conversation and sender-chain changes in local candidates until the write
+commits. This narrow scope is safe without a new reservation/commit API.
 
 The CLI `SharedSnapshot` adapter now delegates `try_put` instead of inheriting
 the default infallible trait implementation. This prevents a future bounded
@@ -44,7 +49,9 @@ New regressions cover:
 1. sealed first-contact capacity rejection;
 2. announcement capacity rejection;
 3. bounded `SharedSnapshot::try_put` propagation; and
-4. FFI nickname rejection after self-revocation.
+4. FFI nickname rejection after self-revocation; and
+5. valid-prekey first-contact rejection with unchanged ratchet/conversation
+   state and a successful retry after provider recovery.
 
 ## Explicit non-claims
 
@@ -55,21 +62,23 @@ and require separate staging work:
 - constructor bootstrap claims keep a local discovery view when persistence is
   rejected, while legacy claim-returning wrappers swallow the provider error;
 - receipts and other fire-and-forget auxiliary bundles;
-- prekey/pairwise `send_app` after the sealed fallback;
+- established-conversation direct `send_app` (its ratchet still advances
+  before the legacy store path);
 - group sender-key messages and distributions; and
 - file symbols and manifests.
 
-`Node::new` may therefore still populate an initially bounded snapshot through
-legacy claim writes before a bounded producer is called. A complete fix needs
-provider reservation/commit semantics, staged cryptographic state, and a batch
-transaction for file symbols. Do not replace all `store_own` calls with
-`try_put` until those invariants are tested.
+`Node::new` retains fixed bootstrap claims in its local discovery view even
+when their provider write is rejected, but cannot report that persistence
+failure through its source-compatible constructor. A complete producer fix
+still needs provider reservation/commit semantics and a batch transaction for
+file symbols. Do not replace all `store_own` calls with `try_put` until those
+invariants are tested.
 
 ## Next implementation order
 
-1. Add a private/test-only producer-capacity harness for `send_app` and prove
-   pairwise chain, pending, DAG, sent-history, SeenIndex, and event state are
-   unchanged on rejection.
+1. Stage the established-conversation direct `send_app` branch and prove
+   sender-chain, DAG, SeenIndex, delivery, and event state are unchanged on
+   provider rejection.
 2. Design and review an additive provider reservation/commit capability;
    include outstanding reservations, replacement deltas, failed-commit
    recovery, and restart semantics.

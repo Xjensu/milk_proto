@@ -102,6 +102,29 @@ impl SendChain {
         Ok((key, epoch, index))
     }
 
+    /// Derive the next message key and a candidate post-send chain without
+    /// mutating this chain. Producers that must persist an encrypted bundle
+    /// before committing ratchet state use this checkpoint-free staging seam.
+    pub fn try_next_candidate(&self) -> Result<(Zeroizing<[u8; 32]>, SendChain), CryptoError> {
+        if self.exhausted {
+            return Err(CryptoError::Ratchet);
+        }
+        let key = Zeroizing::new(msg_key(&self.ck));
+        let next_ck = next_ck(&self.ck);
+        let next_index = if self.next_index == u32::MAX {
+            u32::MAX
+        } else {
+            self.next_index + 1
+        };
+        let candidate = SendChain {
+            ck: next_ck,
+            exhausted: self.next_index == u32::MAX,
+            epoch: self.epoch,
+            next_index,
+        };
+        Ok((key, candidate))
+    }
+
     /// Bump the epoch at live contact (doc 08 §5.2): folds `session_material`
     /// into the chain key, resets the index to 0, and increments `epoch`.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
@@ -413,8 +436,22 @@ impl Drop for RecvChain {
 
 #[cfg(test)]
 mod tests {
-    use super::{msg_key, RecvChain};
+    use super::{msg_key, RecvChain, SendChain};
     use crate::error::CryptoError;
+
+    #[test]
+    fn staged_send_candidate_does_not_mutate_the_live_chain() {
+        let mut live = SendChain::new([0x31; 32], 4);
+        let (staged_key, candidate) = live.try_next_candidate().unwrap();
+        assert_eq!(live.next_index, 0);
+        assert_eq!(live.epoch, 4);
+
+        let (live_key, epoch, index) = live.try_next().unwrap();
+        assert_eq!(*staged_key, *live_key);
+        assert_eq!((epoch, index), (4, 0));
+        assert_eq!(candidate.epoch, live.epoch);
+        assert_eq!(candidate.next_index, live.next_index);
+    }
 
     #[test]
     fn receive_chain_accepts_final_index_once() {

@@ -28,10 +28,11 @@ The own-origin producers do not all have the same rollback surface:
 
 | Producer | State changed before/around storage | Failure consequence |
 | --- | --- | --- |
-| `gossip_claim`, `emit_receipt` | Claim/receipt bookkeeping is already updated or intentionally fire-and-forget | A rejected auxiliary bundle may be silently lost; changing the return type would alter internal callback contracts. |
-| `publish_announcement` | No ratchet, but public API currently returns an ID after `store_own` | Must return a storage error and avoid `Created`/SeenIndex state on rejection. |
-| `send_sealed` | Stores first, then creates `Conv` and `pending_first_contact` | Can be made transactional with a returned error, provided the store contract is explicit. |
-| `send_app` | `SendChain::next()` advances before `store_own`; `pending_async` is removed before the write; DAG/pending state follows it | A write rejection after encryption requires restoring the consumed send key/index and the pending async marker. `SendChain` now has a tested snapshot/restore checkpoint seam, but no in-place transaction guard that coordinates the other NodeCore fields. |
+| `gossip_claim` | Claim publication now calls `try_store_own` before adopting ordinary claims; constructor bootstrap claims retain a local discovery view on rejection | Legacy claim-returning wrappers still swallow the error; constructor persistence remains unreportable through the source-compatible API. |
+| `emit_receipt` | Receipt bookkeeping is intentionally fire-and-forget before the legacy store path | A rejected auxiliary bundle may be silently lost; changing the callback contract requires a separate receipt policy. |
+| `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
+| `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
+| `send_app` | The valid-prekey first-contact branch now stages a candidate `Conv`/sender chain and uses `try_store_own`; established-conversation direct sends still advance before legacy `store_own` | First-contact capacity rejection is fail-closed and retryable. Established direct, group, receipt, and file producers still require coordinated transaction semantics. |
 | `send_group` | `LocalSenderKey::encrypt_with_ad` advances its private chain before `store_own` | A rejection would consume a group message index. The group sender key has no rollback/snapshot seam. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 
@@ -48,16 +49,17 @@ capacity remains stable between a check and the write.
   rejection to `DropReason::StoreRejected`; the node-level regression
   `node_store_rejection_prevents_delivery_and_post_store_side_effects`
   confirms that an inbound rejection does not deliver or index the bundle.
-- Own-origin paths still call `store_own` at the producer sites listed above.
+- Most own-origin paths still call `store_own` at the producer sites listed
+  above; the staged prekey first-contact branch is the deliberate exception.
 - The public `BundleStore::put` method is infallible and has no capacity/error
   result. `mmp-store::SnapshotStore` delegates to the in-memory implementation
   and currently cannot provide a fixed-capacity rejection contract.
 - Existing oversized local-input tests prove that wire-size rejection does not
   poison first-contact state; they do not prove provider-capacity rejection.
-- `mmp-crypto::SendChain::snapshot`/`restore` is now covered by a regression
-  that replays the exact key, epoch, and index after a simulated rejected
-  candidate. The checkpoint is zeroizing and provider-local; it is not an
-  authenticated arbitrary-input rollback API.
+- `mmp-crypto::SendChain::try_next_candidate` is covered by a regression that
+  proves key/epoch/index derivation without mutating the live chain. The
+  candidate is zeroizing and provider-local; it is not an authenticated
+  arbitrary-input rollback API.
 - Group sends now perform an exact placeholder `Bundle` width check before
   `LocalSenderKey::encrypt_with_ad`; an oversized rejection therefore does not
   consume a group sender index. No group-key rollback API was added because
@@ -92,8 +94,10 @@ capacity error. That work is larger than a safe one-file hardening and should
 be accompanied by transactional tests for every producer in the table.
 
 Until one of those contracts is approved, keep `store_own` on the legacy
-`put` seam and treat fixed-capacity own-origin persistence as an explicit
-provider limitation. Do not claim that `BundleStore::try_put` protects local
+`put` seam for producers without a staged state boundary and treat fixed-
+capacity own-origin persistence as an explicit provider limitation. The
+prekey first-contact exception is covered only by its producer-specific
+candidate path; do not claim that `BundleStore::try_put` protects all local
 send APIs.
 
 The platform audit then split that crash-consistency residual by operating
@@ -110,12 +114,14 @@ durability evidence and permits a later retry.
 
 ## Transaction-readiness follow-up
 
-The mmp-crypto audit (commit `be61df4`, wording correction `07b57ed`) proves
+The mmp-crypto audit (commit `be61df4`, wording correction `07b57ed`) proved
 that a pairwise `SendChain` can be checkpointed before `next()` and restored
-after a simulated rejected write without skipping a key. This is useful
-building material, but it is not a complete storage transaction: group
-`LocalSenderKey`, pending async markers, conversation DAG state, delivery
-tracking, and file-symbol indexes still need coordinated commit/rollback.
+after a simulated rejected write without skipping a key. The current
+candidate seam extends that result without mutating the live chain, and the
+node's prekey first-contact producer commits the candidate only after
+`try_store_own` succeeds. This is still not a complete storage transaction:
+established direct sends, group `LocalSenderKey`, receipts, and file-symbol
+indexes need coordinated commit/rollback.
 
 No additional `BundleStore` preflight method was added. A read-only
 `total_bytes`/`meta` check cannot reserve the final ciphertext/BundleID and

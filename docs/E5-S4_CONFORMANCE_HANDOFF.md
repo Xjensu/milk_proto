@@ -2998,6 +2998,29 @@ Verification for this continuation:
 - No path under `specification/` changed; existing user-owned dirty files and
   temporary audit directories remain unstaged.
 
+## 2026-08-10 continuation: staged prekey first-contact producer
+
+The next bounded storage-integrity increment is now implemented in the Rust
+reference node without changing the frozen specification. The valid-prekey
+first-contact branch of `send_app` builds a candidate `Conv`, derives a
+candidate sender-ratchet state through `SendChain::try_next_candidate`, and
+constructs the complete encrypted bundle before calling `try_store_own`.
+Only after that provider accepts the bytes are the conversation, DAG head, and
+`pending_first_contact` marker committed. `pending_async` is not mutated in
+this fresh branch; it remains provider-local restore compatibility state.
+
+The regression uses a rejecting provider, proves unchanged store/SeenIndex,
+conversation, pending, sent-history, event, and diagnostics state, then
+restores a durable provider and confirms a prekey retry decrypts in a real
+contact. A separate `mmp-crypto` test proves the staged sender candidate does
+not mutate the live chain and yields the same key/index as a committed send.
+
+This is intentionally not generic `send_app` hardening. Established direct
+conversation sends, group sender-key messages, receipts, and file-symbol
+batches still use legacy or multi-object producer paths and require their own
+transaction design. No wire or specification file changed, and the research
+MMP/Φ proposals remain non-normative hypotheses.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

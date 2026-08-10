@@ -52,9 +52,10 @@ conditions.
 - `revoke_identity` and other legacy `Vec<u8>` claim wrappers can return an
   empty vector on provider rejection. A typed revocation API is still needed
   if callers must distinguish that failure without interpreting the bytes.
-- Pairwise first-contact `send_app` still advances ratchet/conversation state
-  before its legacy store path. The next bounded increment should stage a
-  candidate conversation and commit it only after `try_store_own` succeeds.
+- The valid-prekey pairwise first-contact branch of `send_app` is now staged:
+  candidate ratchet/conversation state commits only after `try_store_own`
+  succeeds. Established-conversation direct sends still advance their ratchet
+  before the legacy store path and are the next pairwise residual.
 - Group distributions, receipts, and file-symbol batches still need their own
   reservation or batch-commit design; replacing every `store_own` call blindly
   would create new consistency bugs.
@@ -70,6 +71,7 @@ rustfmt drift; `cargo fmt --all -- --check` may report that baseline debt even
 when the affected crates compile and their tests pass. No file under
 `specification/` was modified.
 
-Recommended next step: implement and test staged pairwise first-contact
-publication, including unchanged ratchet, pending, DAG, `SeenIndex`, event,
-and diagnostics state on provider rejection.
+Recommended next step: stage established-conversation direct publication,
+including unchanged ratchet, DAG, `SeenIndex`, delivery, event, and diagnostics
+state on provider rejection. Keep group, receipt, and file producers separate
+until their multi-object transaction boundaries are designed.

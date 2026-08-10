@@ -544,6 +544,43 @@ fn sealed_first_contact_store_rejection_is_side_effect_free() {
 }
 
 #[test]
+fn prekey_first_contact_store_rejection_is_side_effect_free() {
+    let mut sender = node(253);
+    let mut peer = node(252);
+    introduce(&mut sender, &mut peer);
+    sender.enable_diagnostics();
+
+    let conv_id = conversation_id(&sender.core.public, &peer.core.public);
+    let seen_before = sender.core.seen.encode();
+    let events_before = sender.core.events.len();
+    let diag_before = sender.diagnostics().records().len();
+    sender.core.store = Box::new(CapacityRejectStore);
+
+    assert_eq!(sender.send_text(&peer.node_id(), "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(sender.store_len(), 0);
+    assert_eq!(sender.core.seen.encode(), seen_before);
+    assert!(!sender.core.convs.contains_key(&conv_id));
+    assert!(!sender.core.pending_async.contains_key(&conv_id));
+    assert!(!sender.core.pending_first_contact.contains_key(&conv_id));
+    assert!(sender.core.sent.is_empty());
+    assert_eq!(sender.core.events.len(), events_before);
+    assert_eq!(sender.diagnostics().records().len(), diag_before);
+
+    // A capacity failure must not poison the first-contact retry. Restoring
+    // a durable provider yields a normal X3DH/prekey bundle.
+    sender.core.store = Box::new(MemStore::new());
+    let id = sender.send_text(&peer.node_id(), "retry after capacity").expect("retry succeeds");
+    let (_, raw) = sender.core.store.get(&id).expect("retry bundle stored");
+    let bundle = Bundle::decode_canonical(&raw).expect("retry bundle decodes");
+    assert!(matches!(AsyncPayload::decode(&bundle.payload).unwrap(), AsyncPayload::Prekey { .. }));
+
+    contact(&mut sender, &mut peer, 253, 10_000);
+    assert!(drain(&mut peer).iter().any(
+        |event| matches!(event, Event::MessageReceived { body, .. } if body == b"retry after capacity")
+    ));
+}
+
+#[test]
 fn announcement_store_rejection_is_side_effect_free() {
     let mut n = Node::new([251; 32], Box::new(CapacityRejectStore), Tier::Relay);
     n.enable_diagnostics();

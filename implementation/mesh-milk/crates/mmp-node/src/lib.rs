@@ -2321,8 +2321,7 @@ impl NodeCore {
             let Some(agreement) = agreement else {
                 return self.send_sealed(peer, &peer_pub, conv_id, app, payload);
             };
-            self.convs.insert(conv_id, Conv::new(conv_id, &self.public, &peer_pub, *agreement.ck0));
-            self.pending_async.insert(conv_id, (agreement.eph_pub, agreement.prekey_id));
+            return self.send_prekey_first_contact(&peer_pub, Id16(peer.0), conv_id, body, agreement);
         }
 
         let dest = Id16(peer.0);
@@ -2402,6 +2401,66 @@ impl NodeCore {
         if pending.is_some() {
             self.pending_first_contact.insert(conv_id, id);
         }
+        Ok(id)
+    }
+
+    /// Build and durably store the first X3DH/prekey bundle before publishing
+    /// any conversation, pending, DAG, or sender-ratchet state. A capacity
+    /// rejection therefore leaves the caller able to retry the same logical
+    /// first contact after local storage recovers.
+    fn send_prekey_first_contact(
+        &mut self,
+        peer_pub: &Key32,
+        dest: Id16,
+        conv_id: Id16,
+        body: Vec<u8>,
+        agreement: mmp_crypto::prekey::SenderAgreement,
+    ) -> Result<Id16, SendError> {
+        let mut candidate = Conv::new(conv_id, &self.public, peer_pub, *agreement.ck0);
+        let (epoch, index) = (candidate.send.epoch, candidate.send.next_index);
+        let (msg_key, candidate_send) =
+            candidate.send.try_next_candidate().map_err(|_| SendError::RatchetExhausted)?;
+        let placeholder_ct = vec![0u8; body.len() + 16];
+        let mut bundle = Bundle {
+            class: class::DIRECT,
+            flags: FLAG_ASYNC_KEYS | FLAG_WANTS_RECEIPT,
+            origin: self.public,
+            dest,
+            lifetime_ms: LIFETIME_MESSAGE_MS,
+            priority: 1,
+            exts: Vec::new(),
+            payload: AsyncPayload::Prekey {
+                prekey_id: agreement.prekey_id,
+                sender_xpk: self.exchange,
+                eph: agreement.eph_pub,
+                ct: placeholder_ct,
+            }
+            .encode(),
+            signature: Sig64::ZERO,
+        };
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
+        let key = aead::committed_key(&msg_key, &msg_context(&self.public, &bundle.dest, &conv_id, epoch, index));
+        let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
+        bundle.payload = AsyncPayload::Prekey {
+            prekey_id: agreement.prekey_id,
+            sender_xpk: self.exchange,
+            eph: agreement.eph_pub,
+            ct,
+        }
+        .encode();
+        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
+            return Err(SendError::TooLarge);
+        }
+
+        let budget = origin_budget(self.utility.n_hat(self.now));
+        let id = self.try_store_own(bundle, budget)?;
+        candidate.send = candidate_send;
+        candidate.dag.insert(id, &[]);
+        self.convs.insert(conv_id, candidate);
+        self.pending_first_contact.insert(conv_id, id);
         Ok(id)
     }
 
