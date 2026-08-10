@@ -865,6 +865,39 @@ fn blob_have_advertisements_are_bounded_and_rotated_per_peer() {
     assert_eq!(roots(n.core.blob_frames(&peer)), first);
 }
 
+/// The BLOB bitmap is stripe-major: `block` selects the first stripe and the
+/// bitmap's bit zero selects the first symbol within that stripe.  A request
+/// for block 1 must therefore resolve to global symbol number `RS_TOTAL_N`,
+/// never to symbol zero from block 0.
+#[test]
+fn blob_multi_stripe_request_applies_block_relative_bitmap_offset() {
+    let mut sender = node(255);
+    let mut peer = node(254);
+    introduce(&mut sender, &mut peer);
+    drain(&mut sender);
+    drain(&mut peer);
+
+    let data = vec![0x5a; mmp_types::consts::STRIPE_DATA_BYTES + 1];
+    let sent = sender
+        .send_file(&peer.node_id(), "two-stripes.bin", "application/octet-stream", &data)
+        .expect("multi-stripe file is durable");
+
+    // In a block-1 request, bit zero refers to global symbol RS_TOTAL_N, not
+    // global symbol zero.  `true` means BLOB_REQ (wanted bits are set).
+    let mut bitmap = [0u8; RS_TOTAL_N / 8];
+    bitmap[0] = 0x01;
+    let ids = sender
+        .core
+        .blob_serve_candidates(&peer.node_id(), &sent.root, 1, &bitmap, true);
+
+    assert_eq!(ids.len(), 1, "the requested second-stripe symbol is present");
+    assert_eq!(
+        sender.core.symbol_of.get(&ids[0]),
+        Some(&(sent.root, RS_TOTAL_N as u16)),
+        "block-relative bitmap offset must select the first symbol of stripe 1"
+    );
+}
+
 /// A shape-valid class-4 bundle with a malformed Merkle payload must not be
 /// retained in the holder index merely because no local fetch is active.  If
 /// it were indexed first, a later BLOB_HAVE/BLOB_REQ could serve the bytes to

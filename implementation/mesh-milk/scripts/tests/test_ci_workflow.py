@@ -48,7 +48,8 @@ class CIWorkflowTests(unittest.TestCase):
         test_steps = [
             step
             for step in workflow["jobs"]["host"]["steps"]
-            if step.get("run") == "cargo test --workspace --all-features --locked -- --test-threads=1"
+            if step.get("run")
+            == "cargo test --workspace --all-targets --all-features --locked -- --test-threads=1"
         ]
         self.assertEqual(len(test_steps), 1)
 

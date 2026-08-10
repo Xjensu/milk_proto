@@ -45,7 +45,7 @@ jobs:
       # mmp-store's Windows tests share a deliberately fixed recovery fixture
       # under %TEMP%; keep the workspace test matrix serial as documented in
       # docs/MANUAL_INTEROP_TESTING.md to avoid rename races.
-      - run: cargo test --workspace --all-features --locked -- --test-threads=1
+      - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
       # docs/AGILE_BACKLOG.md E2-S1: clippy was previously enforced only by
       # local practice, not CI. Proven locally to catch a real violation
       # (needless_bool/bool_comparison) before being wired in here.
