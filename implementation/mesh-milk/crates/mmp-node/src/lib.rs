@@ -4060,7 +4060,20 @@ impl SessionHost for NodeCore {
                         {
                             let sym_no = block * RS_TOTAL_N as u16 + sym;
                             if let Some(a) = assemblies.get(&root) {
-                                if matches!(a.state, BlobState::Wanted | BlobState::Fetching)
+                                // The requester-side bypass is a solicited
+                                // path, not a capability granted to every
+                                // authenticated peer that guesses an active
+                                // root.  Symbols are immutable and retain the
+                                // manifest sharer's origin across relays; the
+                                // destination must likewise be this requester.
+                                // Otherwise a Sybil can stream unique,
+                                // Merkle-invalid class-4 bundles into an
+                                // active fetch without consuming its origin
+                                // bucket (each is stored briefly, verified,
+                                // then removed).
+                                if b.origin == a.sharer
+                                    && b.dest == node_id
+                                    && matches!(a.state, BlobState::Wanted | BlobState::Fetching)
                                     && !a.have_bit(sym_no)
                                 {
                                     return true;

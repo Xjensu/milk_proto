@@ -1111,6 +1111,64 @@ fn active_invalid_symbol_is_counted_and_removed() {
 }
 
 #[test]
+fn solicited_symbol_admission_requires_manifest_sharer_and_destination() {
+    let sharer = node(227);
+    let attacker = node(226);
+    let mut receiver = node(225);
+    let root = Id16([0x93; 16]);
+    receiver.core.offers.insert(
+        root,
+        crate::blob::FileOfferInfo {
+            size: 1_000,
+            full_hash: [0; 32],
+            sharer: sharer.identity.public(),
+        },
+    );
+    let dest = std::env::temp_dir().join(format!("mmp-node-symbol-admission-{}.part", std::process::id()));
+    receiver.core.fetch_file(&root, &dest).expect("cached offer admits fetch");
+
+    let mut bundle = Bundle {
+        class: class::SYMBOL,
+        flags: 0,
+        origin: attacker.identity.public(),
+        dest: receiver.node_id(),
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::BULK,
+        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
+        // Shape-valid but Merkle-invalid: this reaches the admission closure,
+        // then is removed by the active-fetch verification path.
+        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = attacker.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let id = bundle.id();
+
+    assert_eq!(receiver.core.buckets.len(), 0);
+    receiver.core.on_bundle(&attacker.node_id(), &bundle.encode());
+
+    // An active fetch does not grant every authenticated peer a free write
+    // path.  Only the verified manifest sharer and the intended destination
+    // may use the requester-side symbol bypass; this attacker-origin symbol
+    // must be charged to its ordinary origin bucket before verification.
+    assert_eq!(receiver.core.buckets.len(), 1, "untrusted symbol origin must consume ordinary admission");
+    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must still be removed");
+    assert_eq!(receiver.core.assemblies[&root].bad_symbols, 1);
+
+    // A correctly signed sharer-origin symbol addressed to a different
+    // destination is not a solicitation for this assembly either.
+    bundle.origin = sharer.identity.public();
+    bundle.dest = Id16([0xa7; 16]);
+    bundle.signature = sharer.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    let wrong_destination_id = bundle.id();
+    receiver.core.on_bundle(&sharer.node_id(), &bundle.encode());
+    assert_eq!(receiver.core.buckets.len(), 2, "wrong-destination symbol must consume its ordinary bucket");
+    assert!(receiver.core.store.meta(&wrong_destination_id).is_none());
+    assert_eq!(receiver.core.assemblies[&root].bad_symbols, 2);
+
+    let _ = std::fs::remove_file(dest);
+}
+
+#[test]
 fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
     let mut n = node(236);
     n.core.store = Box::new(MemStore::new());
