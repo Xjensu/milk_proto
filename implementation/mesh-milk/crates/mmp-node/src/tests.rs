@@ -1267,6 +1267,53 @@ fn direct_message_delivery_and_receipt() {
 }
 
 #[test]
+fn receipt_store_rejection_is_side_effect_free_and_retryable() {
+    let mut alice = node(5);
+    let mut bob = node(6);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    alice.send_text(&bob.node_id(), "receipt setup").expect("setup send");
+    contact(&mut alice, &mut bob, 5, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    contact(&mut alice, &mut bob, 6, 20_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let conv_id = conversation_id(&bob.core.public, &alice.core.public);
+    assert!(bob.core.convs.contains_key(&conv_id));
+    let delivered = Id16([0xa6; 16]);
+    bob.enable_diagnostics();
+    let seen_before = bob.core.seen.encode();
+    let events_before = bob.core.events.len();
+    let diag_before = bob.diagnostics().records().len();
+    bob.core.store = Box::new(CapacityRejectStore);
+
+    bob.core.emit_receipt(&conv_id, &delivered, &alice.core.public);
+    assert_eq!(bob.store_len(), 0);
+    assert_eq!(bob.core.seen.encode(), seen_before);
+    assert_eq!(bob.core.events.len(), events_before);
+    assert_eq!(bob.diagnostics().records().len(), diag_before);
+
+    bob.core.store = Box::new(MemStore::new());
+    bob.core.emit_receipt(&conv_id, &delivered, &alice.core.public);
+    let meta = bob
+        .core
+        .store
+        .all_meta()
+        .into_iter()
+        .find(|meta| meta.class == class::CONTROL)
+        .expect("receipt stored after provider recovery");
+    let (_, raw) = bob.core.store.get(&meta.id).expect("receipt bytes");
+    let bundle = Bundle::decode_canonical(&raw).expect("receipt bundle decodes");
+    assert_eq!(bundle.dest, alice.node_id());
+    let receipt = ReceiptPayload::decode(&bundle.payload).expect("receipt payload decodes");
+    assert_eq!(receipt.delivered, delivered);
+}
+
+#[test]
 fn sent_history_evicts_terminal_entries_but_rejects_when_all_active() {
     let mut n = node(239);
     let conv = Id16([0x71; 16]);

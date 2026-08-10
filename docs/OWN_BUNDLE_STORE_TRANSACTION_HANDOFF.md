@@ -20,7 +20,10 @@ Node::send_text / group_send / send_file / publish_announcement
 
 The caller may believe that a message exists even though there is no durable
 copy to forward. This is a local storage-integrity issue, not a wire
-authentication issue.
+authentication issue. The bounded follow-up now closes synchronous provider
+rejection for announcements, sealed/prekey/established pairwise sends,
+self-originated group ciphertext, and best-effort receipts; group
+distributions/rekeys and file-symbol batches remain open.
 
 ## Why an immediate `try_put` replacement is unsafe
 
@@ -29,10 +32,10 @@ The own-origin producers do not all have the same rollback surface:
 | Producer | State changed before/around storage | Failure consequence |
 | --- | --- | --- |
 | `gossip_claim` | Claim publication now calls `try_store_own` before adopting ordinary claims; constructor bootstrap claims retain a local discovery view on rejection | Legacy claim-returning wrappers still swallow the error; constructor persistence remains unreportable through the source-compatible API. |
-| `emit_receipt` | Receipt bookkeeping is intentionally fire-and-forget before the legacy store path | A rejected auxiliary bundle may be silently lost; changing the callback contract requires a separate receipt policy. |
+| `emit_receipt` | Builds the receipt, then calls `try_store_own` without mutating delivery state | A rejected receipt is fail-closed with no false store/index/event state, but best-effort publication can still leave the origin waiting until a bounded retry/reserved-control policy exists. |
 | `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
-| `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group, receipt, and file producers still require coordinated transaction semantics. |
+| `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group distributions/rekeys and file producers still require coordinated semantics. |
 | `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions/rekey membership changes still need coordinated semantics. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 

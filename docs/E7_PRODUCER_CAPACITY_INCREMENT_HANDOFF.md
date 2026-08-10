@@ -21,6 +21,9 @@ This continuation adds narrow uses of the existing receive-side
 - The self-originated `send_group` path now derives an opaque
   `LocalSendCandidate`, calls `try_store_own`, and commits the group sender
   chain only after the provider accepts the complete signed bundle.
+- `emit_receipt` now uses `try_store_own` on its best-effort path. A full
+  provider drops the local receipt without creating false `SeenIndex` or
+  `JourneyEvent::Created` state; authenticated delivery is not undone.
 
 `try_store_own` inserts `SeenIndex` state and logs `JourneyEvent::Created` only
 after the provider accepts the complete encoded bundle. A capacity rejection
@@ -56,7 +59,7 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 126 node tests, 37 CLI tests, and 31 FFI tests;
+The focused runs passed with 127 node tests, 37 CLI tests, and 31 FFI tests;
 the crypto suite passed 53 tests with the staged candidate API.
 New regressions cover:
 
@@ -70,7 +73,9 @@ New regressions cover:
    SeenIndex, event, diagnostic, and sent-history state, followed by a retry
    using the original epoch/index; and
 7. group rejection with unchanged `SeenIndex`, event, and diagnostic state,
-   followed by a retry that emits group chain index zero.
+   followed by a retry that emits group chain index zero; and
+8. receipt rejection with unchanged store/index/event/diagnostic state,
+   followed by successful decode after provider recovery.
 
 ## Explicit non-claims
 
@@ -80,7 +85,8 @@ and require separate staging work:
 
 - constructor bootstrap claims keep a local discovery view when persistence is
   rejected, while legacy claim-returning wrappers swallow the provider error;
-- receipts and other fire-and-forget auxiliary bundles;
+- receipt retry durability and reserved control capacity (the current receipt
+  path is best-effort after a provider rejection);
 - group-key distributions/rekey transitions and membership side effects; and
 - file symbols and manifests.
 
@@ -97,8 +103,9 @@ invariants are tested.
    include outstanding reservations, replacement deltas, failed-commit
    recovery, and restart semantics.
 2. Add candidate-state or batch semantics for group-key distributions/rekeys,
-   receipts, and file producers.
-3. Select a board-specific allocator/flash policy, then implement the
+   and a bounded pending-receipt retry/reserved-control policy.
+3. Add the file producer batch/reservation design.
+4. Select a board-specific allocator/flash policy, then implement the
    `no_std` provider and linked-image/HIL gates.
 
 ## Adversarial review

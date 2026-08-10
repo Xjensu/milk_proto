@@ -60,7 +60,11 @@ conditions.
 - The self-originated `send_group` path now stages an opaque local sender-key
   candidate and commits it only after `try_store_own` succeeds. Stale or
   cross-key candidates are rejected by the crypto API.
-- Group distributions/rekey membership transitions, receipts, and file-symbol batches still need their own
+- Receipt publication now calls `try_store_own` and is fail-closed at the
+  provider boundary; a rejection does not undo authenticated delivery, but
+  the current API has no durable pending-receipt retry journal.
+- Group distributions/rekey membership transitions, receipt retry durability,
+  and file-symbol batches still need their own
   reservation or batch-commit design; replacing every `store_own` call blindly
   would create new consistency bugs.
 - `SnapshotStore` admission covers the complete image, including auxiliary
@@ -75,7 +79,8 @@ rustfmt drift; `cargo fmt --all -- --check` may report that baseline debt even
 when the affected crates compile and their tests pass. No file under
 `specification/` was modified.
 
-Recommended next step: design and stage group-key distributions/rekeys,
-receipts, and file symbol producers separately. Their multi-object transaction
-boundaries remain different; do not infer full storage atomicity or exactly-once
-behavior from the pairwise/group message results.
+Recommended next step: design and stage group-key distributions/rekeys, a
+bounded pending-receipt retry/reserved-control policy, and file symbol
+producers separately. Their multi-object transaction boundaries remain
+different; do not infer full storage atomicity or exactly-once behavior from the
+pairwise/group message results.

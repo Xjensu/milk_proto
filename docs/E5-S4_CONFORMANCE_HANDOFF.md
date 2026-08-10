@@ -3061,6 +3061,21 @@ capacity-rejection boundary only: group-key distributions, membership rekeys,
 and `group_remove` retry semantics remain multi-object residuals, and no crash
 atomicity or wire/specification change is claimed.
 
+## 2026-08-10 continuation: receipt producer capacity boundary
+
+`emit_receipt` now uses `try_store_own` after constructing and signing the
+control bundle. Provider rejection therefore does not add receipt bytes,
+`SeenIndex`, or `JourneyEvent::Created`/diagnostic state, while the already
+authenticated delivery event is preserved. The focused regression rejects a
+synthetic receipt, checks those state surfaces, restores a durable provider,
+and decodes the successfully stored receipt.
+
+This remains a best-effort publication boundary: the current API intentionally
+does not queue a durable pending receipt or reserve control capacity, so a full
+provider can leave the origin waiting for acknowledgement. Crash consistency
+after provider acceptance and a bounded retry/reserved-control policy remain
+open; no wire or specification change was made.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

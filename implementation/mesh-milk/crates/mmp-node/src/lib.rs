@@ -2775,7 +2775,11 @@ impl NodeCore {
             signature: Sig64::ZERO,
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        self.store_own(bundle, L_RECEIPT);
+        // Receipt publication is best-effort at this API boundary: an
+        // authenticated delivery must not be rolled back merely because the
+        // local provider is full. `try_store_own` is still required so a
+        // rejected receipt does not create false SeenIndex/Created state.
+        let _ = self.try_store_own(bundle, L_RECEIPT);
     }
 
     /// Class-0 receipt handling for carriers AND the origin (doc 05 §7).
