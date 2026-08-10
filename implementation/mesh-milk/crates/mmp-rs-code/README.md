@@ -10,3 +10,23 @@ confidence Medium, "believed trivial, not yet benchmarked") belongs here.
 Consumed by `mmp-node`'s blob state machine.
 
 See `specification/16-file-transfer.md` (referenced as doc 16 elsewhere in this repo).
+
+## Host benchmark (not hardware evidence)
+
+Run the deterministic decode workload with:
+
+```text
+cargo run --locked -p mmp-rs-code --example decode_bench --release
+```
+
+Set `MMP_RS_BENCH_ITERS` to change the sample count (the default is five).
+The workload checks the recovered bytes for every sample and reports minimum,
+median, and maximum host elapsed time for the file-stripe (`k=32`, `n=40`)
+and maximum-`k` (`k=64`, `n=72`) profiles, each with 2,048-byte symbols. It
+uses only the existing crate and standard-library timing in the example; no
+benchmark dependency is added.
+
+These numbers are diagnostic and cannot establish the OQ-7 acceptance gate.
+That gate still requires a linked nRF52-class image, measured flash/RAM, and a
+target-silicon Reed--Solomon decode run. The current CI `thumbv7em` check and
+rlib budgets are dependency/size-regression checks, not linked-image evidence.
