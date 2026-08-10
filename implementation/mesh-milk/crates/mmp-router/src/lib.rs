@@ -69,6 +69,12 @@ pub fn handoff_decision(
     if peer_is_dest {
         return Handoff::Deliver;
     }
+    // A focused copy has already spent its only local grant.  Keep the
+    // record for direct delivery, but never mint another relay grant on a
+    // later contact (including after a crash-recovered hand-off intent).
+    if meta.budget == 0 {
+        return Handoff::Keep;
+    }
     // Never offer back to the origin; purged bundles are gone before this.
     if peer_is_origin || *peer == meta.origin {
         return Handoff::Keep;

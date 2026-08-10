@@ -91,6 +91,30 @@ fn handoff_rules() {
 }
 
 #[test]
+fn zero_budget_non_destination_is_not_offered_again() {
+    let peer = Id16([7; 16]);
+    let zero = meta(3, 1, 1, 100, 0, false);
+
+    assert_eq!(
+        handoff_decision(&zero, &peer, 0.1, 0.9, false, false, SuppressSignal::None, 0),
+        Handoff::Keep,
+        "a focused zero-budget copy must not mint another grant"
+    );
+}
+
+#[test]
+fn zero_budget_still_delivers_to_destination() {
+    let destination = Id16([0xDD; 16]);
+    let zero = meta(4, 1, 1, 100, 0, false);
+
+    assert_eq!(
+        handoff_decision(&zero, &destination, 0.1, 0.0, true, false, SuppressSignal::None, 0),
+        Handoff::Deliver,
+        "direct delivery must remain unconditional even after focus"
+    );
+}
+
+#[test]
 fn transfer_order_is_value_dense() {
     let peer = Id16([0xDD; 16]); // matches dest of meta()
     let metas = vec![

@@ -101,6 +101,11 @@ contract suite passes as part of the Python checks. The provisional
 introduces unregistered domains and lacks the authenticated, replay, size, and
 role-binding invariants required for production; it is not staged or integrated.
 
+The router also now refuses to re-offer a crash-recovered zero-budget focused
+copy to another relay while preserving unconditional delivery to its
+destination; the focused router suite passes 16/16 and `mmp-node` passes
+149/149.
+
 ---
 
 ## 1. Where we are (implemented and verified)
