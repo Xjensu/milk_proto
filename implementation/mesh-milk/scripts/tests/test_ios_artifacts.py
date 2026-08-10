@@ -12,7 +12,10 @@ SPEC = importlib.util.spec_from_file_location("verify_ios_artifacts", SCRIPT)
 assert SPEC and SPEC.loader
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
-from check_mobile_api_surface import EXPECTED_MMP_NODE_METHODS
+from check_mobile_api_surface import (
+    EXPECTED_MMP_NODE_METHODS,
+    EXPECTED_MMP_NODE_THROWING_METHODS,
+)
 
 
 def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path, Path]:
@@ -53,7 +56,7 @@ def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path,
     bindings = root / "swift-bindings"
     bindings.mkdir()
     methods = "\n".join(
-        f"    func {method}() {{}}"
+        f"    func {method}(){' throws' if method in EXPECTED_MMP_NODE_THROWING_METHODS else ''} {{}}"
         for method in EXPECTED_MMP_NODE_METHODS
     )
     (bindings / "mmp_ffi.swift").write_text(
@@ -264,7 +267,7 @@ class IOSArtifactTests(unittest.TestCase):
             xcframework, bindings = _write_fixture(Path(root))
             source = bindings / "mmp_ffi.swift"
             text = source.read_text(encoding="utf-8")
-            text = text.replace("    func flush() {}\n", "")
+            text = text.replace("    func flush() throws {}\n", "")
             source.write_text(text, encoding="utf-8")
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("MmpNode.flush" in item for item in violations))

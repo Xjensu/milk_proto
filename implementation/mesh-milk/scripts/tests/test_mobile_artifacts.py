@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
+from check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+
 
 SCRIPT = Path(__file__).parents[1] / "verify_android_artifacts.py"
 SPEC = importlib.util.spec_from_file_location("verify_android_artifacts", SCRIPT)
@@ -15,7 +17,12 @@ SPEC.loader.exec_module(VERIFY)
 
 def _kotlin() -> str:
     methods = "\n".join(
-        f"    override fun `{method}`() {{}}"
+        (
+            f"    @Throws(FfiException::class)\n"
+            if method in EXPECTED_MMP_NODE_THROWING_METHODS
+            else ""
+        )
+        + f"    override fun `{method}`() {{}}"
         for method in VERIFY.EXPECTED_MMP_NODE_METHODS
     )
     return f"interface MmpNodeInterface {{\n{methods}\n}}\n"

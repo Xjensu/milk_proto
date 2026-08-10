@@ -7,6 +7,8 @@ time, so they need this one-language variant as a packaging gate. It checks
 both properties that matter at this boundary:
 
 * the generated ``MmpNode`` protocol/interface exposes every Rust FFI method;
+* methods returning ``Result<_, FfiError>`` retain their host-language
+  throwing contract;
 * Rust-internal secret-state identifiers do not enter the generated source.
 
 Usage (from ``implementation/mesh-milk``)::
@@ -31,7 +33,10 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from check_mobile_api_surface import EXPECTED_MMP_NODE_METHODS  # type: ignore[import-not-found]
+from check_mobile_api_surface import (  # type: ignore[import-not-found]
+    EXPECTED_MMP_NODE_METHODS,
+    EXPECTED_MMP_NODE_THROWING_METHODS,
+)
 from check_mobile_secret_surface import scan_directory as scan_secret_directory  # type: ignore[import-not-found]
 
 
@@ -67,6 +72,17 @@ def _surface_violations(language: str, directory: Path) -> list[str]:
             pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("
             if not re.search(pattern, text):
                 violations.append(f"generated Kotlin output is missing MmpNode.{method}")
+        for method in EXPECTED_MMP_NODE_THROWING_METHODS:
+            method_pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("
+            throwing_pattern = (
+                rf"@Throws\s*\(\s*FfiException\s*::\s*class\s*\)\s*"
+                rf"override\s+fun\s+`{re.escape(method)}`\s*\("
+            )
+            if re.search(method_pattern, text) and not re.search(throwing_pattern, text):
+                violations.append(
+                    "generated Kotlin output is missing FfiError throwing annotation "
+                    f"for MmpNode.{method}"
+                )
     else:
         if not re.search(r"\bprotocol\s+MmpNodeProtocol\b", text):
             violations.append("generated Swift output has no MmpNodeProtocol")
@@ -74,6 +90,13 @@ def _surface_violations(language: str, directory: Path) -> list[str]:
             pattern = rf"\bfunc\s+{re.escape(method)}\s*\("
             if not re.search(pattern, text):
                 violations.append(f"generated Swift output is missing MmpNode.{method}")
+        for method in EXPECTED_MMP_NODE_THROWING_METHODS:
+            method_pattern = rf"\bfunc\s+{re.escape(method)}\s*\("
+            throwing_pattern = rf"\bfunc\s+{re.escape(method)}\s*\([^)]*\)\s*throws\b"
+            if re.search(method_pattern, text) and not re.search(throwing_pattern, text):
+                violations.append(
+                    f"generated Swift output is missing throws for MmpNode.{method}"
+                )
     return violations
 
 
