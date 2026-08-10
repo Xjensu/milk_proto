@@ -3168,3 +3168,19 @@ The existing same-target end-to-end resend remains the positive dedup case.
 This is a local safety policy, not a wire or specification change. A future
 multi-destination holder index may replace the temporary fail-closed behavior
 only after its routing and storage semantics are reviewed.
+
+## 2026-08-10 continuation: manifest-only provider rejection
+
+The file test double now has a shared toggle that accepts all class-4 symbols
+but rejects class-1 writes. This exercises the later failure boundary that is
+distinct from a symbol-prefix rejection: all symbols remain durable, indexed,
+Merkle-valid, and present in `SeenIndex`, while the rejected manifest leaves
+conversation state, first-contact/pending markers, sent history, events, and
+diagnostics unchanged. Opening the class-1 gate and retrying reuses the same
+root without minting a second symbol set and produces a normally tracked
+`Queued` manifest.
+
+This confirms resumable per-bundle admission, not aggregate file/manifest
+atomicity. The provider contract still has no explicit unknown-commit result;
+crash recovery and a future batch/reservation seam remain E7 design work. No
+wire or specification document was changed.

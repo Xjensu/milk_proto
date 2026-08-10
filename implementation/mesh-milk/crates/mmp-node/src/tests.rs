@@ -2,6 +2,8 @@
 //! group messages, receipts purge; a 3-node chain relays store-carry-forward.
 
 use std::collections::{BTreeMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
 use mmp_core::{IdSource, MemStore, SessionHost};
@@ -343,11 +345,16 @@ struct PrefixCapacityStore {
     inner: MemStore,
     accepted_symbols: usize,
     symbol_limit: usize,
+    reject_direct: Option<Arc<AtomicBool>>,
 }
 
 impl PrefixCapacityStore {
     fn new(symbol_limit: usize) -> Self {
-        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit }
+        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit, reject_direct: None }
+    }
+
+    fn rejecting_direct(symbol_limit: usize, gate: Arc<AtomicBool>) -> Self {
+        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit, reject_direct: Some(gate) }
     }
 }
 
@@ -361,6 +368,14 @@ impl BundleStore for PrefixCapacityStore {
         meta: BundleMeta,
         bytes: &[u8],
     ) -> Result<StorePutOutcome, StorePutError> {
+        // Direct payloads are encrypted, so this fixture deliberately uses
+        // the class-1 boundary as the manifest rejection point rather than
+        // attempting to inspect the apptype inside ciphertext.
+        if meta.class == class::DIRECT
+            && self.reject_direct.as_ref().is_some_and(|gate| gate.load(Ordering::Relaxed))
+        {
+            return Err(StorePutError::Capacity);
+        }
         if meta.class == class::SYMBOL && self.accepted_symbols >= self.symbol_limit {
             return Err(StorePutError::Capacity);
         }
@@ -1821,6 +1836,67 @@ fn send_file_partial_provider_keeps_only_durable_indexed_prefix() {
     assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
     assert_eq!(alice.core.events.len(), events_before, "symbol prefix does not emit a manifest event");
     assert_eq!(alice.diagnostics().records().len(), diagnostics_before);
+}
+
+#[test]
+fn send_file_manifest_rejection_preserves_symbols_for_retry() {
+    let mut alice = node(68);
+    let mut bob = node(69);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let gate = Arc::new(AtomicBool::new(true));
+    alice.core.store = Box::new(PrefixCapacityStore::rejecting_direct(usize::MAX, gate.clone()));
+    let events_before = alice.core.events.len();
+    let diagnostics_before = alice.diagnostics().records().len();
+    let conv_id = conversation_id(&alice.core.public, &bob.core.public);
+    let data = vec![0x46; 3000];
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "manifest-retry.bin", "application/octet-stream", &data),
+        Err(SendError::ResourceLimit)
+    );
+
+    let total_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
+    assert_eq!(
+        alice
+            .core
+            .store
+            .all_meta()
+            .into_iter()
+            .filter(|meta| meta.class == class::SYMBOL)
+            .count(),
+        total_symbols,
+        "all symbols were accepted before the manifest rejection"
+    );
+    assert_eq!(
+        alice.core.store.all_meta().into_iter().filter(|meta| meta.class == class::DIRECT).count(),
+        0,
+        "the rejected manifest was not persisted"
+    );
+    assert_eq!(alice.core.blob_index.values().map(BTreeMap::len).sum::<usize>(), total_symbols);
+    assert_eq!(alice.core.symbol_of.len(), total_symbols);
+    for id in alice.core.symbol_of.keys() {
+        assert!(alice.core.store.meta(id).is_some());
+        assert!(alice.core.seen.contains(id));
+    }
+    assert!(!alice.core.convs.contains_key(&conv_id));
+    assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
+    assert!(alice.core.sent.is_empty());
+    assert_eq!(alice.core.events.len(), events_before);
+    assert_eq!(alice.diagnostics().records().len(), diagnostics_before);
+
+    // The provider still contains the accepted symbols; only the direct
+    // class-1 boundary is opened for the retry, so the same root can be
+    // reused without minting another symbol set.
+    gate.store(false, Ordering::Relaxed);
+    let retry = alice
+        .send_file(&bob.node_id(), "manifest-retry.bin", "application/octet-stream", &data)
+        .expect("manifest retry after provider recovery");
+    let root = alice.core.blob_index.keys().next().copied().expect("root remains indexed");
+    assert_eq!(retry.root, root);
+    assert_eq!(alice.message_state(&retry.message_id), Some(DeliveryState::Queued));
+    assert!(alice.core.store.meta(&retry.message_id).is_some());
 }
 
 #[test]
