@@ -44,6 +44,13 @@ pub(crate) enum VaultError {
     Busy,
 }
 
+/// A restore operation that runs while the provider holds its identity-scoped
+/// restore transaction.  Native providers must keep the transaction held for
+/// the entire callback, including the caller's in-memory state swap; a
+/// best-effort/no-op implementation would not satisfy the rollback invariant.
+pub(crate) type RestoreOperation<'a> =
+    dyn FnMut(&mut dyn SnapshotVault) -> Result<u64, VaultError> + 'a;
+
 /// Ciphertext and provider-owned opaque key material for one node generation.
 ///
 /// `context` is metadata needed to recompute the AEAD associated-data hash; it
@@ -84,6 +91,15 @@ fn validate_record_bounds(record: &SealedRecord) -> Result<(), VaultError> {
 /// compare-and-swap: either the complete candidate record becomes visible, or
 /// the prior record remains intact. The provider must persist no plaintext.
 pub(crate) trait SnapshotVault {
+    /// Run one restore operation while excluding commits from every process
+    /// that can mutate this identity's durable record.  The provider must
+    /// acquire an exclusive transaction/lease before invoking `operation` and
+    /// release it only after the callback returns.  Implementations must not
+    /// provide a default no-op: without a real provider lock, a concurrent
+    /// commit can invalidate the state immediately after the final generation
+    /// check and before the node installs it.
+    fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError>;
+
     /// Load the last committed opaque record, if one exists.
     fn load(&mut self) -> Result<Option<SealedRecord>, VaultError>;
 
@@ -229,9 +245,9 @@ pub(crate) fn open_record(
 }
 
 /// Load, unwrap, and validate one generation without exposing plaintext to
-/// the provider. Every failed step returns before any caller-side restore.
-pub(crate) fn restore_from_vault(
-    vault: &mut impl SnapshotVault,
+/// the provider. The caller must already hold the provider restore lock.
+fn restore_from_vault_unlocked(
+    vault: &mut dyn SnapshotVault,
     node_public: &Key32,
     node_id: &Id16,
 ) -> Result<(u64, RestoredState), VaultError> {
@@ -275,6 +291,43 @@ pub(crate) fn restore_from_vault(
     if generation < vault.generation_floor()? {
         return Err(VaultError::Generation);
     }
+    Ok((generation, state))
+}
+
+/// Restore one generation while holding the provider's transaction through
+/// the caller's state installation.  This is the production-facing helper;
+/// the lower-level decoder above intentionally does not claim linearizability
+/// when called outside the lock.
+pub(crate) fn restore_from_vault_into(
+    vault: &mut impl SnapshotVault,
+    node_public: &Key32,
+    node_id: &Id16,
+    apply: &mut dyn FnMut(RestoredState) -> Result<(), VaultError>,
+) -> Result<u64, VaultError> {
+    let mut operation = |locked: &mut dyn SnapshotVault| {
+        let (generation, state) = restore_from_vault_unlocked(locked, node_public, node_id)?;
+        apply(state)?;
+        Ok(generation)
+    };
+    vault.with_restore_lock(&mut operation)
+}
+
+/// Load, unwrap, and validate one generation through a provider restore
+/// transaction. This helper is retained for Rust-internal tests and callers
+/// that need the decoded state; production node installation uses
+/// [`restore_from_vault_into`] so the in-memory swap remains inside the lock.
+pub(crate) fn restore_from_vault(
+    vault: &mut impl SnapshotVault,
+    node_public: &Key32,
+    node_id: &Id16,
+) -> Result<(u64, RestoredState), VaultError> {
+    let mut restored = None;
+    let mut apply = |state| {
+        restored = Some(state);
+        Ok(())
+    };
+    let generation = restore_from_vault_into(vault, node_public, node_id, &mut apply)?;
+    let state = restored.ok_or(VaultError::Invalid)?;
     Ok((generation, state))
 }
 
@@ -323,6 +376,7 @@ mod tests {
     use super::*;
     use mmp_core::MemStore;
     use rand::{rngs::StdRng, SeedableRng};
+    use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
     use crate::{Node, Tier};
 
     struct ReferenceSnapshotVault {
@@ -332,6 +386,7 @@ mod tests {
         trusted_now_ms: u64,
         record: Option<SealedRecord>,
         unwrap_calls: usize,
+        restore_lock_calls: usize,
     }
 
     impl ReferenceSnapshotVault {
@@ -345,6 +400,7 @@ mod tests {
                 trusted_now_ms: 100_000,
                 record: None,
                 unwrap_calls: 0,
+                restore_lock_calls: 0,
             }
         }
 
@@ -366,6 +422,14 @@ mod tests {
     }
 
     impl SnapshotVault for ReferenceSnapshotVault {
+        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+            // This in-memory fixture has no external process.  Count the
+            // callback so tests still prove the production path cannot bypass
+            // the required provider transaction seam.
+            self.restore_lock_calls += 1;
+            operation(self)
+        }
+
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
             if !self.available {
                 return Err(VaultError::Unavailable);
@@ -434,6 +498,11 @@ mod tests {
     }
 
     impl SnapshotVault for FloorAdvancingAfterLoadVault {
+        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+            self.inner.restore_lock_calls += 1;
+            operation(self)
+        }
+
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
             let record = self.inner.load()?;
             if self.advance_after_load {
@@ -469,6 +538,11 @@ mod tests {
     }
 
     impl SnapshotVault for FloorAdvancingAfterClockVault {
+        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+            self.inner.restore_lock_calls += 1;
+            operation(self)
+        }
+
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
             self.inner.load()
         }
@@ -484,6 +558,44 @@ mod tests {
                 self.advance_after_clock = false;
             }
             Ok(now)
+        }
+
+        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+            self.inner.commit(expected_generation, candidate, dek)
+        }
+
+        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+            self.inner.unwrap_dek(context, wrapped_dek)
+        }
+    }
+
+    /// Test adapter proving that the high-level helper keeps the provider
+    /// transaction active while the caller installs the decoded state.  A
+    /// native implementation must replace this boolean with an exclusive
+    /// cross-process transaction/lease.
+    struct LockObservingVault {
+        inner: ReferenceSnapshotVault,
+        active: Arc<AtomicBool>,
+    }
+
+    impl SnapshotVault for LockObservingVault {
+        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+            assert!(!self.active.swap(true, Ordering::AcqRel), "restore lock must not be nested");
+            let result = operation(self);
+            self.active.store(false, Ordering::Release);
+            result
+        }
+
+        fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
+            self.inner.load()
+        }
+
+        fn generation_floor(&mut self) -> Result<u64, VaultError> {
+            self.inner.generation_floor()
+        }
+
+        fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
+            self.inner.trusted_now_ms()
         }
 
         fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
@@ -599,6 +711,13 @@ mod tests {
     }
 
     impl SnapshotVault for JournaledSnapshotVault {
+        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+            // The journal model is single-process and therefore cannot model
+            // a native cross-process lock; retain the explicit callback seam
+            // so production adapters cannot accidentally omit it.
+            operation(self)
+        }
+
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
             Ok(self.image.current.clone())
         }
@@ -873,6 +992,39 @@ mod tests {
         let before = target.secret_state_snapshot().unwrap();
         assert_eq!(target.restore_secret_state_from_vault(&mut replay_vault), Err(VaultError::Invalid));
         assert_eq!(target.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+    }
+
+    #[test]
+    fn restore_into_keeps_provider_transaction_through_state_application() {
+        let source = Node::new([119; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut source_vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(119);
+        assert_eq!(save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(), 1);
+
+        let active = Arc::new(AtomicBool::new(false));
+        let mut vault = LockObservingVault {
+            inner: source_vault,
+            active: Arc::clone(&active),
+        };
+        let mut applied_under_lock = false;
+        let active_during_apply = Arc::clone(&active);
+        let mut apply = |state: RestoredState| {
+            assert!(active_during_apply.load(Ordering::Acquire));
+            applied_under_lock = true;
+            drop(state);
+            Ok(())
+        };
+
+        let generation = restore_from_vault_into(
+            &mut vault,
+            &source.core.public,
+            &source.core.node_id,
+            &mut apply,
+        )
+        .unwrap();
+        assert_eq!(generation, 1);
+        assert!(applied_under_lock);
+        assert!(!active.load(Ordering::Acquire));
     }
 
     #[test]

@@ -922,14 +922,18 @@ impl Node {
         {
             return Err(vault::VaultError::Busy);
         }
-        let (generation, state) = vault::restore_from_vault(vault, &self.core.public, &self.core.node_id)?;
-        self.core.convs = state.convs;
-        self.core.established_convs = state.established_convs;
-        self.core.prekeys = state.prekeys;
-        self.core.pending_async = state.pending_async;
-        self.core.pending_first_contact = state.pending_first_contact;
-        self.core.sent = state.sent;
-        Ok(generation)
+        let node_public = self.core.public;
+        let node_id = self.core.node_id;
+        let mut apply = |state: secret_state::RestoredState| {
+            self.core.convs = state.convs;
+            self.core.established_convs = state.established_convs;
+            self.core.prekeys = state.prekeys;
+            self.core.pending_async = state.pending_async;
+            self.core.pending_first_contact = state.pending_first_contact;
+            self.core.sent = state.sent;
+            Ok(())
+        };
+        vault::restore_from_vault_into(vault, &node_public, &node_id, &mut apply)
     }
 
     /// Request a peer to act as a patron for this node. The offer is sent on
