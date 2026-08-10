@@ -63,11 +63,32 @@ Normative boundaries checked:
     checkpoint required by doc 06 §8.3. A strict equality guard was tested and
     rejected as an incomplete fix because it breaks legitimate convergence.
 11. **High — effective membership changes are not uniformly epoch-bound.**
-    `group_invite` adds a member without rotating the epoch, while
-    `remove_member` rotates even when the target has no live OR-Set tags. The
-    implementation therefore diverges from the “every effective change” rule
-    until authenticated anchor/control semantics define ordering and key
-    distribution.
+    `group_invite` adds a member without rotating the epoch. The earlier audit
+    wording also claimed that `remove_member` rotated for a member with no live
+    OR-Set tags; that was a historical finding, fixed by commits `4c1398f` and
+    `0637a67` (the current implementation returns before mutation). The invite
+    path remains a live confidentiality gap: a newly invited member receives
+    the current epoch key and can derive earlier same-epoch traffic, contrary
+    to doc 08 §6.3's late-joiner rule.
+12. **Critical — future-epoch distribution does not advance a non-admin's
+    local epoch.** When an administrator rotates after removing a member, the
+    remaining member accepts the administrator's `dist.epoch > gs.epoch` but
+    leaves `gs.epoch` and its own sender key at the old epoch. Its subsequent
+    group messages therefore remain in the old epoch; a removed member that
+    still has that sender key can decrypt them. The existing positive test
+    covers only administrator-to-member traffic and does not exercise a
+    remaining non-admin sender after removal. This cannot be fixed by simply
+    requiring equality: the current 0x02 body carries no authenticated admin
+    anchor, and equality would break the legitimate convergence path.
+13. **High — authenticated future-epoch flooding is unbounded.** Any current
+    member can send a distinct, syntactically valid future epoch through the
+    authenticated direct channel. `GroupState::learn_remote` retains one
+    `RemoteSenderKey` and one `SenderKeyDist` per `(member, epoch)` with no
+    lifetime or count bound. A replay of ever-increasing epochs can exhaust
+    memory, and an attacker can pre-fill an epoch so a later legitimate
+    distribution is rejected as a duplicate. A local cap or strict comparison
+    would trade memory safety for an unauthorised availability/confidentiality
+    decision; the missing signed anchor/control schema must be resolved first.
 
 ## Safe remediation boundary
 
@@ -110,6 +131,14 @@ Future-epoch acceptance and invite/remove epoch transitions remain explicitly
 open: they cannot be hardened safely by a local comparison without either
 breaking the existing re-key convergence path or inventing the missing admin
 anchor/control wire semantics.
+
+The current release therefore carries three explicit group-security gates:
+late-joiner confidentiality, post-removal non-admin sender confidentiality, and
+bounded authenticated future-epoch admission. They are implementation risks,
+not evidence that the candidate `group_control.rs` schema is ready for
+promotion. A reviewed control envelope must bind the administrator, group,
+epoch, membership transition, recipient, operation sequence, and replay
+frontier before any of these paths are changed.
 
 Admin-signed membership authorization and a bounded unknown-group admission
 policy remain open protocol work. They require a normative control envelope and

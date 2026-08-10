@@ -81,3 +81,29 @@ cryptographic state, routing, or specification status. The E7 gate remains open
 until a provider, producer rollback/batch behavior, host tests, target checks,
 and named-board HIL evidence satisfy `docs/E7_FIXED_STORE_DESIGN.md`.
 
+## Prototype evidence (2026-08-10)
+
+The first safe implementation slice is now committed as `b5200f1`
+(`test(store): prototype fixed-capacity reservations`). The
+integration-test-only provider in
+`crates/mmp-store/tests/fixed_transactional_provider.rs` keeps its reservation
+token private and exercises exact-fill admission, replacement-delta accounting,
+outstanding reservations, same-ID busy rejection, idempotent abort, stale or
+mismatched tokens, simulated unavailable commit, and bounded receive-side
+`try_put`. Five focused tests and strict Clippy pass.
+
+This prototype intentionally does **not** add a public capability trait or
+claim that `SnapshotStore` is transactional. The producer audit confirms why:
+`NodeCore::store_own` currently inserts `SeenIndex` state before its infallible
+`put`; pairwise sends advance the ratchet and pending/DAG state around the
+store call; group sends advance the sender key first; and file sends index each
+symbol before storing it. A reservation API without staged producer state would
+make capacity failures worse by leaving cryptographic and blob state advanced.
+
+`SnapshotLimits` also bounds the complete snapshot image only. It does not yet
+provide slot-count, per-bundle, metadata, auxiliary-budget, or crash-journal
+reservation semantics. Wrapping `try_put` or estimating free bytes would
+therefore be an invalid production implementation. The next E7 step is a
+reviewed provider policy plus producer-specific prepare/commit paths, starting
+with sealed and pairwise sends; group and file operations remain deferred until
+their rollback/batch contracts exist.
