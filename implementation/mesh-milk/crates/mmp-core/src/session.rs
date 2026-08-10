@@ -50,10 +50,11 @@ const fn frame_payload_within_cap(len: usize) -> bool {
 /// serializes several collection lengths with `u8`/`u16` casts.  A local host
 /// (or a compromised host callback) must not be able to turn those casts into
 /// a different wire value in an otherwise live session.  The aggregate byte
-/// cap is checked after encoding; these checks cover only the narrower field
-/// widths that could truncate before that cap is observed.
+/// The field-width checks cover narrow counters that could truncate before the
+/// aggregate payload cap is observed; the aggregate width is then checked
+/// without allocating the encoded payload.
 fn frame_wire_widths_valid(frame: &Frame) -> bool {
-    match frame {
+    let widths_valid = match frame {
         Frame::Summary(summary) => {
             summary.receipt_buckets.len() <= u8::MAX as usize
                 && summary.claim_digest.len() <= u8::MAX as usize
@@ -67,6 +68,58 @@ fn frame_wire_widths_valid(frame: &Frame) -> bool {
         Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => bitmap.len() <= u16::MAX as usize,
         Frame::Error { detail, .. } => detail.len() <= 256,
         _ => true,
+    };
+
+    // Keep the infallible public encoder from first materialising an
+    // attacker-influenced host frame that is larger than the frozen 4 KiB
+    // payload cap.  In particular, a WANT/RECON_IDS list can be valid under
+    // its u16 element-count field while still being hundreds of KiB on the
+    // wire.  Compute the encoded width with checked arithmetic before
+    // `send_frame` calls `Frame::encode_payload`.
+    widths_valid && frame_payload_len(frame).is_some_and(|len| len <= MAX_FRAME_PAYLOAD)
+}
+
+/// Return the canonical payload width without allocating the payload.  This is
+/// deliberately kept in the session layer because `Frame::encode_payload`
+/// remains an infallible compatibility API; untrusted host callbacks must not
+/// be able to turn its intermediate allocation into a memory spike.
+fn frame_payload_len(frame: &Frame) -> Option<usize> {
+    let add = |a: usize, b: usize| a.checked_add(b);
+    let mul = |a: usize, b: usize| a.checked_mul(b);
+
+    match frame {
+        Frame::Hs(bytes)
+        | Frame::FriendOffer(bytes)
+        | Frame::FriendAck(bytes)
+        | Frame::ProxySummary(bytes)
+        | Frame::Bundle(bytes) => Some(bytes.len()),
+        Frame::IdProof { .. } => Some(32 + 64),
+        Frame::Credit(_) => Some(1),
+        Frame::Summary(summary) => {
+            let mut len = 1usize;
+            for bucket in &summary.receipt_buckets {
+                len = add(len, 4)?; // epoch + varbytes length
+                len = add(len, bucket.bloom.len())?;
+            }
+            len = add(len, 1)?;
+            len = add(len, mul(summary.claim_digest.len(), 9)?)?;
+            len = add(len, 1)?;
+            len = add(len, mul(summary.group_hints.len(), 16)?)?;
+            len = add(len, 1)?;
+            for heads in &summary.want_heads {
+                len = add(len, 17)?; // conversation id + head count
+                len = add(len, mul(heads.heads.len(), 16)?)?;
+            }
+            Some(len)
+        }
+        Frame::ReconInit { .. } => Some(2 + 16 + 16 + 4 + 8),
+        Frame::ReconRange { ranges, .. } => add(2, mul(ranges.len(), 16 + 16 + 4 + 8)?),
+        Frame::ReconIds { ids, .. } => add(1 + 16 + 16 + 2, mul(ids.len(), 16)?),
+        Frame::Want(ids) => add(2, mul(ids.len(), 16)?),
+        Frame::Budget { .. } => Some(16 + 1),
+        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => add(16 + 2 + 2, bitmap.len()),
+        Frame::Error { detail, .. } => add(1 + 2, detail.len()),
+        Frame::Close => Some(0),
     }
 }
 
@@ -1036,6 +1089,24 @@ mod wire_budget_tests {
             bitmap: vec![0u8; u16::MAX as usize + 1],
         }));
         assert!(!frame_wire_widths_valid(&Frame::Error { code: 1, detail: vec![0u8; 257] }));
+    }
+
+    #[test]
+    fn outbound_encoder_width_guard_rejects_payloads_over_cap_before_encoding() {
+        // These counts fit their u16/u8 wire fields, but their canonical
+        // payloads exceed MAX_FRAME_PAYLOAD.  The guard must reject them
+        // before Frame::encode_payload allocates a multi-KiB intermediate.
+        assert!(!frame_wire_widths_valid(&Frame::Want(vec![Id16::MIN; 256])));
+        assert!(!frame_wire_widths_valid(&Frame::ReconIds {
+            domain: 0,
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            ids: vec![Id16::MIN; 255],
+        }));
+        assert!(!frame_wire_widths_valid(&Frame::ReconRange {
+            domain: 0,
+            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 95],
+        }));
     }
 
     #[test]
