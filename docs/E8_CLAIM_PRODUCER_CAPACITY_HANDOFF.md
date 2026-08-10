@@ -63,8 +63,8 @@ conditions.
 - Receipt publication now calls `try_store_own` and is fail-closed at the
   provider boundary; a rejection does not undo authenticated delivery, but
   the current API has no durable pending-receipt retry journal.
-- Group distributions/rekey membership transitions, receipt retry durability,
-  and file-symbol batches still need their own
+- Per-member distribution/rekey transaction and crash semantics, receipt retry
+  durability, and file-symbol batches still need their own
   reservation or batch-commit design; replacing every `store_own` call blindly
   would create new consistency bugs.
 - `SnapshotStore` admission covers the complete image, including auxiliary

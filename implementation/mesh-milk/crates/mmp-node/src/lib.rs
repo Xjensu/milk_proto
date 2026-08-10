@@ -1340,7 +1340,10 @@ impl Node {
         Ok(())
     }
 
-    /// Remove a member: epoch rotates, everyone re-keys, the removed member
+    /// Remove a member: epoch rotates, everyone re-keys, the removed member.
+    /// If a distribution write fails, the local membership/epoch change
+    /// remains committed and the error reports pending re-key work; callers
+    /// must retry a group send, not the removal itself.
     /// reads nothing from the new epoch (doc 08 §6.3).
     pub fn group_remove(&mut self, gid: &Id16, member: &NodeId) -> Result<u16, SendError> {
         let (epoch, members) = {
@@ -1362,19 +1365,29 @@ impl Node {
         // suppress no useful send: `send_own_dist` always includes the epoch
         // in its idempotence key.  Drop only this group's stale epochs; other
         // groups and the freshly rotated epoch remain untouched.  If a
-        // re-key send below fails, the missing current-epoch marker is still
-        // absent and will be retried on the next contact.
+        // re-key send below fails, the group-wide distribution marker remains
+        // set and will be retried by the next group send.
         self.core.sent_dists.retain(|(sent_gid, _, sent_epoch)| {
             *sent_gid != *gid || *sent_epoch == epoch
         });
         let me = self.core.node_id;
+        let mut first_error = None;
         for m in members {
             if m != me && m != *member {
-                let _ = self.core.send_own_dist(gid, &m);
+                if let Err(err) = self.core.send_own_dist(gid, &m) {
+                    if first_error.is_none() {
+                        first_error = Some(err);
+                    }
+                }
+            }
+        }
+        if first_error.is_none() {
+            if let Some(gs) = self.core.groups.get_mut(gid) {
+                gs.mark_distribution_attempted();
             }
         }
         self.core.enqueue_event(Event::GroupEpochChanged { gid: *gid, epoch });
-        Ok(epoch)
+        first_error.map_or(Ok(epoch), Err)
     }
 
     /// Send a text into the group under our sender key (doc 08 §6.2).
@@ -1393,7 +1406,12 @@ impl Node {
             let members = self.core.groups.get(gid).map(|gs| gs.members.members()).unwrap_or_default();
             for member in members {
                 if member != me {
-                    self.core.send_own_dist(gid, &member)?;
+                    if let Err(err) = self.core.send_own_dist(gid, &member) {
+                        if let Some(gs) = self.core.groups.get_mut(gid) {
+                            gs.mark_distribution_needed();
+                        }
+                        return Err(err);
+                    }
                 }
             }
             if let Some(gs) = self.core.groups.get_mut(gid) {
@@ -2736,12 +2754,17 @@ impl NodeCore {
             if !gs.members.contains(from) || dist.epoch < gs.epoch {
                 return;
             }
-            if !gs.learn_remote(*from, &dist) {
+            let exact_duplicate = gs.dists.get(&(member, dist.epoch)) == Some(&dist);
+            if !exact_duplicate && !gs.learn_remote(*from, &dist) {
                 return;
             }
         }
         // Reciprocate our own sender key so the sender can read us.
-        let _ = self.send_own_dist(&gid, from);
+        if self.send_own_dist(&gid, from).is_err() {
+            if let Some(gs) = self.groups.get_mut(&gid) {
+                gs.mark_distribution_needed();
+            }
+        }
     }
 
     fn deliver_group(&mut self, bundle: &Bundle) {

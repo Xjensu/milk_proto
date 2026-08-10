@@ -2085,6 +2085,70 @@ fn group_store_rejection_is_side_effect_free_and_retryable() {
 }
 
 #[test]
+fn duplicate_sender_key_retries_reciprocal_distribution_after_rejection() {
+    let mut alice = node(58);
+    let mut bob = node(59);
+    introduce(&mut alice, &mut bob);
+    let gid = alice.create_group();
+    let dist = alice.core.groups.get(&gid).expect("group").local.dist().encode();
+    let mut body = Vec::with_capacity(16 + dist.len());
+    body.extend_from_slice(&alice.node_id().0);
+    body.extend_from_slice(&dist);
+
+    bob.core.store = Box::new(CapacityRejectStore);
+    bob.core.handle_sender_key(&alice.node_id(), &body);
+    assert!(!bob.core.sent_dists.contains(&(gid, alice.node_id(), 1)));
+    assert!(bob.core.groups.get(&gid).unwrap().needs_distribution());
+
+    bob.core.store = Box::new(MemStore::new());
+    // Replay the exact authenticated distribution. The remote key is already
+    // known, but the reciprocal first-contact write can now be retried.
+    bob.core.handle_sender_key(&alice.node_id(), &body);
+    assert!(bob.core.sent_dists.contains(&(gid, alice.node_id(), 1)));
+    assert!(bob.store_len() > 0, "reciprocal distribution was stored");
+}
+
+#[test]
+fn group_rekey_distribution_retries_after_provider_recovery() {
+    let mut alice = node(54);
+    let mut bob = node(55);
+    let mut carol = node(56);
+    introduce(&mut alice, &mut bob);
+    introduce(&mut alice, &mut carol);
+    introduce(&mut bob, &mut carol);
+
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).expect("bob invite");
+    alice.group_invite(&gid, &carol.node_id()).expect("carol invite");
+    contact(&mut alice, &mut bob, 54, 10_000);
+    contact(&mut alice, &mut carol, 55, 20_000);
+    contact(&mut alice, &mut carol, 56, 30_000);
+    contact(&mut alice, &mut bob, 57, 40_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    drain(&mut carol);
+
+    alice.core.store = Box::new(CapacityRejectStore);
+    let old_epoch = alice.core.groups.get(&gid).expect("group").epoch;
+    assert_eq!(alice.group_remove(&gid, &carol.node_id()), Err(SendError::ResourceLimit));
+    let group = alice.core.groups.get(&gid).expect("rotated group");
+    assert_eq!(group.epoch, old_epoch + 1);
+    assert!(group.needs_distribution(), "failed rekey remains pending");
+    assert!(!alice.core.sent_dists.contains(&(gid, bob.node_id(), group.epoch)));
+
+    alice.core.store = Box::new(MemStore::new());
+    alice.group_send(&gid, "rekey retry").expect("group send retries distribution");
+    let epoch = alice.core.groups.get(&gid).expect("group").epoch;
+    assert!(!alice.core.groups.get(&gid).unwrap().needs_distribution());
+    assert!(alice.core.sent_dists.contains(&(gid, bob.node_id(), epoch)));
+
+    contact(&mut alice, &mut bob, 58, 50_000);
+    assert!(drain(&mut bob).iter().any(
+        |event| matches!(event, Event::GroupMessage { gid: g, body, .. } if *g == gid && body == b"rekey retry")
+    ));
+}
+
+#[test]
 fn blocked_peer_is_silently_denied() {
     let mut alice = node(1);
     let mut bob = node(2);

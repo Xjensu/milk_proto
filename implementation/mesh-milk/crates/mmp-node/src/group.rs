@@ -81,6 +81,7 @@ impl GroupState {
         self.members.apply(&MembershipOp::Remove { tags });
         self.epoch = next_epoch;
         self.local = LocalSenderKey::generate(rng, self.gid, self.epoch);
+        self.needs_distribution = true;
         // Old-epoch remote keys stay valid for in-flight traffic; new-epoch
         // keys arrive via fresh dists.
         Some(self.epoch)
@@ -189,6 +190,12 @@ impl GroupState {
     /// Clear the restart re-gossip marker after scheduling distributions.
     pub fn mark_distribution_attempted(&mut self) {
         self.needs_distribution = false;
+    }
+
+    /// Keep the current sender key scheduled for re-gossip after a provider
+    /// or peer-facing distribution attempt fails.
+    pub fn mark_distribution_needed(&mut self) {
+        self.needs_distribution = true;
     }
 }
 

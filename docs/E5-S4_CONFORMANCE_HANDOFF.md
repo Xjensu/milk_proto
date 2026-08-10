@@ -3076,6 +3076,23 @@ provider can leave the origin waiting for acknowledgement. Crash consistency
 after provider acceptance and a bounded retry/reserved-control policy remain
 open; no wire or specification change was made.
 
+## 2026-08-10 continuation: distribution retry marker
+
+Authenticated sender-key handling now distinguishes an exact duplicate
+`(member, epoch, distribution)` from a conflicting same-slot distribution.
+Exact duplicates do not reset the remote receive chain and still retry the
+local reciprocal distribution; conflicting replacements remain rejected. A
+failed reciprocal write sets the group distribution marker for a later retry.
+
+Membership removal now marks a freshly generated epoch as needing distribution.
+`group_remove` attempts every remaining member, reports the first distribution
+error after committing the local membership/epoch change, and leaves the marker
+set. The next `group_send` retries the current-epoch distributions using the
+existing idempotence set, then clears the marker only after all sends succeed.
+This is a bounded group-wide liveness improvement, not per-member crash
+atomicity or an all-or-none membership transaction; no wire or specification
+file changed.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

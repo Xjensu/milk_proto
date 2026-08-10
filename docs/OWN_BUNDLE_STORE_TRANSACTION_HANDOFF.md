@@ -36,7 +36,7 @@ The own-origin producers do not all have the same rollback surface:
 | `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
 | `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group distributions/rekeys and file producers still require coordinated semantics. |
-| `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions/rekey membership changes still need coordinated semantics. |
+| `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions now have a bounded group-wide retry marker; per-member transaction/crash semantics remain open. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 
 Changing `store_own` to return `Result` without solving these transitions would

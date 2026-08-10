@@ -59,7 +59,7 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 127 node tests, 37 CLI tests, and 31 FFI tests;
+The focused runs passed with 129 node tests, 37 CLI tests, and 31 FFI tests;
 the crypto suite passed 53 tests with the staged candidate API.
 New regressions cover:
 
@@ -75,7 +75,9 @@ New regressions cover:
 7. group rejection with unchanged `SeenIndex`, event, and diagnostic state,
    followed by a retry that emits group chain index zero; and
 8. receipt rejection with unchanged store/index/event/diagnostic state,
-   followed by successful decode after provider recovery.
+   followed by successful decode after provider recovery; and
+9. duplicate sender-key reciprocal retry and rekey distribution retry after
+   provider recovery.
 
 ## Explicit non-claims
 
@@ -87,7 +89,9 @@ and require separate staging work:
   rejected, while legacy claim-returning wrappers swallow the provider error;
 - receipt retry durability and reserved control capacity (the current receipt
   path is best-effort after a provider rejection);
-- group-key distributions/rekey transitions and membership side effects; and
+- per-member distribution/rekey transaction, crash, and retry policy (the
+  current group-wide marker retries synchronously, while membership changes
+  remain locally committed); and
 - file symbols and manifests.
 
 `Node::new` retains fixed bootstrap claims in its local discovery view even
