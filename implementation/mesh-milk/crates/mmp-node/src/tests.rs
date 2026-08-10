@@ -581,6 +581,65 @@ fn prekey_first_contact_store_rejection_is_side_effect_free() {
 }
 
 #[test]
+fn established_direct_store_rejection_is_side_effect_free() {
+    let mut sender = node(241);
+    let mut peer = node(240);
+    introduce(&mut sender, &mut peer);
+
+    let first = sender.send_text(&peer.node_id(), "establish conversation").unwrap();
+    contact(&mut sender, &mut peer, 241, 10_000);
+    assert!(drain(&mut peer).iter().any(
+        |event| matches!(event, Event::MessageReceived { id, body, .. } if *id == first && body == b"establish conversation")
+    ));
+    contact(&mut sender, &mut peer, 242, 20_000);
+    drain(&mut sender);
+    drain(&mut peer);
+
+    let conv_id = conversation_id(&sender.core.public, &peer.core.public);
+    assert!(!sender.core.pending_first_contact.contains_key(&conv_id));
+    let conv = sender.core.convs.get(&conv_id).expect("conversation established");
+    let send_before = (conv.send.epoch, conv.send.next_index);
+    let send_snapshot_before = conv.send.snapshot().expect("sender snapshot");
+    let dag_before = conv.dag.snapshot().expect("DAG snapshot");
+    let seen_before = sender.core.seen.encode();
+    let pending_async_before = sender.core.pending_async.clone();
+    let pending_first_before = sender.core.pending_first_contact.clone();
+    let sent_before = sender.core.sent.clone();
+    sender.enable_diagnostics();
+    let events_before = sender.core.events.len();
+    let diag_before = sender.diagnostics().records().len();
+    sender.core.store = Box::new(CapacityRejectStore);
+
+    assert_eq!(sender.send_text(&peer.node_id(), "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(sender.store_len(), 0);
+    assert_eq!(sender.core.seen.encode(), seen_before);
+    let conv_after = sender.core.convs.get(&conv_id).expect("conversation remains");
+    assert_eq!((conv_after.send.epoch, conv_after.send.next_index), send_before);
+    assert_eq!(conv_after.send.snapshot().unwrap(), send_snapshot_before);
+    assert_eq!(conv_after.dag.snapshot().unwrap(), dag_before);
+    assert_eq!(sender.core.pending_async, pending_async_before);
+    assert_eq!(sender.core.pending_first_contact, pending_first_before);
+    assert_eq!(sender.core.sent.len(), sent_before.len());
+    for (id, before) in sent_before {
+        let after = sender.core.sent.get(&id).expect("sent entry remains");
+        assert_eq!((after.conv, after.state), (before.conv, before.state));
+    }
+    assert_eq!(sender.core.events.len(), events_before);
+    assert_eq!(sender.diagnostics().records().len(), diag_before);
+
+    sender.core.store = Box::new(MemStore::new());
+    let retry = sender.send_text(&peer.node_id(), "retry after capacity").expect("retry succeeds");
+    let (_, retry_raw) = sender.core.store.get(&retry).expect("retry bundle stored");
+    let retry_bundle = Bundle::decode_canonical(&retry_raw).expect("retry bundle decodes");
+    let retry_direct = mmp_types::payload::DirectPayload::decode(&retry_bundle.payload).expect("direct retry payload");
+    assert_eq!((retry_direct.epoch, retry_direct.index), send_before);
+    contact(&mut sender, &mut peer, 243, 30_000);
+    assert!(drain(&mut peer).iter().any(
+        |event| matches!(event, Event::MessageReceived { id, body, .. } if *id == retry && body == b"retry after capacity")
+    ));
+}
+
+#[test]
 fn announcement_store_rejection_is_side_effect_free() {
     let mut n = Node::new([251; 32], Box::new(CapacityRejectStore), Tier::Relay);
     n.enable_diagnostics();

@@ -3021,6 +3021,30 @@ batches still use legacy or multi-object producer paths and require their own
 transaction design. No wire or specification file changed, and the research
 MMP/Φ proposals remain non-normative hypotheses.
 
+## 2026-08-10 continuation: established direct producer staging
+
+The established-conversation direct branch of `send_app` is now covered by the
+same bounded in-process capacity boundary as the earlier first-contact paths.
+It derives the next message key and sender-chain state through
+`SendChain::try_next_candidate`, builds the exact encrypted bundle, and calls
+`try_store_own` before committing `Conv.send`, the conversation DAG, and pending
+markers. A rejecting provider therefore leaves the live sender snapshot,
+epoch/index, DAG, `SeenIndex`, pending maps, sent history, events, and
+diagnostics unchanged. After provider recovery, the retry uses the original
+epoch/index and decrypts successfully in the peer contact path.
+
+The origin-budget calculation samples the mutable local `UtilityState::n_hat`
+estimator before the provider call. Its advisory EWMA timestamp may therefore
+advance on a rejected send; this routing-accounting effect is outside the
+durable pairwise producer boundary and is not presented as a rollback guarantee.
+
+This closes the synchronous provider-rejection residual for pairwise direct
+messages only. It does not provide crash-atomic persistence after a provider
+accepts bytes, and group sender-key messages, receipts, and file-symbol batches
+remain separate multi-object transaction work. The regression is intentionally
+bounded to those invariants; no wire field, frozen specification document, or
+MMP/Φ research hypothesis was changed.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

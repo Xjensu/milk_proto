@@ -1988,9 +1988,11 @@ impl NodeCore {
     ///
     /// This is intentionally separate from [`Self::store_own`]. Legacy
     /// producers still use the infallible compatibility path until their
-    /// cryptographic and bookkeeping state can be staged transactionally. The
-    /// sealed first-contact producer is safe to use this helper because it
-    /// mutates no conversation, pending, or ratchet state before the write.
+    /// cryptographic and bookkeeping state can be staged transactionally.
+    /// Sealed first-contact, valid-prekey first-contact, and established
+    /// pairwise direct producers use this helper only after constructing
+    /// provider-local candidate state; live conversation, ratchet, and
+    /// bookkeeping state is committed after the write succeeds.
     fn try_store_own(&mut self, bundle: Bundle, budget: u8) -> Result<Id16, SendError> {
         let bytes = bundle.encode();
         let id = bundle.id();
@@ -2374,9 +2376,13 @@ impl NodeCore {
             return Err(SendError::TooLarge);
         }
 
-        let (msg_key, epoch, index) = {
-            let conv = self.convs.get_mut(&conv_id).expect("just ensured");
-            conv.send.try_next().map_err(|_| SendError::RatchetExhausted)?
+        let (msg_key, candidate_send, epoch, index) = {
+            let conv = self.convs.get(&conv_id).expect("just ensured");
+            let epoch = conv.send.epoch;
+            let index = conv.send.next_index;
+            let (msg_key, candidate_send) =
+                conv.send.try_next_candidate().map_err(|_| SendError::RatchetExhausted)?;
+            (msg_key, candidate_send, epoch, index)
         };
         let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
         let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
@@ -2389,16 +2395,14 @@ impl NodeCore {
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
-        if pending.is_some() {
-            self.pending_async.remove(&conv_id);
-        }
         let parents_copy: Vec<Id16> = bundle.parents().to_vec();
         let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.store_own(bundle, budget);
-        if let Some(c) = self.convs.get_mut(&conv_id) {
-            c.dag.insert(id, &parents_copy);
-        }
+        let id = self.try_store_own(bundle, budget)?;
+        let conv = self.convs.get_mut(&conv_id).expect("conversation remains");
+        conv.send = candidate_send;
+        conv.dag.insert(id, &parents_copy);
         if pending.is_some() {
+            self.pending_async.remove(&conv_id);
             self.pending_first_contact.insert(conv_id, id);
         }
         Ok(id)

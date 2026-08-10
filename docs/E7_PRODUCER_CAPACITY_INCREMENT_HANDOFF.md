@@ -14,6 +14,10 @@ This continuation adds narrow uses of the existing receive-side
   conversation and sender ratchet, stores the complete bundle through
   `try_store_own`, and commits conversation/pending/DAG state only after the
   provider accepts it.
+- The established-conversation direct branch of `send_app` now derives a
+  candidate sender chain, constructs the exact bundle, and calls
+  `try_store_own` before committing the live sender chain, DAG head, and
+  pending markers.
 
 `try_store_own` inserts `SeenIndex` state and logs `JourneyEvent::Created` only
 after the provider accepts the complete encoded bundle. A capacity rejection
@@ -22,7 +26,12 @@ seen index, diagnostics, conversation map, and pending-first-contact map
 unchanged. Announcement and sealed producers perform no cryptographic state
 mutation before the write; the prekey first-contact producer keeps its
 conversation and sender-chain changes in local candidates until the write
-commits. This narrow scope is safe without a new reservation/commit API.
+commits. The established direct producer follows the same candidate boundary.
+This narrow scope is safe for synchronous provider rejection without a new
+reservation/commit API, but it is not crash-atomic after provider acceptance.
+The mutable local `UtilityState::n_hat` estimator is sampled before the write;
+its advisory EWMA timestamp may advance on rejection and is intentionally
+outside this producer rollback boundary.
 
 The CLI `SharedSnapshot` adapter now delegates `try_put` instead of inheriting
 the default infallible trait implementation. This prevents a future bounded
@@ -43,7 +52,7 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 120 node tests, 37 CLI tests, and 30 FFI tests.
+The focused runs passed with 125 node tests, 37 CLI tests, and 31 FFI tests.
 New regressions cover:
 
 1. sealed first-contact capacity rejection;
@@ -51,7 +60,10 @@ New regressions cover:
 3. bounded `SharedSnapshot::try_put` propagation; and
 4. FFI nickname rejection after self-revocation; and
 5. valid-prekey first-contact rejection with unchanged ratchet/conversation
-   state and a successful retry after provider recovery.
+   state and a successful retry after provider recovery; and
+6. established direct rejection with unchanged sender-chain, DAG, pending,
+   SeenIndex, event, diagnostic, and sent-history state, followed by a retry
+   using the original epoch/index.
 
 ## Explicit non-claims
 
@@ -62,8 +74,6 @@ and require separate staging work:
 - constructor bootstrap claims keep a local discovery view when persistence is
   rejected, while legacy claim-returning wrappers swallow the provider error;
 - receipts and other fire-and-forget auxiliary bundles;
-- established-conversation direct `send_app` (its ratchet still advances
-  before the legacy store path);
 - group sender-key messages and distributions; and
 - file symbols and manifests.
 
@@ -76,14 +86,12 @@ invariants are tested.
 
 ## Next implementation order
 
-1. Stage the established-conversation direct `send_app` branch and prove
-   sender-chain, DAG, SeenIndex, delivery, and event state are unchanged on
-   provider rejection.
-2. Design and review an additive provider reservation/commit capability;
+1. Design and review an additive provider reservation/commit capability;
    include outstanding reservations, replacement deltas, failed-commit
    recovery, and restart semantics.
-3. Add candidate-state or batch semantics for group and file producers.
-4. Select a board-specific allocator/flash policy, then implement the
+2. Add candidate-state or batch semantics for group, receipt, and file
+   producers.
+3. Select a board-specific allocator/flash policy, then implement the
    `no_std` provider and linked-image/HIL gates.
 
 ## Adversarial review

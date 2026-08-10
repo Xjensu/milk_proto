@@ -32,7 +32,7 @@ The own-origin producers do not all have the same rollback surface:
 | `emit_receipt` | Receipt bookkeeping is intentionally fire-and-forget before the legacy store path | A rejected auxiliary bundle may be silently lost; changing the callback contract requires a separate receipt policy. |
 | `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
-| `send_app` | The valid-prekey first-contact branch now stages a candidate `Conv`/sender chain and uses `try_store_own`; established-conversation direct sends still advance before legacy `store_own` | First-contact capacity rejection is fail-closed and retryable. Established direct, group, receipt, and file producers still require coordinated transaction semantics. |
+| `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group, receipt, and file producers still require coordinated transaction semantics. |
 | `send_group` | `LocalSenderKey::encrypt_with_ad` advances its private chain before `store_own` | A rejection would consume a group message index. The group sender key has no rollback/snapshot seam. |
 | `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
 
@@ -50,7 +50,10 @@ capacity remains stable between a check and the write.
   `node_store_rejection_prevents_delivery_and_post_store_side_effects`
   confirms that an inbound rejection does not deliver or index the bundle.
 - Most own-origin paths still call `store_own` at the producer sites listed
-  above; the staged prekey first-contact branch is the deliberate exception.
+  above; the staged pairwise direct branches are the deliberate exceptions.
+- Pairwise staging does not roll back the advisory `UtilityState::n_hat` EWMA
+  sample used to derive the storage budget; that routing-accounting state is
+  not durable producer state and remains a separate refinement.
 - The public `BundleStore::put` method is infallible and has no capacity/error
   result. `mmp-store::SnapshotStore` delegates to the in-memory implementation
   and currently cannot provide a fixed-capacity rejection contract.
@@ -96,7 +99,7 @@ be accompanied by transactional tests for every producer in the table.
 Until one of those contracts is approved, keep `store_own` on the legacy
 `put` seam for producers without a staged state boundary and treat fixed-
 capacity own-origin persistence as an explicit provider limitation. The
-prekey first-contact exception is covered only by its producer-specific
+pairwise direct exceptions are covered only by their producer-specific
 candidate path; do not claim that `BundleStore::try_put` protects all local
 send APIs.
 
@@ -118,10 +121,11 @@ The mmp-crypto audit (commit `be61df4`, wording correction `07b57ed`) proved
 that a pairwise `SendChain` can be checkpointed before `next()` and restored
 after a simulated rejected write without skipping a key. The current
 candidate seam extends that result without mutating the live chain, and the
-node's prekey first-contact producer commits the candidate only after
-`try_store_own` succeeds. This is still not a complete storage transaction:
-established direct sends, group `LocalSenderKey`, receipts, and file-symbol
-indexes need coordinated commit/rollback.
+node's prekey first-contact and established direct producers commit candidates
+only after `try_store_own` succeeds. This is still not a complete storage
+transaction: group `LocalSenderKey`, receipts, and file-symbol indexes need
+coordinated commit/rollback, and all paths remain crash-non-atomic after a
+provider accepts bytes but before process bookkeeping is persisted.
 
 No additional `BundleStore` preflight method was added. A read-only
 `total_bytes`/`meta` check cannot reserve the final ciphertext/BundleID and
