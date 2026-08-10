@@ -1976,41 +1976,13 @@ impl NodeCore {
         self.try_store_own(bundle, 8).map(|_| ()).map_err(|_| ClaimPublishError::StoreRejected)
     }
 
-    /// Store one of our own bundles (already signed) with a spray budget.
-    fn store_own(&mut self, bundle: Bundle, budget: u8) -> Id16 {
-        let bytes = bundle.encode();
-        let id = bundle.id();
-        let meta = BundleMeta {
-            id,
-            class: bundle.class,
-            origin: self.node_id,
-            dest: bundle.dest,
-            priority: bundle.priority,
-            // Own originals: a node trusts itself, no receive-time clamp
-            // applies (doc 18 §5.2 is about what's adopted from *others*).
-            effective_priority: bundle.priority,
-            size: bytes.len() as u32,
-            stored_at: self.now,
-            expires_at: self.now.saturating_add(bundle.lifetime_ms),
-            budget,
-            own_origin: true,
-            slot: SlotState::Stored,
-        };
-        self.seen.insert(&id, bundle.class, self.now);
-        self.store.put(meta, &bytes);
-        self.diag.log(id, JourneyEvent::Created, self.now);
-        id
-    }
+    // All own-origin producers use the fallible provider seam below.
 
     /// Store an own-origin bundle through the bounded write seam.
     ///
-    /// This is intentionally separate from [`Self::store_own`]. Legacy
-    /// producers still use the infallible compatibility path until their
-    /// cryptographic and bookkeeping state can be staged transactionally.
-    /// Sealed first-contact, valid-prekey first-contact, and established
-    /// pairwise direct producers use this helper only after constructing
-    /// provider-local candidate state; live conversation, ratchet, and
-    /// bookkeeping state is committed after the write succeeds.
+    /// Producers use this helper only after constructing provider-local
+    /// candidate state; live conversation, ratchet, and bookkeeping state is
+    /// committed after the write succeeds.
     fn try_store_own(&mut self, bundle: Bundle, budget: u8) -> Result<Id16, SendError> {
         let bytes = bundle.encode();
         let id = bundle.id();
@@ -2990,7 +2962,7 @@ impl NodeCore {
     /// out-of-bounds symbols are still stored/forwarded opaquely by the
     /// ordinary bundle pipeline, just not indexed here). Returns the derived
     /// `(root, sym_no)` on success.
-    fn index_symbol_bundle(&mut self, bundle: &Bundle, id: Id16) -> Option<(Id16, u16)> {
+    fn symbol_location(bundle: &Bundle) -> Option<(Id16, u16)> {
         let (root, block, sym, k, n) = bundle.exts.iter().find_map(|e| match *e {
             Ext::SymbolInfo { root, block, sym, k, n } => Some((root, block, sym, k, n)),
             _ => None,
@@ -3002,7 +2974,14 @@ impl NodeCore {
         {
             return None;
         }
-        let sym_no = block * RS_TOTAL_N as u16 + sym;
+        Some((root, block * RS_TOTAL_N as u16 + sym))
+    }
+
+    /// Record a symbol that has already passed durable provider admission.
+    /// Keeping this separate from [`Self::symbol_location`] lets own-origin
+    /// producers stage local indexes after `try_store_own` succeeds, while
+    /// receive-side ingestion can retain its verify-then-deindex fail-safe.
+    fn record_symbol(&mut self, root: Id16, sym_no: u16, id: Id16) {
         if let Some(previous) = self.blob_index.get(&root).and_then(|idx| idx.get(&sym_no)).copied() {
             if previous != id && self.symbol_of.get(&previous) == Some(&(root, sym_no)) {
                 self.symbol_of.remove(&previous);
@@ -3010,6 +2989,11 @@ impl NodeCore {
         }
         self.blob_index.entry(root).or_default().insert(sym_no, id);
         self.symbol_of.insert(id, (root, sym_no));
+    }
+
+    fn index_symbol_bundle(&mut self, bundle: &Bundle, id: Id16) -> Option<(Id16, u16)> {
+        let (root, sym_no) = Self::symbol_location(bundle)?;
+        self.record_symbol(root, sym_no, id);
         Some((root, sym_no))
     }
 
@@ -3171,9 +3155,11 @@ impl NodeCore {
                 bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
                 debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
                 let budget = origin_budget(self.utility.n_hat(self.now));
-                let id = bundle.id();
-                self.index_symbol_bundle(&bundle, id);
-                self.store_own(bundle, budget);
+                let location = Self::symbol_location(&bundle);
+                let id = self.try_store_own(bundle, budget)?;
+                if let Some((root, sym_no)) = location {
+                    self.record_symbol(root, sym_no, id);
+                }
             }
         }
 

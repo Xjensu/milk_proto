@@ -94,16 +94,18 @@ mismatched tokens, simulated unavailable commit, and bounded receive-side
 
 This prototype intentionally does **not** add a public capability trait or
 claim that `SnapshotStore` is transactional. The producer audit confirms why:
-`NodeCore::store_own` currently inserts `SeenIndex` state before its infallible
-`put`; pairwise sends advance the ratchet and pending/DAG state around the
-store call; group sends advance the sender key first; and file sends index each
-symbol before storing it. A reservation API without staged producer state would
-make capacity failures worse by leaving cryptographic and blob state advanced.
+The staged pairwise and group-ciphertext paths now commit candidate state only
+after `try_store_own`, while group distributions/rekeys and the file plane still
+span multiple provider writes. File symbols use the safer interim order
+`try_store_own` then holder-index mutation, but an accepted prefix can remain
+after a later symbol or manifest failure. A reservation API without staged
+producer state would make capacity failures worse by leaving cryptographic and
+blob state advanced.
 
 `SnapshotLimits` also bounds the complete snapshot image only. It does not yet
 provide slot-count, per-bundle, metadata, auxiliary-budget, or crash-journal
 reservation semantics. Wrapping `try_put` or estimating free bytes would
 therefore be an invalid production implementation. The next E7 step is a
-reviewed provider policy plus producer-specific prepare/commit paths, starting
-with sealed and pairwise sends; group and file operations remain deferred until
-their rollback/batch contracts exist.
+reviewed provider policy plus producer-specific prepare/commit paths for group
+distributions/rekeys and the aggregate file/manifest operation; the current
+single-bundle pairwise paths are already covered by candidate staging.

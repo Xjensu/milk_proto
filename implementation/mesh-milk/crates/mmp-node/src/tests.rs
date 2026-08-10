@@ -1630,6 +1630,48 @@ fn send_file_pending_rejects_before_minting_new_symbols() {
 }
 
 #[test]
+fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
+    let mut alice = node(57);
+    let mut bob = node(58);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    // Keep the authenticated peer state, but replace the local durable
+    // provider with one that rejects every symbol write. The failed send must
+    // not advertise symbols that were never accepted by storage.
+    alice.core.store = Box::new(CapacityRejectStore);
+    let seen_before = alice.core.seen.encode();
+    let events_before = alice.core.events.len();
+    let diagnostics_before = alice.diagnostics().records().len();
+
+    let data = vec![0x37; 3000];
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "rejected.bin", "application/octet-stream", &data),
+        Err(SendError::ResourceLimit)
+    );
+    assert!(alice.core.blob_index.is_empty(), "rejected symbols must not enter holder index");
+    assert!(alice.core.symbol_of.is_empty(), "rejected symbols must not enter reverse index");
+    assert!(alice.core.store.all_meta().iter().all(|meta| meta.class != class::SYMBOL));
+    assert_eq!(alice.core.seen.encode(), seen_before, "rejected symbols must not enter SeenIndex");
+    assert_eq!(alice.core.events.len(), events_before, "manifest must not be attempted after symbol rejection");
+    assert_eq!(alice.diagnostics().records().len(), diagnostics_before, "rejected symbols must not emit Created diagnostics");
+
+    // Recovery is retryable because no false inventory was recorded and no
+    // first-contact manifest was committed by the failed attempt.
+    alice.core.store = Box::new(MemStore::new());
+    let sent = alice
+        .send_file(&bob.node_id(), "rejected.bin", "application/octet-stream", &data)
+        .expect("retry after provider recovery");
+    let total_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
+    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(total_symbols));
+    assert_eq!(alice.core.symbol_of.len(), total_symbols);
+    for id in alice.core.symbol_of.keys() {
+        assert!(alice.core.store.meta(id).is_some(), "every indexed symbol must be durable");
+    }
+}
+
+#[test]
 fn send_file_revoked_peer_is_transactionally_side_effect_free() {
     let mut alice = node(55);
     let mut bob = node(56);

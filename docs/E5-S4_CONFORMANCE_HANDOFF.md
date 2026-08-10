@@ -3093,6 +3093,24 @@ This is a bounded group-wide liveness improvement, not per-member crash
 atomicity or an all-or-none membership transaction; no wire or specification
 file changed.
 
+## 2026-08-10 continuation: file-symbol admission ordering
+
+`send_file` now derives the symbol location without mutating holder indexes,
+stores each own-origin class-4 bundle through `try_store_own`, and records
+`blob_index`/`symbol_of` only after provider acceptance. A rejecting provider
+therefore cannot leave false local inventory, false `SeenIndex` entries, or a
+misleading `Created` diagnostic that suppresses a retry. The regression covers
+a one-stripe rejection and recovery: the failed attempt leaves zero symbols
+and the retry produces all durable/indexed symbols.
+
+This is intentionally resumable partial-inventory semantics, not all-or-none
+file/manifest atomicity. If a provider accepts a prefix and rejects a later
+symbol, the accepted prefix remains a valid holder inventory; if the manifest
+write fails after symbol acceptance, the symbols likewise remain valid and the
+manifest can be retried. An aggregate batch/reservation seam must include the
+symbols, manifest, delivery bookkeeping, and any pairwise candidate state
+before E7 can claim strict atomicity. No wire or specification file changed.
+
 Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change

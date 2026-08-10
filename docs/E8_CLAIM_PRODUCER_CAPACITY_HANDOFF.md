@@ -64,9 +64,11 @@ conditions.
   provider boundary; a rejection does not undo authenticated delivery, but
   the current API has no durable pending-receipt retry journal.
 - Per-member distribution/rekey transaction and crash semantics, receipt retry
-  durability, and file-symbol batches still need their own
+  durability, and aggregate file-symbol/manifest batches still need their own
   reservation or batch-commit design; replacing every `store_own` call blindly
-  would create new consistency bugs.
+  would create new consistency bugs. The current file producer is safer but
+  intentionally resumable: each accepted symbol is indexed only after durable
+  admission, while an accepted prefix can remain after a later rejection.
 - `SnapshotStore` admission covers the complete image, including auxiliary
   records. A stale auxiliary record can still make a valid bundle fail closed;
   this is intentional until provider reservation semantics are designed.

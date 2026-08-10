@@ -21,6 +21,12 @@ This continuation adds narrow uses of the existing receive-side
 - The self-originated `send_group` path now derives an opaque
   `LocalSendCandidate`, calls `try_store_own`, and commits the group sender
   chain only after the provider accepts the complete signed bundle.
+- The self-originated `send_file` symbol path now calls `try_store_own` before
+  recording `blob_index`/`symbol_of`. A rejecting provider therefore cannot
+  create false local inventory, false `SeenIndex` state, or a misleading
+  `Created` diagnostic that suppresses a later retry. Accepted symbols remain
+  valid resumable partial inventory if a later symbol or manifest write fails;
+  this is deliberately not an all-or-none file transaction.
 - `emit_receipt` now uses `try_store_own` on its best-effort path. A full
   provider drops the local receipt without creating false `SeenIndex` or
   `JourneyEvent::Created` state; authenticated delivery is not undone.
@@ -59,7 +65,7 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 129 node tests, 37 CLI tests, and 31 FFI tests;
+The focused runs passed with 130 node tests, 37 CLI tests, and 31 FFI tests;
 the crypto suite passed 53 tests with the staged candidate API.
 New regressions cover:
 
@@ -77,7 +83,9 @@ New regressions cover:
 8. receipt rejection with unchanged store/index/event/diagnostic state,
    followed by successful decode after provider recovery; and
 9. duplicate sender-key reciprocal retry and rekey distribution retry after
-   provider recovery.
+   provider recovery; and
+10. file-symbol provider rejection with empty local indexes followed by a
+    successful retry after provider recovery.
 
 ## Explicit non-claims
 
@@ -92,14 +100,17 @@ and require separate staging work:
 - per-member distribution/rekey transaction, crash, and retry policy (the
   current group-wide marker retries synchronously, while membership changes
   remain locally committed); and
-- file symbols and manifests.
+- aggregate file symbols + manifest transaction semantics. The current file
+  path is only per-symbol fail-closed/resumable: an accepted prefix remains
+  indexed and durable after a later rejection, while the manifest is not
+  attempted after a symbol rejection.
 
 `Node::new` retains fixed bootstrap claims in its local discovery view even
 when their provider write is rejected, but cannot report that persistence
 failure through its source-compatible constructor. A complete producer fix
 still needs provider reservation/commit semantics and a batch transaction for
-file symbols. Do not replace all `store_own` calls with `try_put` until those
-invariants are tested.
+file symbols. Do not bypass the staged `try_store_own` boundary or claim
+aggregate atomicity until those invariants are tested.
 
 ## Next implementation order
 
@@ -108,7 +119,9 @@ invariants are tested.
    recovery, and restart semantics.
 2. Add candidate-state or batch semantics for group-key distributions/rekeys,
    and a bounded pending-receipt retry/reserved-control policy.
-3. Add the file producer batch/reservation design.
+3. Add the file producer batch/reservation design, including the manifest and
+   any delivery bookkeeping in the same provider commit boundary; retain the
+   current post-admission index policy until that capability exists.
 4. Select a board-specific allocator/flash policy, then implement the
    `no_std` provider and linked-image/HIL gates.
 

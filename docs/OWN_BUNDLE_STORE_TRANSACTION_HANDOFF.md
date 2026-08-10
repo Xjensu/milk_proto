@@ -6,11 +6,11 @@ was altered.
 
 ## Finding
 
-`NodeCore::store_own` currently calls the legacy infallible
-`BundleStore::put` seam (`implementation/mesh-milk/crates/mmp-node/src/lib.rs`)
-and then reports the bundle as created. `BundleStore::try_put` was added for
-receive-side admission, but own-origin producers do not call it. A fixed-size
-provider that rejects `try_put` can therefore expose an asymmetric failure:
+The original `NodeCore::store_own` implementation called the legacy
+infallible `BundleStore::put` seam and then reported the bundle as created.
+Before the bounded follow-up, `BundleStore::try_put` was receive-side only and
+own-origin producers did not call it. A fixed-size provider that rejects
+`try_put` could therefore expose an asymmetric failure:
 
 ```text
 Node::send_text / group_send / send_file / publish_announcement
@@ -22,8 +22,9 @@ The caller may believe that a message exists even though there is no durable
 copy to forward. This is a local storage-integrity issue, not a wire
 authentication issue. The bounded follow-up now closes synchronous provider
 rejection for announcements, sealed/prekey/established pairwise sends,
-self-originated group ciphertext, and best-effort receipts; group
-distributions/rekeys and file-symbol batches remain open.
+self-originated group ciphertext, file symbols, and best-effort receipts;
+aggregate group distributions/rekeys and file-symbol/manifest batches remain
+open.
 
 ## Why an immediate `try_put` replacement is unsafe
 
@@ -37,14 +38,14 @@ The own-origin producers do not all have the same rollback surface:
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
 | `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group distributions/rekeys and file producers still require coordinated semantics. |
 | `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions now have a bounded group-wide retry marker; per-member transaction/crash semantics remain open. |
-| `send_file` symbols | Symbols are minted and indexed one by one before the manifest send | A capacity failure can leave a partial own-origin file and stale blob indexes unless the whole operation is transactional. |
+| `send_file` symbols | Each symbol is now admitted with `try_store_own` before `blob_index`/`symbol_of` mutation; the manifest is sent afterward | A rejecting provider cannot leave false local inventory. Accepted symbols may remain as valid resumable partial inventory after a later symbol/manifest failure; aggregate all-or-none semantics still require a batch transaction. |
 
-Changing `store_own` to return `Result` without solving these transitions would
-be worse than the current behavior: it would surface an error while leaving a
-pairwise or group ratchet advanced, causing the next valid message to be
-undecryptable by the peer. A preflight `total_bytes` check is also insufficient
-for arbitrary providers because the `BundleStore` trait does not promise that
-capacity remains stable between a check and the write.
+A blanket conversion to a fallible result without solving these transitions
+would be worse than the historical behavior: it would surface an error while
+leaving a pairwise or group ratchet advanced, causing the next valid message to
+be undecryptable by the peer. A preflight `total_bytes` check is also
+insufficient for arbitrary providers because the `BundleStore` trait does not
+promise that capacity remains stable between a check and the write.
 
 ## Evidence and residual risk
 
@@ -52,9 +53,9 @@ capacity remains stable between a check and the write.
   rejection to `DropReason::StoreRejected`; the node-level regression
   `node_store_rejection_prevents_delivery_and_post_store_side_effects`
   confirms that an inbound rejection does not deliver or index the bundle.
-- Most own-origin paths still call `store_own` at the producer sites listed
-  above; the staged pairwise direct and self-originated group-ciphertext
-  branches are the deliberate exceptions.
+- All current own-origin bundle producers use the fallible `try_store_own`
+  seam. The remaining risk is multi-bundle coordination and crash atomicity,
+  not a hidden infallible `store_own` call.
 - Pairwise staging does not roll back the advisory `UtilityState::n_hat` EWMA
   sample used to derive the storage budget; that routing-accounting state is
   not durable producer state and remains a separate refinement.
@@ -74,8 +75,10 @@ capacity remains stable between a check and the write.
   or cross-key tokens. Group distributions and membership rekeys remain
   separate multi-object work.
 - File sends now preflight a revoked destination before minting class-4 symbols,
-  preventing durable symbol/index residue on that deterministic rejection. This
-  does not solve provider-capacity failure after symbol minting.
+  preventing durable symbol/index residue on that deterministic rejection. Each
+  symbol is then stored through `try_store_own` before local holder indexing, so
+  provider rejection cannot poison deduplication or `SeenIndex`. This is a
+  resumable partial-inventory policy, not aggregate file/manifest atomicity.
 - `ffe4975` hardens the host snapshot format independently of the provider
   transaction problem: loading rejects a checksummed bundle record whose
   `BundleMeta::size` disagrees with the persisted body, and persistence rejects
@@ -97,16 +100,17 @@ explicit transactional semantics, for example:
    keys, SeenIndex, delivery tracking, and file symbol indexes.
 
 Alternatively, each cryptographic producer must gain a narrowly reviewed
-`peek/commit` or snapshot/restore API before `store_own` can propagate a
-capacity error. That work is larger than a safe one-file hardening and should
-be accompanied by transactional tests for every producer in the table.
+`peek/commit` or snapshot/restore API before a capacity error can be coupled to
+its full multi-object operation. That work is larger than a safe one-file
+hardening and should be accompanied by transactional tests for every producer
+in the table.
 
-Until one of those contracts is approved, keep `store_own` on the legacy
-`put` seam for producers without a staged state boundary and treat fixed-
-capacity own-origin persistence as an explicit provider limitation. The
-pairwise direct exceptions are covered only by their producer-specific
-candidate path; do not claim that `BundleStore::try_put` protects all local
-send APIs.
+Until one of those contracts is approved, keep the current per-bundle
+`try_store_own` boundary and treat fixed-capacity aggregate own-origin
+persistence as an explicit provider limitation. The pairwise and group
+ciphertext paths are covered only by their producer-specific candidate paths;
+do not claim that the per-bundle seam provides all local multi-object send
+semantics.
 
 The platform audit then split that crash-consistency residual by operating
 system. `0f2f433` uses same-directory atomic `rename` plus parent-directory
