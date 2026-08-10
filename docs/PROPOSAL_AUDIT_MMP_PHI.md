@@ -1612,6 +1612,35 @@ The implementation plan is therefore amended, without changing
    conditional probability formulas are not acceptance evidence for a 2×
    production claim; require trace/device comparisons and confidence intervals.
 
+## Claim-schema conformance correction (2026-08-10)
+
+The follow-up implementation audit found an additional issue that the supplied
+dialogue did not mention. Document 10 describes the Friendship claim body as
+`friend || expiry_hint || peer_role || both signatures`, while the current
+Rust/handbook path uses `friend || since:u64 || countersig`. The discrepancy is
+already registered as `CONFORMANCE-002` in the E5-S4 design. It is a real
+interoperability blocker, not permission to silently pick a new wire format.
+The `avatar_root` field is similarly underspecified: the frozen text says only
+"blob hash", while the dormant Rust blob-root helper includes size and RS
+parameters. Both remain explicit errata gates.
+
+Commit `780fea0` adds a typed `Node::try_publish_claim` path and centralizes
+the validation that the current Rust implementation can prove: exchange-key
+length, prekey structure plus signed-prekey signature, the current Friendship
+countersignature, group epoch-anchor structure, and revocation-owner binding.
+The legacy infallible publisher remains source-compatible and fails closed;
+unknown fields and authority pointer fields (`AUTHCERT`, `REVOCATION_LIST`)
+remain opaque. No new wire field or specification text was introduced.
+
+The amended plan now has an explicit prerequisite before calling claim vectors
+normative:
+
+10. **Claim conformance P0:** resolve `CONFORMANCE-002` and the avatar-root
+    body definition through a reviewed erratum or approved migration design;
+    publish dual positive/negative vectors only after that decision. Until
+    then, current-Rust Friendship validation is provisional and must not be
+    advertised as cross-implementation interoperability.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
