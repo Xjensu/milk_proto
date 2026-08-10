@@ -34,11 +34,13 @@ message key, epoch, or index.
 4. Restore only from the checkpoint created by the same in-memory chain. The
    byte parser is strict but does not authenticate arbitrary caller bytes.
 
-This seam solves only the pairwise send-chain component. It does not make
-`NodeCore::store_own` transactional: `pending_async`, `pending_first_contact`,
-conversation DAG heads, delivery tracking, and SeenIndex need coordinated
-rollback as well. `LocalSenderKey` for group messages has no equivalent
-checkpoint/restore seam, and file-symbol indexes can be partially populated.
+This seam solves only the pairwise send-chain component. It does not make the
+per-bundle `NodeCore::try_store_own` boundary transactional across
+`pending_async`, `pending_first_contact`, conversation DAG heads, delivery
+tracking, and SeenIndex; those need coordinated rollback as well.
+`LocalSenderKey` for group messages has no equivalent checkpoint/restore seam,
+and file-symbol indexes can remain partially populated by design after a later
+provider failure.
 The reserve/commit provider contract described in
 `docs/OWN_BUNDLE_STORE_TRANSACTION_HANDOFF.md` remains required before
 propagating `BundleStore::try_put` errors through all own-origin producers.

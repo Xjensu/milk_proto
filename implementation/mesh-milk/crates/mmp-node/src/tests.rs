@@ -336,6 +336,79 @@ impl BundleStore for CapacityRejectStore {
     }
 }
 
+/// Provider fixture that accepts a bounded prefix of class-4 writes and then
+/// rejects later symbols. It models a provider that has enough room for a
+/// valid resumable prefix, but not for the complete file operation.
+struct PrefixCapacityStore {
+    inner: MemStore,
+    accepted_symbols: usize,
+    symbol_limit: usize,
+}
+
+impl PrefixCapacityStore {
+    fn new(symbol_limit: usize) -> Self {
+        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit }
+    }
+}
+
+impl BundleStore for PrefixCapacityStore {
+    fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
+        self.inner.put(meta, bytes);
+    }
+
+    fn try_put(
+        &mut self,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
+        if meta.class == class::SYMBOL && self.accepted_symbols >= self.symbol_limit {
+            return Err(StorePutError::Capacity);
+        }
+        let is_symbol = meta.class == class::SYMBOL;
+        let outcome = self.inner.try_put(meta, bytes)?;
+        if is_symbol {
+            self.accepted_symbols += 1;
+        }
+        Ok(outcome)
+    }
+
+    fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        self.inner.get(id)
+    }
+
+    fn meta(&self, id: &Id16) -> Option<BundleMeta> {
+        self.inner.meta(id)
+    }
+
+    fn update_meta(&mut self, meta: BundleMeta) {
+        self.inner.update_meta(meta);
+    }
+
+    fn remove(&mut self, id: &Id16) -> bool {
+        self.inner.remove(id)
+    }
+
+    fn ids_range(&self, lo: &Id16, hi: &Id16) -> Vec<Id16> {
+        self.inner.ids_range(lo, hi)
+    }
+
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        self.inner.all_meta()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.inner.total_bytes()
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
+        self.inner.expire(now_ms)
+    }
+}
+
 #[test]
 fn tick_compacts_idle_admission_bucket_maps() {
     let mut n = node(250);
@@ -1356,6 +1429,36 @@ fn saturated_active_sent_history_rejects_before_bundle_creation() {
 }
 
 #[test]
+fn saturated_active_sent_history_rejects_file_before_symbol_minting() {
+    let mut a = node(242);
+    let mut b = node(243);
+    introduce(&mut a, &mut b);
+    let conv = conversation_id(&a.core.public, &b.core.public);
+    for value in 0..super::MAX_SENT_RUNTIME {
+        let mut id = [0u8; 16];
+        id[..8].copy_from_slice(&(value as u64).to_le_bytes());
+        a.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+    }
+
+    let store_before = a.store_len();
+    let seen_before = a.core.seen.encode();
+    let blob_index_before = a.core.blob_index.clone();
+    let symbol_of_before = a.core.symbol_of.clone();
+    let events_before = a.core.events.len();
+    let diagnostics_before = a.diagnostics().records().len();
+    assert_eq!(
+        a.send_file(&b.node_id(), "blocked.bin", "application/octet-stream", &[0x51; 3000]),
+        Err(SendError::ResourceLimit)
+    );
+    assert_eq!(a.store_len(), store_before);
+    assert_eq!(a.core.seen.encode(), seen_before);
+    assert_eq!(a.core.blob_index, blob_index_before);
+    assert_eq!(a.core.symbol_of, symbol_of_before);
+    assert_eq!(a.core.events.len(), events_before);
+    assert_eq!(a.diagnostics().records().len(), diagnostics_before);
+}
+
+#[test]
 fn direct_send_reports_ratchet_exhaustion_without_emitting_bundle() {
     let mut alice = node(1);
     let mut bob = node(2);
@@ -1669,6 +1772,46 @@ fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
     for id in alice.core.symbol_of.keys() {
         assert!(alice.core.store.meta(id).is_some(), "every indexed symbol must be durable");
     }
+}
+
+#[test]
+fn send_file_partial_provider_keeps_only_durable_indexed_prefix() {
+    let mut alice = node(61);
+    let mut bob = node(62);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let conv_id = conversation_id(&alice.core.public, &bob.core.public);
+    alice.core.store = Box::new(PrefixCapacityStore::new(8));
+    let events_before = alice.core.events.len();
+    let diagnostics_before = alice.diagnostics().records().len();
+    let data = vec![0x43; 3000];
+
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "partial.bin", "application/octet-stream", &data),
+        Err(SendError::ResourceLimit)
+    );
+
+    let durable_symbols = alice
+        .core
+        .store
+        .all_meta()
+        .into_iter()
+        .filter(|meta| meta.class == class::SYMBOL)
+        .count();
+    assert_eq!(durable_symbols, 8, "provider accepted exactly the configured prefix");
+    let indexed_symbols: usize = alice.core.blob_index.values().map(BTreeMap::len).sum();
+    assert_eq!(indexed_symbols, 8, "holder index matches durable accepted prefix");
+    assert_eq!(alice.core.symbol_of.len(), 8, "reverse index matches durable accepted prefix");
+    for id in alice.core.symbol_of.keys() {
+        assert!(alice.core.store.meta(id).is_some(), "every indexed symbol is durable");
+        assert!(alice.core.seen.contains(id), "every accepted symbol is in SeenIndex");
+    }
+    assert!(!alice.core.convs.contains_key(&conv_id), "manifest rejection path did not create a conversation");
+    assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
+    assert_eq!(alice.core.events.len(), events_before, "symbol prefix does not emit a manifest event");
+    assert_eq!(alice.diagnostics().records().len(), diagnostics_before);
 }
 
 #[test]
@@ -3018,6 +3161,12 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
     let _ = std::fs::remove_file(&part_path);
 
     let sent = a.send_file(&b.node_id(), "test.bin", "application/octet-stream", &data).unwrap();
+    assert_eq!(a.message_state(&sent.message_id), Some(DeliveryState::Queued));
+    assert!(a
+        .core
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::DeliveryProgress { id, state: DeliveryState::Queued } if *id == sent.message_id)));
 
     contact(&mut a, &mut b, 1, 10_000);
     drain(&mut a);
@@ -3064,6 +3213,7 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
     contact(&mut a, &mut b, 2, 20_000);
     drain(&mut a);
     drain(&mut b);
+    assert_eq!(a.message_state(&sent.message_id), Some(DeliveryState::Delivered));
 
     let symbol_count = |n: &Node| {
         n.core.store.all_meta().iter().filter(|m| m.class == mmp_types::bundle::class::SYMBOL).count()

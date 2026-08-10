@@ -19,10 +19,10 @@ fn try_put(
 
 `put` cannot report a full fixed-capacity store. `try_put` is sufficient for
 receive-side admission, but it does not reserve capacity while a producer is
-encrypting a message or preparing a multi-bundle file. Replacing `put` with
-`try_put` in `NodeCore::store_own` today would leave pairwise/group ratchets,
-conversation state, and file indexes advanced when the provider rejects the
-write.
+encrypting a message or preparing a multi-bundle file. Replacing the historical
+infallible own-origin path with `try_put` without staged state would leave
+pairwise/group ratchets, conversation state, and file indexes advanced when the
+provider rejects the write.
 
 The next seam must therefore be additive. Existing implementations and callers
 continue to compile and retain their current behavior. A provider opts into
@@ -296,12 +296,14 @@ store is usable on a board.
    leave the legacy `BundleStore` path unchanged.
 3. Integrate receive-side `try_put` and verify `StoreRejected` behavior.
 4. Add candidate-state APIs producer by producer, starting with `send_sealed`
-   and pairwise direct messages. Do not touch group/file sends until their
-   rollback or batch path exists.
+   and pairwise direct messages. The current implementation has a reviewed
+   interim exception for file symbols (`try_store_own` before holder-index
+   mutation) that provides resumable partial inventory only; do not claim
+   strict aggregate group/file atomicity until their rollback or batch path
+   exists.
 5. Add the batch capability for file symbols, then wire the embedded backend.
 6. Run host, target, and hardware acceptance suites before claiming E7-S1.
 
 Stop and return to design review if any provider cannot prove all-or-none commit,
 if capacity arithmetic needs a wire-visible change, or if a producer would need
 to reuse an advanced ratchet index after an uncertain commit result.
-

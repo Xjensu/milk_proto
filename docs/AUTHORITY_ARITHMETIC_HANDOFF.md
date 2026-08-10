@@ -7,8 +7,8 @@ changing the frozen MMP/1 wire contract:
 
 - mmp-node::AuthorityBuckets now uses saturating multiplication and addition
   when refilling an authority-subject admission bucket.
-- NodeCore::store_own now uses a saturating deadline calculation for bundles
-  created at a clock value near u64::MAX.
+- NodeCore::try_store_own now uses a saturating deadline calculation for
+  bundles created at a clock value near u64::MAX.
 
 ## Why this was required
 
@@ -34,10 +34,9 @@ value.
 ## Boundaries and remaining work
 
 This is local arithmetic hardening only. It does not solve the larger E7
-producer-capacity problem: store_own still uses the legacy infallible
-BundleStore::put path, and a fixed-capacity provider still requires a
-reservation/commit design before own-origin side effects can be made
-transactional. Friendship and avatar_root claim layouts also remain
+producer-capacity problem: `try_store_own` is per-bundle, while a fixed-capacity
+provider still requires a reservation/commit design before multi-object
+own-origin side effects can be made transactional. Friendship and avatar_root claim layouts also remain
 implementation-provisional until a reviewed erratum or migration decision
 defines their exact wire bytes.
 

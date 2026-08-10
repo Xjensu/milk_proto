@@ -65,7 +65,7 @@ cargo test -p mmp-cli --all-targets -- --test-threads=1
 cargo test -p mmp-ffi --all-targets -- --test-threads=1
 ```
 
-The focused runs passed with 130 node tests, 37 CLI tests, and 31 FFI tests;
+The focused runs passed with 132 node tests, 37 CLI tests, and 31 FFI tests;
 the crypto suite passed 53 tests with the staged candidate API.
 New regressions cover:
 
@@ -85,7 +85,9 @@ New regressions cover:
 9. duplicate sender-key reciprocal retry and rekey distribution retry after
    provider recovery; and
 10. file-symbol provider rejection with empty local indexes followed by a
-    successful retry after provider recovery.
+    successful retry after provider recovery; and
+11. accepted-prefix storage consistency plus active sent-history rejection
+    before file-symbol minting.
 
 ## Explicit non-claims
 

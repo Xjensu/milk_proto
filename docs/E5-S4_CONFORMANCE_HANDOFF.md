@@ -3015,7 +3015,8 @@ restores a durable provider and confirms a prekey retry decrypts in a real
 contact. A separate `mmp-crypto` test proves the staged sender candidate does
 not mutate the live chain and yields the same key/index as a committed send.
 
-This is intentionally not generic `send_app` hardening. Established direct
+This is intentionally not generic `send_app` hardening. At this dated point,
+established direct
 conversation sends, group sender-key messages, receipts, and file-symbol
 batches still use legacy or multi-object producer paths and require their own
 transaction design. No wire or specification file changed, and the research
@@ -3102,6 +3103,12 @@ therefore cannot leave false local inventory, false `SeenIndex` entries, or a
 misleading `Created` diagnostic that suppresses a retry. The regression covers
 a one-stripe rejection and recovery: the failed attempt leaves zero symbols
 and the retry produces all durable/indexed symbols.
+
+The manifest returned by `FileSend` is now admitted against the bounded sent
+history before symbol production and recorded as `Queued` after `send_app`
+accepts it. The existing file end-to-end path confirms that the same ID later
+reaches `Delivered`; an active sent-history saturation regression confirms the
+file path fails before minting symbols.
 
 This is intentionally resumable partial-inventory semantics, not all-or-none
 file/manifest atomicity. If a provider accepts a prefix and rejects a later

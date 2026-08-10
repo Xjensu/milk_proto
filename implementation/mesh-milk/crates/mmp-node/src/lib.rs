@@ -3105,6 +3105,14 @@ impl NodeCore {
             // side-effect-free, just like ConversationPending.
             return Err(SendError::ResourceLimit);
         }
+        // `send_file` returns the manifest BundleID as a trackable message,
+        // just like `send_text`. Reserve a slot in the bounded delivery
+        // history before minting symbols; otherwise a full active history
+        // could leave valid blob bytes behind while the manifest cannot be
+        // tracked.
+        if !self.sent_capacity_available() {
+            return Err(SendError::ResourceLimit);
+        }
         let stripes = blob::stripes_for_size(data.len() as u32);
         let mut padded = data.to_vec();
         padded.resize(stripes as usize * STRIPE_DATA_BYTES, 0);
@@ -3177,6 +3185,11 @@ impl NodeCore {
             FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
         manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
         let message_id = self.send_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
+        // `sent_capacity_available` was checked before symbol minting and
+        // `send_app` does not mutate delivery history, so this cannot fail
+        // under the node's single-threaded mutation model.
+        self.record_sent(message_id, conv_id)?;
+        self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
         Ok(FileSend { message_id, root: file_root })
     }
 

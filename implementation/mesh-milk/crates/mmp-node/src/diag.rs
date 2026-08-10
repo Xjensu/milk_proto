@@ -5,11 +5,11 @@
 use mmp_types::ids::{Id16, NodeId};
 
 /// One lifecycle step a bundle passed through, as logged by `NodeCore`'s
-/// various call sites (`store_own`, `on_bundle`, `enforce_quota`, `tick`,
+/// various call sites (`try_store_own`, `on_bundle`, `enforce_quota`, `tick`,
 /// `load_for_handoff`, `handle_receipt`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JourneyEvent {
-    /// Minted and stored locally by this node (`NodeCore::store_own`).
+    /// Minted and accepted by the local provider (`NodeCore::try_store_own`).
     Created,
     /// Admitted into the store from the wire (`SessionHost::on_bundle`).
     Stored,
