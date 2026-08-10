@@ -583,6 +583,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn hostile_stream_side_is_rejected_without_panicking() {
+        let (tx, _rx) = event_channel();
+        tx.set_streams(7, [Some(reader(1)), None]);
+        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1)
+            .unwrap();
+
+        // `StreamStamp::side` is transport-internal, but keeping this check
+        // total protects the ingress boundary if a malformed callback ever
+        // crosses it. The side is validated before indexing the two-entry
+        // stream table.
+        let hostile = StreamStamp { generation: 1, side: u8::MAX };
+        assert_eq!(tx.try_stream_data(7, hostile, data(0)), Err(DataEnqueueError::Stale));
+    }
+
+    #[tokio::test]
     async fn stale_retirement_tombstone_cannot_purge_reused_link() {
         let (tx, _rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
