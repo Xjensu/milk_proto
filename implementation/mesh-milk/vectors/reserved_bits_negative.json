@@ -1,0 +1,6 @@
+{
+  "description": "reserved bundle flag bits MUST be rejected before authentication (doc 10 §6.1)",
+  "reserved_mask": 128,
+  "wire": "1182d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787372222222222222222222222222222222280ee3600000200001500676f6c64656e20766563746f72207061796c6f6164de865e61d838f6dfea0bbc64ef090c8a2253f7c553692e912c06a260a098ef4e3a5faf108ff252e95daa22c954a884be221fba889b7b9ca1780dedcd24f7d90a",
+  "expected_error": "reserved bundle flags are set"
+}

@@ -25,6 +25,7 @@ const VECTOR_NAMES: &[&str] = &[
     "hello.json",
     "lifetime_reset_negative.json",
     "noncanonical_s_negative.json",
+    "reserved_bits_negative.json",
     "rbsr_fingerprint.json",
     "receipt.json",
 ];
@@ -590,16 +591,16 @@ fn committed_vector_inventory_is_explicit_and_complete() {
 fn coverage_manifest_maps_every_committed_vector() {
     let json = vector("coverage.json");
     assert_eq!(json_string(&json, "schema"), "mmp-e5-s4-coverage-v1");
-    assert_eq!(json_u64(&json, "entry_count"), 34);
+    assert_eq!(json_u64(&json, "entry_count"), 38);
 
     let ids = json_all_strings(&json, "id");
     let artifacts = json_all_strings(&json, "artifact");
     let sources = json_all_strings(&json, "source");
     let evidence = json_all_strings(&json, "evidence");
-    assert_eq!(ids.len(), 34);
-    assert_eq!(artifacts.len(), 34);
-    assert_eq!(sources.len(), 34);
-    assert_eq!(evidence.len(), 34);
+    assert_eq!(ids.len(), 38);
+    assert_eq!(artifacts.len(), 38);
+    assert_eq!(sources.len(), 38);
+    assert_eq!(evidence.len(), 38);
     assert!(sources.iter().all(|source| source.starts_with("specification/")));
     assert!(evidence.iter().all(|entry| !entry.is_empty()));
 
@@ -654,6 +655,26 @@ fn coverage_manifest_lists_each_registered_frame_requirement() {
         required.len(),
         "frame requirement IDs must be one-to-one with the registered frame table"
     );
+}
+
+#[test]
+fn coverage_manifest_lists_required_canonical_negative_cases() {
+    let json = vector("coverage.json");
+    let ids = json_all_strings(&json, "id");
+    let artifacts = json_all_strings(&json, "artifact");
+    assert_eq!(ids.len(), artifacts.len());
+    for (requirement, artifact) in [
+        ("negative.bundle.reserved-bits.v1", "reserved_bits_negative.json"),
+        ("negative.tlv.unknown-critical.v1", "bundle_tlv_negative.json"),
+        ("negative.tlv.out-of-order.v1", "bundle_tlv_negative.json"),
+        ("negative.tlv.duplicate.v1", "bundle_tlv_negative.json"),
+    ] {
+        let index = ids
+            .iter()
+            .position(|id| id == requirement)
+            .unwrap_or_else(|| panic!("coverage manifest is missing {requirement}"));
+        assert_eq!(artifacts[index], artifact, "{requirement} must map to {artifact}");
+    }
 }
 
 #[test]
@@ -818,6 +839,19 @@ fn bundle_reader_rejects_tampered_layout_without_production_decoder() {
     assert!(matches!(
         read_bundle_independent(&bad_payload_length),
         Err("payload length does not consume the unsigned bundle")
+    ));
+}
+
+#[test]
+fn reserved_bits_negative_vector_is_rejected_by_independent_bundle_reader() {
+    let json = vector("reserved_bits_negative.json");
+    let wire = parse_hex(&json, "wire");
+    assert_eq!(json_u64(&json, "reserved_mask"), 0x80);
+    assert_eq!(json_string(&json, "expected_error"), "reserved bundle flags are set");
+    assert_ne!(wire[1] & 0x80, 0, "fixture must set a reserved bundle flag");
+    assert!(matches!(
+        read_bundle_independent(&wire),
+        Err("reserved bundle flags are set")
     ));
 }
 

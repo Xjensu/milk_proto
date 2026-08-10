@@ -1,7 +1,7 @@
 {
   "schema": "mmp-e5-s4-coverage-v1",
   "description": "normative requirement coverage for committed MMP/1 vectors",
-  "entry_count": 34,
+  "entry_count": 38,
   "entries": [
     {"id": "beacon.codec.v1", "artifact": "beacon.json", "source": "specification/10-message-format.md §5", "evidence": "independent_fixed_reader+production_roundtrip" },
     {"id": "bundle.compat.class1.v1", "artifact": "bundle.json", "source": "specification/10-message-format.md §3", "evidence": "independent_outer_reader+production_signature" },
@@ -9,6 +9,10 @@
     {"id": "claim.nickname.v1", "artifact": "claim.json", "source": "specification/06-sync-spec.md §4; specification/10-message-format.md §4.4", "evidence": "production_roundtrip+signature" },
     {"id": "negative.budget.clamp.v1", "artifact": "budget_clamp_negative.json", "source": "specification/05-routing-spec.md §6", "evidence": "production_invariant" },
     {"id": "negative.bundle.tlv.v1", "artifact": "bundle_tlv_negative.json", "source": "specification/10-message-format.md §6.1", "evidence": "independent_tlv_reader+production_rejection" },
+    {"id": "negative.bundle.reserved-bits.v1", "artifact": "reserved_bits_negative.json", "source": "specification/10-message-format.md §6.1", "evidence": "independent_outer_reader+structural_rejection" },
+    {"id": "negative.tlv.unknown-critical.v1", "artifact": "bundle_tlv_negative.json", "source": "specification/10-message-format.md §6.1", "evidence": "independent_tlv_reader+production_rejection" },
+    {"id": "negative.tlv.out-of-order.v1", "artifact": "bundle_tlv_negative.json", "source": "specification/10-message-format.md §6.1", "evidence": "independent_tlv_reader+production_rejection" },
+    {"id": "negative.tlv.duplicate.v1", "artifact": "bundle_tlv_negative.json", "source": "specification/10-message-format.md §6.1", "evidence": "independent_tlv_reader+production_rejection" },
     {"id": "negative.cross-domain.v1", "artifact": "cross_domain_negative.json", "source": "specification/10-message-format.md §3.1", "evidence": "production_cross_domain_rejection" },
     {"id": "negative.cross-domain.matrix.v1", "artifact": "cross_domain_matrix.json", "source": "specification/10-message-format.md §3.1", "evidence": "independent_schema+production_9x9_matrix" },
     {"id": "negative.envelope.oversize.v1", "artifact": "envelope_oversize_negative.json", "source": "specification/10-message-format.md §6.4", "evidence": "independent_normative_cap+production_runtime_cap" },

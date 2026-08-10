@@ -520,6 +520,7 @@ pub fn generate() -> Vec<VectorFile> {
         frames_vector(),
         envelope_oversize_negative_vector(),
         bundle_tlv_negative_vector(),
+        reserved_bits_negative_vector(),
         coverage_manifest_vector(),
     ]
 }
@@ -911,6 +912,24 @@ fn bundle_tlv_negative_vector() -> VectorFile {
     VectorFile { name: "bundle_tlv_negative.json", json }
 }
 
+/// Negative bundle vector for the reserved outer-flag bits in doc 10 §6.1.
+/// The signature is intentionally left unchanged: a receiver must reject the
+/// reserved flag before attempting authentication, so this fixture pins the
+/// structural fail-closed rule rather than a signature result.
+fn reserved_bits_negative_vector() -> VectorFile {
+    let (bundle, _) = vector_bundle();
+    let mut wire = bundle.encode();
+    const RESERVED_MASK: u8 = 0x80;
+    wire[1] |= RESERVED_MASK;
+    assert_ne!(wire[1] & RESERVED_MASK, 0);
+    let json = format!(
+        "{{\n  \"description\": \"reserved bundle flag bits MUST be rejected before authentication (doc 10 §6.1)\",\n  \"reserved_mask\": {},\n  \"wire\": \"{}\",\n  \"expected_error\": \"reserved bundle flags are set\"\n}}\n",
+        RESERVED_MASK,
+        hex(&wire),
+    );
+    VectorFile { name: "reserved_bits_negative.json", json }
+}
+
 /// Machine-readable map from every committed artifact to its normative
 /// requirement and the verification evidence that consumes it.  Keeping this
 /// manifest generated makes additions fail the same drift gate as wire bytes.
@@ -922,6 +941,10 @@ fn coverage_manifest_vector() -> VectorFile {
         ("claim.nickname.v1", "claim.json", "specification/06-sync-spec.md §4; specification/10-message-format.md §4.4", "production_roundtrip+signature"),
         ("negative.budget.clamp.v1", "budget_clamp_negative.json", "specification/05-routing-spec.md §6", "production_invariant"),
         ("negative.bundle.tlv.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
+        ("negative.bundle.reserved-bits.v1", "reserved_bits_negative.json", "specification/10-message-format.md §6.1", "independent_outer_reader+structural_rejection"),
+        ("negative.tlv.unknown-critical.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
+        ("negative.tlv.out-of-order.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
+        ("negative.tlv.duplicate.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
         ("negative.cross-domain.v1", "cross_domain_negative.json", "specification/10-message-format.md §3.1", "production_cross_domain_rejection"),
         ("negative.cross-domain.matrix.v1", "cross_domain_matrix.json", "specification/10-message-format.md §3.1", "independent_schema+production_9x9_matrix"),
         ("negative.envelope.oversize.v1", "envelope_oversize_negative.json", "specification/10-message-format.md §6.4", "independent_normative_cap+production_runtime_cap"),

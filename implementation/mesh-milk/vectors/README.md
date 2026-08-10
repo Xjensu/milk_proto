@@ -112,6 +112,9 @@ Negative (each states the rejection/invariant it pins):
   unknown critical TLV, out-of-order types, and duplicate types. The malformed
   extension runs retain otherwise valid outer bundle framing so rejection is
   attributable to canonical TLV rules.
+- `reserved_bits_negative.json` — the independent outer-bundle reader rejects
+  a reserved flag bit before authentication; the coverage manifest also gives
+  stable IDs to this case and to each of the three TLV cases above.
 
 ## Secrets rule
 
