@@ -1824,6 +1824,49 @@ fn send_file_partial_provider_keeps_only_durable_indexed_prefix() {
 }
 
 #[test]
+fn send_file_cross_destination_dedup_fails_closed_before_manifest() {
+    let mut alice = node(65);
+    let mut bob = node(66);
+    let mut carol = node(67);
+    introduce(&mut alice, &mut bob);
+    introduce(&mut alice, &mut carol);
+    drain(&mut alice);
+    drain(&mut bob);
+    drain(&mut carol);
+
+    let data = vec![0x45; 3000];
+    let first = alice
+        .send_file(&bob.node_id(), "same.bin", "application/octet-stream", &data)
+        .expect("first destination accepts the file");
+    let metas_before = alice.core.store.all_meta();
+    let seen_before = alice.core.seen.encode();
+    let blob_index_before = alice.core.blob_index.clone();
+    let symbol_of_before = alice.core.symbol_of.clone();
+    let sent_before: HashSet<Id16> = alice.core.sent.keys().copied().collect();
+    let events_before = alice.core.events.len();
+    let diagnostics_before = alice.diagnostics().records().len();
+    let carol_conv = conversation_id(&alice.core.public, &carol.core.public);
+
+    // The one-ID-per-slot holder index contains B-addressed symbols. A
+    // root-only count must not make a later C manifest look deliverable.
+    assert_eq!(
+        alice.send_file(&carol.node_id(), "same.bin", "application/octet-stream", &data),
+        Err(SendError::ResourceLimit)
+    );
+    assert_eq!(alice.core.store.all_meta(), metas_before, "no C manifest or symbols were stored");
+    assert_eq!(alice.core.seen.encode(), seen_before, "failed destination admission is side-effect free");
+    assert_eq!(alice.core.blob_index, blob_index_before);
+    assert_eq!(alice.core.symbol_of, symbol_of_before);
+    let sent_after: HashSet<Id16> = alice.core.sent.keys().copied().collect();
+    assert_eq!(sent_after, sent_before);
+    assert_eq!(alice.core.events.len(), events_before);
+    assert_eq!(alice.diagnostics().records().len(), diagnostics_before);
+    assert!(!alice.core.convs.contains_key(&carol_conv));
+    assert!(!alice.core.pending_first_contact.contains_key(&carol_conv));
+    assert!(blob_index_before.contains_key(&first.root));
+}
+
+#[test]
 fn send_file_revoked_peer_is_transactionally_side_effect_free() {
     let mut alice = node(55);
     let mut bob = node(56);

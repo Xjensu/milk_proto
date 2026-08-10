@@ -3148,3 +3148,23 @@ prefixes are resumable rather than aggregate-atomic, and the content-addressed
 dedup/index is not yet destination-aware for sending identical bytes to
 multiple peers. A future change must define that index/holder model before
 altering `send_file`; it must not silently reinterpret the frozen protocol.
+
+## 2026-08-10 continuation: destination-compatible file deduplication
+
+The file producer no longer treats a root-wide symbol count as proof of a
+complete local inventory. Before skipping Reed–Solomon symbol production it
+now checks every expected `sym_no`, confirms the provider still has a durable
+record, re-verifies its Merkle position, and requires `BundleMeta.dest` to
+match the requested peer. Stale or incomplete entries are repaired and cause
+the producer to remint the needed inventory. If valid symbols for the root are
+addressed to another peer, the current one-ID-per-slot holder index cannot
+represent both inventories safely; `send_file` therefore fails closed with
+`ResourceLimit` before minting a new manifest or changing producer state.
+
+The regression sends identical content to B and then attempts the same send to
+C. The second call leaves store metadata, both blob indexes, `SeenIndex`, sent
+history, events, diagnostics, and C's conversation/pending state unchanged.
+The existing same-target end-to-end resend remains the positive dedup case.
+This is a local safety policy, not a wire or specification change. A future
+multi-destination holder index may replace the temporary fail-closed behavior
+only after its routing and storage semantics are reviewed.

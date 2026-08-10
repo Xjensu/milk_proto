@@ -3000,21 +3000,34 @@ impl NodeCore {
     /// Remove `id` from both blob indices — used on Merkle-verification
     /// failure and index prune (expiry/eviction).
     fn deindex_symbol(&mut self, id: &Id16) {
-        if let Some((root, sym_no)) = self.symbol_of.remove(id) {
-            if let Some(idx) = self.blob_index.get_mut(&root) {
-                if idx.get(&sym_no) == Some(id) {
-                    idx.remove(&sym_no);
-                }
-                if idx.is_empty() {
-                    self.blob_index.remove(&root);
-                    // Decision D3 residual 2 GC rule: once an ABANDONED
-                    // assembly's last servable symbol is gone, drop the
-                    // assembly entry too.
-                    if matches!(self.assemblies.get(&root).map(|a| a.state), Some(BlobState::Abandoned)) {
-                        self.assemblies.remove(&root);
-                    }
-                }
+        if let Some((root, sym_no)) = self.symbol_of.get(id).copied() {
+            self.deindex_symbol_at(root, sym_no, id);
+        }
+    }
+
+    /// Remove one forward-index candidate and its matching reverse entry.
+    /// The location is supplied by the caller because a corrupted forward
+    /// entry may disagree with `symbol_of`; repairing the candidate itself is
+    /// still required to prevent repeated stale serving attempts.
+    fn deindex_symbol_at(&mut self, root: Id16, sym_no: u16, id: &Id16) {
+        let mut remove_root = false;
+        if let Some(idx) = self.blob_index.get_mut(&root) {
+            if idx.get(&sym_no) == Some(id) {
+                idx.remove(&sym_no);
             }
+            remove_root = idx.is_empty();
+        }
+        if remove_root {
+            self.blob_index.remove(&root);
+            // Decision D3 residual 2 GC rule: once an ABANDONED
+            // assembly's last servable symbol is gone, drop the
+            // assembly entry too.
+            if matches!(self.assemblies.get(&root).map(|a| a.state), Some(BlobState::Abandoned)) {
+                self.assemblies.remove(&root);
+            }
+        }
+        if self.symbol_of.get(id) == Some(&(root, sym_no)) {
+            self.symbol_of.remove(id);
         }
     }
 
@@ -3075,6 +3088,10 @@ impl NodeCore {
     /// `Node::send_file`: RS-encode, Merkle-root, mint class-4 symbol
     /// bundles (dedup by content address, decision D6), then send the signed
     /// `FileManifest` as an apptype-0x01 class-1 message (decision D8).
+    ///
+    /// Until a destination-aware multi-holder index exists, a root whose
+    /// durable symbols belong to another destination is rejected locally
+    /// rather than silently reusing an unroutable inventory.
     fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
         if data.len() as u64 > FILE_MAX {
             return Err(SendError::TooLarge);
@@ -3132,11 +3149,12 @@ impl NodeCore {
         root_bytes.copy_from_slice(&root32[..16]);
         let file_root = Id16(root_bytes);
 
-        // Dedup by content address (decision D6): mint nothing if every
-        // symbol for this root is already in our own index.
+        // Dedup by content address (decision D6), but only after proving exact
+        // slot coverage, durable Merkle-valid bytes, and destination binding.
+        // A root-wide count is insufficient because SYMBOL bundles carry the
+        // requested peer in their destination field.
         let total_symbols = stripes as usize * RS_TOTAL_N;
-        let already_complete =
-            self.blob_index.get(&file_root).is_some_and(|m| m.len() >= total_symbols);
+        let already_complete = self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
         if !already_complete {
             for (sym_no, sym) in all_symbols.iter().enumerate() {
                 let block = (sym_no / RS_TOTAL_N) as u16;
@@ -3191,6 +3209,45 @@ impl NodeCore {
         self.record_sent(message_id, conv_id)?;
         self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
         Ok(FileSend { message_id, root: file_root })
+    }
+
+    /// Return whether the local holder inventory is complete and compatible
+    /// with `peer`. Missing, malformed, or incomplete entries are repaired or
+    /// reported as a partial inventory so the caller can mint the needed
+    /// symbols. A valid symbol addressed to another peer is a destination
+    /// conflict: fail closed until the holder index can represent multiple
+    /// destination-specific copies without overwriting one another.
+    fn local_file_inventory_complete(
+        &mut self,
+        root: &Id16,
+        total_symbols: usize,
+        peer: &NodeId,
+    ) -> Result<bool, SendError> {
+        let Some(index) = self.blob_index.get(root).cloned() else {
+            return Ok(false);
+        };
+        let target = *peer;
+        for sym_no in 0..total_symbols {
+            let sym_no = sym_no as u16;
+            let Some(id) = index.get(&sym_no).copied() else {
+                return Ok(false);
+            };
+            let Some(meta) = self.store.meta(&id) else {
+                self.deindex_symbol_at(*root, sym_no, &id);
+                return Ok(false);
+            };
+            if meta.class != class::SYMBOL {
+                self.deindex_symbol_at(*root, sym_no, &id);
+                return Ok(false);
+            }
+            if meta.dest != target {
+                return Err(SendError::ResourceLimit);
+            }
+            if !self.symbol_verifies_for(root, sym_no, &id) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Manifest hook (decision D8), called from `deliver_direct` on
@@ -3288,18 +3345,18 @@ impl NodeCore {
             // Provider-side eviction/removal can happen independently of the
             // in-memory holder index. Repair the index immediately so future
             // BLOB_HAVE/BLOB_REQ and dedup decisions do not repeat a dead ID.
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         };
         if !stored_bundle_is_valid(&meta, &bytes) {
             // Invalid bytes cannot be served even if the reverse index still
             // points at them. Remove the provider record as well as the index.
             self.store.remove(id);
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         }
         let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         };
         if symbol_payload_verifies(&bundle, root, sym_no) {
@@ -3307,7 +3364,7 @@ impl NodeCore {
         } else {
             // The bundle is generically valid but belongs to another root or
             // slot; preserve its bytes and only remove the stale mapping.
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             false
         }
     }
@@ -3318,28 +3375,28 @@ impl NodeCore {
     /// same local symbol when multiple peers request it.
     fn symbol_slot_present(&mut self, root: &Id16, sym_no: u16, id: &Id16) -> bool {
         let Some((meta, bytes)) = self.store.get(id) else {
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         };
         if meta.size as usize != bytes.len() {
             self.store.remove(id);
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         }
         let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
             self.store.remove(id);
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         };
         if bundle.id() != meta.id || bundle.class != class::SYMBOL {
             self.store.remove(id);
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             return false;
         }
         if symbol_payload_verifies(&bundle, root, sym_no) {
             true
         } else {
-            self.deindex_symbol(id);
+            self.deindex_symbol_at(*root, sym_no, id);
             false
         }
     }
