@@ -1027,6 +1027,13 @@ impl Node {
     /// "un-revoke." No successor: this is a pure "this identity is dead"
     /// tombstone. Returns the claim's encoded bytes.
     pub fn revoke_identity(&mut self, reason: u8) -> Vec<u8> {
+        self.try_revoke_identity(reason).unwrap_or_default()
+    }
+
+    /// Fallible self-revocation helper. Unlike the legacy wrapper, provider
+    /// rejection is returned to the caller instead of being represented by an
+    /// ambiguous empty byte vector.
+    pub fn try_revoke_identity(&mut self, reason: u8) -> Result<Vec<u8>, ClaimPublishError> {
         let body = Revocation {
             revoked_key: self.core.public,
             reason,
@@ -1037,7 +1044,7 @@ impl Node {
         // A revocation is a one-shot tombstone (immutable once adopted, doc
         // 06 §4.6) — unlike `set_nickname`'s host-tracked seq, there is never
         // a second write to race against, so a fixed seq is correct here.
-        self.publish_claim(field::REVOCATION, 1, body)
+        self.try_publish_claim(field::REVOCATION, 1, body)
     }
 
     /// Publish a self-revocation claim that names a proposed successor. The
@@ -1052,6 +1059,18 @@ impl Node {
         successor: Key32,
         countersig: Sig64,
     ) -> Vec<u8> {
+        self.try_revoke_identity_with_successor(reason, successor, countersig).unwrap_or_default()
+    }
+
+    /// Fallible self-revocation helper with a successor countersignature.
+    /// The successor signature is treated as claim data here; peers decide
+    /// whether it verifies before surfacing the successor to users.
+    pub fn try_revoke_identity_with_successor(
+        &mut self,
+        reason: u8,
+        successor: Key32,
+        countersig: Sig64,
+    ) -> Result<Vec<u8>, ClaimPublishError> {
         let body = Revocation {
             revoked_key: self.core.public,
             reason,
@@ -1059,7 +1078,7 @@ impl Node {
             successor_countersig: Some(countersig),
         }
         .encode();
-        self.publish_claim(field::REVOCATION, 1, body)
+        self.try_publish_claim(field::REVOCATION, 1, body)
     }
 
     /// Inject an out-of-band-verified claim (QR ceremony, doc 07 §6.1) or a

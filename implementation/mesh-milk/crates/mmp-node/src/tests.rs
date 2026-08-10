@@ -84,6 +84,31 @@ fn claim_publication_store_rejection_is_side_effect_free() {
 }
 
 #[test]
+fn typed_revocation_reports_provider_failure_and_tombstone_state() {
+    let mut rejected = Node::new([242; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    let claims_before = rejected.own_claims();
+    let seen_before = rejected.core.seen.encode();
+    let events_before = rejected.core.events.len();
+    let diagnostics_before = rejected.diagnostics().records().len();
+
+    assert_eq!(
+        rejected.try_revoke_identity(7),
+        Err(ClaimPublishError::StoreRejected),
+        "typed revocation must expose provider rejection"
+    );
+    assert_eq!(rejected.own_claims(), claims_before);
+    assert_eq!(rejected.core.seen.encode(), seen_before);
+    assert_eq!(rejected.core.events.len(), events_before);
+    assert_eq!(rejected.diagnostics().records().len(), diagnostics_before);
+
+    let mut published = node(241);
+    let bytes = published.try_revoke_identity(7).expect("durable revocation");
+    let claim = mmp_types::claim::Claim::decode(&bytes).expect("encoded revocation claim");
+    assert_eq!(claim.field, mmp_types::claim::field::REVOCATION);
+    assert_eq!(published.try_revoke_identity(8), Err(ClaimPublishError::OwnerRevoked));
+}
+
+#[test]
 fn nickname_at_byte_cap_is_signed_and_adopted() {
     let mut n = node(247);
     let name = "é".repeat(NICKNAME_MAX / "é".len());

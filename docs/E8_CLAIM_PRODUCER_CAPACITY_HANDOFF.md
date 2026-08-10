@@ -86,3 +86,18 @@ bounded pending-receipt retry/reserved-control policy, and file symbol
 producers separately. Their multi-object transaction boundaries remain
 different; do not infer full storage atomicity or exactly-once behavior from the
 pairwise/group message results.
+
+## 2026-08-10 continuation: typed self-revocation result
+
+Node::try_revoke_identity and
+Node::try_revoke_identity_with_successor now expose
+Result<Vec<u8>, ClaimPublishError>. The legacy Vec<u8> wrappers remain
+source-compatible and delegate to the typed methods, preserving their
+historical empty-vector-on-failure behavior. A focused regression proves that
+provider rejection leaves claims, SeenIndex, events, and diagnostics
+unchanged; a successful typed call decodes the revocation and a second call
+fails with OwnerRevoked.
+
+This additive node API does not change the FFI surface or the wire claim. The
+FFI wrappers still require an explicit error-surface decision before exposing
+typed failure to mobile callers.
