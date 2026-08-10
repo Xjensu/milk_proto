@@ -245,6 +245,22 @@ fn bounded_store_constructor_surfaces_persist_failure() {
 }
 
 #[test]
+fn constructor_rejects_unreadable_snapshot_path_fail_closed() {
+    let dir = TempDir::new("unreadable-snapshot");
+    let path = dir.file("snapshot.mmp");
+    // A directory at the primary path makes the snapshot loader fail with a
+    // non-NotFound I/O error.  The FFI constructor must not turn that into an
+    // apparently empty node whose writes can only live in memory.
+    std::fs::create_dir_all(&path).expect("create an unreadable primary path");
+
+    assert!(matches!(
+        MmpNode::new(vec![49u8; 32], FfiTier::Relay, Some(path.clone())),
+        Err(FfiError::Internal)
+    ));
+    assert!(std::path::Path::new(&path).is_dir(), "constructor must not replace the primary path");
+}
+
+#[test]
 fn bounded_store_rejects_nickname_as_internal_without_claim_side_effects() {
     let dir = TempDir::new("bounded-claim");
     let node = MmpNode::new_with_store_limit(vec![45u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)

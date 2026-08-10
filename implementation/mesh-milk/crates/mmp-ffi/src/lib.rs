@@ -727,6 +727,20 @@ impl MmpNode {
                         None => SnapshotStore::open(path),
                         Some(limits) => SnapshotStore::open_with_limits(path, limits),
                     }));
+                    // Do not expose a node backed by an image that the store
+                    // deliberately refused to load.  Such a node would look
+                    // empty to the host while every later persist is
+                    // rejected, which makes a restart appear successful and
+                    // silently invites new state to be accumulated only in
+                    // RAM.  The store keeps the primary image untouched; the
+                    // host must repair/select a different path explicitly.
+                    if snap
+                        .lock()
+                        .unwrap_or_else(|poison| poison.into_inner())
+                        .load_rejected()
+                    {
+                        return Err(FfiError::Internal);
+                    }
                     (Box::new(SharedStore(snap.clone())), Some(snap))
                 }
             };
