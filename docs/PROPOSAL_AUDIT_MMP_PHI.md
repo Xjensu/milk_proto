@@ -1641,6 +1641,32 @@ normative:
     then, current-Rust Friendship validation is provisional and must not be
     advertised as cross-implementation interoperability.
 
+## Stateful claim-publication correction (2026-08-10)
+
+The follow-up audit found one more security-relevant gap in the local authoring
+path. Receiver-side `ClaimStore::merge` already treated an adopted
+`REVOCATION` as an immutable owner tombstone, but local publication validated
+only the candidate body. Consequently, a node could sign and gossip a later
+claim which every conforming receiver would reject as stale. That is wasted
+radio/storage work and creates misleading local publication evidence after an
+identity has been revoked.
+
+Commit `c2aa486` adds a store-state preflight before the local signature is
+created. Once this node has an adopted revocation, every subsequent local
+field—including opaque/unknown extensions and a second revocation—is rejected
+with `ClaimPublishError::OwnerRevoked`; no claim-store mutation, signature,
+bundle, or gossip side effect occurs. The first structurally valid revocation
+remains publishable. A regression publishes the tombstone, attempts several
+recognized fields plus an unknown field, and asserts that the own-claim and
+bundle-store snapshots remain unchanged.
+
+This is an implementation invariant, not a wire-format change. It does not
+solve a malicious remote author's ability to mint claims before its revocation
+is observed; it only makes the local state transition fail closed and keeps
+the receiver's tombstone rule aligned with the authoring API. The release gate
+still requires cross-implementation claim conformance and external review of
+revocation/succession semantics.
+
 ## Source register
 
 - [A7] RFC 9171, Bundle Protocol v7: https://www.rfc-editor.org/rfc/rfc9171.html
