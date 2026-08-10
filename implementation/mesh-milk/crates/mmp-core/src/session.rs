@@ -672,7 +672,11 @@ impl SessionEngine {
                 self.pending_budget = false;
                 self.pending_bundle_id = None;
                 self.pending_bundle_admitted = false;
-                if admitted {
+                // A carried copy's local budget is always at least one
+                // (doc 05 §2.1).  Consume an invalid zero grant without
+                // mutating the admitted bundle; direct delivery already ran
+                // with the preceding BUNDLE and remains unconditional.
+                if admitted && granted != 0 {
                     host.on_budget(&peer, &id, granted.min(L_MAX));
                 }
             }
@@ -1533,6 +1537,47 @@ mod rx_bound_tests {
 
         assert_eq!(b.phase, Phase::Established);
         assert_eq!(hb.budget_calls, 0, "a dropped bundle cannot receive a budget grant");
+    }
+
+    #[test]
+    fn zero_budget_grant_is_consumed_without_invalidating_the_session() {
+        let ia = identity(23);
+        let ib = identity(24);
+        let mut a = SessionEngine::initiator(&ia, &hello(), 1000).unwrap();
+        let mut b = SessionEngine::responder(&ib, &hello(), 1000).unwrap();
+        let mut ha = host();
+        let mut hb = host();
+        drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
+
+        for _ in 0..200 {
+            let mut moved = false;
+            while let Some(bytes) = a.poll_out() {
+                moved = true;
+                b.on_wire(&bytes, 1000, &ib, &mut hb);
+            }
+            while let Some(bytes) = b.poll_out() {
+                moved = true;
+                a.on_wire(&bytes, 1000, &ia, &mut ha);
+            }
+            if !moved {
+                break;
+            }
+        }
+        assert_eq!(a.phase, Phase::Established);
+        assert_eq!(b.phase, Phase::Established);
+
+        let (bundle, id) = admitted_bundle_fixture();
+        a.tx_credits = FRAME_CREDIT_WINDOW;
+        b.rx_credits = FRAME_CREDIT_WINDOW;
+        a.send_frame(&Frame::Bundle(bundle));
+        a.send_frame(&Frame::Budget { id, granted: 0 });
+        let bundle_wire = a.poll_out().expect("bundle");
+        let budget_wire = a.poll_out().expect("budget");
+        b.on_wire(&bundle_wire, 2000, &ib, &mut hb);
+        b.on_wire(&budget_wire, 2000, &ib, &mut hb);
+
+        assert_eq!(b.phase, Phase::Established, "invalid zero grant is not a session error");
+        assert_eq!(hb.budget_calls, 0, "a zero grant must not be adopted");
     }
 
     #[test]

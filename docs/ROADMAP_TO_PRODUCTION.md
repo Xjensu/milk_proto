@@ -104,7 +104,10 @@ role-binding invariants required for production; it is not staged or integrated.
 The router also now refuses to re-offer a crash-recovered zero-budget focused
 copy to another relay while preserving unconditional delivery to its
 destination; the focused router suite passes 16/16 and `mmp-node` passes
-149/149.
+149/149. The session engine also consumes an invalid zero-valued BUDGET grant
+without adopting it, preserving the carried-copy `budget >= 1` invariant while
+keeping the ordered transfer session alive; `mmp-core` passes 97/97 including
+the new regression.
 
 ---
 
