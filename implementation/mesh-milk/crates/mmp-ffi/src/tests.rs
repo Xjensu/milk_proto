@@ -259,6 +259,70 @@ fn bounded_store_rejects_nickname_as_internal_without_claim_side_effects() {
 }
 
 #[test]
+fn typed_revocation_reports_provider_rejection_without_claim_side_effects() {
+    let dir = TempDir::new("bounded-revocation");
+    let node = MmpNode::new_with_store_limit(
+        vec![46u8; 32],
+        FfiTier::Relay,
+        dir.file("bounded.mmp"),
+        1,
+    )
+    .expect("valid bounded store constructor arguments");
+    node.tick(1);
+    let claims_before = node.own_claims();
+    let store_before = node.store_len();
+    drain(&node);
+
+    assert_eq!(node.try_revoke_identity(7), Err(FfiError::Internal));
+    assert_eq!(node.own_claims(), claims_before);
+    assert_eq!(node.store_len(), store_before);
+    assert!(
+        drain(&node).is_empty(),
+        "provider rejection must not emit events"
+    );
+}
+
+#[test]
+fn typed_revocation_returns_claim_and_reports_second_attempt() {
+    let node = node(47);
+    node.tick(1);
+    let claim_bytes = node
+        .try_revoke_identity(8)
+        .expect("unbounded provider accepts the tombstone");
+    let claim = mmp_types::claim::Claim::decode(&claim_bytes).expect("well-formed claim");
+    assert_eq!(claim.field, mmp_types::claim::field::REVOCATION);
+    assert_eq!(claim.owner.0.to_vec(), node.public_key());
+    assert_eq!(node.try_revoke_identity(9), Err(FfiError::Internal));
+}
+
+#[test]
+fn successor_revocation_reports_provider_rejection_instead_of_empty_success() {
+    let dir = TempDir::new("bounded-successor-revocation");
+    let node = MmpNode::new_with_store_limit(
+        vec![48u8; 32],
+        FfiTier::Relay,
+        dir.file("bounded.mmp"),
+        1,
+    )
+    .expect("valid bounded store constructor arguments");
+    node.tick(1);
+    let claims_before = node.own_claims();
+    let store_before = node.store_len();
+    drain(&node);
+
+    assert_eq!(
+        node.revoke_identity_with_successor(9, vec![49u8; 32], vec![0xa5u8; 64]),
+        Err(FfiError::Internal)
+    );
+    assert_eq!(node.own_claims(), claims_before);
+    assert_eq!(node.store_len(), store_before);
+    assert!(
+        drain(&node).is_empty(),
+        "provider rejection must not emit events"
+    );
+}
+
+#[test]
 fn transport_close_feedback_is_visible_at_the_ffi_boundary() {
     let node = MmpNode::new(vec![9u8; 32], FfiTier::Leaf, None).expect("valid seed");
     node.link_up(1, true);

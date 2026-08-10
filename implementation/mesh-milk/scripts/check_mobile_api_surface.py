@@ -68,6 +68,7 @@ EXPECTED_MMP_NODE_METHODS = (
     "storeLen",
     "subscribeScope",
     "tick",
+    "tryRevokeIdentity",
     "unsubscribeScope",
 )
 
@@ -98,6 +99,7 @@ EXPECTED_MMP_NODE_THROWING_METHODS = (
     "sendText",
     "setNickname",
     "unsubscribeScope",
+    "tryRevokeIdentity",
 )
 
 SOURCE_SUFFIXES = {".kt", ".kts", ".swift"}

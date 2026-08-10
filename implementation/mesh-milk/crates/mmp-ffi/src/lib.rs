@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use mmp_core::MemStore;
 use mmp_node::{
-    BlobState, DeliveryState, Event, FetchError, FileFailReason, FileProgress, FileSend, Node,
-    SendError, Tier,
+    BlobState, ClaimPublishError, DeliveryState, Event, FetchError, FileFailReason, FileProgress,
+    FileSend, Node, SendError, Tier,
 };
 use mmp_store::{SnapshotLimits, SnapshotStore};
 use mmp_tal::{LinkQuality, TalEvent};
@@ -123,6 +123,17 @@ fn map_fetch_error(e: FetchError) -> FfiError {
         // as a malformed byte slice.
         FetchError::UnknownRoot => FfiError::BadArg,
         FetchError::Io => FfiError::Internal,
+    }
+}
+
+fn map_claim_publish_error(e: ClaimPublishError) -> FfiError {
+    match e {
+        // Revocation bodies are assembled entirely from fixed-width values
+        // inside the node; malformed body/size outcomes therefore indicate an
+        // internal invariant failure, while caller-controlled key/signature
+        // lengths are rejected earlier by `key32_from`/`sig64_from`.
+        ClaimPublishError::InvalidBody | ClaimPublishError::TooLarge => FfiError::Internal,
+        ClaimPublishError::StoreRejected | ClaimPublishError::OwnerRevoked => FfiError::Internal,
     }
 }
 
@@ -1001,6 +1012,16 @@ impl MmpNode {
         self.lock().revoke_identity(reason)
     }
 
+    /// Fallible self-revocation variant. Unlike [`MmpNode::revoke_identity`],
+    /// this method never represents provider rejection as an empty byte
+    /// vector: lifecycle/provider failures are returned as `FfiError::Internal`.
+    /// The legacy method remains unchanged for source and ABI compatibility.
+    pub fn try_revoke_identity(&self, reason: u8) -> Result<Vec<u8>, FfiError> {
+        self.lock()
+            .try_revoke_identity(reason)
+            .map_err(map_claim_publish_error)
+    }
+
     /// Publish a self-revocation claim with a proposed successor. `successor`
     /// must be exactly 32 bytes and `countersig` exactly 64 bytes; the latter
     /// is the successor's already-produced signature over
@@ -1013,7 +1034,9 @@ impl MmpNode {
     ) -> Result<Vec<u8>, FfiError> {
         let successor = key32_from(&successor)?;
         let countersig = sig64_from(&countersig)?;
-        Ok(self.lock().revoke_identity_with_successor(reason, successor, countersig))
+        self.lock()
+            .try_revoke_identity_with_successor(reason, successor, countersig)
+            .map_err(map_claim_publish_error)
     }
 
     // ------------------------------------------------------ blob plane (§4.4) --
