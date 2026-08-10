@@ -3110,6 +3110,122 @@ fn unclocked_authority_cert_fails_closed_even_when_future_dated() {
 }
 
 #[test]
+fn attached_authority_cert_received_before_clock_is_replayed_after_clock_ready() {
+    let mut alice = node(24);
+    let mut bob = node(25);
+    let authority = mmp_crypto::Identity::from_seed(&[26; 32]);
+    let scope = bob.subscribe_scope(b"clock/attached-replay");
+    bob.pin_authority_root(scope, authority.public());
+
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        1_000,
+    );
+    // The attached cert must not elevate or render while the clock is unset.
+    // Use a nonzero display cutoff so this also exercises the early-return
+    // path for an unclocked announcement; the cert must still be retained.
+    let mut body = AnnouncementBody {
+        suite: 1,
+        ann_type: 1,
+        scope,
+        not_after: 100,
+        text: b"clock pending".to_vec(),
+        sig: Sig64::ZERO,
+    };
+    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    let mut bundle = Bundle {
+        class: class::ANNOUNCEMENT,
+        flags: 0,
+        origin: alice.public_key(),
+        dest: scope,
+        lifetime_ms: LIFETIME_MESSAGE_MS,
+        priority: prio::OPERATIONAL,
+        exts: vec![Ext::Optional { typ: mmp_types::tlv::TLV_AUTHCERT_ATTACH, val: cert.encode() }],
+        payload: body.encode(),
+        signature: Sig64::ZERO,
+    };
+    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    alice.core.try_store_own(bundle, 32).unwrap();
+    contact(&mut alice, &mut bob, 24, 24_000);
+    assert!(
+        !drain(&mut bob).iter().any(|event| matches!(event, Event::Announcement { .. })),
+        "an unclocked nonzero cutoff must not reach the display/event surface"
+    );
+
+    bob.set_wall_clock(0);
+    // The next announcement omits the cert: success proves the retained
+    // attachment, rather than a fresh wire certificate, became usable.
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"clock ready", None).unwrap();
+    contact(&mut alice, &mut bob, 25, 25_000);
+    let second = drain(&mut bob)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Announcement { effective_priority, official, text, .. } if text == b"clock ready" => {
+                Some((effective_priority, official))
+            }
+            _ => None,
+        })
+        .expect("the post-clock announcement is visible");
+    assert_eq!(second, (prio::OPERATIONAL, true));
+}
+
+#[test]
+fn attached_authority_cert_is_reconstructed_from_store_after_restart() {
+    let mut alice = node(27);
+    let mut bob = node(28);
+    let authority = mmp_crypto::Identity::from_seed(&[29; 32]);
+    let scope = bob.subscribe_scope(b"clock/attached-restart");
+    bob.pin_authority_root(scope, authority.public());
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        1_000,
+    );
+
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"persisted cert", Some(&cert)).unwrap();
+    contact(&mut alice, &mut bob, 27, 27_000);
+    let before_restart = drain(&mut bob)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Announcement { effective_priority, official, text, .. } if text == b"persisted cert" => {
+                Some((effective_priority, official))
+            }
+            _ => None,
+        })
+        .expect("the unclocked announcement remains visible but non-official");
+    assert_eq!(before_restart, (prio::NORMAL, false));
+
+    // Recreate the node with the same durable store while its clock is still
+    // unset. Startup reconstruction must discover the stored attachment
+    // without emitting a duplicate application event.
+    let persisted_store = std::mem::replace(&mut bob.core.store, Box::new(MemStore::new()));
+    let mut restarted = Node::new([28; 32], persisted_store, Tier::Relay);
+    restarted.subscribe_scope_id(scope);
+    restarted.pin_authority_root(scope, authority.public());
+    restarted.set_wall_clock(0);
+
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"after restart", None).unwrap();
+    contact(&mut alice, &mut restarted, 28, 28_000);
+    let event = drain(&mut restarted)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Announcement { effective_priority, official, text, .. } if text == b"after restart" => {
+                Some((effective_priority, official))
+            }
+            _ => None,
+        })
+        .expect("the post-restart announcement is visible");
+    assert_eq!(event, (prio::OPERATIONAL, true));
+}
+
+#[test]
 fn wall_clock_rollback_cannot_revalidate_expired_authority() {
     let mut alice = node(16);
     let mut bob = node(17);

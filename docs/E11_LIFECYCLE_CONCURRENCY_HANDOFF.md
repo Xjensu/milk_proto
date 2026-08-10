@@ -4,6 +4,10 @@
 **Date:** 2026-08-10
 **Scope:** receiver-local authority replay and shared-session ratchet lifecycle; no wire or specification change
 
+The authority-attachment portion is superseded by
+`docs/E12_ATTACHED_AUTHORITY_HANDOFF.md`; the lifecycle results below remain
+valid as the pre-E12 checkpoint.
+
 ## Implemented
 
 ### Authority claims and clock readiness

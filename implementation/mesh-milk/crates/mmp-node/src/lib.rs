@@ -34,7 +34,7 @@ use rand::rngs::StdRng;
 use rand::SeedableRng;
 use zeroize::Zeroizing;
 
-use mmp_core::authority::{effective_class5_priority, AuthorityStore};
+use mmp_core::authority::{effective_class5_priority, AuthorityStore, CertReject};
 use mmp_core::bloom::{Bloom, INTERNAL_SALT};
 use mmp_core::ingest::{ingest, Disposition};
 use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError};
@@ -135,6 +135,17 @@ const MAX_CONVERSATION_STATE: usize = 256;
 /// secret-state snapshot limit; terminal history is evictable, while queued
 /// and in-mesh messages remain protected until they expire or are delivered.
 const MAX_SENT_RUNTIME: usize = 4096;
+/// Bound authority certificates retained while a host has not supplied a
+/// wall-clock sample (or has not yet pinned the matching issuer root).  A
+/// full map refuses new entries rather than evicting a previously retained
+/// certificate, so attacker-controlled attachments cannot erase a pending
+/// valid grant by filling the map.
+const MAX_PENDING_AUTH_CERTS: usize = 256;
+
+struct PendingAuthCert {
+    cert: AuthCert,
+    display_not_after: u32,
+}
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,6 +526,10 @@ struct NodeCore {
     /// [`Node::authority_snapshot`] and restore it before accepting traffic.
     authority: AuthorityStore,
     auth_buckets: AuthorityBuckets,
+    /// Subject-bound, signature-checked AuthCert attachments waiting for a
+    /// trusted wall-clock/root before authority admission can be evaluated.
+    /// This is local recovery state, not wire or secret state.
+    pending_authcerts: BTreeMap<(Key32, Id16), PendingAuthCert>,
     /// Wall clock (unix seconds), for `not_after` checks only (doc 18 §6.3).
     /// Everything else in this crate runs on the monotonic `now`. Fail-closed
     /// default 0: every cert reads as expired until the host calls
@@ -641,6 +656,7 @@ impl Node {
             buckets: OriginBuckets::new(),
             authority: AuthorityStore::new(),
             auth_buckets: AuthorityBuckets::new(),
+            pending_authcerts: BTreeMap::new(),
             wall_unix_s: None,
             convs: HashMap::new(),
             established_convs: HashSet::new(),
@@ -681,6 +697,7 @@ impl Node {
         // in the MVP — simply nothing on a fresh `MemStore`). Bounded by
         // quota, runs once at startup, mirrors how claims/groups restore.
         core.rebuild_blob_index();
+        core.rebuild_pending_authority_certs();
         let mut node = Node {
             identity,
             core,
@@ -933,6 +950,7 @@ impl Node {
         if self.core.wall_unix_s.is_none_or(|previous| unix_s >= previous) {
             self.core.wall_unix_s = Some(unix_s);
             self.core.reconsider_authority_claims();
+            self.core.reconsider_pending_authority_certs();
         }
     }
 
@@ -940,6 +958,7 @@ impl Node {
     /// entry point — the "pinned," not "gossiped," trust level).
     pub fn pin_authority_root(&mut self, scope: Id16, issuer: Key32) {
         self.core.authority.pin_root(scope, issuer);
+        self.core.reconsider_pending_authority_certs();
     }
 
     /// Subscribe to a scope by human-readable name (doc 18 §4), returning its
@@ -1181,6 +1200,7 @@ impl Node {
     pub fn restore_authority(&mut self, bytes: &[u8]) -> bool {
         let Some(authority) = AuthorityStore::decode(bytes) else { return false };
         self.core.authority = authority;
+        self.core.reconsider_pending_authority_certs();
         true
     }
 
@@ -1818,6 +1838,7 @@ impl Node {
         // deny admission of otherwise valid future certificates.
         if let Some(now_unix_s) = self.core.wall_unix_s {
             self.core.authority.expire(now_unix_s);
+            self.core.reconsider_pending_authority_certs();
         }
         // Admission buckets are RAM-only accounting state. Compact idle
         // origins/authority subjects so a Sybil stream cannot leave one map
@@ -1959,6 +1980,89 @@ impl NodeCore {
             .collect();
         for cert in certs {
             let _ = self.authority.consider_cert(&cert, now_unix_s);
+        }
+    }
+
+    /// Re-evaluate attached authority certificates retained before a trusted
+    /// wall-clock/root was available.  Valid certificates move into the
+    /// ordinary authority store; malformed, expired, revoked, or otherwise
+    /// unusable entries are dropped.  An untrusted issuer/capacity condition
+    /// remains pending so a later root pin or authority expiry can recover it.
+    fn reconsider_pending_authority_certs(&mut self) {
+        let Some(now_unix_s) = self.wall_unix_s else { return };
+        let pending = std::mem::take(&mut self.pending_authcerts);
+        let mut retained = BTreeMap::new();
+        for (key, pending) in pending {
+            if pending.display_not_after != 0
+                && now_unix_s > pending.display_not_after.saturating_add(NOT_AFTER_SKEW_S)
+            {
+                continue;
+            }
+            match self.authority.consider_cert(&pending.cert, now_unix_s) {
+                Ok(())
+                | Err(CertReject::BadSuite)
+                | Err(CertReject::BadSignature)
+                | Err(CertReject::Expired)
+                | Err(CertReject::Revoked) => {}
+                Err(CertReject::UntrustedIssuer) | Err(CertReject::Capacity) => {
+                    if retained.len() < MAX_PENDING_AUTH_CERTS {
+                        retained.insert(key, pending);
+                    }
+                }
+            }
+        }
+        self.pending_authcerts = retained;
+    }
+
+    /// Rebuild pending attached certificates from durable class-5 bundles.
+    /// This runs at startup before any wall-clock sample is available and
+    /// never emits an application event; certificates are adopted only by
+    /// the normal clock/root re-evaluation path.
+    fn rebuild_pending_authority_certs(&mut self) {
+        let metas = self.store.all_meta();
+        for meta in metas {
+            if meta.class != class::ANNOUNCEMENT {
+                continue;
+            }
+            let Some((stored_meta, bytes)) = self.store.get(&meta.id) else { continue };
+            if !stored_bundle_is_valid(&stored_meta, &bytes) {
+                continue;
+            }
+            let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
+            let Ok(body) = AnnouncementBody::decode(&bundle.payload) else { continue };
+            if body.suite != 0x01
+                || body.scope != bundle.dest
+                || mmp_crypto::verify(SigDomain::Announce, &bundle.origin, &body.signed_object(), &body.sig).is_err()
+            {
+                continue;
+            }
+            for ext in &bundle.exts {
+                let Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val } = ext else { continue };
+                let Ok(cert) = AuthCert::decode(val) else { continue };
+                if cert.subject != bundle.origin
+                    || cert.suite != 0x01
+                    || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+                {
+                    continue;
+                }
+                self.retain_pending_authority_cert(cert, body.not_after);
+            }
+        }
+    }
+
+    /// Retain one attached AuthCert only after its local, clock-independent
+    /// checks pass.  Existing entries may be refreshed by a longer-lived
+    /// certificate; a full map refuses new subjects (fail closed).
+    fn retain_pending_authority_cert(&mut self, cert: AuthCert, display_not_after: u32) {
+        let key = (cert.subject, cert.scope);
+        if let Some(existing) = self.pending_authcerts.get_mut(&key) {
+            if cert.not_after > existing.cert.not_after {
+                *existing = PendingAuthCert { cert, display_not_after };
+            }
+            return;
+        }
+        if self.pending_authcerts.len() < MAX_PENDING_AUTH_CERTS {
+            self.pending_authcerts.insert(key, PendingAuthCert { cert, display_not_after });
         }
     }
 
@@ -2158,24 +2262,42 @@ impl NodeCore {
         // admission rule: an expired or unclocked nonzero cutoff is retained
         // for store-and-forward but must not reach the local event surface.
         // `0` is the explicit v1 no-expiry sentinel used by the local producer.
-        if body.not_after != 0
+        let display_invalid = body.not_after != 0
             && self.wall_unix_s.is_none_or(|now_unix_s| {
                 now_unix_s > body.not_after.saturating_add(NOT_AFTER_SKEW_S)
-            })
-        {
-            return;
-        }
+            });
 
         // TLV 0x81: a self-contained attached cert is verified and adopted
         // exactly as a gossiped one would be (doc 18 §5.2.1 item 1).
         for ext in &bundle.exts {
             if let Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val } = ext {
                 if let Ok(cert) = AuthCert::decode(val) {
+                    // Validate the clock-independent binding before keeping
+                    // an attachment across an unclocked interval.  Issuer
+                    // trust and expiry are checked on reconsideration.
+                    if cert.subject != bundle.origin
+                        || cert.suite != 0x01
+                        || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+                    {
+                        continue;
+                    }
                     if let Some(now_unix_s) = self.wall_unix_s {
-                        let _ = self.authority.consider_cert(&cert, now_unix_s);
+                        if !display_invalid {
+                            match self.authority.consider_cert(&cert, now_unix_s) {
+                                Err(CertReject::UntrustedIssuer) | Err(CertReject::Capacity) => {
+                                    self.retain_pending_authority_cert(cert, body.not_after);
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else {
+                        self.retain_pending_authority_cert(cert, body.not_after);
                     }
                 }
             }
+        }
+        if display_invalid {
+            return;
         }
         // TLV 0x82: display-only hint, never trusted for admission (doc 18 §3).
         let scope_name_hint = bundle.exts.iter().find_map(|ext| match ext {
