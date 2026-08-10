@@ -123,3 +123,46 @@ fn bounded_try_put_accounts_for_replacement_delta_before_admission() {
         let _ = fs::remove_file(file);
     }
 }
+
+#[test]
+fn bounded_try_put_rejected_replacement_preserves_all_state() {
+    let stem = format!("mmp-store-bounded-reject-replacement-{}", std::process::id());
+    let fixture_path = std::env::temp_dir().join(format!("{stem}-fixture.mmp"));
+    let path = std::env::temp_dir().join(format!("{stem}.mmp"));
+    for file in [&fixture_path, &path] {
+        let _ = fs::remove_file(file);
+        let _ = fs::remove_file(file.with_extension("tmp"));
+    }
+
+    let mut fixture = SnapshotStore::open(&fixture_path);
+    fixture.put(meta(1), b"hello");
+    fixture.persist().expect("fixture persists");
+    let image = fs::read(&fixture_path).expect("fixture image");
+    fs::write(&path, &image).expect("copy complete fixture image");
+
+    let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64));
+    let id = Id16([1; 16]);
+    let before_get = bounded.get(&id);
+    let before_meta = bounded.all_meta();
+    let before_ids = bounded.ids_range(&Id16::MIN, &Id16::MAX);
+    let before_len = bounded.len();
+    let before_total = bounded.total_bytes();
+
+    let mut replacement = meta(1);
+    replacement.size = 6;
+    assert_eq!(
+        bounded.try_put(replacement, b"123456"),
+        Err(StorePutError::Capacity)
+    );
+
+    assert_eq!(bounded.get(&id), before_get);
+    assert_eq!(bounded.all_meta(), before_meta);
+    assert_eq!(bounded.ids_range(&Id16::MIN, &Id16::MAX), before_ids);
+    assert_eq!(bounded.len(), before_len);
+    assert_eq!(bounded.total_bytes(), before_total);
+
+    for file in [&fixture_path, &path] {
+        let _ = fs::remove_file(file);
+        let _ = fs::remove_file(file.with_extension("tmp"));
+    }
+}

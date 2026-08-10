@@ -94,7 +94,12 @@ pub trait BundleStore {
     /// The default preserves the legacy [`Self::put`] behavior and reports
     /// whether the ID was new or replaced. Embedded stores should override
     /// this method so a capacity rejection reaches [`crate::ingest`] instead
-    /// of being misreported as a successful durable store.
+    /// of being misreported as a successful durable store. An implementation
+    /// returning `Err(StorePutError::Capacity)` must fail closed: it must not
+    /// mutate payload bytes, metadata, byte counters, the ID set, or any
+    /// auxiliary provider state. Unknown or post-write failures are not
+    /// represented by this enum until the provider has an explicit recovery
+    /// or journal contract.
     fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
         let replaced = self.meta(&meta.id).is_some();
         self.put(meta, bytes);
