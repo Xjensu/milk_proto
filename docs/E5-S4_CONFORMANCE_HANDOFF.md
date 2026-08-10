@@ -3122,3 +3122,29 @@ Next safe steps are the typed/fallible known-claim authoring API, native mobile
 consumer migration, Linux/BlueZ evidence, and measured MMP/Φ experiments. The
 external dialogue remains a research backlog, not evidence for a wire change
 or a 2× production claim.
+
+## 2026-08-10 continuation: stale holder-index repair
+
+The class-4 serving and handoff paths now self-heal when a provider evicts or
+returns malformed bytes for an ID that remains in `blob_index`/`symbol_of`.
+Missing records are de-indexed before another request can repeat the dead
+lookup; malformed records are removed and de-indexed; a generic-valid bundle
+that proves a different root or symbol slot loses only the stale mapping. The
+full bundle signature check remains at `load_for_handoff`, while BLOB serving
+uses the cheaper existence/identity/Merkle-position check so repeated
+peer-specific requests do not multiply Ed25519 work. `fetch_file` still uses
+the full verifier before absorbing local symbols.
+
+The focused regression removes an indexed symbol directly from the provider
+and confirms that handoff returns no bytes and repairs both indexes. The full
+`mmp-node` library suite passes (133 tests), including the bounded unseen-peer
+serving-counter case. This is local consistency hardening only; no wire field,
+frozen specification document, or security claim about Byzantine storage was
+changed.
+
+Remaining file-plane residuals are deliberately explicit: `try_put` has no
+unknown-commit outcome after a provider-side I/O interruption, accepted symbol
+prefixes are resumable rather than aggregate-atomic, and the content-addressed
+dedup/index is not yet destination-aware for sending identical bytes to
+multiple peers. A future change must define that index/holder model before
+altering `send_file`; it must not silently reinterpret the frozen protocol.

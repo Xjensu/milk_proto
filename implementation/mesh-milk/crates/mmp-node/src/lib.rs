@@ -3283,10 +3283,65 @@ impl NodeCore {
     /// Re-verify a stored symbol bundle's Merkle path against `root`/`sym_no`
     /// (decision D1 checks a+b) — used both for absorbing already-stored
     /// symbols on `fetch_file` and for the live receive path.
-    fn symbol_verifies_for(&self, root: &Id16, sym_no: u16, id: &Id16) -> bool {
-        let Some((_, bytes)) = self.store.get(id) else { return false };
-        let Ok(bundle) = Bundle::decode_canonical(&bytes) else { return false };
-        symbol_payload_verifies(&bundle, root, sym_no)
+    fn symbol_verifies_for(&mut self, root: &Id16, sym_no: u16, id: &Id16) -> bool {
+        let Some((meta, bytes)) = self.store.get(id) else {
+            // Provider-side eviction/removal can happen independently of the
+            // in-memory holder index. Repair the index immediately so future
+            // BLOB_HAVE/BLOB_REQ and dedup decisions do not repeat a dead ID.
+            self.deindex_symbol(id);
+            return false;
+        };
+        if !stored_bundle_is_valid(&meta, &bytes) {
+            // Invalid bytes cannot be served even if the reverse index still
+            // points at them. Remove the provider record as well as the index.
+            self.store.remove(id);
+            self.deindex_symbol(id);
+            return false;
+        }
+        let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
+            self.deindex_symbol(id);
+            return false;
+        };
+        if symbol_payload_verifies(&bundle, root, sym_no) {
+            true
+        } else {
+            // The bundle is generically valid but belongs to another root or
+            // slot; preserve its bytes and only remove the stale mapping.
+            self.deindex_symbol(id);
+            false
+        }
+    }
+
+    /// Check that an indexed symbol still exists and proves its advertised
+    /// Merkle position. Full signature verification remains at the handoff
+    /// boundary; this cheaper check prevents repeated Ed25519 work for the
+    /// same local symbol when multiple peers request it.
+    fn symbol_slot_present(&mut self, root: &Id16, sym_no: u16, id: &Id16) -> bool {
+        let Some((meta, bytes)) = self.store.get(id) else {
+            self.deindex_symbol(id);
+            return false;
+        };
+        if meta.size as usize != bytes.len() {
+            self.store.remove(id);
+            self.deindex_symbol(id);
+            return false;
+        }
+        let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
+            self.store.remove(id);
+            self.deindex_symbol(id);
+            return false;
+        };
+        if bundle.id() != meta.id || bundle.class != class::SYMBOL {
+            self.store.remove(id);
+            self.deindex_symbol(id);
+            return false;
+        }
+        if symbol_payload_verifies(&bundle, root, sym_no) {
+            true
+        } else {
+            self.deindex_symbol(id);
+            false
+        }
     }
 
     /// Class-4 receive hook (`on_bundle`'s dispatch, decision D8): index (all
@@ -3458,23 +3513,30 @@ impl NodeCore {
         let covered = (bitmap.len() / 5) as u32 * RS_TOTAL_N as u32;
         let lo = u16::try_from(base).unwrap_or(u16::MAX);
         let mut out = Vec::new();
-        if let Some(idx) = self.blob_index.get(root) {
-            for (&sym_no, id) in idx.range(lo..) {
-                let sym_no_u32 = u32::from(sym_no);
-                if sym_no_u32 < base {
-                    continue;
-                }
-                let rel = sym_no_u32 - base;
-                if rel >= covered {
-                    break; // sorted by sym_no; nothing further is covered
-                }
-                let byte = (rel / 8) as usize;
-                let bit_set = bitmap.get(byte).is_some_and(|b| b & (1 << (rel % 8)) != 0);
-                if bit_set == wants_set_bits {
-                    out.push(*id);
-                    if out.len() as u32 >= remaining {
-                        break;
-                    }
+        // Clone the bounded candidate list before validating it: validation
+        // may repair `blob_index`/`symbol_of` when a provider evicted a record,
+        // so holding a live map borrow across `symbol_verifies_for` would be
+        // both impossible in Rust and unsafe as a bookkeeping assumption.
+        let candidates: Vec<(u16, Id16)> = self
+            .blob_index
+            .get(root)
+            .map(|idx| idx.range(lo..).map(|(&sym_no, id)| (sym_no, *id)).collect())
+            .unwrap_or_default();
+        for (sym_no, id) in candidates {
+            let sym_no_u32 = u32::from(sym_no);
+            if sym_no_u32 < base {
+                continue;
+            }
+            let rel = sym_no_u32 - base;
+            if rel >= covered {
+                break; // sorted by sym_no; nothing further is covered
+            }
+            let byte = (rel / 8) as usize;
+            let bit_set = bitmap.get(byte).is_some_and(|b| b & (1 << (rel % 8)) != 0);
+            if bit_set == wants_set_bits && self.symbol_slot_present(root, sym_no, &id) {
+                out.push(id);
+                if out.len() as u32 >= remaining {
+                    break;
                 }
             }
         }
@@ -3566,7 +3628,18 @@ impl SessionHost for NodeCore {
     }
 
     fn load_for_handoff(&mut self, peer: &NodeId, id: &Id16) -> Option<(Vec<u8>, u8)> {
-        let (mut meta, mut bytes) = self.store.get(id)?;
+        let (mut meta, mut bytes) = match self.store.get(id) {
+            Some(record) => record,
+            None => {
+                // A provider may evict a record without notifying the
+                // in-memory holder index. Repair the reverse/forward mapping
+                // before returning, otherwise every future handoff retries a
+                // dead symbol and consumes no useful work but can still waste
+                // a caller's serving opportunity.
+                self.deindex_symbol(id);
+                return None;
+            }
+        };
         // The ordinary ingest path verifies before storing, but a checksum-
         // only local snapshot can be tampered with between process starts.
         // Revalidate before touching the lifetime bytes or emitting anything;
@@ -3576,6 +3649,17 @@ impl SessionHost for NodeCore {
             self.store.remove(id);
             self.deindex_symbol(id);
             return None;
+        }
+        // When this is an indexed class-4 symbol, re-prove the Merkle
+        // position against the holder mapping before spending routing budget.
+        // A generic signature check alone cannot detect a root/slot mismatch
+        // caused by local index corruption.
+        if meta.class == class::SYMBOL {
+            if let Some((root, sym_no)) = self.symbol_of.get(id).copied() {
+                if !self.symbol_slot_present(&root, sym_no, id) {
+                    return None;
+                }
+            }
         }
         let peer_is_dest = meta.dest == *peer;
         let u_self = self.utility.utility(&meta.dest, self.now);

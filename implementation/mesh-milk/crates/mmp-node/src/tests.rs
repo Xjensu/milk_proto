@@ -761,6 +761,11 @@ fn proxy_summary_hints_are_bounded_per_peer() {
 #[test]
 fn blob_serve_counters_are_bounded_for_unseen_peers() {
     let mut n = node(253);
+    let mut source = node(252);
+    introduce(&mut n, &mut source);
+    drain(&mut n);
+    drain(&mut source);
+
     let empty_root = Id16([0x33; 16]);
     for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
         let mut peer = [0u8; 16];
@@ -769,8 +774,12 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
     }
     assert!(n.core.blob_served.is_empty(), "empty requests must not consume peer slots");
 
-    let root = Id16([0x44; 16]);
-    n.core.blob_index.insert(root, BTreeMap::from([(0, Id16([0x66; 16]))]));
+    // Use a genuinely durable and signed symbol so the serving-budget test
+    // exercises admission rather than the stale-index repair path.
+    let root = n
+        .send_file(&source.node_id(), "serve.bin", "application/octet-stream", &[0x44; 3000])
+        .expect("source file is durable")
+        .root;
     for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
         let mut peer = [0u8; 16];
         peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
@@ -3226,6 +3235,37 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
 
     let _ = std::fs::remove_file(&dest_path);
     let _ = std::fs::remove_file(&part_path);
+}
+
+#[test]
+fn missing_indexed_symbol_is_pruned_before_handoff() {
+    let mut a = node(63);
+    let mut b = node(64);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let data = vec![0x64; 3000];
+    let sent = a
+        .send_file(&b.node_id(), "stale.bin", "application/octet-stream", &data)
+        .expect("file symbols are initially durable");
+    let symbol_id = a
+        .core
+        .blob_index
+        .get(&sent.root)
+        .and_then(|idx| idx.get(&0))
+        .copied()
+        .expect("first symbol is indexed");
+    assert!(a.core.store.remove(&symbol_id), "test provider eviction removes the bytes only");
+    assert!(a.core.symbol_of.contains_key(&symbol_id));
+
+    assert!(SessionHost::load_for_handoff(&mut a.core, &b.node_id(), &symbol_id).is_none());
+    assert!(!a.core.symbol_of.contains_key(&symbol_id), "missing bytes repair reverse index");
+    assert!(!a
+        .core
+        .blob_index
+        .get(&sent.root)
+        .is_some_and(|idx| idx.contains_key(&0)), "missing bytes repair forward index");
 }
 
 /// `Node::cancel_fetch` moves an active (not-yet-complete) assembly to
