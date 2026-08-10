@@ -26,6 +26,9 @@ from pathlib import Path
 
 WORKSPACE = Path(__file__).resolve().parents[1]
 REPO_ROOT = WORKSPACE.parents[1]
+# Package-scoped libtest runs may use a few workers locally; the full workspace
+# matrix remains serial because store-sensitive tests share process-wide state.
+PACKAGE_TEST_THREADS = 4
 
 
 def _run(command: list[str], *, cwd: Path) -> int:
@@ -121,6 +124,39 @@ def _format_command(
     return ["rustfmt", "--check", "--edition", "2021", *rust_files]
 
 
+def _test_command(packages: set[str], *, all_mode: bool) -> list[str]:
+    """Build the Cargo test command for a full or package-scoped check.
+
+    Explicit package scopes are the developer fast tier and use a bounded
+    number of libtest workers.  ``--all`` is the reproducible workspace/CI
+    matrix and intentionally keeps the serial test setting.
+    """
+
+    if all_mode:
+        return [
+            "cargo",
+            "test",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--locked",
+            "--",
+            "--test-threads=1",
+        ]
+
+    package_args = sorted(packages)
+    return [
+        "cargo",
+        "test",
+        "--locked",
+        *sum((["-p", package] for package in package_args), []),
+        "--all-targets",
+        "--all-features",
+        "--",
+        f"--test-threads={PACKAGE_TEST_THREADS}",
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", action="append", dest="packages", default=[])
@@ -163,16 +199,7 @@ def main(argv: list[str] | None = None) -> int:
         format_command = _format_command(packages, changed_paths, all_mode=args.all)
         format_failed = bool(format_command and _run(format_command, cwd=WORKSPACE))
         if args.all:
-            test_command = [
-                "cargo",
-                "test",
-                "--workspace",
-                "--all-targets",
-                "--all-features",
-                "--locked",
-                "--",
-                "--test-threads=1",
-            ]
+            test_command = _test_command(set(), all_mode=True)
             clippy_command = [
                 "cargo",
                 "clippy",
@@ -186,16 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             ]
         else:
             package_args = sorted(packages)
-            test_command = [
-                "cargo",
-                "test",
-                "--locked",
-                *sum((["-p", package] for package in package_args), []),
-                "--all-targets",
-                "--all-features",
-                "--",
-                "--test-threads=1",
-            ]
+            test_command = _test_command(packages, all_mode=False)
             clippy_command = [
                 "cargo",
                 "clippy",

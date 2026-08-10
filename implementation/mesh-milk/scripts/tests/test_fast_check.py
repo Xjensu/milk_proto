@@ -1,6 +1,6 @@
 import unittest
 
-from scripts.fast_check import _format_command, _infer, _rust_files_for_scope
+from scripts.fast_check import _format_command, _infer, _rust_files_for_scope, _test_command
 
 
 class FastCheckTests(unittest.TestCase):
@@ -39,6 +39,18 @@ class FastCheckTests(unittest.TestCase):
             _format_command(set(), [], all_mode=True),
             ["cargo", "fmt", "--all", "--", "--check"],
         )
+
+    def test_explicit_package_scope_uses_bounded_parallel_test_threads(self) -> None:
+        command = _test_command({"mmp-router", "mmp-node"}, all_mode=False)
+
+        self.assertIn("--test-threads=4", command)
+        self.assertNotIn("--test-threads=1", command)
+
+    def test_all_scope_keeps_serial_test_threads(self) -> None:
+        command = _test_command(set(), all_mode=True)
+
+        self.assertIn("--test-threads=1", command)
+        self.assertNotIn("--test-threads=4", command)
 
     def test_infers_rust_package_and_python_changes(self) -> None:
         packages, workspace, python_change, fuzz_change = _infer(
