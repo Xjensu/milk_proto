@@ -87,6 +87,19 @@ a local run completed with exit code 0 in approximately 282.9 seconds. The
 specification remains frozen and the Linux/BlueZ, Android/iOS, battery,
 keystore, and external-review gates remain open.
 
+**Addendum, 2026-08-10 (CLI/vector follow-up):** the E5-S4 coverage map now
+contains 34 entries, including one stable requirement ID for each of the 17
+registered document-10 frame types while retaining the shared `frames.json`
+artifact. The independent vector suite passes 29/29 and strict `mmp-cli`
+Clippy passes. A baseline CLI restore deadlock was also fixed: snapshot records
+are copied while the shared store mutex is held, then node restore methods run
+after the mutex is released. The formerly hanging snapshot bootstrap test and
+the complete `mmp-cli` test binary now pass (39/39). The mobile/API prose
+contract suite passes as part of the Python checks. The provisional
+`mmp-types::group_control` candidate remains quarantined because it currently
+introduces unregistered domains and lacks the authenticated, replay, size, and
+role-binding invariants required for production; it is not staged or integrated.
+
 ---
 
 ## 1. Where we are (implemented and verified)

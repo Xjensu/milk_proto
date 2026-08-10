@@ -171,6 +171,13 @@ loop diagram):
 ```
 MmpNode.new(seed: bytes32, tier: FfiTier, storePath: string?) -> MmpNode   // throws FfiError
 ```
+
+```
+MmpNode.newWithStoreLimit(seed: bytes32, tier: FfiTier, storePath: string, maxStoreBytes: u64)
+    -> MmpNode                                                        // throws FfiError
+```
+`newWithStoreLimit` is the bounded file-backed variant. `maxStoreBytes` must be nonzero and
+covers the complete snapshot image, including auxiliary records and framing, not only bundles.
 `storePath = null` → in-memory store, nothing survives process death. `storePath = <path>` →
 file-backed `SnapshotStore`, opened/created immediately, periodically flushed by `tick()` every
 30 000 ms of simulated time, or immediately via `flush()`. See §6 for exactly what persists.
@@ -239,11 +246,14 @@ tell the user removal is instant; see `docs/USER_FEATURES.md` for the honest UX 
 ```
 node.nodeId() -> bytes16
 node.publicKey() -> bytes32
-node.setNickname(name: string, seq: u32)
+node.setNickname(name: string, seq: u32)                        // throws FfiError
 node.ownClaims() -> [bytes]                                  // encoded Claim objects, for QR/out-of-band exchange
 node.ingestClaim(claim: bytes, verified: bool)                // throws FfiError
 node.block(peer: bytes16)                                     // throws FfiError
 node.revokeIdentity(reason: u8) -> bytes                       // encoded Claim, already queued into gossip
+node.tryRevokeIdentity(reason: u8) -> bytes                     // throws FfiError; preferred checked form
+node.revokeIdentityWithSuccessor(reason: u8, successor: bytes32, countersig: bytes64) -> bytes
+                                                               // throws FfiError
 ```
 `seq` in `setNickname` must be host-tracked and monotonically increasing per field per owner (LWW
 merge rule, doc 06 §4.2) — reusing or decreasing it means your own newer claim can lose to a
@@ -330,8 +340,9 @@ forward, doc 03 §8) but never surface an `Announcement` event.
 `ownClaims()`/`ingestClaim()` — no dedicated UniFFI Record type yet). Attaching it (TLV `0x81`,
 RECOMMENDED whenever `priority` ≤ 1/OPERATIONAL, doc 18 §5.2.1) lets a stranger receiver — one who
 hasn't seen your AuthCert over claim gossip yet — verify and elevate on first contact. Minting an
-`AuthCert` itself has no dedicated method yet; construct and sign one Rust-side (`mmp_types::authcert::AuthCert`)
-until a mint helper is added.
+`mintAuthCert(suite, subject, scope, caps, priorityBudget, notAfter)` returns an encoded
+issuer-signed `AuthCert` after validating its inputs. It does not pin the local key, adopt the
+certificate, or make a receiver trust it; the receiver still needs an explicit root pin.
 
 ### 5.11 Persistence control
 
@@ -431,7 +442,7 @@ onCharacteristicWrite((link, bytes) => node.linkData(link, bytes));
 
 // drive loop, ~1 Hz, plus after every injected event:
 setInterval(async () => {
-  await node.tick(Date.now());
+  await node.tick(Math.floor(performance.now())); // monotonic milliseconds; never Date.now()
   let frame; while ((frame = await node.pollSend())) bleWrite(frame.link, frame.bytes);
   let ev;    while ((ev = await node.pollEvent()))    dispatch(ev);
 }, 1000);

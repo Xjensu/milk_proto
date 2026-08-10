@@ -587,32 +587,73 @@ fn committed_vector_inventory_is_explicit_and_complete() {
 }
 
 #[test]
-fn coverage_manifest_maps_every_committed_vector_once() {
+fn coverage_manifest_maps_every_committed_vector() {
     let json = vector("coverage.json");
     assert_eq!(json_string(&json, "schema"), "mmp-e5-s4-coverage-v1");
-    assert_eq!(json_u64(&json, "entry_count"), 17);
+    assert_eq!(json_u64(&json, "entry_count"), 34);
 
     let ids = json_all_strings(&json, "id");
     let artifacts = json_all_strings(&json, "artifact");
     let sources = json_all_strings(&json, "source");
     let evidence = json_all_strings(&json, "evidence");
-    assert_eq!(ids.len(), 17);
-    assert_eq!(artifacts.len(), 17);
-    assert_eq!(sources.len(), 17);
-    assert_eq!(evidence.len(), 17);
+    assert_eq!(ids.len(), 34);
+    assert_eq!(artifacts.len(), 34);
+    assert_eq!(sources.len(), 34);
+    assert_eq!(evidence.len(), 34);
     assert!(sources.iter().all(|source| source.starts_with("specification/")));
     assert!(evidence.iter().all(|entry| !entry.is_empty()));
 
     let mut actual = artifacts;
     actual.sort();
+    actual.dedup();
     let mut expected = VECTOR_NAMES.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>();
     expected.sort();
-    assert_eq!(actual, expected, "coverage manifest must map every committed vector exactly once");
+    assert_eq!(actual, expected, "coverage manifest must map every committed vector");
 
     let mut unique_ids = ids.clone();
     unique_ids.sort();
     unique_ids.dedup();
     assert_eq!(unique_ids.len(), ids.len(), "coverage IDs must be unique");
+}
+
+#[test]
+fn coverage_manifest_lists_each_registered_frame_requirement() {
+    let json = vector("coverage.json");
+    let ids = json_all_strings(&json, "id");
+    let artifacts = json_all_strings(&json, "artifact");
+    assert_eq!(ids.len(), artifacts.len());
+    let required = [
+        "frame.type.0x01.hs.v1",
+        "frame.type.0x02.id-proof.v1",
+        "frame.type.0x03.credit.v1",
+        "frame.type.0x10.summary.v1",
+        "frame.type.0x11.recon-init.v1",
+        "frame.type.0x12.recon-range.v1",
+        "frame.type.0x13.recon-ids.v1",
+        "frame.type.0x14.want.v1",
+        "frame.type.0x20.bundle.v1",
+        "frame.type.0x21.budget.v1",
+        "frame.type.0x30.blob-req.v1",
+        "frame.type.0x31.blob-have.v1",
+        "frame.type.0x40.friend-offer.v1",
+        "frame.type.0x41.friend-ack.v1",
+        "frame.type.0x42.proxy-summary.v1",
+        "frame.type.0x7e.error.v1",
+        "frame.type.0x7f.close.v1",
+    ];
+    for requirement in required {
+        assert!(ids.iter().any(|id| id == requirement), "coverage manifest is missing {requirement}");
+    }
+    for (id, artifact) in ids.iter().zip(&artifacts) {
+        if id.starts_with("frame.type.") {
+            assert_eq!(artifact, "frames.json", "{id} must consume the complete frame inventory");
+        }
+    }
+    assert_eq!(
+        ids.iter().filter(|id| id.starts_with("frame.type.")).count(),
+        required.len(),
+        "frame requirement IDs must be one-to-one with the registered frame table"
+    );
 }
 
 #[test]
@@ -979,6 +1020,65 @@ fn cross_domain_matrix_has_all_registered_pairs_and_expected_results() {
     }
     assert_eq!(results.iter().filter(|value| value.as_str() == "accept").count(), 9);
     assert_eq!(results.iter().filter(|value| value.as_str() == "reject").count(), 72);
+}
+
+#[test]
+fn committed_cross_domain_signatures_match_declared_verdicts() {
+    let json = vector("cross_domain_matrix.json");
+    let object_domains = json_all_strings(&json, "object_domain");
+    let public_keys = json_all_strings(&json, "pubkey");
+    let objects = json_all_strings(&json, "object");
+    let signatures = json_all_strings(&json, "signature");
+    let verify_domains = json_all_strings(&json, "verify_domain");
+    let results = json_all_strings(&json, "result");
+    assert_eq!(object_domains.len(), 9);
+    assert_eq!(public_keys.len(), 9);
+    assert_eq!(objects.len(), 9);
+    assert_eq!(signatures.len(), 9);
+    assert_eq!(verify_domains.len(), 81);
+    assert_eq!(results.len(), 81);
+
+    fn domain(name: &str) -> mmp_types::domain::SigDomain {
+        match name {
+            "mmp1/bundle" => mmp_types::domain::SigDomain::Bundle,
+            "mmp1/claim" => mmp_types::domain::SigDomain::Claim,
+            "mmp1/friend" => mmp_types::domain::SigDomain::Friend,
+            "mmp1/prekey" => mmp_types::domain::SigDomain::Prekey,
+            "mmp1/blobroot" => mmp_types::domain::SigDomain::BlobRoot,
+            "mmp1/chanbind" => mmp_types::domain::SigDomain::ChanBind,
+            "mmp1/manifest" => mmp_types::domain::SigDomain::Manifest,
+            "mmp1/authcert" => mmp_types::domain::SigDomain::AuthCert,
+            "mmp1/announce" => mmp_types::domain::SigDomain::Announce,
+            other => panic!("unknown signature domain in committed matrix: {other}"),
+        }
+    }
+
+    for row in 0..9 {
+        assert_eq!(object_domains[row], verify_domains[row * 9 + row]);
+        let public_key = mmp_types::ids::Key32(
+            decode_hex("pubkey", &public_keys[row])
+                .try_into()
+                .expect("matrix public keys must be 32 bytes"),
+        );
+        let object = decode_hex("object", &objects[row]);
+        let signature = mmp_types::ids::Sig64(
+            decode_hex("signature", &signatures[row])
+                .try_into()
+                .expect("matrix signatures must be 64 bytes"),
+        );
+        for column in 0..9 {
+            let index = row * 9 + column;
+            let accepted = mmp_crypto::verify(
+                domain(&verify_domains[index]),
+                &public_key,
+                &object,
+                &signature,
+            )
+            .is_ok();
+            let declared = results[index].as_str() == "accept";
+            assert_eq!(accepted, declared, "committed matrix verdict drifted at ({row},{column})");
+        }
+    }
 }
 
 #[test]

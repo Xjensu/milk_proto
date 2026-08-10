@@ -930,13 +930,32 @@ fn coverage_manifest_vector() -> VectorFile {
         ("envelope.framing.v1", "envelope.json", "specification/10-message-format.md §2", "independent_envelope_reader+production_roundtrip"),
         ("frame.hello.v1", "hello.json", "specification/10-message-format.md §2.1", "independent_fixed_reader+production_roundtrip"),
         ("frame.registry.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x01.hs.v1", "frames.json", "specification/10-message-format.md §2", "independent_envelope_reader+production_roundtrip"),
+        ("frame.type.0x02.id-proof.v1", "frames.json", "specification/10-message-format.md §2.2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x03.credit.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x10.summary.v1", "frames.json", "specification/10-message-format.md §2.3", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x11.recon-init.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x12.recon-range.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x13.recon-ids.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x14.want.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x20.bundle.v1", "frames.json", "specification/10-message-format.md §2.5", "independent_outer_reader+production_roundtrip"),
+        ("frame.type.0x21.budget.v1", "frames.json", "specification/10-message-format.md §2.5", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x30.blob-req.v1", "frames.json", "specification/10-message-format.md §2.6", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x31.blob-have.v1", "frames.json", "specification/10-message-format.md §2.6", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x40.friend-offer.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x41.friend-ack.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x42.proxy-summary.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x7e.error.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
+        ("frame.type.0x7f.close.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
         ("receipt.mac.v1", "receipt.json", "specification/05-routing-spec.md §7", "production_mac_invariant"),
         ("rbsr.fingerprint.v1", "rbsr_fingerprint.json", "specification/06-sync-spec.md §9", "production_fingerprint_invariant"),
         ("coverage.manifest.v1", "coverage.json", "specification/12-rust-blueprint.md §7", "machine_readable_manifest_completeness"),
     ];
     let mut json = String::from(
-        "{\n  \"schema\": \"mmp-e5-s4-coverage-v1\",\n  \"description\": \"normative requirement coverage for committed MMP/1 vectors\",\n  \"entry_count\": 17,\n  \"entries\": [\n",
+        "{\n  \"schema\": \"mmp-e5-s4-coverage-v1\",\n  \"description\": \"normative requirement coverage for committed MMP/1 vectors\",\n  \"entry_count\": ",
     );
+    json.push_str(&ENTRIES.len().to_string());
+    json.push_str(",\n  \"entries\": [\n");
     for (index, (id, artifact, source, evidence)) in ENTRIES.iter().enumerate() {
         json.push_str(&format!(
             "    {{\"id\": \"{}\", \"artifact\": \"{}\", \"source\": \"{}\", \"evidence\": \"{}\" }}{}\n",

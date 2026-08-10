@@ -648,24 +648,39 @@ fn build_node(seed: [u8; 32], store_path: Option<&str>) -> (Node, Option<Arc<Mut
 /// is ingested with `verified: false`; the store has already re-verified its
 /// signature while loading it.
 fn restore_snapshot_state(node: &mut Node, shared: &Arc<Mutex<SnapshotStore>>) {
-    let store = shared.lock().expect("snapshot store mutex poisoned");
-    for claim in store.claims() {
+    // Copy the validated snapshot records while holding the store lock, then
+    // release it before mutating the node.  `Node` is backed by the same
+    // `SharedSnapshot`; ingest/restore paths may touch that store again and
+    // must never attempt to reacquire this mutex recursively.
+    let (claims, group_blobs, seen_index, receipt_filter, authority, blocklist) = {
+        let store = shared.lock().expect("snapshot store mutex poisoned");
+        (
+            store.claims().to_vec(),
+            store.group_blobs().to_vec(),
+            store.seen_index().cloned(),
+            store.receipt_filter().cloned(),
+            store.authority().map(ToOwned::to_owned),
+            store.blocklist().map(ToOwned::to_owned),
+        )
+    };
+
+    for claim in &claims {
         node.ingest_claim(claim.clone(), false);
     }
-    for blob in store.group_blobs() {
+    for blob in &group_blobs {
         node.restore_group(blob);
     }
-    if let Some(seen) = store.seen_index() {
-        node.restore_seen_index(seen.clone());
+    if let Some(seen) = seen_index {
+        node.restore_seen_index(seen);
     }
-    if let Some(receipts) = store.receipt_filter() {
-        node.restore_receipt_filter(receipts.clone());
+    if let Some(receipts) = receipt_filter {
+        node.restore_receipt_filter(receipts);
     }
-    if let Some(authority) = store.authority() {
-        let _ = node.restore_authority(authority);
+    if let Some(authority) = authority {
+        let _ = node.restore_authority(&authority);
     }
-    if let Some(blocklist) = store.blocklist() {
-        let _ = node.restore_blocklist(blocklist);
+    if let Some(blocklist) = blocklist {
+        let _ = node.restore_blocklist(&blocklist);
     }
 }
 

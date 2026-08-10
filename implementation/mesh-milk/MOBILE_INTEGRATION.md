@@ -126,6 +126,7 @@ MmpNode(seed: bytes32, tier: Tier, storePath: string?)
   .ownClaims() -> List<bytes>       // for QR verification / bootstrap exchange
   .ingestClaim(claim: bytes, verified: bool)
   .setNickname(name: string, seq: u32)
+  .tryRevokeIdentity(reason: u8) -> bytes                    // throws FfiError; preferred checked form
   .sendText(peer: bytes16, text: string) -> bytes16          // BundleID to track
   .createGroup() -> bytes16
   .groupInvite(gid, peer) / .groupSend(gid, text) / .groupRemove(gid, member) -> u16 (new epoch)
@@ -148,6 +149,9 @@ MmpNode(seed: bytes32, tier: Tier, storePath: string?)
                                      // applicationDidEnterBackground) rather than waiting for
                                      // the next periodic tick()-driven persist
   .lastPersistError() -> string?    // Display of the most recent persist failure, if any
+
+MmpNode.newWithStoreLimit(seed: bytes32, tier: Tier, storePath: string, maxStoreBytes: u64)
+  -> MmpNode                         // throws FfiError; maxStoreBytes must be nonzero
 ```
 
 ## 4. Android (Kotlin) — the relay workhorse
@@ -166,7 +170,7 @@ A **foreground service** with a persistent notification is the only honest way t
   * Service: `6d6d7031-0000-4d4d-5031-6d6573686d6c`
   * TX (client→server, Write Without Response): `6d6d7031-0001-4d4d-5031-6d6573686d6c`
   * RX (server→client, Notify): `6d6d7031-0002-4d4d-5031-6d6573686d6c`
-* **TX characteristic**: client writes with *Write Without Response*; feed each write into `node.linkData(link, bytes, now)`. The core reassembles frames internally with a hard 4 KiB bound — you never buffer.
+* **TX characteristic**: client writes with *Write Without Response*; feed each write into `node.linkData(link, bytes)`. The core reassembles frames internally with a hard 4 KiB bound — you never buffer.
 * **RX characteristic**: *Notify*; drain `node.pollSend()` into ≤(MTU−3)-byte notifications, in order.
 * Request MTU 247+, 2M PHY, DLE; proceed gracefully on 23-byte floors — the core doesn't care, only throughput does.
 * `link` id is any u64 you mint per connection (e.g. connection handle); call `linkDown` on disconnect — no other cleanup exists or is needed.
@@ -178,7 +182,7 @@ class MeshService : Service() {
 
     override fun onCreate() {
         startForeground(NOTIF_ID, meshNotification())
-        node = MmpNode(Keystore.loadOrCreateSeed(), filesDir.resolve("mmp").path, FfiTier.RELAY)
+        node = MmpNode(Keystore.loadOrCreateSeed(), FfiTier.RELAY, filesDir.resolve("mmp").path)
         startAdvertising(node.beacon(now()))
         startFilteredScan()          // ScanFilter on MMP_SERVICE_UUID
         pump()
@@ -236,7 +240,7 @@ final class MeshController: NSObject, CBPeripheralManagerDelegate, CBCentralMana
     }
 
     // Central: didDiscover → node.onBeacon(serviceData, rssi)
-    // didConnect → node.linkUp(handle(for: peripheral), initiator: true, now())
+    // didConnect → node.linkUp(handle(for: peripheral), initiator: true)
     // characteristic value updates → node.linkData(...) ; disconnect → node.linkDown(...)
 
     func pump() {

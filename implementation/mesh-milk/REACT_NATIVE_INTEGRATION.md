@@ -124,6 +124,7 @@ interface MmpMeshNative {
   ownClaims(): Promise<string[]>;               // base64-encoded Claim records
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   setNickname(name: string, seq: number): Promise<void>;
+  tryRevokeIdentity(reason: number): Promise<string>; // rejects on local provider/lifecycle failure
   block(peer: NodeIdHex): Promise<void>;
 
   // Messaging.
@@ -211,6 +212,10 @@ export class MmpClient {
     return native.setNickname(name, seq);
   }
 
+  tryRevokeIdentity(reason: number): Promise<string> {
+    return native.tryRevokeIdentity(reason);
+  }
+
   ownClaims(): Promise<string[]> {
     return native.ownClaims();
   }
@@ -279,6 +284,7 @@ export interface Spec extends TurboModule {
   groupMembers(gid: string): Promise<string[]>;
   groupRemove(gid: string, member: string): Promise<number>;
   setNickname(name: string, seq: number): Promise<void>;
+  tryRevokeIdentity(reason: number): Promise<string>;
   ownClaims(): Promise<string[]>;
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   block(peer: string): Promise<void>;
@@ -434,7 +440,8 @@ class MmpMeshModule(reactContext: ReactApplicationContext) :
     }
 
     // createGroup / groupInvite / groupSend / groupMembers / groupRemove / setNickname /
-    // ownClaims / ingestClaim / block / enableDiagnostics / diagDump / setTier / publicKey /
+    // tryRevokeIdentity / ownClaims / ingestClaim / block / enableDiagnostics / diagDump /
+    // setTier / publicKey /
     // storeLen / flush / lastPersistError follow the identical "post to driveHandler, call
     // the UniFFI binding, resolve/reject" shape and are omitted here for brevity — see
     // MmpMeshModuleFull.kt in the reference app.
@@ -601,7 +608,8 @@ class MmpMesh: RCTEventEmitter, CBCentralManagerDelegate, CBPeripheralManagerDel
     }
 
     // messageState / createGroup / groupInvite / groupSend / groupMembers / groupRemove /
-    // setNickname / ownClaims / ingestClaim / block / enableDiagnostics / diagDump /
+    // setNickname / tryRevokeIdentity / ownClaims / ingestClaim / block /
+    // enableDiagnostics / diagDump /
     // setTier / publicKey / storeLen / flush / lastPersistError: identical
     // "driveQueue.async { ... resolve/reject }" shape, omitted for brevity.
 

@@ -778,6 +778,11 @@ key is silently denied; succession countersig failure → succession ignored, re
   a one-shot tombstone, there is never a second write to race against) — can hand them back.
 - `mmp-ffi/src/lib.rs`: `FfiEvent::PeerRevoked { peer, successor }` mirrors the core event (public
   keys only). `MmpNode::revoke_identity(reason: u8) -> Vec<u8>` mirrors `Node::revoke_identity`.
+  `MmpNode::try_revoke_identity(reason) -> Result<Vec<u8>, FfiError>` is the preferred checked
+  form and maps local provider/lifecycle rejection to `FfiError::Internal`; the legacy helper
+  remains source-compatible and represents that rejection as an empty byte vector.
+  `MmpNode::revoke_identity_with_successor(reason, successor, countersig) -> Result<Vec<u8>, FfiError>`
+  validates the 32-byte/64-byte arguments and reports provider/lifecycle failures.
   `SendError::PeerRevoked` folds into the existing `FfiError::UnknownPeer` rather than growing the
   three-variant FFI error enum — consistent with that enum's own documented "deliberately coarse"
   rationale; `Event::PeerRevoked` is what carries the actual distinction (including the successor)

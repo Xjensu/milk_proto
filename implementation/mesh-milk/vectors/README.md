@@ -50,8 +50,12 @@ the production test independently exercises the nine diagonal accepts and 72
 off-diagonal rejects. No private key material is emitted.
 
 `coverage.json` is the machine-readable requirement map. Its coverage test
-requires exactly one entry for every committed vector artifact, a normative
-specification source, and explicit verification evidence.
+requires every committed vector artifact to be mapped, a normative
+specification source, and explicit verification evidence. The frame inventory
+also has one stable requirement ID for each of the 17 registered document-10
+frame types; those requirements intentionally point to the shared
+`frames.json` artifact so a frame can never disappear behind a single generic
+"registry" row.
 
 ## What's here
 
@@ -82,7 +86,10 @@ Positive:
 - `cross_domain_matrix.json` contains deterministic objects and signatures for
   all nine registered `SigDomain` tags and the full 9x9 accept/reject matrix;
   `GroupMsg` and candidate group-control tags are intentionally excluded as
-  provisional/unregistered.
+  provisional/unregistered. The conformance suite verifies the declared result
+  of every committed matrix cell with the public verifier, in addition to the
+  production-generated matrix test, so a hand-edited verdict cannot pass as
+  coverage evidence.
 
 Negative (each states the rejection/invariant it pins):
 - `noncanonical_s_negative.json` — the same valid Ed25519 signature with its

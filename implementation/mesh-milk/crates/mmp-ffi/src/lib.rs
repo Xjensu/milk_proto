@@ -738,32 +738,47 @@ impl MmpNode {
         // reloaded claim is not thereby out-of-band-verified — same trust
         // level it had before the restart.
         if let Some(snap) = &snapshot {
-            let guard = snap.lock().unwrap_or_else(|poison| poison.into_inner());
-            for claim in guard.claims() {
+            // Snapshot-backed node callbacks may touch the same shared store
+            // while replaying state. Copy the validated records under the
+            // mutex, release it, and only then mutate the node; holding this
+            // guard across `ingest_claim`/restore would deadlock recursively.
+            let (claims, group_blobs, seen_index, receipt_filter, authority, blocklist) = {
+                let guard = snap.lock().unwrap_or_else(|poison| poison.into_inner());
+                (
+                    guard.claims().to_vec(),
+                    guard.group_blobs().to_vec(),
+                    guard.seen_index().cloned(),
+                    guard.receipt_filter().cloned(),
+                    guard.authority().map(ToOwned::to_owned),
+                    guard.blocklist().map(ToOwned::to_owned),
+                )
+            };
+
+            for claim in &claims {
                 node.ingest_claim(claim.clone(), false);
             }
-            for blob in guard.group_blobs() {
+            for blob in &group_blobs {
                 node.restore_group(blob);
             }
             // SeenIndex/ReceiptFilter (handbook §4.3 step 3): restore if a
             // prior snapshot had one, otherwise the node just keeps the
             // fresh-empty default `Node::new` already constructed — same
             // "nothing to restore" posture as claims/groups above.
-            if let Some(seen) = guard.seen_index() {
-                node.restore_seen_index(seen.clone());
+            if let Some(seen) = seen_index {
+                node.restore_seen_index(seen);
             }
-            if let Some(rf) = guard.receipt_filter() {
-                node.restore_receipt_filter(rf.clone());
+            if let Some(rf) = receipt_filter {
+                node.restore_receipt_filter(rf);
             }
-            if let Some(authority) = guard.authority() {
+            if let Some(authority) = authority {
                 // SnapshotStore has already validated the record; Node
                 // decodes again before replacing its live authority state so
                 // this boundary remains safe if another store implementation
                 // is introduced later.
-                node.restore_authority(authority);
+                node.restore_authority(&authority);
             }
-            if let Some(blocklist) = guard.blocklist() {
-                node.restore_blocklist(blocklist);
+            if let Some(blocklist) = blocklist {
+                node.restore_blocklist(&blocklist);
             }
         }
         Ok(Arc::new(MmpNode {
