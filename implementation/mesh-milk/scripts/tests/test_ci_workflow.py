@@ -201,7 +201,16 @@ class CIWorkflowTests(unittest.TestCase):
 
     def test_release_job_requires_host_and_fuzz_build_gates(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-        self.assertEqual(workflow["jobs"]["release"]["needs"], ["host", "fuzz-build"])
+        self.assertEqual(
+            workflow["jobs"]["release"]["needs"],
+            ["host", "fuzz-build", "deny", "cargo-audit"],
+        )
+
+    def test_release_job_requires_dependency_security_gates(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        needs = set(workflow["jobs"]["release"]["needs"])
+        self.assertIn("deny", needs)
+        self.assertIn("cargo-audit", needs)
 
     def test_release_job_verifies_keyless_signature_before_manifest(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))

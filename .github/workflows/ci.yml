@@ -364,12 +364,13 @@ jobs:
   # certificate from Sigstore's public Fulcio CA, and the signature is
   # recorded in the public Rekor transparency log — verification is against
   # that public log, not a key distributed to verifiers. Gated on `host` and
-  # `fuzz-build` passing first so a broken build or invalid deterministic
-  # corpus is never signed. The bounded `fuzz-run` campaign remains
+  # `fuzz-build`, `deny`, and `cargo-audit` passing first so a broken build,
+  # invalid deterministic corpus, or known dependency risk is never signed.
+  # The bounded `fuzz-run` campaign remains
   # schedule/manual-only and therefore cannot be a tag-release dependency.
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [host, fuzz-build]
+    needs: [host, fuzz-build, deny, cargo-audit]
     permissions:
       id-token: write
       contents: read

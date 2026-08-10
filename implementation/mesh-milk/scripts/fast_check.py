@@ -89,6 +89,16 @@ def _infer(paths: list[str]) -> tuple[set[str], bool, bool, bool]:
             workspace_change = True
         elif len(parts) >= 4 and parts[:3] == ("implementation", "mesh-milk", "crates"):
             packages.add(parts[3])
+        elif len(parts) >= 4 and parts[:3] == (
+            "implementation",
+            "mesh-milk",
+            "vectors",
+        ):
+            # Golden vectors are exercised by mmp-cli's independent reader and
+            # generator tests.  Keep edits to committed vector bytes in the
+            # mandatory local conformance tier instead of treating them as
+            # documentation-only changes.
+            packages.add("mmp-cli")
         elif len(parts) >= 3 and parts[:2] == ("implementation", "mesh-milk"):
             if parts[2] == "tools" and len(parts) >= 4 and parts[3] == "layer-check":
                 packages.add("layer-check")

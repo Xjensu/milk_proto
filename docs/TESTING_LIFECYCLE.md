@@ -63,6 +63,11 @@ For a script-only edit, `--python` runs the Python gate. Fuzz recipe changes
 run the deterministic seed check; the sanitizer campaign is never hidden in a
 developer's 30-second loop.
 
+Edits under `implementation/mesh-milk/vectors/` automatically select the
+`mmp-cli` package in automatic mode. That package owns the independent reader,
+generator drift checks, and negative-vector conformance tests, so changing a
+golden file cannot accidentally look like a documentation-only edit.
+
 ## Normal CI tier (target: 2–5 minutes per host job)
 
 The host matrix runs the full Rust workspace test matrix and Clippy. Separate

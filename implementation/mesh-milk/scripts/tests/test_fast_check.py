@@ -101,6 +101,19 @@ class FastCheckTests(unittest.TestCase):
         self.assertFalse(python_change)
         self.assertFalse(fuzz_change)
 
+    def test_golden_vector_changes_select_cli_conformance_package(self) -> None:
+        packages, workspace, python_change, fuzz_change = _infer(
+            [
+                "implementation/mesh-milk/vectors/bundle.json",
+                "implementation/mesh-milk/vectors/coverage.json",
+            ]
+        )
+
+        self.assertEqual(packages, {"mmp-cli"})
+        self.assertFalse(workspace)
+        self.assertFalse(python_change)
+        self.assertFalse(fuzz_change)
+
 
 if __name__ == "__main__":
     unittest.main()
