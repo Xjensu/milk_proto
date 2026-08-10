@@ -59,6 +59,11 @@ normal CI tier includes all mandatory fast tests and all active non-ignored
 tests, but does not run long ignored simulator drills or a multi-hour fuzzing
 campaign.
 
+All host-matrix Cargo build, test, Clippy, and named storage-gate commands use
+the committed lockfile (`--locked`). This makes the 2–5 minute CI tier
+reproducible instead of allowing an unrelated dependency-resolution change to
+look like a protocol regression.
+
 Similar mobile source fixtures are shared where practical. Kotlin and Swift
 surface tests use the same manifest-driven fixture shape, while CLI/FFI tests
 retain separate adapter assertions because they exercise different mutex,

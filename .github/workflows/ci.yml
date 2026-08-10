@@ -41,20 +41,20 @@ jobs:
       # without this. Windows/macOS backends are stubs with no such need.
       - if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
-      - run: cargo build --workspace --all-features
+      - run: cargo build --workspace --all-features --locked
       # mmp-store's Windows tests share a deliberately fixed recovery fixture
       # under %TEMP%; keep the workspace test matrix serial as documented in
       # docs/MANUAL_INTEROP_TESTING.md to avoid rename races.
-      - run: cargo test --workspace --all-features -- --test-threads=1
+      - run: cargo test --workspace --all-features --locked -- --test-threads=1
       # docs/AGILE_BACKLOG.md E2-S1: clippy was previously enforced only by
       # local practice, not CI. Proven locally to catch a real violation
       # (needless_bool/bool_comparison) before being wired in here.
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       # E7-S1 acceptance double: keep the reservation/commit invariants
       # visible as a named CI gate while the real fixed-capacity provider and
       # board image remain outstanding.
       - name: test embedded transactional store acceptance double (E7-S1)
-        run: cargo test -p mmp-store --test transactional_prototype --all-features
+        run: cargo test -p mmp-store --test transactional_prototype --all-features --locked
 
   android-check:
     runs-on: ubuntu-latest

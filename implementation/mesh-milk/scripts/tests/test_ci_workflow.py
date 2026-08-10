@@ -48,7 +48,7 @@ class CIWorkflowTests(unittest.TestCase):
         test_steps = [
             step
             for step in workflow["jobs"]["host"]["steps"]
-            if step.get("run") == "cargo test --workspace --all-features -- --test-threads=1"
+            if step.get("run") == "cargo test --workspace --all-features --locked -- --test-threads=1"
         ]
         self.assertEqual(len(test_steps), 1)
 
@@ -62,7 +62,7 @@ class CIWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(
             checks,
-            ["cargo test -p mmp-store --test transactional_prototype --all-features"],
+            ["cargo test -p mmp-store --test transactional_prototype --all-features --locked"],
         )
 
     def test_no_std_gate_checks_embedded_shell_dependency_closure(self) -> None:
