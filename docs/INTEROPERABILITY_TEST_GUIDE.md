@@ -228,10 +228,11 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 cargo install cargo-ndk
 # Set ANDROID_NDK_HOME to the installed NDK directory.
 scripts/build-android-aar.sh mobile-artifacts/android
-python scripts/check_mobile_binding.py kotlin <generated-bindings-dir>
 ```
 
-The script requires `ANDROID_NDK_HOME` and `zip`. The resulting AAR is
+The build script runs the Kotlin source-level API/secret gate against its
+generated source directory before packaging. The script requires
+ANDROID_NDK_HOME and zip. The resulting AAR is
 native-only; the app still has to package generated Kotlin bindings and
 implement the BLE bridge. The SDK-free Kotlin drive-loop tests are source/JVM
 tests, not proof of behavior on a phone.

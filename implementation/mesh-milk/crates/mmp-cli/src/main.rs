@@ -917,10 +917,14 @@ async fn drive_loop<C: ClockSource>(
         while let Some(link) = node.poll_close() {
             central.hangup(link).await;
         }
-        if node.close_actions_dropped() != 0 || central.control_events_dropped() != 0 {
+        if node.close_actions_dropped() != 0
+            || node.event_queue_dropped() != 0
+            || central.control_events_dropped() != 0
+        {
             eprintln!(
-                "mmp-cli: transport lifecycle overload (node close drops: {}, transport control drops: {}); shutting down",
+                "mmp-cli: transport lifecycle overload (node close drops: {}, node event drops: {}, transport control drops: {}); shutting down",
                 node.close_actions_dropped(),
+                node.event_queue_dropped(),
                 central.control_events_dropped()
             );
             central.shutdown_all().await;
@@ -962,7 +966,9 @@ async fn drive_loop<C: ClockSource>(
         }
     }
 
-    let overload = node.close_actions_dropped() != 0 || central.control_events_dropped() != 0;
+    let overload = node.close_actions_dropped() != 0
+        || node.event_queue_dropped() != 0
+        || central.control_events_dropped() != 0;
     central.shutdown_all().await;
     let persisted = finish(shared, node, frames_sent, messages_received);
     if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
@@ -1063,10 +1069,14 @@ async fn drive_loop_peripheral<C: ClockSource>(
                 eprintln!("mmp-cli: close on link {link:#x} failed: {e}");
             }
         }
-        if node.close_actions_dropped() != 0 || peripheral.control_events_dropped() != 0 {
+        if node.close_actions_dropped() != 0
+            || node.event_queue_dropped() != 0
+            || peripheral.control_events_dropped() != 0
+        {
             eprintln!(
-                "mmp-cli: transport lifecycle overload (node close drops: {}, transport control drops: {}); shutting down",
+                "mmp-cli: transport lifecycle overload (node close drops: {}, node event drops: {}, transport control drops: {}); shutting down",
                 node.close_actions_dropped(),
+                node.event_queue_dropped(),
                 peripheral.control_events_dropped()
             );
             peripheral.shutdown_all().await;
@@ -1088,7 +1098,9 @@ async fn drive_loop_peripheral<C: ClockSource>(
         }
     }
 
-    let overload = node.close_actions_dropped() != 0 || peripheral.control_events_dropped() != 0;
+    let overload = node.close_actions_dropped() != 0
+        || node.event_queue_dropped() != 0
+        || peripheral.control_events_dropped() != 0;
     peripheral.shutdown_all().await;
     let persisted = finish(shared, node, frames_sent, messages_received);
     if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }

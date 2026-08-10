@@ -31,12 +31,13 @@ Manifest shape (``mmp-ble-evidence-v1``)::
          "kernel": "...", "adapter": "...",
          "seed_fingerprint": "sha256:<64 lowercase hex>",
          "command": "cargo run --release -p mmp-cli -- listen ...",
-         "log": "alice.log", "markers": ["advertising", "MessageReceived"]},
+         "log": "alice.log", "markers": ["advertising", "Established",
+                                            "MessageReceived"]},
         {"name": "bob", "role": "central", "os": "...",
          "kernel": "...", "adapter": "...",
          "seed_fingerprint": "sha256:<64 lowercase hex>",
          "command": "cargo run --release -p mmp-cli -- send ...",
-         "log": "bob.log", "markers": ["Established", "Delivered"]}
+         "log": "bob.log", "markers": ["dialed", "Established", "Delivered"]}
       ],
       "stores": {"peripheral_inspect": "alice.inspect",
                  "central_inspect": "bob.inspect"},

@@ -9,13 +9,13 @@ of a real radio exchange.
 
 | Path | Manual status | What is required |
 | --- | --- | --- |
-| PC ↔ PC, in-memory | Available on any Rust host | One checkout; no Bluetooth hardware |
-| PC ↔ PC, real BLE | Linux/BlueZ peripheral + Linux/Windows/macOS central | One Linux machine running `listen`, plus a second PC with a supported central adapter |
+| PC-to-PC, in-memory | Available on any Rust host | One checkout; no Bluetooth hardware |
+| PC-to-PC, real BLE | Linux/BlueZ peripheral + Linux/Windows/macOS central | One Linux machine running `listen`, plus a second PC with a supported central adapter |
 | Windows/macOS PC as peripheral | Not available in the current implementation | `mmp-tal-peripheral` is a compile-time stub on these platforms; use a Linux peripheral |
-| Android/iOS ↔ PC | Integration-ready but not a turnkey app test | A consuming Android/iOS app must provide the platform BLE callbacks and compile the produced bindings; this repository does not contain a reference mobile app |
+| Android/iOS-to-PC | Integration-ready but not a turnkey app test | A consuming Android/iOS app must provide the platform BLE callbacks and compile the produced bindings; this repository does not contain a reference mobile app |
 | Mobile artifact build | CI/toolchain gated | Android NDK + `cargo-ndk` for AAR; macOS + Xcode for XCFramework |
 
-The protocol specification remains the wire authority. Do not “fix” a failed
+The protocol specification remains the wire authority. Do not "fix" a failed
 interop test by changing `specification/`; record the observed bytes and file a
 specification/implementation discrepancy instead.
 
@@ -49,7 +49,7 @@ Expected observations:
 
 * two deterministic node IDs are printed;
 * a message is queued, transferred over the in-memory link, and acknowledged;
-* the final line reports `demo assertions: receiver_message=true,
+* a line reports `demo assertions: receiver_message=true,
   sender_delivered=true`;
 * the process exits successfully without a Bluetooth adapter.
 
@@ -101,7 +101,7 @@ Copy only the printed `sha256:<64 lowercase hex>` values into
 `hosts[].seed_fingerprint`; never publish the seed files. This fingerprint is
 an evidence label, not an MMP node ID and not a replacement for seed secrecy.
 
-## 3. PC ↔ PC over real BLE (Linux peripheral + Linux/Windows/macOS central)
+## 3. PC-to-PC over real BLE (Linux peripheral + Linux/Windows/macOS central)
 
 The current peripheral backend is Linux/BlueZ only. The central backend uses
 `btleplug` on Linux, Windows, and macOS, so the second machine may be any of
@@ -167,7 +167,8 @@ cargo run --release -p mmp-cli -- connect .\bob.seed --store .\mmp-bob.store
 Leave it running until the log shows an established link and the peer's
 claims have exchanged. Then press `Ctrl-C` and wait for `store persisted to
 disk`. `connect` is a foreground bootstrap process; it is not intended to run
-concurrently with the later `send` command using the same store file.
+concurrently with the later `send` command. The later `send` process must use
+the same `--store` path so that the persisted peer claims are available.
 
 Keep the bootstrap output as a separate log (for example,
 `bob-connect.log`). It is not, by itself, the central-side delivery evidence:
@@ -201,7 +202,9 @@ needs all of the following:
 2. both sides complete the protocol handshake and identity proof;
 3. the bundle is accepted by A and the receipt returns to B;
 4. `send` reports delivery rather than timing out;
-5. each side remains stable after disconnect/reconnect.
+5. the central process is stopped and restarted with the same persisted store
+   before a reconnect attempt; the current CLI makes one dial attempt per
+   peripheral per process and does not retry in-process.
 
 Stop both processes with `Ctrl-C`, then inspect the stores if needed:
 
@@ -210,14 +213,20 @@ cargo run -p mmp-cli -- inspect /tmp/mmp-alice.store
 cargo run -p mmp-cli -- inspect /tmp/mmp-bob.store
 ```
 
-Capture the exact CLI output, OS version, adapter model, negotiated MTU (if
-the platform exposes it), RSSI, and elapsed delivery time. A single successful
-run is only a smoke result; repeat with the machines moving out of range and
-back into range to exercise store-carry-forward and reconnect behavior.
+Capture the exact CLI output, OS version, adapter model, and elapsed delivery
+time. The reference CLI does not print negotiated MTU or RSSI; obtain those
+from adapter/OS tooling when available, otherwise record them as unavailable
+with a reason. A single successful run is only a smoke result; stop and restart
+the central process with the same store after an out-of-range interval to
+exercise store-carry-forward and reconnect behavior.
+
+The peripheral advertises a 128-bit service UUID and 24-byte service data.
+Controllers that expose only legacy advertisement capacity may not surface it;
+classify that as an adapter/backend limitation, not a protocol failure.
 
 ### What to record when it fails
 
-Record which gate failed rather than only “BLE failed”:
+Record which gate failed rather than only "BLE failed":
 
 * no advertisement visible;
 * advertisement visible but no GATT connection;
@@ -229,7 +238,7 @@ Record which gate failed rather than only “BLE failed”:
 Also preserve `mmp-cli inspect` output and the exact command lines. Do not
 publish seed files or raw private keys in an issue.
 
-## 4. Mobile ↔ PC test (once a consuming app exists)
+## 4. Mobile-to-PC test (once a consuming app exists)
 
 There is currently no runnable Android or iOS application in this repository.
 The mobile surface is a UniFFI library: the app owns scanning, advertising,
@@ -247,7 +256,7 @@ the consuming Android/iOS host must add it and test the native close callback.
 
 Immediately after constructing or restoring `MmpNode`, on the same serialized
 drive queue, call `tick` once with current same-boot monotonic uptime before
-calling `sendText`, `sendBody`, `sendFile`, or any group-send method. Android
+calling `sendText`, `sendFile`, or any group-send method. Android
 should use `SystemClock.elapsedRealtime()`; iOS should use
 `ProcessInfo.processInfo.systemUptime`. Assert that this first tick completes
 before exposing send controls or injecting the first link event. A send before
@@ -282,8 +291,8 @@ The script fails closed when `ANDROID_NDK_HOME` is unset or when `zip` is not
 available; neither prerequisite is installed by the script.
 
 The script produces a native-only `mmp-ffi.aar` plus a Kotlin bindings source
-zip. Before packaging, it runs the repository's source-level API/secret gate:
-`scripts/check_mobile_binding.py kotlin <generated-bindings-dir>`. A pass means
+zip. Before packaging, it runs the repository's source-level API/secret gate
+against the generated source directory. A pass means
 the generated Kotlin `MmpNode` surface matches the Rust FFI and no internal
 vault/ratchet identifiers leaked into the source; it does not compile Kotlin or
 prove BLE behavior. In the consuming app, compile the Kotlin bindings, add the
@@ -314,9 +323,9 @@ python scripts/verify_ios_artifacts.py \
 
 The verifier is an artifact-shape gate, not a Swift compiler or CoreBluetooth
 test. It does not upgrade an artifact pass into mobile interoperability. The
-build script also runs the corresponding source-level gate,
-`scripts/check_mobile_binding.py swift <generated-bindings-dir>`, before moving
-the Swift source into the output. As with Android, this verifies generated API
+build script also runs the corresponding source-level gate against the
+generated Swift source directory before moving the Swift source into the output.
+As with Android, this verifies generated API
 coverage and the secret denylist only; it is not a Swift compiler or hardware
 result. Add the generated framework and Swift bindings to a test app, implement
 the CoreBluetooth central/peripheral callbacks, and exercise the same
