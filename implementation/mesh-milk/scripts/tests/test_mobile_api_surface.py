@@ -4,33 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+try:
+    from scripts.tests.mobile_fixtures import kotlin_surface, swift_surface
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    from mobile_fixtures import kotlin_surface, swift_surface
 
 SCRIPT = Path(__file__).parents[1] / "check_mobile_api_surface.py"
 SPEC = importlib.util.spec_from_file_location("check_mobile_api_surface", SCRIPT)
 assert SPEC and SPEC.loader
 CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
-
-
-def _kotlin(methods: tuple[str, ...]) -> str:
-    body = "\n".join(
-        (
-            f"    @Throws(FfiException::class)\n"
-            if method in CHECK.EXPECTED_MMP_NODE_THROWING_METHODS
-            else ""
-        )
-        + f"    override fun `{method}`() {{}}"
-        for method in methods
-    )
-    return f"interface MmpNodeInterface {{\n{body}\n}}\n"
-
-
-def _swift(methods: tuple[str, ...]) -> str:
-    body = "\n".join(
-        f"    func {method}(){' throws' if method in CHECK.EXPECTED_MMP_NODE_THROWING_METHODS else ''}"
-        for method in methods
-    )
-    return f"protocol MmpNodeProtocol {{\n{body}\n}}\n"
 
 
 class MobileApiSurfaceTests(unittest.TestCase):
@@ -101,8 +84,14 @@ class MobileApiSurfaceTests(unittest.TestCase):
             swift = root_path / "swift"
             kotlin.mkdir()
             swift.mkdir()
-            (kotlin / "mmp_ffi.kt").write_text(_kotlin(methods), encoding="utf-8")
-            (swift / "mmp_ffi.swift").write_text(_swift(methods), encoding="utf-8")
+            (kotlin / "mmp_ffi.kt").write_text(
+                kotlin_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                encoding="utf-8",
+            )
+            (swift / "mmp_ffi.swift").write_text(
+                swift_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                encoding="utf-8",
+            )
             self.assertEqual(CHECK.scan_bindings(kotlin, swift), [])
 
     def test_reports_missing_method_per_language(self) -> None:
@@ -113,8 +102,14 @@ class MobileApiSurfaceTests(unittest.TestCase):
             swift = root_path / "swift"
             kotlin.mkdir()
             swift.mkdir()
-            (kotlin / "mmp_ffi.kt").write_text(_kotlin(methods[:-1]), encoding="utf-8")
-            (swift / "mmp_ffi.swift").write_text(_swift(methods[:-1]), encoding="utf-8")
+            (kotlin / "mmp_ffi.kt").write_text(
+                kotlin_surface(methods[:-1], CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                encoding="utf-8",
+            )
+            (swift / "mmp_ffi.swift").write_text(
+                swift_surface(methods[:-1], CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                encoding="utf-8",
+            )
             violations = CHECK.scan_bindings(kotlin, swift)
             self.assertEqual(len(violations), 2)
             self.assertIn("unsubscribeScope", violations[0])
@@ -128,11 +123,11 @@ class MobileApiSurfaceTests(unittest.TestCase):
             swift = root_path / "swift"
             kotlin.mkdir()
             swift.mkdir()
-            kotlin_source = _kotlin(methods).replace(
+            kotlin_source = kotlin_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
                 "    @Throws(FfiException::class)\n    override fun `setNickname`",
                 "    override fun `setNickname`",
             )
-            swift_source = _swift(methods).replace(
+            swift_source = swift_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
                 "    func setNickname() throws",
                 "    func setNickname()",
             )

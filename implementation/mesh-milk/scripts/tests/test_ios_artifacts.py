@@ -12,10 +12,23 @@ SPEC = importlib.util.spec_from_file_location("verify_ios_artifacts", SCRIPT)
 assert SPEC and SPEC.loader
 VERIFY = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFY)
-from check_mobile_api_surface import (
-    EXPECTED_MMP_NODE_METHODS,
-    EXPECTED_MMP_NODE_THROWING_METHODS,
-)
+try:
+    from scripts.tests.check_mobile_api_surface import (
+        EXPECTED_MMP_NODE_METHODS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
+    )
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    from check_mobile_api_surface import (
+        EXPECTED_MMP_NODE_METHODS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
+    )
+try:
+    from scripts.tests.mobile_fixtures import swift_surface
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    from mobile_fixtures import swift_surface
 
 
 def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path, Path]:
@@ -55,12 +68,12 @@ def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path,
 
     bindings = root / "swift-bindings"
     bindings.mkdir()
-    methods = "\n".join(
-        f"    func {method}(){' throws' if method in EXPECTED_MMP_NODE_THROWING_METHODS else ''} {{}}"
-        for method in EXPECTED_MMP_NODE_METHODS
+    methods = swift_surface(
+        EXPECTED_MMP_NODE_METHODS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
     )
     (bindings / "mmp_ffi.swift").write_text(
-        f"public protocol MmpNodeProtocol {{\n{methods}\n}}\n",
+        "public " + methods,
         encoding="utf-8",
     )
     return xcframework, bindings
@@ -267,7 +280,7 @@ class IOSArtifactTests(unittest.TestCase):
             xcframework, bindings = _write_fixture(Path(root))
             source = bindings / "mmp_ffi.swift"
             text = source.read_text(encoding="utf-8")
-            text = text.replace("    func flush() throws {}\n", "")
+            text = text.replace("    func flush() throws\n", "")
             source.write_text(text, encoding="utf-8")
             violations = VERIFY.verify_artifacts(xcframework, bindings)
             self.assertTrue(any("MmpNode.flush" in item for item in violations))

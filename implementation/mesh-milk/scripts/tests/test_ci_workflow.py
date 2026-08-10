@@ -9,6 +9,27 @@ WORKSPACE = Path(__file__).parents[2]
 
 
 class CIWorkflowTests(unittest.TestCase):
+    def test_extended_simulator_tier_is_schedule_or_manual_only(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        self.assertIn("simulator-extended", workflow["jobs"])
+        job = workflow["jobs"]["simulator-extended"]
+        self.assertEqual(
+            job["if"],
+            "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+        )
+        runs = [step.get("run", "") for step in job["steps"]]
+        self.assertIn(
+            "cargo test --release --locked -p mmp-sim --all-targets --all-features -- --ignored --test-threads=1",
+            runs,
+        )
+
+    def test_fuzz_smoke_is_schedule_or_manual_only(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(
+            workflow["jobs"]["fuzz-run"]["if"],
+            "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+        )
+
     def test_android_check_provisions_ndk_toolchain(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["android-check"]["steps"]

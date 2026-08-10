@@ -5,7 +5,17 @@ import unittest
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-from check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+try:
+    from scripts.tests.check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parents[1]))
+    from check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+try:
+    from scripts.tests.mobile_fixtures import kotlin_surface
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    from mobile_fixtures import kotlin_surface
 
 
 SCRIPT = Path(__file__).parents[1] / "verify_android_artifacts.py"
@@ -16,16 +26,10 @@ SPEC.loader.exec_module(VERIFY)
 
 
 def _kotlin() -> str:
-    methods = "\n".join(
-        (
-            f"    @Throws(FfiException::class)\n"
-            if method in EXPECTED_MMP_NODE_THROWING_METHODS
-            else ""
-        )
-        + f"    override fun `{method}`() {{}}"
-        for method in VERIFY.EXPECTED_MMP_NODE_METHODS
+    return kotlin_surface(
+        VERIFY.EXPECTED_MMP_NODE_METHODS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
     )
-    return f"interface MmpNodeInterface {{\n{methods}\n}}\n"
 
 
 def _write_zip(path: Path, members: dict[str, bytes | str]) -> None:

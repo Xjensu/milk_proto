@@ -15,9 +15,10 @@ every change and the buildable specs for remaining work (§4).
 
 As of 2026-08-09 the workspace is well past the original "Stage 0 scaffold"
 point: all 15 crates plus `mmp-tal-peripheral` have working implementations.
-The latest serial `cargo test --workspace --all-targets` run reported zero
-failures across 420 listed test items (414 active, 6 intentionally ignored
-simulation deployment/scale cases); clippy and `layer-check` are clean. Phase A
+The current workspace contains 491 listed test items (485 active, 6
+intentionally ignored simulation deployment/scale cases). The latest focused
+Rust gates and Python validation are green; clippy and `layer-check` are clean.
+Phase A
 is implementation-complete but its exit gate — a real two-machine BLE exchange
 — still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact
 integration seam until native Android/iOS consuming radio shells exist. See
@@ -39,6 +40,24 @@ root, not under this directory, because that's the only place GitHub Actions
 discovers workflow files).
 
 ## Verify locally
+
+### Fast changed-scope loop
+
+Use the changed package (Cargo builds its dependencies automatically) instead
+of rerunning the complete workspace for every edit:
+
+```sh
+python scripts/fast_check.py --package mmp-node
+python scripts/fast_check.py --package mmp-types --package mmp-crypto
+python scripts/fast_check.py --python
+```
+
+The helper runs formatting, package-scoped all-target tests, and warnings-as-
+errors Clippy. It refuses to guess after a manifest/lockfile/toolchain change;
+use `--all` deliberately in that case. See `../../docs/TESTING_LIFECYCLE.md`
+for the mandatory invariant classes and CI/nightly separation.
+
+### Full local matrix (release-style)
 
 ```sh
 cargo build --workspace --all-features

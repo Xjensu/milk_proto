@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mmp_core::store::{BundleMeta, BundleStore};
+use mmp_core::store::{BundleMeta, BundleStore, StorePutError, StorePutOutcome};
 use mmp_core::MemStore;
 use mmp_node::{DeliveryState, Event, Node, Tier};
 use mmp_store::SnapshotStore;
@@ -565,6 +565,9 @@ struct SharedSnapshot(Arc<Mutex<SnapshotStore>>);
 impl BundleStore for SharedSnapshot {
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
         self.0.lock().expect("snapshot store mutex poisoned").put(meta, bytes)
+    }
+    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+        self.0.lock().expect("snapshot store mutex poisoned").try_put(meta, bytes)
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.0.lock().expect("snapshot store mutex poisoned").get(id)
@@ -1140,6 +1143,7 @@ fn finish(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    use mmp_core::store::SlotState;
     use mmp_types::bundle::class;
     use mmp_types::ids::Key32;
 
@@ -1257,6 +1261,31 @@ mod tests {
         assert!(parse_positional_and_store(&bad_store, 1)
             .expect_err("option-looking store paths must fail")
             .contains("looks like an option"));
+    }
+
+    #[test]
+    fn shared_snapshot_preserves_bounded_try_put_rejection() {
+        let path = temp_snapshot_path();
+        let snapshot = SnapshotStore::open_with_limits(&path, mmp_store::SnapshotLimits::new(1));
+        let mut shared = SharedSnapshot(Arc::new(Mutex::new(snapshot)));
+        let meta = BundleMeta {
+            id: Id16([0x61; 16]),
+            class: class::DIRECT,
+            origin: Id16([0x62; 16]),
+            dest: Id16([0x63; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: 0,
+            stored_at: 0,
+            expires_at: 1_000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+
+        assert_eq!(shared.try_put(meta, &[]), Err(StorePutError::Capacity));
+        assert_eq!(shared.len(), 0);
+        remove_snapshot(&path);
     }
 
     #[test]

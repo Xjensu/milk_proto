@@ -15,6 +15,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
 
 env:
   CARGO_TERM_COLOR: always
@@ -303,13 +305,14 @@ jobs:
             cargo fuzz build "$t"
           done
 
-  # Short seeded runs — manual/dispatch only (not on every push): doc 12 §7.2's
+  # Short seeded runs — weekly schedule/manual dispatch only (not on every
+  # push): doc 12 §7.2's
   # "N CPU-hours once a baseline is measured" is deliberately NOT pre-committed
   # here (docs/ROADMAP_TO_PRODUCTION.md Phase C exit gate says the same); this
   # job is a smoke-level "still finds nothing in a couple minutes" check, not
   # the real corpus-hardening run.
   fuzz-run:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -332,6 +335,20 @@ jobs:
         with:
           name: mmp-fuzz-corpus
           path: implementation/mesh-milk/fuzz/corpus
+
+  # Extended simulation tier: ignored deployment/scale drills are deliberately
+  # kept out of the normal host loop so a local or pull-request cycle does not
+  # pay for a long experiment. The weekly schedule and an explicit
+  # workflow_dispatch both run this job; a release still requires the normal
+  # host matrix as its authoritative unit/regression gate.
+  simulator-extended:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: run ignored simulator deployment and scale drills
+        run: cargo test --release --locked -p mmp-sim --all-targets --all-features -- --ignored --test-threads=1
 
   # docs/AGILE_BACKLOG.md E8-S2: signed release artifacts, on a version tag
   # push only. Scope decision: `mmp-cli` is this workspace's one standalone

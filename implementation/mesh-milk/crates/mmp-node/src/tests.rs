@@ -19,6 +19,7 @@ use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::Ext;
 
+use crate::diag::JourneyEvent;
 use crate::{ClaimPublishError, DeliveryState, Event, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
@@ -479,6 +480,50 @@ fn node_store_rejection_prevents_delivery_and_post_store_side_effects() {
         !bob.core.events.iter().any(|event| matches!(event, Event::MessageReceived { id, .. } if *id == message_id)),
         "delivery must not run before a durable store accepts the bundle"
     );
+}
+
+#[test]
+fn sealed_first_contact_store_rejection_is_side_effect_free() {
+    let mut n = Node::new([253; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    let mut peer = node(252);
+    introduce_exchange_only(&mut n, &mut peer);
+    n.enable_diagnostics();
+
+    let peer_id = peer.node_id();
+    let peer_key = peer.public_key();
+    let conv_id = conversation_id(&n.core.public, &peer_key);
+    let seen_before = n.core.seen.encode();
+    assert_eq!(n.send_text(&peer_id, "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(n.store_len(), 0);
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert!(!n.core.convs.contains_key(&conv_id));
+    assert!(!n.core.pending_first_contact.contains_key(&conv_id));
+    assert!(!n.core.events.iter().any(|event| matches!(event, Event::DeliveryProgress { .. })));
+    assert!(!n
+        .diagnostics()
+        .records()
+        .iter()
+        .any(|record| matches!(record.event, JourneyEvent::Created)));
+}
+
+#[test]
+fn announcement_store_rejection_is_side_effect_free() {
+    let mut n = Node::new([251; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    n.enable_diagnostics();
+    let scope = Id16([0x64; 16]);
+    let seen_before = n.core.seen.encode();
+
+    assert_eq!(
+        n.publish_announcement(scope, 1, prio::OPERATIONAL, b"provider capacity", None),
+        Err(SendError::ResourceLimit)
+    );
+    assert_eq!(n.store_len(), 0);
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert!(!n
+        .diagnostics()
+        .records()
+        .iter()
+        .any(|record| matches!(record.event, JourneyEvent::Created)));
 }
 
 #[test]

@@ -852,3 +852,16 @@ fn oversized_nickname_is_rejected_before_claim_or_gossip_side_effects() {
     assert_eq!(node.own_claims(), claims_before, "invalid input must not publish a claim");
     assert_eq!(node.store_len(), store_before, "invalid input must not enqueue gossip");
 }
+
+#[test]
+fn revoked_identity_rejects_nickname_through_ffi_error_surface() {
+    let node = node(91);
+
+    let revocation = node.revoke_identity(7);
+    assert!(!revocation.is_empty());
+    let claims_after_revocation = node.own_claims();
+    let store_after_revocation = node.store_len();
+    assert_eq!(node.set_nickname("after-revocation".to_string(), 1), Err(FfiError::BadArg));
+    assert_eq!(node.own_claims(), claims_after_revocation);
+    assert_eq!(node.store_len(), store_after_revocation, "only the revocation gossip is stored");
+}

@@ -37,7 +37,7 @@ use zeroize::Zeroizing;
 use mmp_core::authority::{effective_class5_priority, AuthorityStore};
 use mmp_core::bloom::{Bloom, INTERNAL_SALT};
 use mmp_core::ingest::{ingest, Disposition};
-use mmp_core::store::{BundleMeta, BundleStore, SlotState};
+use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError};
 use mmp_core::{
     ClaimStore, IdSource, ReceiptFilter, SeenIndex, SessionEngine, SessionEvent, SessionHost,
 };
@@ -1916,7 +1916,6 @@ impl NodeCore {
     fn store_own(&mut self, bundle: Bundle, budget: u8) -> Id16 {
         let bytes = bundle.encode();
         let id = bundle.id();
-        self.seen.insert(&id, bundle.class, self.now);
         let meta = BundleMeta {
             id,
             class: bundle.class,
@@ -1933,9 +1932,43 @@ impl NodeCore {
             own_origin: true,
             slot: SlotState::Stored,
         };
+        self.seen.insert(&id, bundle.class, self.now);
         self.store.put(meta, &bytes);
         self.diag.log(id, JourneyEvent::Created, self.now);
         id
+    }
+
+    /// Store an own-origin bundle through the bounded write seam.
+    ///
+    /// This is intentionally separate from [`Self::store_own`]. Legacy
+    /// producers still use the infallible compatibility path until their
+    /// cryptographic and bookkeeping state can be staged transactionally. The
+    /// sealed first-contact producer is safe to use this helper because it
+    /// mutates no conversation, pending, or ratchet state before the write.
+    fn try_store_own(&mut self, bundle: Bundle, budget: u8) -> Result<Id16, SendError> {
+        let bytes = bundle.encode();
+        let id = bundle.id();
+        let size = u32::try_from(bytes.len()).map_err(|_| SendError::ResourceLimit)?;
+        let meta = BundleMeta {
+            id,
+            class: bundle.class,
+            origin: self.node_id,
+            dest: bundle.dest,
+            priority: bundle.priority,
+            effective_priority: bundle.priority,
+            size,
+            stored_at: self.now,
+            expires_at: self.now.saturating_add(bundle.lifetime_ms),
+            budget,
+            own_origin: true,
+            slot: SlotState::Stored,
+        };
+        self.store
+            .try_put(meta, &bytes)
+            .map_err(|StorePutError::Capacity| SendError::ResourceLimit)?;
+        self.seen.insert(&id, bundle.class, self.now);
+        self.diag.log(id, JourneyEvent::Created, self.now);
+        Ok(id)
     }
 
     /// Doc 18 §3: build, inner-sign (as the authority SUBJECT), and store a
@@ -1985,7 +2018,7 @@ impl NodeCore {
             return Err(SendError::TooLarge);
         }
         let budget = origin_budget(self.utility.n_hat(self.now));
-        Ok(self.store_own(bundle, budget))
+        self.try_store_own(bundle, budget)
     }
 
     /// Doc 18 §5.2: verify, elevate-if-authorized, and surface a class-5
@@ -2151,7 +2184,7 @@ impl NodeCore {
         }
 
         let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.store_own(bundle, budget);
+        let id = self.try_store_own(bundle, budget)?;
         let mut conv = Conv::new(conv_id, &self.public, peer_pub, *ck0);
         conv.dag.insert(id, &[]);
         self.convs.insert(conv_id, conv);

@@ -862,8 +862,7 @@ impl MmpNode {
         if name.len() > NICKNAME_MAX {
             return Err(FfiError::BadArg);
         }
-        self.lock().set_nickname(&name, seq);
-        Ok(())
+        self.lock().try_set_nickname(&name, seq).map_err(map_send_error)
     }
 
     /// Our own signed claims (identity/exchange keys, prekey batch, nickname,
