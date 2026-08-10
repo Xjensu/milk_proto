@@ -101,3 +101,13 @@ fails with OwnerRevoked.
 This additive node API does not change the FFI surface or the wire claim. The
 FFI wrappers still require an explicit error-surface decision before exposing
 typed failure to mobile callers.
+
+## 2026-08-10 correction: typed FFI/mobile result is now additive
+
+The final sentence above is historical. Commit `25fcc62` adds
+`MmpNode::try_revoke_identity -> Result<Vec<u8>, FfiError>` to the exported
+FFI surface and changes the existing successor wrapper to propagate typed
+provider failure instead of returning `Ok(empty)`. The legacy no-successor
+`Vec<u8>` method remains unchanged for ABI compatibility. The source-derived
+mobile method/throwing manifests and focused FFI regressions are updated; the
+remaining work is regeneration and native Android/iOS artifact verification.

@@ -60,6 +60,20 @@ fail-closed handling, and EOF-triggered sweeps. Workspace tests, workspace
 clippy, and `layer-check` pass; direct Linux/BlueZ execution remains a
 hardware/sysroot gate, and the specification directory remains unchanged.
 
+**Addendum, 2026-08-10:** the continuation after the 2026-08-08 checkpoint
+landed four bounded correctness slices without changing `specification/`:
+`25fcc62` exposes typed self-revocation failure through the FFI and fixes the
+existing successor wrapper's `Ok(empty)` ambiguity; `b9f39cd` documents and
+tests zero-mutation `StorePutError::Capacity` replacement rejection;
+`b794180` locks host CI dependency resolution; and the earlier file/claim
+producer slices add destination-safe deduplication and manifest-only retry
+coverage. Focused evidence is 34 passing `mmp-ffi` tests, 136 passing
+`mmp-node` tests, four bounded snapshot-provider tests, 42 mobile source and
+artifact checks with four expected skips, and clean focused Clippy. Generated
+Kotlin/Swift regeneration, native Android/iOS runtime gates, Linux/BlueZ
+two-host exchange, and hardware battery measurements remain open. Existing
+dirty user-owned files and provisional candidates were not staged.
+
 ---
 
 ## 1. Where we are (implemented and verified)

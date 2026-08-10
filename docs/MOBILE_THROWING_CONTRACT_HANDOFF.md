@@ -79,6 +79,17 @@ python scripts/check_spec_status.py --repo ../..
    establish UniFFI generation, OS background behavior, GATT behavior, or
    radio interoperability.
 
+## 2026-08-10 status correction
+
+The historical E7 item above is partly closed. Producer-capacity red tests,
+claim/file staging, and the zero-mutation `StorePutError::Capacity` provider
+invariant are now implemented and committed. The mobile surface additionally
+exports `tryRevokeIdentity` and propagates successor-revocation provider
+failure; source-derived binding checks pass. Remaining E7 work is aggregate
+reservation/unknown-commit design, not another direct `store_own` conversion.
+Native binding regeneration, SDK compilation, physical BLE exchange, and
+hardware battery gates remain open.
+
 ## Adversarial review
 
 ### Security auditor
