@@ -29,6 +29,12 @@ REPO_ROOT = WORKSPACE.parents[1]
 # Package-scoped libtest runs may use a few workers locally; the full workspace
 # matrix remains serial because store-sensitive tests share process-wide state.
 PACKAGE_TEST_THREADS = 4
+# `mmp-store` still contains recovery fixtures with deliberately stable paths
+# (for example, the historical `mmp-store-test` directory). Running those
+# tests concurrently can make one test observe another test's temporary image,
+# turning a storage invariant failure into a scheduling flake. Keep this
+# package serial even in the local fast tier.
+SERIAL_TEST_PACKAGES = frozenset({"mmp-store"})
 
 
 def _run(command: list[str], *, cwd: Path) -> int:
@@ -145,6 +151,9 @@ def _test_command(packages: set[str], *, all_mode: bool) -> list[str]:
         ]
 
     package_args = sorted(packages)
+    test_threads = (
+        1 if SERIAL_TEST_PACKAGES.intersection(packages) else PACKAGE_TEST_THREADS
+    )
     return [
         "cargo",
         "test",
@@ -153,7 +162,7 @@ def _test_command(packages: set[str], *, all_mode: bool) -> list[str]:
         "--all-targets",
         "--all-features",
         "--",
-        f"--test-threads={PACKAGE_TEST_THREADS}",
+        f"--test-threads={test_threads}",
     ]
 
 
