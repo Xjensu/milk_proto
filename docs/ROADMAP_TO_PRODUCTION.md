@@ -75,11 +75,12 @@ two-host exchange, and hardware battery measurements remain open. Existing
 dirty user-owned files and provisional candidates were not staged.
 
 **Addendum, 2026-08-10 (post-attached-authority fix):** the current host-side
-lifecycle checkpoint is now 148 passing `mmp-node` library tests (serial), including the
+lifecycle checkpoint is now 149 passing `mmp-node` library tests (serial), including the
 multi-stripe blob index regression, authority-claim replay after wall-clock
 readiness, parallel-link ratchet epoch coverage, and authenticated versus
 pre-identity internally-closed-session ratchet coverage, attached-authority
-clock/restart recovery, and rotated-root pending-certificate fencing. The
+clock/restart recovery, rotated-root pending-certificate fencing on direct pin,
+and the equivalent authority-snapshot restore path. The
 normal host CI command is
 `cargo test --workspace --all-targets --all-features --locked -- --test-threads=1`;
 a local run completed with exit code 0 in approximately 282.9 seconds. The

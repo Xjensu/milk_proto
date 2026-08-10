@@ -3277,6 +3277,58 @@ fn rotated_authority_root_accepts_shorter_lived_pending_certificate() {
 }
 
 #[test]
+fn restored_authority_root_accepts_shorter_lived_pending_certificate() {
+    let mut alice = node(34);
+    let mut bob = node(35);
+    let old_authority = mmp_crypto::Identity::from_seed(&[36; 32]);
+    let new_authority = mmp_crypto::Identity::from_seed(&[37; 32]);
+    let scope = bob.subscribe_scope(b"authority/restore-rotation");
+    let old_cert = signed_cert(
+        &old_authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        1_000,
+    );
+    let new_cert = signed_cert(
+        &new_authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        100,
+    );
+
+    let old_id = alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"old root", Some(&old_cert)).unwrap();
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"new root", Some(&new_cert)).unwrap();
+    contact(&mut alice, &mut bob, 34, 34_000);
+    alice.core.store.remove(&old_id);
+    contact(&mut alice, &mut bob, 35, 35_000);
+    drain(&mut bob);
+
+    let mut authority_holder = node(38);
+    authority_holder.subscribe_scope_id(scope);
+    authority_holder.pin_authority_root(scope, new_authority.public());
+    let snapshot = authority_holder.authority_snapshot();
+    assert!(bob.restore_authority(&snapshot));
+    bob.set_wall_clock(0);
+
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"restored rotation", None).unwrap();
+    contact(&mut alice, &mut bob, 36, 36_000);
+    let event = drain(&mut bob)
+        .into_iter()
+        .find_map(|event| match event {
+            Event::Announcement { effective_priority, official, text, .. } if text == b"restored rotation" => {
+                Some((effective_priority, official))
+            }
+            _ => None,
+        })
+        .expect("the post-restore announcement is visible");
+    assert_eq!(event, (prio::OPERATIONAL, true));
+}
+
+#[test]
 fn wall_clock_rollback_cannot_revalidate_expired_authority() {
     let mut alice = node(16);
     let mut bob = node(17);

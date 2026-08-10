@@ -41,8 +41,9 @@ certificate without carrying it again.
 - `attached_authority_cert_received_before_clock_is_replayed_after_clock_ready`: passed.
 - `attached_authority_cert_is_reconstructed_from_store_after_restart`: passed.
 - `rotated_authority_root_accepts_shorter_lived_pending_certificate`: passed.
-- Authority-focused node tests: 13 passed.
-- Full `mmp-node` library suite: 148 passed, 0 failed, serial execution.
+- `restored_authority_root_accepts_shorter_lived_pending_certificate`: passed.
+- Authority-focused node tests: 14 passed.
+- Full `mmp-node` library suite: 149 passed, 0 failed, serial execution.
 - `mmp-core` authority suite: 16 passed.
 - Strict `mmp-node` Clippy: passed.
 - Focused nonzero display-cutoff regression: passed.
