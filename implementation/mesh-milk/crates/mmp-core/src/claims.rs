@@ -89,6 +89,15 @@ impl ClaimStore {
         }
     }
 
+    /// Validate a candidate against this store's current state without
+    /// mutating it.  An owner with an adopted identity-revocation tombstone
+    /// cannot publish another claim, including an unknown extension field;
+    /// callers use this preflight before signing or gossiping local bytes.
+    pub fn validate_candidate(&self, claim: &Claim) -> bool {
+        let node = node_id_of(&claim.owner);
+        !self.map.contains_key(&(node, field::REVOCATION)) && Self::validate_claim(claim)
+    }
+
     /// Merge a signature-verified claim.
     ///
     /// Tombstone rule (doc 06 §4.6 / handbook §4.6): once a `REVOCATION`

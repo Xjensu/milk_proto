@@ -450,6 +450,9 @@ pub enum ClaimPublishError {
     /// claim field. Unknown fields remain opaque and are never rejected for
     /// an internal format this node does not understand.
     InvalidBody,
+    /// The local identity already has an adopted identity-revocation
+    /// tombstone; the tombstone is immutable and blocks every later claim.
+    OwnerRevoked,
 }
 
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
@@ -1878,8 +1881,12 @@ impl NodeCore {
         // semantic checks as wire decoding and ClaimStore::merge. Without
         // this guard a manually supplied claim could be signed and gossiped
         // even though receivers correctly reject it.
-        if !ClaimStore::validate_claim(&claim) {
-            return Err(ClaimPublishError::InvalidBody);
+        if !self.claims.validate_candidate(&claim) {
+            return if self.claims.revocation(&node_id_of(&claim.owner)).is_some() {
+                Err(ClaimPublishError::OwnerRevoked)
+            } else {
+                Err(ClaimPublishError::InvalidBody)
+            };
         }
         claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
         let encoded = claim.encode();

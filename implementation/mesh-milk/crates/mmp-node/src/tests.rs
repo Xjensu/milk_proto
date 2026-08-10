@@ -108,6 +108,29 @@ fn recognized_claim_publication_rejects_malformed_bodies_before_side_effects() {
 }
 
 #[test]
+fn claim_publication_after_self_revocation_fails_before_signing_or_gossip() {
+    let mut n = node(250);
+    assert!(!n.revoke_identity(7).is_empty(), "the initial tombstone remains publishable");
+    let claims_after_revoke = n.own_claims();
+    let store_after_revoke = n.store_len();
+
+    for field_id in [
+        mmp_types::claim::field::NICKNAME,
+        mmp_types::claim::field::EXCHANGE_KEY,
+        mmp_types::claim::field::PREKEY_BATCH,
+        0xf1,
+    ] {
+        assert_eq!(
+            n.try_publish_claim(field_id, 2, vec![1, 2, 3]),
+            Err(ClaimPublishError::OwnerRevoked),
+            "field {field_id:#x} must be rejected by the tombstone preflight",
+        );
+        assert_eq!(n.own_claims(), claims_after_revoke);
+        assert_eq!(n.store_len(), store_after_revoke);
+    }
+}
+
+#[test]
 fn persisted_handoff_revalidates_raw_bundle_before_mutation() {
     let signer = Identity::from_seed(&[241; 32]);
     let peer = Id16([242; 16]);
