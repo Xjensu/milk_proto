@@ -1573,6 +1573,45 @@ impl Node {
         self.close_actions.retain(|queued| *queued != link);
     }
 
+    /// Advance the shared conversation ratchet exactly once when an
+    /// authenticated contact tears down. This is used for both an explicit
+    /// physical `LinkDown` and an internally closed session, whose engine is
+    /// removed before the host can deliver `LinkDown`.
+    fn bump_ratchet_for_teardown(&mut self, link: LinkId, material: [u8; 32], identity: Key32) {
+        let conv_id = conversation_id(&self.core.public, &identity);
+        let another_live_link = self
+            .sessions
+            .iter()
+            .any(|(other, other_engine)| *other != link && other_engine.peer_identity() == Some(identity));
+        let met_before = self.core.established_convs.contains(&conv_id);
+        if !met_before && self.core.established_convs.len() >= MAX_CONVERSATION_STATE {
+            self.core.convs.remove(&conv_id);
+            self.core.pending_async.remove(&conv_id);
+            self.core.pending_first_contact.remove(&conv_id);
+        } else {
+            self.core.established_convs.insert(conv_id);
+        }
+        if met_before && !another_live_link {
+            let retire = if let Some(conv) = self.core.convs.get_mut(&conv_id) {
+                if conv.send.epoch == u16::MAX || conv.recv.epoch() == u16::MAX {
+                    true
+                } else {
+                    let send_ok = conv.send.try_bump_epoch(&material).is_ok();
+                    let recv_ok = conv.recv.try_bump_epoch(&material).is_ok();
+                    !send_ok || !recv_ok
+                }
+            } else {
+                false
+            };
+            if retire {
+                self.core.convs.remove(&conv_id);
+                self.core.established_convs.remove(&conv_id);
+                self.core.pending_async.remove(&conv_id);
+                self.core.pending_first_contact.remove(&conv_id);
+            }
+        }
+    }
+
     /// Feed one transport-layer event into the node: beacon overheard, a link
     /// coming up/down, or bytes arriving on a link. Drives the per-link
     /// `SessionEngine`s and the E4-S4 opportunistic ratchet epoch bump on
@@ -1624,58 +1663,15 @@ impl Node {
                 // all the way from `Established` to here, so the material
                 // and peer identity are both still available.
                 if let Some(engine) = self.sessions.get(&link) {
-                    if let (Some(material), Some(identity)) =
-                        (engine.session_material(), engine.peer_identity())
-                    {
-                        let conv_id = conversation_id(&self.core.public, &identity);
-                        // A conversation is shared by every authenticated
-                        // link to the same peer.  Keep its epoch stable while
-                        // another link remains live; advancing it here would
-                        // invalidate traffic still using that contact.  The
-                        // final link teardown performs the single bump.
-                        let another_live_link = self.sessions.iter().any(|(other, other_engine)| {
-                            *other != link && other_engine.peer_identity() == Some(identity)
-                        });
-                        let met_before = self.core.established_convs.contains(&conv_id);
-                        if !met_before && self.core.established_convs.len() >= MAX_CONVERSATION_STATE {
-                            // Multiple links may have been admitted while the
-                            // marker table still had room and tear down after
-                            // another link fills it. Do not let that race
-                            // exceed the bound; retire the unmarked Conv so a
-                            // later contact is denied rather than reusing an
-                            // untracked ratchet without an epoch bump.
-                            self.core.convs.remove(&conv_id);
-                            self.core.pending_async.remove(&conv_id);
-                            self.core.pending_first_contact.remove(&conv_id);
-                        } else {
-                            self.core.established_convs.insert(conv_id);
-                        }
-                        if met_before && !another_live_link {
-                            // Epoch rollover is intentionally fail-closed.  A
-                            // u16 epoch cannot be incremented at its terminal
-                            // value; retaining a conversation whose two
-                            // chains cannot move together would permit an
-                            // accidental nonce/key reuse or a permanent
-                            // send/receive desynchronization.  Remove the
-                            // local state so a later send must establish a
-                            // fresh conversation instead of panicking.
-                            let retire = if let Some(conv) = self.core.convs.get_mut(&conv_id) {
-                                if conv.send.epoch == u16::MAX || conv.recv.epoch() == u16::MAX {
-                                    true
-                                } else {
-                                    let send_ok = conv.send.try_bump_epoch(&material).is_ok();
-                                    let recv_ok = conv.recv.try_bump_epoch(&material).is_ok();
-                                    !send_ok || !recv_ok
-                                }
-                            } else {
-                                false
-                            };
-                            if retire {
-                                self.core.convs.remove(&conv_id);
-                                self.core.established_convs.remove(&conv_id);
-                                self.core.pending_async.remove(&conv_id);
-                                self.core.pending_first_contact.remove(&conv_id);
-                            }
+                    // Noise exposes session material as soon as the channel
+                    // is established, before the encrypted ID_PROOF binding
+                    // has authenticated the peer.  Only a fully Established
+                    // session may mutate conversation/ratchet state.
+                    if engine.peer().is_some() {
+                        if let (Some(material), Some(identity)) =
+                            (engine.session_material(), engine.peer_identity())
+                        {
+                            self.bump_ratchet_for_teardown(link, material, identity);
                         }
                     }
                 }
@@ -1688,6 +1684,7 @@ impl Node {
     fn pump_link(&mut self, link: LinkId) {
         let mut overflowed = false;
         let mut closed = false;
+        let mut teardown_material = None;
         {
             let Some(engine) = self.sessions.get_mut(&link) else { return };
             while let Some(bytes) = engine.poll_out() {
@@ -1705,10 +1702,27 @@ impl Node {
                             self.core.enqueue_event(Event::Established { peer });
                             self.core.enqueue_event(Event::ContactSeen { peer });
                         }
-                        SessionEvent::Closed => closed = true,
+                        SessionEvent::Closed => {
+                            closed = true;
+                            teardown_material = if engine.peer().is_some() {
+                                engine.session_material().zip(engine.peer_identity())
+                            } else {
+                                None
+                            };
+                        }
                     }
                 }
             }
+            if overflowed {
+                teardown_material = if engine.peer().is_some() {
+                    engine.session_material().zip(engine.peer_identity())
+                } else {
+                    None
+                };
+            }
+        }
+        if let Some((material, identity)) = teardown_material {
+            self.bump_ratchet_for_teardown(link, material, identity);
         }
         if overflowed {
             // Never drop one encrypted frame and continue: that would leave

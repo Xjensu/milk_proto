@@ -74,16 +74,15 @@ Kotlin/Swift regeneration, native Android/iOS runtime gates, Linux/BlueZ
 two-host exchange, and hardware battery measurements remain open. Existing
 dirty user-owned files and provisional candidates were not staged.
 
-**Addendum, 2026-08-10 (post-e13bdda):** the current host-side lifecycle
-checkpoint is now 142 passing `mmp-node` library tests (serial), including the
+**Addendum, 2026-08-10 (post-f6f3e59):** the current host-side lifecycle
+checkpoint is now 145 passing `mmp-node` library tests (serial), including the
 multi-stripe blob index regression, authority-claim replay after wall-clock
-readiness, and parallel-link ratchet epoch coverage. The normal host CI command
-is `cargo test --workspace --all-targets --all-features --locked`; a local run
-completed with exit code 0 in approximately 282.9 seconds. Three repeated
-four-thread `mmp-node` runs also passed 142/142. These numbers supersede the
-older 136-test count in the 2026-08-10 continuation note; historical rows are
-left unchanged. The specification remains frozen and the Linux/BlueZ,
-Android/iOS, battery, keystore, and external-review gates remain open.
+readiness, parallel-link ratchet epoch coverage, and authenticated versus
+pre-identity internally-closed-session ratchet coverage. The normal host CI command is
+`cargo test --workspace --all-targets --all-features --locked -- --test-threads=1`;
+a local run completed with exit code 0 in approximately 282.9 seconds. The
+specification remains frozen and the Linux/BlueZ, Android/iOS, battery,
+keystore, and external-review gates remain open.
 
 ---
 

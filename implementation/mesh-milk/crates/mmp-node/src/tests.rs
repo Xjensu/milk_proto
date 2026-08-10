@@ -9,7 +9,7 @@ use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePu
 use mmp_core::{IdSource, MemStore, SessionHost};
 use mmp_crypto::{conversation_id, Identity};
 use mmp_tal::TalEvent;
-use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD};
+use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::consts::{
@@ -1353,6 +1353,118 @@ fn session_slot_releases_when_engine_closes() {
 
     link_up(&mut n, 2);
     assert_eq!(n.sessions.len(), 1, "Closed must release the admission slot");
+}
+
+#[test]
+fn pre_identity_proof_teardown_does_not_mark_conversation_established() {
+    let mut local = node(118);
+    let mut peer = node(119);
+    introduce(&mut local, &mut peer);
+
+    local.on_tal_event(TalEvent::LinkUp { link: 1, initiator: true, quality: Default::default() });
+    peer.on_tal_event(TalEvent::LinkUp { link: 1, initiator: false, quality: Default::default() });
+
+    // Complete only the Noise handshake.  The resulting encrypted ID_PROOF
+    // frames are intentionally discarded, leaving both engines in Binding.
+    for _ in 0..8 {
+        let mut progressed = false;
+        while let Some((link, bytes)) = local.poll_send() {
+            progressed = true;
+            if bytes.get(2) == Some(&FT_HS) {
+                peer.on_tal_event(TalEvent::LinkData { link, bytes });
+            }
+        }
+        while let Some((link, bytes)) = peer.poll_send() {
+            progressed = true;
+            if bytes.get(2) == Some(&FT_HS) {
+                local.on_tal_event(TalEvent::LinkData { link, bytes });
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+
+    let conv_id = conversation_id(&local.core.public, &peer.core.public);
+    assert!(local.sessions.contains_key(&1));
+    assert!(local.sessions.get(&1).is_some_and(|session| session.peer().is_none()));
+    assert!(!local.core.established_convs.contains(&conv_id));
+
+    local.on_tal_event(TalEvent::LinkDown { link: 1 });
+
+    assert!(!local.core.established_convs.contains(&conv_id));
+    assert!(!local.core.convs.contains_key(&conv_id));
+}
+
+#[test]
+fn pre_identity_proof_internal_close_does_not_mark_conversation_established() {
+    let mut local = node(120);
+    let mut peer = node(121);
+    introduce(&mut local, &mut peer);
+
+    local.on_tal_event(TalEvent::LinkUp { link: 1, initiator: true, quality: Default::default() });
+    peer.on_tal_event(TalEvent::LinkUp { link: 1, initiator: false, quality: Default::default() });
+
+    // Complete only the Noise handshake.  The resulting encrypted ID_PROOF
+    // frames are intentionally discarded, leaving both engines in Binding.
+    for _ in 0..8 {
+        let mut progressed = false;
+        while let Some((link, bytes)) = local.poll_send() {
+            progressed = true;
+            if bytes.get(2) == Some(&FT_HS) {
+                peer.on_tal_event(TalEvent::LinkData { link, bytes });
+            }
+        }
+        while let Some((link, bytes)) = peer.poll_send() {
+            progressed = true;
+            if bytes.get(2) == Some(&FT_HS) {
+                local.on_tal_event(TalEvent::LinkData { link, bytes });
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+
+    let conv_id = conversation_id(&local.core.public, &peer.core.public);
+    assert!(local.sessions.get(&1).is_some_and(|session| session.peer().is_none()));
+
+    // A malformed encrypted frame closes the session internally.  This path
+    // must use the same authenticated-only teardown rule as LinkDown.
+    local.on_tal_event(TalEvent::LinkData {
+        link: 1,
+        bytes: vec![0, 0, FT_SUMMARY],
+    });
+
+    assert!(!local.core.established_convs.contains(&conv_id));
+    assert!(!local.core.convs.contains_key(&conv_id));
+}
+
+#[test]
+fn protocol_error_teardown_bumps_ratchet_before_next_contact() {
+    let mut alice = node(116);
+    let mut bob = node(117);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    alice.send_text(&bob.node_id(), "first").unwrap();
+    contact(&mut alice, &mut bob, 1, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((0, 0)));
+
+    // A malformed envelope closes the authenticated session internally.  The
+    // contact has ended even though the host has not yet delivered LinkDown;
+    // the epoch must advance before a later contact can reuse this ratchet.
+    establish(&mut alice, &mut bob, 2);
+    let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
+    let mut malformed = vec![0u8; 3];
+    malformed[..2].copy_from_slice(&oversized_declared_len.to_le_bytes());
+    alice.on_tal_event(TalEvent::LinkData { link: 2, bytes: malformed });
+
+    assert!(!alice.sessions.contains_key(&2), "protocol error closes the session");
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((1, 1)));
 }
 
 #[test]

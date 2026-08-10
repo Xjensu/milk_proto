@@ -22,7 +22,7 @@ Removing a test is allowed only when another test proves the same invariant by
 the same or a stronger mechanism. A shorter test list by itself is not an
 acceptance criterion.
 
-## Local fast tier (target: 10–30 seconds after compilation)
+## Local fast tier (target: 10–30 seconds after compilation for small or parallel scopes)
 
 From `implementation/mesh-milk`, run the changed package and its Cargo
 dependencies:
@@ -38,6 +38,13 @@ tests with serial test threads, and warnings-as-errors Clippy. Cargo builds the
 selected package's dependencies automatically. If the root manifest, lockfile,
 or toolchain changes, the helper refuses to guess and requires an explicit
 `--package` or `--all`.
+
+The 10–30 second target is a budget for small changed crates and already-built
+dependency scopes. The complete serial `mmp-node` package check is currently
+about 40–45 seconds on the Windows reference host (145 tests plus Clippy), so
+that larger scope is an explicitly measured exception rather than a reason to
+remove lifecycle or security coverage. The normal CI workspace command remains
+serial for reproducibility.
 
 The repository currently has pre-existing rustfmt drift in several tracked Rust
 files; until that baseline is repaired or a project formatter version is

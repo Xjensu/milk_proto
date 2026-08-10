@@ -28,17 +28,23 @@ link can still carry traffic. `LinkDown` now advances the repeat-contact epoch
 only for the final authenticated link for that peer. This prevents one physical
 link teardown from invalidating ciphertext still in flight on a parallel link.
 
+The same authenticated-only bump is now applied when `SessionEngine` closes
+internally because of a protocol error or outbox overflow. A Noise channel that
+has reached `Binding` but has not accepted `ID_PROOF` is explicitly excluded:
+it has session material, but it has not established a trusted conversation.
+
 ## Verification
 
 - `authority_claim_received_before_wall_clock_is_reconsidered_after_clock_ready`: passed.
 - Authority-focused node tests: 10 passed.
 - `repeat_contact_defers_epoch_bump_until_last_parallel_link_down`: passed.
+- `pre_identity_proof_internal_close_does_not_mark_conversation_established`: passed.
 - Existing `ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt`: passed.
-- Full `mmp-node` library suite: 142 passed, 0 failed, serial execution.
-- Three repeated parallel `mmp-node` runs (`--test-threads=4`) after the serial
-  baseline: 142 passed, 0 failed each. One earlier parallel invocation was
-  inconsistent while the worktree was still settling; it did not reproduce in
-  the repeated runs, so the normal CI command remains explicitly serial.
+- Full `mmp-node` library suite: 145 passed, 0 failed, serial execution.
+- Earlier repeated parallel runs covered the 142-test pre-auth-gate state and
+  passed after the worktree settled. One earlier invocation was inconsistent,
+  so the normal CI command remains explicitly serial; the authoritative current
+  result is the 145-test serial run above.
 - Strict `mmp-node` Clippy: passed.
 
 The serial test mode remains the normal CI default because store-sensitive

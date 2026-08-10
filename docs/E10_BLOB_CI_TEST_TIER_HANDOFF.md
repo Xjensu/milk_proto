@@ -35,7 +35,9 @@ future drift back to a narrower host matrix.
 ## Verification
 
 - Focused blob regression: 1 passed.
-- Full `mmp-node` library suite: 140 passed, 0 failed.
+- Full `mmp-node` library suite: 140 passed, 0 failed at the pre-f6f3e59
+  blob/CI checkpoint. The current post-f6f3e59 lifecycle count is 145; see
+  `docs/E11_LIFECYCLE_CONCURRENCY_HANDOFF.md` for the superseding evidence.
 - `mmp-node` all-target Clippy with `-D warnings`: passed.
 - Full workspace all-targets test: exit 0; 282.9 seconds locally. The simulator's
   ordinary suite took approximately 231 seconds; all other workspace crates and
