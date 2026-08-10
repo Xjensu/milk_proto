@@ -2099,6 +2099,39 @@ fn ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt() {
 }
 
 #[test]
+fn repeat_contact_defers_epoch_bump_until_last_parallel_link_down() {
+    let mut alice = node(3);
+    let mut bob = node(4);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    alice.send_text(&bob.node_id(), "first").unwrap();
+    contact(&mut alice, &mut bob, 1, 10_000);
+    drain(&mut alice);
+    drain(&mut bob);
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((0, 0)));
+    assert_eq!(bob.conv_epoch(&alice.node_id()), Some((0, 0)));
+
+    // Two authenticated links to the same peer are allowed at the Relay tier.
+    // Closing only one must not advance the shared conversation while the
+    // other link can still carry traffic.
+    establish(&mut alice, &mut bob, 2);
+    establish(&mut alice, &mut bob, 3);
+    alice.on_tal_event(TalEvent::LinkDown { link: 2 });
+    bob.on_tal_event(TalEvent::LinkDown { link: 2 });
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((0, 0)));
+    assert_eq!(bob.conv_epoch(&alice.node_id()), Some((0, 0)));
+
+    // The final live link ends the repeat contact; both sides then rotate in
+    // lockstep before the next contact.
+    alice.on_tal_event(TalEvent::LinkDown { link: 3 });
+    bob.on_tal_event(TalEvent::LinkDown { link: 3 });
+    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((1, 1)));
+    assert_eq!(bob.conv_epoch(&alice.node_id()), Some((1, 1)));
+}
+
+#[test]
 fn three_node_store_carry_forward() {
     // A meets R (relay), then R meets B — the DTN path over space AND time.
     let mut a = node(1);
@@ -2894,6 +2927,36 @@ fn valid_attached_cert_elevates_priority_and_renders_official() {
     let (effective, official) = ann.expect("bob sees the elevated announcement");
     assert_eq!(effective, prio::OPERATIONAL, "valid cert + budget ⇒ declared priority honored");
     assert!(official, "a valid unrevoked cert with CAP_ANNOUNCE renders official regardless of the bucket");
+}
+
+#[test]
+fn authority_claim_received_before_wall_clock_is_reconsidered_after_clock_ready() {
+    let mut alice = node(21);
+    let mut bob = node(22);
+    let authority = mmp_crypto::Identity::from_seed(&[23; 32]);
+    let scope = bob.subscribe_scope(b"clock/claim-replay");
+    bob.pin_authority_root(scope, authority.public());
+
+    // The AuthCert claim arrives while Bob has no trusted wall-clock sample.
+    // It must remain usable after the host supplies the clock; otherwise the
+    // one-shot claim handler permanently loses a valid authority grant.
+    let cert = signed_cert(&authority, alice.public_key(), scope, mmp_types::authcert::CAP_ANNOUNCE, 10, 1_000);
+    alice.publish_claim(mmp_types::claim::field::AUTHCERT, 1, cert.encode());
+    introduce(&mut alice, &mut bob);
+    contact(&mut alice, &mut bob, 21, 21_000);
+    assert!(bob.core.claims.get(&alice.node_id(), mmp_types::claim::field::AUTHCERT).is_some());
+
+    bob.set_wall_clock(0);
+    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"claim became usable", None).unwrap();
+    contact(&mut alice, &mut bob, 22, 22_000);
+
+    let announcement = drain(&mut bob).into_iter().find_map(|event| match event {
+        Event::Announcement { effective_priority, official, text, .. } if text == b"claim became usable" => {
+            Some((effective_priority, official))
+        }
+        _ => None,
+    });
+    assert_eq!(announcement, Some((prio::OPERATIONAL, true)));
 }
 
 #[test]

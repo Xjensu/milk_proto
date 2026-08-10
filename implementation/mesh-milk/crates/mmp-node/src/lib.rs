@@ -932,6 +932,7 @@ impl Node {
     pub fn set_wall_clock(&mut self, unix_s: u32) {
         if self.core.wall_unix_s.is_none_or(|previous| unix_s >= previous) {
             self.core.wall_unix_s = Some(unix_s);
+            self.core.reconsider_authority_claims();
         }
     }
 
@@ -1627,6 +1628,14 @@ impl Node {
                         (engine.session_material(), engine.peer_identity())
                     {
                         let conv_id = conversation_id(&self.core.public, &identity);
+                        // A conversation is shared by every authenticated
+                        // link to the same peer.  Keep its epoch stable while
+                        // another link remains live; advancing it here would
+                        // invalidate traffic still using that contact.  The
+                        // final link teardown performs the single bump.
+                        let another_live_link = self.sessions.iter().any(|(other, other_engine)| {
+                            *other != link && other_engine.peer_identity() == Some(identity)
+                        });
                         let met_before = self.core.established_convs.contains(&conv_id);
                         if !met_before && self.core.established_convs.len() >= MAX_CONVERSATION_STATE {
                             // Multiple links may have been admitted while the
@@ -1641,7 +1650,7 @@ impl Node {
                         } else {
                             self.core.established_convs.insert(conv_id);
                         }
-                        if met_before {
+                        if met_before && !another_live_link {
                             // Epoch rollover is intentionally fail-closed.  A
                             // u16 epoch cannot be incremented at its terminal
                             // value; retaining a conversation whose two
@@ -1916,6 +1925,26 @@ impl NodeCore {
                 self.enqueue_event(Event::CompromiseWarning { owner });
             }
             mmp_core::ClaimMerge::Stale | mmp_core::ClaimMerge::Rejected => {}
+        }
+    }
+
+    /// Re-run authority-pointer claims that were adopted before the host had
+    /// supplied a wall-clock sample.  Claim merge is intentionally independent
+    /// of wall-clock readiness, so dropping these pointers would otherwise
+    /// make a valid certificate unusable until the sender gossiped it again.
+    fn reconsider_authority_claims(&mut self) {
+        let Some(now_unix_s) = self.wall_unix_s else { return };
+        let certs: Vec<AuthCert> = self
+            .claims
+            .iter()
+            .filter(|claim| claim.field == field::AUTHCERT)
+            .filter_map(|claim| {
+                let cert = AuthCert::decode(&claim.body).ok()?;
+                (cert.subject == claim.owner).then_some(cert)
+            })
+            .collect();
+        for cert in certs {
+            let _ = self.authority.consider_cert(&cert, now_unix_s);
         }
     }
 
