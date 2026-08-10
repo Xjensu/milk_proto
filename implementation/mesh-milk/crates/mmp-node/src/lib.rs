@@ -433,6 +433,8 @@ pub enum SendError {
     /// refuse to open a new conversation or use their prekey batch, even if
     /// one is still on file from before the revocation.
     PeerRevoked,
+    /// The local identity has been revoked and cannot publish another claim.
+    OwnerRevoked,
     /// The conversation or group sender-key ratchet cannot advance any
     /// further. No bundle is emitted; the caller must re-establish or
     /// re-key the conversation/group before retrying.
@@ -450,6 +452,11 @@ pub enum ClaimPublishError {
     /// claim field. Unknown fields remain opaque and are never rejected for
     /// an internal format this node does not understand.
     InvalidBody,
+    /// The encoded claim cannot fit in a v1 bundle without truncation.
+    TooLarge,
+    /// The local bundle provider rejected the gossip write before claim state
+    /// was adopted.
+    StoreRejected,
     /// The local identity already has an adopted identity-revocation
     /// tombstone; the tombstone is immutable and blocks every later claim.
     OwnerRevoked,
@@ -685,9 +692,10 @@ impl Node {
             beacon_salt,
         };
         // Identity claims (doc 03 §3.3): exchange key + prekey batch, seq 1.
-        node.publish_claim(field::EXCHANGE_KEY, 1, node.core.exchange.0.to_vec());
+        let exchange = node.core.exchange.0.to_vec();
+        node.core.publish_bootstrap_claim_now(field::EXCHANGE_KEY, 1, exchange);
         let batch = node.core.prekeys.batch(&node.identity).encode();
-        node.publish_claim(field::PREKEY_BATCH, 1, batch);
+        node.core.publish_bootstrap_claim_now(field::PREKEY_BATCH, 1, batch);
         node
     }
 
@@ -1004,7 +1012,11 @@ impl Node {
         }
         self.try_publish_claim(field::NICKNAME, seq, name.as_bytes().to_vec())
             .map(|_| ())
-            .map_err(|_| SendError::TooLarge)
+            .map_err(|error| match error {
+                ClaimPublishError::InvalidBody | ClaimPublishError::TooLarge => SendError::TooLarge,
+                ClaimPublishError::OwnerRevoked => SendError::OwnerRevoked,
+                ClaimPublishError::StoreRejected => SendError::ResourceLimit,
+            })
     }
 
     /// Publish a self-revocation claim (field `0x09`, handbook §4.6) —
@@ -1862,12 +1874,8 @@ impl NodeCore {
         }
     }
 
-    /// Sign, learn, and gossip a claim — [`Node::publish_claim`] delegates
-    /// here, and it's also used directly from inside the `SessionHost` seam
-    /// (`on_friend_ack`, handbook §4.5), which only has `&mut NodeCore`, not
-    /// the outer `Node`.
-    fn publish_claim_now(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
-        self.try_publish_claim_now(field_id, seq, body).unwrap_or_default()
+    fn publish_bootstrap_claim_now(&mut self, field_id: u8, seq: u32, body: Vec<u8>) {
+        let _ = self.try_publish_claim_now_with_policy(field_id, seq, body, true);
     }
 
     fn try_publish_claim_now(
@@ -1875,6 +1883,16 @@ impl NodeCore {
         field_id: u8,
         seq: u32,
         body: Vec<u8>,
+    ) -> Result<Vec<u8>, ClaimPublishError> {
+        self.try_publish_claim_now_with_policy(field_id, seq, body, false)
+    }
+
+    fn try_publish_claim_now_with_policy(
+        &mut self,
+        field_id: u8,
+        seq: u32,
+        body: Vec<u8>,
+        retain_bootstrap_on_store_rejection: bool,
     ) -> Result<Vec<u8>, ClaimPublishError> {
         let mut claim = Claim { owner: self.public, field: field_id, seq, body, sig: Sig64::ZERO };
         // Keep the local publication path subject to the same field-specific
@@ -1888,15 +1906,40 @@ impl NodeCore {
                 Err(ClaimPublishError::InvalidBody)
             };
         }
+        let claim_wire_len = 32usize
+            .checked_add(1)
+            .and_then(|len| len.checked_add(4))
+            .and_then(|len| len.checked_add(2))
+            .and_then(|len| len.checked_add(claim.body.len()))
+            .and_then(|len| len.checked_add(64))
+            .ok_or(ClaimPublishError::TooLarge)?;
+        if claim.body.len() > u16::MAX as usize || claim_wire_len > MAX_BUNDLE {
+            return Err(ClaimPublishError::TooLarge);
+        }
         claim.sig = self.identity.sign(SigDomain::Claim, &claim.signed_object());
         let encoded = claim.encode();
-        self.learn_claim(claim.clone(), true);
-        self.gossip_claim(&claim);
-        Ok(encoded)
+        match self.gossip_claim(&claim) {
+            Ok(()) => {
+                self.learn_claim(claim, true);
+                Ok(encoded)
+            }
+            Err(error)
+                if retain_bootstrap_on_store_rejection
+                    && matches!(error, ClaimPublishError::StoreRejected) =>
+            {
+                // Fixed identity bootstrap claims are required for local
+                // discovery even when a provider cannot persist them. Keep
+                // them in the in-memory claim view, but do not mark a failed
+                // gossip write as seen or durable.
+                self.learn_claim(claim, true);
+                Err(error)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Wrap a claim in a class-3 bundle so it gossips through sync (D0).
-    fn gossip_claim(&mut self, claim: &Claim) {
+    fn gossip_claim(&mut self, claim: &Claim) -> Result<(), ClaimPublishError> {
         let mut bundle = Bundle {
             class: class::CLAIM,
             flags: 0,
@@ -1909,7 +1952,10 @@ impl NodeCore {
             signature: Sig64::ZERO,
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        self.store_own(bundle, 8);
+        if bundle_wire_len(&bundle) > MAX_BUNDLE {
+            return Err(ClaimPublishError::TooLarge);
+        }
+        self.try_store_own(bundle, 8).map(|_| ()).map_err(|_| ClaimPublishError::StoreRejected)
     }
 
     /// Store one of our own bundles (already signed) with a spray budget.
@@ -3730,13 +3776,18 @@ impl SessionHost for NodeCore {
         if mmp_crypto::verify(SigDomain::Friend, &patron_key, &preimage, &ack.countersig).is_err() {
             return; // invalid countersig → ignore (handbook §4.5 step 4)
         }
+        let seq = self.next_friendship_seq;
+        let body = Friendship { friend: patron_key, since, countersig: ack.countersig }.encode();
+        // Persist the claim before consuming the offer.  A bounded or
+        // failing provider must leave the handshake retryable rather than
+        // acknowledging friendship in memory without a durable claim.
+        if self.try_publish_claim_now(field::FRIENDSHIP, seq, body).is_err() {
+            return;
+        }
         self.patrons.insert(*peer, since);
         self.pending_offers.remove(peer);
         self.offered_since.remove(peer);
-        let seq = self.next_friendship_seq;
-        self.next_friendship_seq += 1;
-        let body = Friendship { friend: patron_key, since, countersig: ack.countersig }.encode();
-        self.publish_claim_now(field::FRIENDSHIP, seq, body);
+        self.next_friendship_seq = self.next_friendship_seq.saturating_add(1);
         self.enqueue_event(Event::FriendshipEstablished { peer: *peer, since });
     }
 

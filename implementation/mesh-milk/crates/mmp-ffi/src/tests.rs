@@ -245,6 +245,20 @@ fn bounded_store_constructor_surfaces_persist_failure() {
 }
 
 #[test]
+fn bounded_store_rejects_nickname_as_internal_without_claim_side_effects() {
+    let dir = TempDir::new("bounded-claim");
+    let node = MmpNode::new_with_store_limit(vec![45u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)
+        .expect("valid bounded store constructor arguments");
+    node.tick(1);
+    let claims_before = node.own_claims();
+    let store_before = node.store_len();
+
+    assert_eq!(node.set_nickname("capacity-failure".to_string(), 1), Err(FfiError::Internal));
+    assert_eq!(node.own_claims(), claims_before);
+    assert_eq!(node.store_len(), store_before);
+}
+
+#[test]
 fn transport_close_feedback_is_visible_at_the_ffi_boundary() {
     let node = MmpNode::new(vec![9u8; 32], FfiTier::Leaf, None).expect("valid seed");
     node.link_up(1, true);
@@ -861,7 +875,7 @@ fn revoked_identity_rejects_nickname_through_ffi_error_surface() {
     assert!(!revocation.is_empty());
     let claims_after_revocation = node.own_claims();
     let store_after_revocation = node.store_len();
-    assert_eq!(node.set_nickname("after-revocation".to_string(), 1), Err(FfiError::BadArg));
+    assert_eq!(node.set_nickname("after-revocation".to_string(), 1), Err(FfiError::Internal));
     assert_eq!(node.own_claims(), claims_after_revocation);
     assert_eq!(node.store_len(), store_after_revocation, "only the revocation gossip is stored");
 }

@@ -101,6 +101,9 @@ fn map_send_error(e: SendError) -> FfiError {
         // surfaced separately and with more detail (successor, if any) than
         // an error variant could carry.
         SendError::PeerRevoked => FfiError::UnknownPeer,
+        // The local identity is revoked; this is a lifecycle state, not a
+        // malformed nickname or other caller-controlled argument.
+        SendError::OwnerRevoked => FfiError::Internal,
         // Ratchet exhaustion is a local lifecycle condition. Keep the FFI
         // error surface deliberately coarse; hosts should re-establish the
         // conversation/group after observing this internal failure.

@@ -49,10 +49,11 @@ New regressions cover:
 ## Explicit non-claims
 
 This is not a fixed-capacity producer transaction and does not close E7-S1.
-The following paths still use legacy infallible `put` and can advance local
-state before a later persistence failure:
+The following paths still use legacy or non-transactional producer behavior
+and require separate staging work:
 
-- constructor claim gossip and ordinary claim publication;
+- constructor bootstrap claims keep a local discovery view when persistence is
+  rejected, while legacy claim-returning wrappers swallow the provider error;
 - receipts and other fire-and-forget auxiliary bundles;
 - prekey/pairwise `send_app` after the sealed fallback;
 - group sender-key messages and distributions; and

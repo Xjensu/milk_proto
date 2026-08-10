@@ -63,6 +63,25 @@ fn nickname_length_is_checked_before_claim_or_gossip_side_effects() {
 }
 
 #[test]
+fn claim_publication_store_rejection_is_side_effect_free() {
+    let mut n = Node::new([245; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    let claims_before = n.own_claims();
+    let seen_before = n.core.seen.encode();
+    let events_before = n.core.events.len();
+
+    assert_eq!(n.try_set_nickname("durable-failure", 1), Err(SendError::ResourceLimit));
+    assert_eq!(n.own_claims(), claims_before);
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert_eq!(n.store_len(), 0);
+    assert_eq!(n.core.events.len(), events_before);
+    assert!(!n
+        .diagnostics()
+        .records()
+        .iter()
+        .any(|record| matches!(record.event, JourneyEvent::Created)));
+}
+
+#[test]
 fn nickname_at_byte_cap_is_signed_and_adopted() {
     let mut n = node(247);
     let name = "é".repeat(NICKNAME_MAX / "é".len());
@@ -124,6 +143,24 @@ fn recognized_claim_publication_rejects_malformed_bodies_before_side_effects() {
 
     // Forward-compatible fields are still accepted as opaque signed claims.
     assert!(n.try_publish_claim(0xf0, 1, vec![0xff; 3]).is_ok());
+}
+
+#[test]
+fn oversized_unknown_claim_is_rejected_before_signing_or_storage() {
+    let mut n = node(244);
+    let claims_before = n.own_claims();
+    let seen_before = n.core.seen.encode();
+    let store_before = n.store_len();
+    let events_before = n.core.events.len();
+
+    assert_eq!(
+        n.try_publish_claim(0xf0, 1, vec![0xff; MAX_BUNDLE]),
+        Err(ClaimPublishError::TooLarge)
+    );
+    assert_eq!(n.own_claims(), claims_before);
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert_eq!(n.store_len(), store_before);
+    assert_eq!(n.core.events.len(), events_before);
 }
 
 #[test]
@@ -2488,6 +2525,32 @@ fn friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt() 
     let state = f.core.friends.get(&b.node_id()).expect("friendship still on file");
     assert!(state.buffered.is_empty(), "unpinned: buffered set empty after purge");
     assert_eq!(state.quota_used, 0, "quota_used refunded after purge");
+}
+
+#[test]
+fn friendship_ack_store_rejection_preserves_pending_offer_state() {
+    let mut dependent = node(2);
+    let mut patron = node(3);
+    introduce(&mut dependent, &mut patron);
+    drain(&mut dependent);
+    drain(&mut patron);
+
+    patron.allow_friendship_from(dependent.public_key());
+    dependent.request_friendship(patron.public_key());
+    let patron_id = patron.node_id();
+
+    // Keep the bootstrap claims and authenticated peer mapping from the
+    // introduction, then reject only the friendship claim's durable write.
+    dependent.core.store = Box::new(CapacityRejectStore);
+    contact(&mut dependent, &mut patron, 1, 10_000);
+
+    assert!(dependent.core.pending_offers.contains(&patron_id));
+    assert!(dependent.core.offered_since.contains_key(&patron_id));
+    assert!(!dependent.core.patrons.contains_key(&patron_id));
+    assert!(!dependent
+        .own_claims()
+        .into_iter()
+        .any(|claim| claim.field == mmp_types::claim::field::FRIENDSHIP));
 }
 
 /// The handbook §4.5 negative acceptance case: under the same quota
