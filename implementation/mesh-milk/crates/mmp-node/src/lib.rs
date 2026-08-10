@@ -121,6 +121,13 @@ const MAX_BLOB_SERVE_PEERS: usize = 256;
 /// control/direct traffic gets a turn.  The cursor below rotates roots across
 /// later contacts without changing the existing BLOB_HAVE wire frame.
 const MAX_BLOB_HAVE_FRAMES_PER_CONTACT: usize = 4;
+/// Limit explicit origin-targeted BLOB_REQ frames emitted in one contact.
+/// One request covers at most one RS stripe, so control/direct traffic keeps
+/// its reserved share of the bounded session outbox.
+const MAX_BLOB_REQ_FRAMES_PER_CONTACT: usize = 4;
+/// Keep every outbound request bitmap to one RS stripe (40 symbols = 5 B),
+/// even when a local fetch spans many stripes.
+const MAX_BLOB_REQ_BITMAP_BYTES: usize = RS_TOTAL_N / 8;
 /// Local persistence cap for explicit user blocklist entries. This is a host
 /// policy bound, not a wire limit.
 const BLOCKLIST_SNAPSHOT_VERSION: u8 = 1;
@@ -616,6 +623,9 @@ struct NodeCore {
     /// cursor for the capped BLOB_HAVE bootstrap burst; it is reset when a new
     /// authenticated contact is accepted and never appears on the wire.
     blob_have_cursor: HashMap<NodeId, Id16>,
+    /// Last root targeted by an origin-directed BLOB_REQ burst. Local fairness
+    /// state only; it is reset with the contact and never appears on the wire.
+    blob_req_cursor: HashMap<NodeId, Id16>,
 }
 
 /// The driveable node: session lifecycle, claims gossip, direct messaging,
@@ -691,6 +701,7 @@ impl Node {
             offer_order: VecDeque::new(),
             blob_served: HashMap::new(),
             blob_have_cursor: HashMap::new(),
+            blob_req_cursor: HashMap::new(),
         };
         // Handbook §4.4 D2: rebuild the holder-side symbol index from
         // whatever the store already holds (a restored `SnapshotStore`, or —
@@ -3531,7 +3542,8 @@ impl NodeCore {
     /// verified offer, absorb whatever symbols are already in our own
     /// `blob_index` (already-verified — reproven from the store, cheap at
     /// MVP scale), and try any stripe that's already complete. Repair beyond
-    /// that rides `blob_frames`' BLOB_HAVE on the next session (decision D4).
+    /// that rides bounded BLOB_HAVE advertisements and origin-targeted
+    /// BLOB_REQ frames from `blob_frames` on the next session (decision D4).
     fn fetch_file(&mut self, root: &Id16, dest: &Path) -> Result<(), FetchError> {
         if let Some(a) = self.assemblies.get(root) {
             if matches!(a.state, BlobState::Wanted | BlobState::Fetching) {
@@ -4209,6 +4221,7 @@ impl SessionHost for NodeCore {
         // contact with this peer.
         self.blob_served.remove(node);
         self.blob_have_cursor.remove(node);
+        self.blob_req_cursor.remove(node);
         true
     }
 
@@ -4307,14 +4320,15 @@ impl SessionHost for NodeCore {
         self.blob_serve_candidates(peer, root, block, bitmap, true)
     }
 
-    /// MVP requesters emit only BLOB_HAVE for active (`Wanted`/`Fetching`)
-    /// assemblies — the requester's in-RAM `have` vec is byte-identical to the
-    /// wire bitmap form (decision D4), so this is a straight copy.  At most
+    /// Requesters emit bounded BLOB_HAVE advertisements and, when the peer is
+    /// the manifest's verified sharer, bounded BLOB_REQ frames for active
+    /// (`Wanted`/`Fetching`) assemblies.
+    /// The requester's in-RAM `have` vec is byte-identical to the wire bitmap
+    /// form (decision D4), so BLOB_HAVE remains a straight copy. At most
     /// [`MAX_BLOB_HAVE_FRAMES_PER_CONTACT`] roots are advertised per contact;
-    /// a local cursor rotates the bounded burst across later contacts.  This
-    /// is a scheduling bound only: BLOB_REQ remains receive-only in the MVP
-    /// (decision D4 residual), and no wire field or origin-targeting claim is
-    /// inferred.
+    /// a local cursor rotates the bounded burst across later contacts.
+    /// Requests reuse the existing doc-16 wire object; this is local scheduling
+    /// policy, not a new wire field or RBSR partition.
     fn blob_frames(&mut self, peer: &NodeId) -> Vec<Frame> {
         let mut roots: Vec<Id16> = self
             .assemblies
@@ -4340,7 +4354,7 @@ impl SessionHost for NodeCore {
             }
         }
 
-        selected
+        let mut out: Vec<Frame> = selected
             .into_iter()
             .filter_map(|root| {
                 self.assemblies.get(&root).map(|a| Frame::BlobHave {
@@ -4349,7 +4363,55 @@ impl SessionHost for NodeCore {
                     bitmap: a.have.clone(),
                 })
             })
-            .collect()
+            .collect();
+
+        let mut requests: Vec<(Id16, u16, Vec<u8>)> = self
+            .assemblies
+            .values()
+            .filter(|a| {
+                matches!(a.state, BlobState::Wanted | BlobState::Fetching)
+                    && node_id_of(&a.sharer) == *peer
+            })
+            .filter_map(|a| {
+                (0..a.stripes).find_map(|stripe| {
+                    if a.stripe_done_bit(stripe) {
+                        return None;
+                    }
+                    let mut bitmap = vec![0u8; MAX_BLOB_REQ_BITMAP_BYTES];
+                    for symbol in 0..RS_TOTAL_N {
+                        let sym_no = stripe
+                            .saturating_mul(RS_TOTAL_N as u16)
+                            .saturating_add(symbol as u16);
+                        if !a.have_bit(sym_no) {
+                            bitmap[symbol / 8] |= 1 << (symbol % 8);
+                        }
+                    }
+                    bitmap.iter().any(|byte| *byte != 0).then_some((stripe, bitmap))
+                })
+                .map(|(stripe, bitmap)| (a.root, stripe, bitmap))
+            })
+            .collect();
+        requests.sort_unstable_by_key(|(root, _, _)| *root);
+        let request_start = self
+            .blob_req_cursor
+            .get(peer)
+            .and_then(|last| requests.iter().position(|(root, _, _)| root > last))
+            .unwrap_or(0);
+        let request_count = requests.len().min(MAX_BLOB_REQ_FRAMES_PER_CONTACT);
+        let selected_requests: Vec<_> = (0..request_count)
+            .map(|offset| requests[(request_start + offset) % requests.len()].clone())
+            .collect();
+        if let Some((last, _, _)) = selected_requests.last() {
+            if self.blob_req_cursor.contains_key(peer) || self.blob_req_cursor.len() < MAX_BLOB_SERVE_PEERS {
+                self.blob_req_cursor.insert(*peer, *last);
+            }
+        }
+        out.extend(selected_requests.into_iter().map(|(root, block, bitmap)| Frame::BlobReq {
+            root,
+            block,
+            bitmap,
+        }));
+        out
     }
 }
 

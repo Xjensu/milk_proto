@@ -865,6 +865,146 @@ fn blob_have_advertisements_are_bounded_and_rotated_per_peer() {
     assert_eq!(roots(n.core.blob_frames(&peer)), first);
 }
 
+#[test]
+fn blob_requests_are_origin_targeted_and_bounded() {
+    let mut n = node(237);
+    let sharer = Key32([0x42; 32]);
+    let peer = node_id_of(&sharer);
+    let other = node_id_of(&Key32([0x43; 32]));
+
+    for value in 0..(super::MAX_BLOB_REQ_FRAMES_PER_CONTACT * 2) {
+        let root = Id16([value as u8; 16]);
+        n.core.assemblies.insert(
+            root,
+            crate::blob::BlobAssembly::new(
+                root,
+                0,
+                [value as u8; 32],
+                sharer,
+                std::path::PathBuf::from("unused"),
+                0,
+            ),
+        );
+    }
+    // A request for a different sharer must not be sent to this peer.
+    let other_root = Id16([0xee; 16]);
+    n.core.assemblies.insert(
+        other_root,
+        crate::blob::BlobAssembly::new(
+            other_root,
+            0,
+            [0xee; 32],
+            Key32([0x43; 32]),
+            std::path::PathBuf::from("unused"),
+            0,
+        ),
+    );
+    // A terminal assembly must never generate a request.
+    let abandoned_root = Id16([0xef; 16]);
+    let mut abandoned = crate::blob::BlobAssembly::new(
+        abandoned_root,
+        0,
+        [0xef; 32],
+        sharer,
+        std::path::PathBuf::from("unused"),
+        0,
+    );
+    abandoned.state = crate::BlobState::Abandoned;
+    n.core.assemblies.insert(abandoned_root, abandoned);
+
+    let frames = n.core.blob_frames(&peer);
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|frame| matches!(frame, mmp_types::frame::Frame::BlobHave { .. }))
+            .count(),
+        super::MAX_BLOB_HAVE_FRAMES_PER_CONTACT,
+        "origin-targeted requests must not change the existing HAVE burst"
+    );
+    let requests = frames
+        .into_iter()
+        .filter_map(|frame| match frame {
+            mmp_types::frame::Frame::BlobReq { root, block, bitmap } => Some((root, block, bitmap)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), super::MAX_BLOB_REQ_FRAMES_PER_CONTACT);
+    assert!(requests.iter().all(|(root, block, bitmap)| {
+        *block == 0
+            && bitmap.len() == super::MAX_BLOB_REQ_BITMAP_BYTES
+            && n.core.assemblies[root].sharer == sharer
+            && bitmap.iter().any(|byte| *byte != 0)
+    }));
+    assert!(!requests.iter().any(|(root, _, _)| *root == other_root));
+    assert!(!requests.iter().any(|(root, _, _)| *root == abandoned_root));
+
+    // Keep the unused value explicit: the target identity is derived from the
+    // manifest sharer, not from an arbitrary nearby node.
+    assert_ne!(peer, other);
+}
+
+#[test]
+fn blob_request_bitmap_contains_missing_symbols_only() {
+    let mut n = node(238);
+    let sharer = Key32([0x52; 32]);
+    let peer = node_id_of(&sharer);
+
+    let partial_root = Id16([0xa1; 16]);
+    let mut partial = crate::blob::BlobAssembly::new(
+        partial_root,
+        0,
+        [0xa1; 32],
+        sharer,
+        std::path::PathBuf::from("partial"),
+        0,
+    );
+    partial.state = crate::BlobState::Fetching;
+    partial.set_have_bit(0);
+    partial.set_have_bit(2);
+    n.core.assemblies.insert(partial_root, partial);
+
+    let complete_root = Id16([0xa2; 16]);
+    let mut complete = crate::blob::BlobAssembly::new(
+        complete_root,
+        0,
+        [0xa2; 32],
+        sharer,
+        std::path::PathBuf::from("complete"),
+        0,
+    );
+    complete.state = crate::BlobState::Fetching;
+    for symbol in 0..RS_TOTAL_N as u16 {
+        complete.set_have_bit(symbol);
+    }
+    n.core.assemblies.insert(complete_root, complete);
+
+    let request = n
+        .core
+        .blob_frames(&peer)
+        .into_iter()
+        .find_map(|frame| match frame {
+            mmp_types::frame::Frame::BlobReq { root, block, bitmap } => Some((root, block, bitmap)),
+            _ => None,
+        })
+        .expect("partial assembly must request its missing symbols");
+    assert_eq!(request.0, partial_root);
+    assert_eq!(request.1, 0);
+    assert_eq!(request.2.len(), super::MAX_BLOB_REQ_BITMAP_BYTES);
+    assert_eq!(request.2[0] & 0b0000_0101, 0, "have bits must not be requested");
+    assert_ne!(request.2[0] & 0b0000_0010, 0, "a missing bit must be requested");
+    assert!(
+        n.core
+            .blob_frames(&peer)
+            .into_iter()
+            .filter_map(|frame| match frame {
+                mmp_types::frame::Frame::BlobReq { root, .. } => Some(root),
+                _ => None,
+            })
+            .all(|root| root != complete_root),
+        "a complete stripe must not produce a request"
+    );
+}
+
 /// The BLOB bitmap is stripe-major: `block` selects the first stripe and the
 /// bitmap's bit zero selects the first symbol within that stripe.  A request
 /// for block 1 must therefore resolve to global symbol number `RS_TOTAL_N`,

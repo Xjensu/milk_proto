@@ -109,6 +109,18 @@ without adopting it, preserving the carried-copy `budget >= 1` invariant while
 keeping the ordered transfer session alive; `mmp-core` passes 97/97 including
 the new regression.
 
+**Addendum, 2026-08-10 (blob requester follow-up):** `mmp-node` now emits a
+bounded origin-targeted `BLOB_REQ` burst for explicit `fetch_file` assemblies.
+Requests are limited to one five-byte Reed–Solomon stripe bitmap per frame,
+skip complete or terminal assemblies, rotate roots per authenticated contact,
+and are sent only to the manifest's verified sharer identity. The existing
+`BLOB_HAVE` advertisement and receive-side serving path remain unchanged; the
+focused requester regressions and the full serial `mmp-node` suite pass
+151/151, with strict package Clippy clean. This is implementation scheduling
+policy over the existing wire objects, not a specification change. Per-domain
+airtime accounting, streaming symbol production, and non-origin partial-cache
+request policy remain open.
+
 ---
 
 ## 1. Where we are (implemented and verified)
@@ -143,11 +155,11 @@ predate the shipped `mmp-node` blob/friendship/revocation work. The current
 implementation has class-4 symbol transfer plus `BLOB_HAVE`/receive-side
 `BLOB_REQ` serving, friend-offer/ack buffering with advisory proxy summaries,
 and generalized field-`0x09` revocation/succession handling. Remaining gaps
-are the deferred origin-targeted `BLOB_REQ` scheduler, offline patron proxy
+are the remaining non-origin partial-cache request policy, offline patron proxy
 reconciliation, and native keystore persistence; see the Phase C/B entries
 and the implementation handoffs for the precise boundaries.
 
-- Blob plane: manifests, Reed–Solomon symbols, `BLOB_HAVE`, and receive-side `BLOB_REQ`/`BLOB_HAVE` serving are integrated in `mmp-node` (see `Node::fetch_file`, `blob_frames`, and `blob_serve_candidates`). The remaining MVP limitation is deliberate: requesters emit `BLOB_HAVE` only; an origin-targeted `BLOB_REQ` scheduler, per-domain airtime accounting, and streaming symbol production remain deferred. See doc 16 (file transfer).
+- Blob plane: manifests, Reed–Solomon symbols, bounded origin-targeted `BLOB_REQ`, `BLOB_HAVE`, and receive-side `BLOB_REQ`/`BLOB_HAVE` serving are integrated in `mmp-node` (see `Node::fetch_file`, `blob_frames`, and `blob_serve_candidates`). The remaining MVP limitations are per-domain airtime accounting, streaming symbol production, and an explicit policy for requesting from non-origin partial caches. See doc 16 (file transfer).
 - Friendship/proxy buffering: `FRIEND_OFFER`/`FRIEND_ACK`, friend-quota pinning, and advisory `PROXY_SUMMARY` hints are implemented in `mmp-node` and exercised by positive/negative tests. The deferred pieces are offline patron reconciliation, signed proxy-summary validity horizons, ephem-ID resolution, and a real poll schedule; see doc 06 §7.
 - Key revocation/succession claims: the generalized field `0x09` claim is implemented in `mmp-types`, `mmp-core`, `mmp-node`, and the FFI surface, including verified successor countersignatures and session/send refusal after revocation. The remaining work is native persistence/keystore integration, not the wire claim itself.
 - Full state persistence beyond bundles: `SnapshotStore` persists the bundle table, verified claims, group blobs, `SeenIndex`, and `ReceiptFilter`; the CLI and FFI hosts restore and stage those records across restarts. Sender-key secrets/distributions and session-ratchet state remain non-persistent by design. Ratchet persistence still needs the explicit platform-keystore/PCS design described in Phase B; it must not be inferred from the already-shipped non-secret snapshot records.
@@ -205,7 +217,7 @@ No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodolog
 **Exit gate:** a 5-device field test delivers messages with receipts over a 24-hour window within the battery budget (<5%/day background, doc 13 §1). This is a measured field result, not a simulated one — real devices, real Doze/App Refresh behavior.
 
 ### Phase C — "Protocol completeness"
-- Blob plane follow-up: class-4 symbol bundles and `BLOB_HAVE`/receive-side `BLOB_REQ` serving are shipped; make origin-targeted `BLOB_REQ` scheduling, per-domain airtime accounting, and streaming symbol production load-bearing instead of advisory. **[M]**
+- Blob plane follow-up: class-4 symbol bundles, bounded origin-targeted `BLOB_REQ` scheduling, and `BLOB_HAVE`/receive-side `BLOB_REQ` serving are shipped; make per-domain airtime accounting and streaming symbol production load-bearing, and decide the policy for requesting from non-origin partial caches. **[M]**
 - ~~Friendship/proxy: implement the buffering agent~~ **DONE** (2026-07-17, `docs/AGILE_BACKLOG.md` E5-S2) — the architectural blocker this note flagged (does a session retain the peer's verified identity `Key32` after ID_PROOF?) went through the recommended Fable-class design pass first, same as E5-S5: resolved as "yes, via a host-side `NodeCore::known_identities` map, not the engine," with `SessionHost` gaining four friendship methods behind default no-op impls so nothing else (incl. `mmp-sim`) had to change. Buffer/pin-up-to-FRIEND_QUOTA/PROXY_SUMMARY/receipts-stay-end-to-end all implemented and tested (positive + negative 3-node scenarios, TTL expiry, FFI surface) — full writeup in `docs/IMPLEMENTATION_HANDBOOK.md` §4.5. **Still open, deferred per doc 06 §7:** the patron answering reconciliation on the dependent's behalf while it's still offline (this MVP requires the dependent to actually connect), signed proxy summaries with a validity horizon, ephem-id resolution, and a real `PROXY_SUMMARY` poll schedule. **[M → remaining pieces M, tracked as v-next]**
 - ~~Authority announcements: AuthCert + class 5 + priority clamp~~ **CORE MECHANISM + NON-SECRET PERSISTENCE DONE** (2026-07-16/2026-08-08, `docs/AGILE_BACKLOG.md` E5-S5) — verification, sticky revocation-list handling (doc 18 §6, the AuthCert-scoped kind), the receiver-local priority clamp, the per-authority token bucket, validated `AuthorityStore` snapshots, and a dedicated validated FFI mint helper are implemented and tested end-to-end (`mmp-types::authcert`, `mmp-core::authority`, `mmp-node::authority_bucket`, FFI/CLI persistence). Still open: RBSR priority-class partitioning itself (the item below is a prerequisite this story deliberately didn't block on), D3 admission weighting for subscribed scopes, gossiped-root trust, and platform-keystore-backed ratchet persistence. The mint helper signs only with the local identity and never auto-pins or adopts the certificate. **[L → remaining pieces M]**
 - General identity revocation/succession claims (field `0x09`, doc 18 §6 generalized) are implemented and tested end-to-end, including verified successor countersignatures and refusal to initiate/send to revoked peers. Native keystore persistence and user-mediated successor trust remain platform/product work. **[DONE; remaining pieces M]**
