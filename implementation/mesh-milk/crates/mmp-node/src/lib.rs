@@ -1928,7 +1928,7 @@ impl NodeCore {
             effective_priority: bundle.priority,
             size: bytes.len() as u32,
             stored_at: self.now,
-            expires_at: self.now + bundle.lifetime_ms,
+            expires_at: self.now.saturating_add(bundle.lifetime_ms),
             budget,
             own_origin: true,
             slot: SlotState::Stored,

@@ -26,6 +26,24 @@ fn node(seed: u8) -> Node {
 }
 
 #[test]
+fn own_bundle_deadline_saturates_at_clock_max() {
+    let mut n = node(250);
+    n.tick(u64::MAX);
+
+    n.try_set_nickname("max-clock", 1).expect("claim publication remains valid");
+
+    let claim_meta = n
+        .core
+        .store
+        .all_meta()
+        .into_iter()
+        .find(|meta| meta.class == class::CLAIM)
+        .expect("claim bundle is stored");
+    assert_eq!(claim_meta.stored_at, u64::MAX);
+    assert_eq!(claim_meta.expires_at, u64::MAX);
+}
+
+#[test]
 fn nickname_length_is_checked_before_claim_or_gossip_side_effects() {
     let mut n = node(246);
     let before_claims = n.own_claims();

@@ -74,8 +74,10 @@ impl AuthorityBuckets {
         // Refill: rate/h (admissions) → milli-admissions per ms, same formula
         // as OriginBuckets' bytes/h → milli-bytes (mmp-router/src/quota.rs).
         let elapsed = now_ms.saturating_sub(bucket.last_refill);
-        bucket.level_milli =
-            (bucket.level_milli + elapsed * u64::from(bucket.rate_per_h) / 3600).min(capacity);
+        let refill = elapsed
+            .saturating_mul(u64::from(bucket.rate_per_h))
+            / 3600;
+        bucket.level_milli = bucket.level_milli.saturating_add(refill).min(capacity);
         bucket.last_refill = now_ms;
         if bucket.level_milli >= 1000 {
             bucket.level_milli -= 1000;
@@ -145,5 +147,15 @@ mod tests {
         assert_eq!(b.len(), 1);
         b.compact(100, 100);
         assert!(b.is_empty());
+    }
+
+    #[test]
+    fn huge_clock_jump_saturates_refill_without_overflow() {
+        let mut b = AuthorityBuckets::new();
+        let subject = Key32([8; 32]);
+
+        assert!(b.admit(&subject, 1, 0));
+        assert!(b.admit(&subject, 1, u64::MAX));
+        assert!(!b.admit(&subject, 1, u64::MAX));
     }
 }
