@@ -85,6 +85,42 @@ def _infer(paths: list[str]) -> tuple[set[str], bool, bool, bool]:
     return packages, workspace_change, python_change, fuzz_change
 
 
+def _rust_files_for_scope(paths: list[str], packages: set[str]) -> list[str]:
+    """Return changed Rust files under the selected workspace crates.
+
+    Git reports repository-relative paths.  Rustfmt runs from ``WORKSPACE``,
+    so the returned paths intentionally use the workspace-relative
+    ``crates/<package>/...`` form rather than absolute paths.
+    """
+
+    selected: set[str] = set()
+    for raw_path in paths:
+        path = Path(raw_path)
+        parts = path.parts
+        if (
+            len(parts) < 5
+            or parts[:3] != ("implementation", "mesh-milk", "crates")
+            or parts[3] not in packages
+            or path.suffix != ".rs"
+        ):
+            continue
+        selected.add(Path(*parts[2:]).as_posix())
+    return sorted(selected)
+
+
+def _format_command(
+    packages: set[str], changed_paths: list[str], *, all_mode: bool
+) -> list[str] | None:
+    """Build the formatter command for the selected fast-check scope."""
+
+    if all_mode:
+        return ["cargo", "fmt", "--all", "--", "--check"]
+    rust_files = _rust_files_for_scope(changed_paths, packages)
+    if not rust_files:
+        return None
+    return ["rustfmt", "--check", "--edition", "2021", *rust_files]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--package", action="append", dest="packages", default=[])
@@ -92,7 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="deliberately run the full Rust workspace tier")
     args = parser.parse_args(argv)
 
-    inferred, workspace_change, python_change, fuzz_change = _infer(_changed_paths())
+    changed_paths = _changed_paths()
+    inferred, workspace_change, python_change, fuzz_change = _infer(changed_paths)
     # Explicit package selection is the escape hatch for a deliberately small
     # local loop; automatic mode checks every changed package instead.
     packages = set(args.packages) if args.packages else inferred
@@ -123,7 +160,8 @@ def main(argv: list[str] | None = None) -> int:
 
     rust_required = bool(packages) or args.all
     if rust_required:
-        format_failed = bool(_run(["cargo", "fmt", "--all", "--", "--check"], cwd=WORKSPACE))
+        format_command = _format_command(packages, changed_paths, all_mode=args.all)
+        format_failed = bool(format_command and _run(format_command, cwd=WORKSPACE))
         if args.all:
             test_command = [
                 "cargo",

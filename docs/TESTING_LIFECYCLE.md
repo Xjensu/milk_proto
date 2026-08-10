@@ -33,10 +33,14 @@ python scripts/fast_check.py --package mmp-crypto --package mmp-types
 python scripts/fast_check.py --python
 ```
 
-For a Rust scope, the helper runs `cargo fmt --check`, package-scoped all-target
-tests with serial test threads, and warnings-as-errors Clippy. Cargo builds the
-selected package's dependencies automatically. If the root manifest, lockfile,
-or toolchain changes, the helper refuses to guess and requires an explicit
+For a Rust scope, the helper runs rustfmt only on changed `.rs` files inside the
+selected package(s), then package-scoped all-target tests with serial test
+threads and warnings-as-errors Clippy. This avoids unrelated pre-existing
+formatting drift elsewhere in the workspace; if no Rust file changed in the
+selected scope, the formatting step is skipped. `--all` deliberately retains
+the full-workspace `cargo fmt --all -- --check` gate. Cargo builds the selected
+package's dependencies automatically. If the root manifest, lockfile, or
+toolchain changes, the helper refuses to guess and requires an explicit
 `--package` or `--all`.
 
 The 10–30 second target is a budget for small changed crates and already-built
@@ -46,12 +50,11 @@ that larger scope is an explicitly measured exception rather than a reason to
 remove lifecycle or security coverage. The normal CI workspace command remains
 serial for reproducibility.
 
-The repository currently has pre-existing rustfmt drift in several tracked Rust
-files; until that baseline is repaired or a project formatter version is
-pinned, the formatting sub-step reports failure. The helper still runs the
-focused tests and Clippy so their results remain visible. This is reported as
-baseline debt, not treated as permission to reformat unrelated files in a
-protocol change.
+The repository still has pre-existing rustfmt drift in several tracked Rust
+files. Package-scoped checks no longer report that unrelated drift; the `--all`
+gate continues to expose it until the baseline is repaired or a project
+formatter version is pinned. This is reported as baseline debt, not treated as
+permission to reformat unrelated files in a protocol change.
 
 For a script-only edit, `--python` runs the Python gate. Fuzz recipe changes
 run the deterministic seed check; the sanitizer campaign is never hidden in a
