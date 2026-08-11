@@ -38,7 +38,9 @@ use zeroize::Zeroizing;
 use mmp_core::authority::{effective_class5_priority, AuthorityStore, CertReject};
 use mmp_core::bloom::{Bloom, INTERNAL_SALT};
 use mmp_core::ingest::{ingest, Disposition};
-use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StoreReserveError};
+use mmp_core::store::{
+    BundleMeta, BundleStore, SlotState, StoreBatchEntry, StorePutError, StoreReserveError,
+};
 use mmp_core::{
     ClaimStore, IdSource, ReceiptFilter, SeenIndex, SessionEngine, SessionEvent, SessionHost,
 };
@@ -196,6 +198,16 @@ struct PreparedAppCandidate {
     bundle: Bundle,
     state: PreparedAppState,
     rng: StdRng,
+}
+
+/// One locally-minted file symbol staged for an aggregate provider commit.
+/// The encoded bytes and metadata live together until the provider reports a
+/// successful commit, so no local holder index can get ahead of durable state.
+struct PreparedFileSymbol {
+    bundle: Bundle,
+    bytes: Vec<u8>,
+    location: Option<(Id16, u16)>,
+    meta: BundleMeta,
 }
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
@@ -2424,17 +2436,15 @@ impl NodeCore {
 
     // All own-origin producers use the fallible provider seam below.
 
-    /// Store an own-origin bundle through the bounded write seam.
-    ///
-    /// Producers use this helper only after constructing provider-local
-    /// candidate state; live conversation, ratchet, and bookkeeping state is
-    /// committed after the write succeeds.
-    fn try_store_own(&mut self, bundle: Bundle, budget: u8) -> Result<Id16, SendError> {
-        let bytes = bundle.encode();
-        let id = bundle.id();
+    fn own_bundle_meta(
+        &self,
+        bundle: &Bundle,
+        budget: u8,
+        bytes: &[u8],
+    ) -> Result<BundleMeta, SendError> {
         let size = u32::try_from(bytes.len()).map_err(|_| SendError::ResourceLimit)?;
-        let meta = BundleMeta {
-            id,
+        Ok(BundleMeta {
+            id: bundle.id(),
             class: bundle.class,
             origin: self.node_id,
             dest: bundle.dest,
@@ -2446,7 +2456,18 @@ impl NodeCore {
             budget,
             own_origin: true,
             slot: SlotState::Stored,
-        };
+        })
+    }
+
+    /// Store an own-origin bundle through the bounded write seam.
+    ///
+    /// Producers use this helper only after constructing provider-local
+    /// candidate state; live conversation, ratchet, and bookkeeping state is
+    /// committed after the write succeeds.
+    fn try_store_own(&mut self, bundle: Bundle, budget: u8) -> Result<Id16, SendError> {
+        let bytes = bundle.encode();
+        let meta = self.own_bundle_meta(&bundle, budget, &bytes)?;
+        let id = meta.id;
         match self.store.try_reserve(meta) {
             Ok(reservation) => {
                 let commit = self.store.commit_reserved(&reservation, meta, &bytes);
@@ -3015,11 +3036,9 @@ impl NodeCore {
     /// Persist the candidate bundle before applying its conversation-local
     /// state. A provider rejection therefore cannot consume a ratchet index,
     /// create a conversation, or publish a pending first-contact marker.
-    fn commit_app_candidate(&mut self, candidate: PreparedAppCandidate) -> Result<Id16, SendError> {
-        let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.try_store_own(candidate.bundle, budget)?;
-        self.rng = candidate.rng;
-        match candidate.state {
+    fn apply_app_candidate(&mut self, state: PreparedAppState, rng: StdRng, id: Id16) -> Id16 {
+        self.rng = rng;
+        match state {
             PreparedAppState::New { mut conv } => {
                 conv.dag.insert(id, &[]);
                 let conv_id = conv.id;
@@ -3036,7 +3055,14 @@ impl NodeCore {
                 }
             }
         }
-        Ok(id)
+        id
+    }
+
+    fn commit_app_candidate(&mut self, candidate: PreparedAppCandidate) -> Result<Id16, SendError> {
+        let budget = origin_budget(self.utility.n_hat(self.now));
+        let PreparedAppCandidate { bundle, state, rng } = candidate;
+        let id = self.try_store_own(bundle, budget)?;
+        Ok(self.apply_app_candidate(state, rng, id))
     }
 
     fn send_own_dist(&mut self, gid: &Id16, peer: &NodeId) -> Result<(), SendError> {
@@ -3762,7 +3788,11 @@ impl NodeCore {
         let manifest_payload = manifest.encode();
         let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest_payload)?;
 
-        if !already_complete {
+        let message_id = if !already_complete {
+            let budget = origin_budget(self.utility.n_hat(self.now));
+            let manifest_bytes = manifest_candidate.bundle.encode();
+            let manifest_meta = self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
+            let mut symbol_candidates: Vec<PreparedFileSymbol> = Vec::with_capacity(total_symbols);
             for (sym_no, sym) in all_symbols.iter().enumerate() {
                 let block = (sym_no / RS_TOTAL_N) as u16;
                 let sym_in_stripe = (sym_no % RS_TOTAL_N) as u16;
@@ -3787,19 +3817,71 @@ impl NodeCore {
                 };
                 bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
                 debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
-                let budget = origin_budget(self.utility.n_hat(self.now));
                 let location = Self::symbol_location(&bundle);
-                let id = self.try_store_own(bundle, budget)?;
-                if let Some((root, sym_no)) = location {
-                    self.record_symbol(root, sym_no, id);
+                let bytes = bundle.encode();
+                let meta = self.own_bundle_meta(&bundle, budget, &bytes)?;
+                symbol_candidates.push(PreparedFileSymbol { bundle, bytes, location, meta });
+            }
+
+            let mut metas: Vec<BundleMeta> = symbol_candidates.iter().map(|candidate| candidate.meta).collect();
+            metas.push(manifest_meta);
+            match self.store.try_reserve_batch_atomic(&metas) {
+                Ok(batch) => {
+                    let commit = {
+                        let mut entries: Vec<StoreBatchEntry<'_>> = symbol_candidates
+                            .iter()
+                            .map(|candidate| StoreBatchEntry::new(candidate.meta, &candidate.bytes))
+                            .collect();
+                        entries.push(StoreBatchEntry::new(manifest_meta, &manifest_bytes));
+                        self.store.commit_reserved_batch(&batch, &entries)
+                    };
+                    let Ok(_outcomes) = commit else {
+                        // A failed aggregate commit is never retried through
+                        // the legacy seam: the provider may have observed a
+                        // partial failure, so releasing the token is the only
+                        // safe recovery. No local indexes or SeenIndex entries
+                        // are published before the provider reports success.
+                        let _ = self.store.abort_reserved_batch(&batch);
+                        return Err(SendError::ResourceLimit);
+                    };
+                    // A successful provider call is the publication signal.
+                    // The capability contract requires one outcome per entry,
+                    // but it provides no rollback after `Ok`; never turn an
+                    // outcome-shape anomaly into an abort that could orphan
+                    // records already made durable by the provider.
+                    for PreparedFileSymbol { location, meta, .. } in symbol_candidates {
+                        self.seen.insert(&meta.id, meta.class, self.now);
+                        self.diag.log(meta.id, JourneyEvent::Created, self.now);
+                        if let Some((root, sym_no)) = location {
+                            self.record_symbol(root, sym_no, meta.id);
+                        }
+                    }
+                    self.seen.insert(&manifest_meta.id, manifest_meta.class, self.now);
+                    self.diag.log(manifest_meta.id, JourneyEvent::Created, self.now);
+                    self.apply_app_candidate(manifest_candidate.state, manifest_candidate.rng, manifest_meta.id)
+                }
+                Err(StoreReserveError::Unsupported) => {
+                    // Legacy providers explicitly lacking the aggregate
+                    // capability retain the existing accepted-prefix behavior.
+                    // A provider that advertises the capability but rejects it
+                    // must not be weakened into a sequence of single writes.
+                    for PreparedFileSymbol { bundle, location, .. } in symbol_candidates {
+                        let id = self.try_store_own(bundle, budget)?;
+                        if let Some((root, sym_no)) = location {
+                            self.record_symbol(root, sym_no, id);
+                        }
+                    }
+                    self.commit_app_candidate(manifest_candidate)?
+                }
+                Err(StoreReserveError::Invalid | StoreReserveError::Capacity) => {
+                    return Err(SendError::ResourceLimit);
                 }
             }
-        }
-
-        // Commit the previously prepared manifest only after all symbols have
-        // been admitted. A legacy provider may still reject this final write;
-        // accepted symbols intentionally remain indexed for a later retry.
-        let message_id = self.commit_app_candidate(manifest_candidate)?;
+        } else {
+            // A complete local inventory has no symbol writes to aggregate;
+            // retain the ordinary application candidate path for the manifest.
+            self.commit_app_candidate(manifest_candidate)?
+        };
         self.record_sent(message_id, conv_id)?;
         self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
         Ok(FileSend { message_id, root: file_root })

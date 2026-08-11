@@ -3,12 +3,13 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, Read, Seek, SeekFrom};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use mmp_core::store::{
-    BundleMeta, BundleStore, MemStore, SlotState, StoreAbortError, StoreCommitError,
-    StorePutError, StorePutOutcome, StoreReserveError, StoreReservation,
+    BundleMeta, BundleStore, MemStore, SlotState, StoreAbortError, StoreBatchEntry,
+    StoreBatchReservation, StoreCommitError, StorePutError, StorePutOutcome, StoreReserveError,
+    StoreReservation,
 };
 use mmp_core::{IdSource, SessionHost};
 use mmp_crypto::{conversation_id, Identity};
@@ -561,6 +562,307 @@ impl BundleStore for ReservationProbeStore {
     fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
         self.inner.expire(now_ms)
     }
+}
+
+#[derive(Clone, Copy)]
+enum BatchReservationMode {
+    Accept,
+    MalformedSuccess,
+    Reject,
+    CommitFails,
+}
+
+/// Provider fixture for the file-symbol aggregate path. It advertises the
+/// atomic batch capability, then fails at either the reservation or commit
+/// boundary without mutating its inner store. The node must never fall back to
+/// single writes after either failure.
+struct AtomicBatchProbeStore {
+    inner: MemStore,
+    mode: BatchReservationMode,
+    reserve_calls: Arc<AtomicBool>,
+    commit_calls: Arc<AtomicBool>,
+    abort_calls: Arc<AtomicBool>,
+    single_write_calls: Arc<AtomicBool>,
+    batch_symbol_entries: Arc<AtomicUsize>,
+    batch_manifest_entries: Arc<AtomicUsize>,
+}
+
+type BatchProbeHandles = (
+    AtomicBatchProbeStore,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+    Arc<AtomicBool>,
+    Arc<AtomicUsize>,
+    Arc<AtomicUsize>,
+);
+
+impl AtomicBatchProbeStore {
+    fn new(
+        mode: BatchReservationMode,
+    ) -> BatchProbeHandles {
+        let reserve_calls = Arc::new(AtomicBool::new(false));
+        let commit_calls = Arc::new(AtomicBool::new(false));
+        let abort_calls = Arc::new(AtomicBool::new(false));
+        let single_write_calls = Arc::new(AtomicBool::new(false));
+        let batch_symbol_entries = Arc::new(AtomicUsize::new(0));
+        let batch_manifest_entries = Arc::new(AtomicUsize::new(0));
+        (
+            Self {
+                inner: MemStore::new(),
+                mode,
+                reserve_calls: reserve_calls.clone(),
+                commit_calls: commit_calls.clone(),
+                abort_calls: abort_calls.clone(),
+                single_write_calls: single_write_calls.clone(),
+                batch_symbol_entries: batch_symbol_entries.clone(),
+                batch_manifest_entries: batch_manifest_entries.clone(),
+            },
+            reserve_calls,
+            commit_calls,
+            abort_calls,
+            single_write_calls,
+            batch_symbol_entries,
+            batch_manifest_entries,
+        )
+    }
+}
+
+impl BundleStore for AtomicBatchProbeStore {
+    fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
+        self.inner.put(meta, bytes);
+    }
+
+    fn try_put(
+        &mut self,
+        _meta: BundleMeta,
+        _bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
+        self.single_write_calls.store(true, Ordering::Relaxed);
+        Err(StorePutError::Capacity)
+    }
+
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        self.reserve_calls.store(true, Ordering::Relaxed);
+        match self.mode {
+            BatchReservationMode::Accept => self.inner.try_reserve_batch_atomic(metas),
+            BatchReservationMode::MalformedSuccess => self.inner.try_reserve_batch_atomic(metas),
+            BatchReservationMode::Reject => Err(StoreReserveError::Capacity),
+            BatchReservationMode::CommitFails => self.inner.try_reserve_batch_atomic(metas),
+        }
+    }
+
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        self.commit_calls.store(true, Ordering::Relaxed);
+        match self.mode {
+            BatchReservationMode::Accept => {
+                self.batch_symbol_entries.store(
+                    entries.iter().filter(|entry| entry.meta.class == class::SYMBOL).count(),
+                    Ordering::Relaxed,
+                );
+                self.batch_manifest_entries.store(
+                    entries.iter().filter(|entry| entry.meta.class == class::DIRECT).count(),
+                    Ordering::Relaxed,
+                );
+                self.inner.commit_reserved_batch(batch, entries)
+            }
+            BatchReservationMode::MalformedSuccess => {
+                self.inner.commit_reserved_batch(batch, entries)?;
+                Ok(Vec::new())
+            }
+            BatchReservationMode::Reject => Err(StoreCommitError::Invalid),
+            BatchReservationMode::CommitFails => Err(StoreCommitError::Capacity),
+        }
+    }
+
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), StoreAbortError> {
+        self.abort_calls.store(true, Ordering::Relaxed);
+        self.inner.abort_reserved_batch(batch)
+    }
+
+    fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        self.inner.get(id)
+    }
+
+    fn meta(&self, id: &Id16) -> Option<BundleMeta> {
+        self.inner.meta(id)
+    }
+
+    fn update_meta(&mut self, meta: BundleMeta) {
+        self.inner.update_meta(meta);
+    }
+
+    fn remove(&mut self, id: &Id16) -> bool {
+        self.inner.remove(id)
+    }
+
+    fn ids_range(&self, lo: &Id16, hi: &Id16) -> Vec<Id16> {
+        self.inner.ids_range(lo, hi)
+    }
+
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        self.inner.all_meta()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.inner.total_bytes()
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
+        self.inner.expire(now_ms)
+    }
+}
+
+fn assert_atomic_file_failure(mode: BatchReservationMode, expect_commit: bool) {
+    let mut alice = node(if expect_commit { 73 } else { 72 });
+    let mut bob = node(if expect_commit { 74 } else { 75 });
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+    alice.enable_diagnostics();
+
+    let (probe, reserve_calls, commit_calls, abort_calls, single_write_calls, _, _) =
+        AtomicBatchProbeStore::new(mode);
+    alice.core.store = Box::new(probe);
+
+    let store_meta_before = alice.core.store.all_meta();
+    let store_bytes_before = alice.core.store.total_bytes();
+    let store_len_before = alice.core.store.len();
+    let blob_index_before = alice.core.blob_index.clone();
+    let symbol_of_before = alice.core.symbol_of.clone();
+    let seen_before = alice.core.seen.encode();
+    let diagnostics_before = alice.diagnostics().dump();
+    let events_before = alice.core.events.clone();
+    let convs_before: BTreeMap<Id16, (Key32, u16, u32, Vec<Id16>)> = alice
+        .core
+        .convs
+        .iter()
+        .map(|(id, conv)| (*id, (conv.peer, conv.send.epoch, conv.send.next_index, conv.dag.heads())))
+        .collect();
+    let pending_async_before = alice.core.pending_async.clone();
+    let pending_first_before = alice.core.pending_first_contact.clone();
+    let sent_before: BTreeMap<Id16, (Id16, DeliveryState)> = alice
+        .core
+        .sent
+        .iter()
+        .map(|(id, message)| (*id, (message.conv, message.state)))
+        .collect();
+
+    let data = vec![0x4a; 3000];
+    assert_eq!(
+        alice.send_file(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &data),
+        Err(SendError::ResourceLimit)
+    );
+
+    assert!(reserve_calls.load(Ordering::Relaxed), "file send must request atomic batch capacity");
+    assert_eq!(commit_calls.load(Ordering::Relaxed), expect_commit);
+    assert_eq!(abort_calls.load(Ordering::Relaxed), expect_commit);
+    assert!(!single_write_calls.load(Ordering::Relaxed), "atomic failure must not fall back to singles");
+    assert_eq!(alice.core.store.all_meta(), store_meta_before, "failed batch must not publish records");
+    assert_eq!(alice.core.store.total_bytes(), store_bytes_before);
+    assert_eq!(alice.core.store.len(), store_len_before);
+    assert_eq!(alice.core.blob_index, blob_index_before, "failed batch must not mutate holder index");
+    assert_eq!(alice.core.symbol_of, symbol_of_before, "failed batch must not mutate reverse index");
+    assert_eq!(alice.core.seen.encode(), seen_before, "failed batch must not mutate SeenIndex");
+    assert_eq!(alice.diagnostics().dump(), diagnostics_before, "failed batch must not log Created");
+    assert_eq!(alice.core.events, events_before, "manifest candidate must not emit events");
+    let convs_after: BTreeMap<Id16, (Key32, u16, u32, Vec<Id16>)> = alice
+        .core
+        .convs
+        .iter()
+        .map(|(id, conv)| (*id, (conv.peer, conv.send.epoch, conv.send.next_index, conv.dag.heads())))
+        .collect();
+    assert_eq!(convs_after, convs_before, "manifest candidate must not commit a conversation");
+    assert_eq!(alice.core.pending_async, pending_async_before);
+    assert_eq!(alice.core.pending_first_contact, pending_first_before);
+    let sent_after: BTreeMap<Id16, (Id16, DeliveryState)> = alice
+        .core
+        .sent
+        .iter()
+        .map(|(id, message)| (*id, (message.conv, message.state)))
+        .collect();
+    assert_eq!(sent_after, sent_before, "manifest candidate must not enter sent history");
+}
+
+#[test]
+fn send_file_atomic_reservation_rejection_is_side_effect_free() {
+    assert_atomic_file_failure(BatchReservationMode::Reject, false);
+}
+
+#[test]
+fn send_file_atomic_commit_failure_is_side_effect_free() {
+    assert_atomic_file_failure(BatchReservationMode::CommitFails, true);
+}
+
+#[test]
+fn send_file_atomic_success_commits_symbols_and_manifest_together() {
+    let mut alice = node(76);
+    let mut bob = node(77);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let (probe, reserve_calls, commit_calls, _abort_calls, single_write_calls, symbol_entries, manifest_entries) =
+        AtomicBatchProbeStore::new(BatchReservationMode::Accept);
+    alice.core.store = Box::new(probe);
+    let data = vec![0x4b; 3000];
+    let sent = alice
+        .send_file(&bob.node_id(), "atomic-success.bin", "application/octet-stream", &data)
+        .expect("atomic provider accepts the complete file transaction");
+
+    let expected_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
+    assert!(reserve_calls.load(Ordering::Relaxed));
+    assert!(commit_calls.load(Ordering::Relaxed));
+    assert!(!single_write_calls.load(Ordering::Relaxed));
+    assert_eq!(symbol_entries.load(Ordering::Relaxed), expected_symbols);
+    assert_eq!(manifest_entries.load(Ordering::Relaxed), 1);
+    assert_eq!(alice.core.store.len(), expected_symbols + 1);
+    assert_eq!(alice.core.store.meta(&sent.message_id).map(|meta| meta.class), Some(class::DIRECT));
+    assert_eq!(alice.core.symbol_of.len(), expected_symbols);
+    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(expected_symbols));
+    assert_eq!(alice.message_state(&sent.message_id), Some(DeliveryState::Queued));
+}
+
+#[test]
+fn send_file_success_does_not_orphan_records_on_malformed_batch_outcomes() {
+    let mut alice = node(78);
+    let mut bob = node(79);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let (probe, reserve_calls, commit_calls, abort_calls, single_write_calls, _, _) =
+        AtomicBatchProbeStore::new(BatchReservationMode::MalformedSuccess);
+    alice.core.store = Box::new(probe);
+    let data = vec![0x4c; 3000];
+    let sent = alice
+        .send_file(&bob.node_id(), "atomic-malformed-outcomes.bin", "application/octet-stream", &data)
+        .expect("successful publication must not be converted into an orphaning failure");
+
+    let expected_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
+    assert!(reserve_calls.load(Ordering::Relaxed));
+    assert!(commit_calls.load(Ordering::Relaxed));
+    assert!(!abort_calls.load(Ordering::Relaxed));
+    assert!(!single_write_calls.load(Ordering::Relaxed));
+    assert_eq!(alice.core.store.len(), expected_symbols + 1);
+    assert!(alice.core.store.meta(&sent.message_id).is_some());
+    assert_eq!(alice.core.symbol_of.len(), expected_symbols);
+    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(expected_symbols));
+    assert!(alice.core.seen.contains(&sent.message_id));
 }
 
 /// Provider fixture that accepts a bounded prefix of class-4 writes and then
