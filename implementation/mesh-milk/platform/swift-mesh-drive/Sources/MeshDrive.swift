@@ -198,12 +198,13 @@ public final class MeshDrive {
             try? gatt.close(link: link)
             return
         }
+        if activeLinks.contains(link) { return }
         guard activeLinks.count < maxTrackedLinks else {
             latchOverload()
             try? gatt.close(link: link)
             return
         }
-        precondition(activeLinks.insert(link).inserted, "link is already up")
+        guard activeLinks.insert(link).inserted else { return }
         node.linkUp(link, initiator: initiator)
         try drain()
     }

@@ -287,12 +287,13 @@ public class MeshDrive(
             runCatching { gatt.close(link) }
             return
         }
+        if (activeLinks.contains(link)) return
         if (activeLinks.size >= maxTrackedLinks) {
             latchOverload()
             runCatching { gatt.close(link) }
             return
         }
-        check(activeLinks.add(link)) { "link is already up: $link" }
+        if (!activeLinks.add(link)) return
         node.linkUp(link, initiator)
         drain()
     }

@@ -53,6 +53,19 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("CoreBluetooth", self.readme)
         self.assertIn("not evidence", self.readme)
 
+    def test_duplicate_link_up_is_idempotent_before_capacity_check(self) -> None:
+        """A repeated native callback must not crash or trip the overload latch."""
+
+        start = self.source.index("public func onLinkUp")
+        end = self.source.index("public func onLinkData", start)
+        body = self.source[start:end]
+        self.assertIn("if activeLinks.contains(link) { return }", body)
+        self.assertNotIn("precondition(activeLinks.insert(link).inserted", body)
+        self.assertLess(
+            body.index("if activeLinks.contains(link) { return }"),
+            body.index("guard activeLinks.count < maxTrackedLinks"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

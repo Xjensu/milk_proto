@@ -143,6 +143,19 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("runCatching { node.linkDown(it) }", self.source)
         self.assertIn("runCatching { requestPhysicalClose(it) }", self.source)
 
+    def test_duplicate_link_up_is_idempotent_before_capacity_check(self) -> None:
+        """A repeated native callback must not crash or trip the overload latch."""
+
+        start = self.source.index("public fun onLinkUp")
+        end = self.source.index("public fun onLinkData", start)
+        body = self.source[start:end]
+        self.assertIn("if (activeLinks.contains(link)) return", body)
+        self.assertNotIn("check(activeLinks.add(link))", body)
+        self.assertLess(
+            body.index("if (activeLinks.contains(link)) return"),
+            body.index("if (activeLinks.size >= maxTrackedLinks)"),
+        )
+
     def test_close_requests_are_deduplicated_until_disconnect_callback(self) -> None:
         self.assertIn("private val closeRequested = LinkedHashSet<Long>()", self.source)
         self.assertIn("if (closeRequested.add(link))", self.source)
