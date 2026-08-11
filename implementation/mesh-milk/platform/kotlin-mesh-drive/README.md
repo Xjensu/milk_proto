@@ -24,6 +24,10 @@ generated `MmpNode` bindings.
   process-local token and fails closed before exhaustion; adapters must capture
   that token in every callback instead of reusing a platform connection handle
   while old callbacks may still be pending;
+- `ConnectionBindingRegistry` binds those tokens to fresh per-connection
+  `ConnectionIdentity` objects, makes duplicate opens idempotent, rejects
+  stale callback contexts after close, and bounds live bindings before native
+  callbacks reach `MeshDrive`;
 - foreground relay capability demotion to `MeshTier.LEAF` when unavailable;
 - atomic startup rollback: a failed clock/radio/initial drain leaves
   `isRunning == false`, stops any advertiser/scanner that started, and

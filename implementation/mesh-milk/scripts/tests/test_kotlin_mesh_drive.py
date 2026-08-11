@@ -5,6 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SOURCE = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "MeshDrive.kt"
 TOKEN_ALLOCATOR = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "LinkTokenAllocator.kt"
+BINDING_REGISTRY = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "ConnectionBindingRegistry.kt"
 README = ROOT / "platform" / "kotlin-mesh-drive" / "README.md"
 
 
@@ -188,6 +189,29 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("@Synchronized", allocator)
         self.assertIn("nextToken = token + 1L", allocator)
         self.assertIn("LinkTokenAllocator", self.readme)
+
+    def test_connection_binding_registry_fences_stale_callbacks_and_bounds_live_entries(self) -> None:
+        """Callback context, not a reused handle, owns the link lifecycle."""
+
+        self.assertTrue(BINDING_REGISTRY.exists())
+        registry = BINDING_REGISTRY.read_text(encoding="utf-8")
+        self.assertIn("public class ConnectionBindingRegistry", registry)
+        self.assertIn("public class ConnectionIdentity private constructor()", registry)
+        self.assertIn("public fun create(): ConnectionIdentity", registry)
+        self.assertIn("IdentityHashMap", registry)
+        self.assertIn("public fun open(identity: ConnectionIdentity): ConnectionBinding?", registry)
+        self.assertIn("public fun close(binding: ConnectionBinding): Boolean", registry)
+        self.assertIn("public fun isCurrent(binding: ConnectionBinding): Boolean", registry)
+        self.assertIn("private val active", registry)
+        self.assertIn("maxBindings > 0", registry)
+        self.assertIn("if (active.size >= maxBindings) return null", registry)
+        self.assertIn("current !== binding", registry)
+        self.assertIn("=== binding", registry)
+        self.assertLess(
+            registry.index("active[identity]?.let { return it }"),
+            registry.index("if (active.size >= maxBindings) return null"),
+        )
+        self.assertIn("ConnectionBindingRegistry", self.readme)
 
     def test_link_callbacks_forward_before_draining_host_output(self) -> None:
         """Keep callback ordering compatible with the FFI single-owner contract.
