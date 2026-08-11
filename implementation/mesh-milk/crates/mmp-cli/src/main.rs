@@ -22,7 +22,9 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mmp_core::store::{BundleMeta, BundleStore, StorePutError, StorePutOutcome};
+use mmp_core::store::{
+    BundleMeta, BundleStore, StoreBatchEntry, StoreBatchError, StorePutError, StorePutOutcome,
+};
 use mmp_core::MemStore;
 use mmp_node::{DeliveryState, Event, Node, Tier};
 #[cfg(target_os = "windows")]
@@ -577,6 +579,12 @@ impl BundleStore for SharedSnapshot {
     }
     fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
         self.0.lock().expect("snapshot store mutex poisoned").try_put(meta, bytes)
+    }
+    fn try_put_batch(
+        &mut self,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreBatchError> {
+        self.0.lock().expect("snapshot store mutex poisoned").try_put_batch(entries)
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.0.lock().expect("snapshot store mutex poisoned").get(id)
@@ -1501,6 +1509,40 @@ mod tests {
 
         assert_eq!(shared.try_put(meta, &[]), Err(StorePutError::Capacity));
         assert_eq!(shared.len(), 0);
+        remove_snapshot(&path);
+    }
+
+    #[test]
+    fn shared_snapshot_forwards_atomic_batch_outcomes() {
+        let path = temp_snapshot_path();
+        let snapshot = SnapshotStore::open(&path);
+        let mut shared = SharedSnapshot(Arc::new(Mutex::new(snapshot)));
+        let meta = |id_byte: u8, size: usize| BundleMeta {
+            id: Id16([id_byte; 16]),
+            class: class::DIRECT,
+            origin: Id16([0x72; 16]),
+            dest: Id16([0x73; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: size as u32,
+            stored_at: 0,
+            expires_at: 1_000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+        let entries = [
+            StoreBatchEntry::new(meta(0x74, 3), b"one"),
+            StoreBatchEntry::new(meta(0x75, 3), b"two"),
+        ];
+
+        assert_eq!(
+            shared.try_put_batch(&entries),
+            Ok(vec![StorePutOutcome::Inserted, StorePutOutcome::Inserted])
+        );
+        assert_eq!(shared.len(), 2);
+        assert_eq!(shared.get(&Id16([0x74; 16])).map(|(_, bytes)| bytes), Some(b"one".to_vec()));
+        assert_eq!(shared.get(&Id16([0x75; 16])).map(|(_, bytes)| bytes), Some(b"two".to_vec()));
         remove_snapshot(&path);
     }
 
