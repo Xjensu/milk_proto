@@ -132,6 +132,15 @@ pub struct StoreReservation {
     nonce: u64,
 }
 
+/// Provider-local capability for one all-or-nothing set of reserved bundle
+/// publications. It is runtime-only, non-serializable, and not cloneable so
+/// callers cannot mistake it for a wire or persistence value.
+#[derive(Debug, PartialEq, Eq)]
+pub struct StoreBatchReservation {
+    provider: u64,
+    nonce: u64,
+}
+
 /// Opaque identity used by adapters that need to track reservation metadata
 /// alongside a [`StoreReservation`]. It cannot be constructed outside this
 /// module and carries no authorization by itself.
@@ -141,10 +150,28 @@ pub struct StoreReservationKey {
     nonce: u64,
 }
 
+/// Opaque identity used by adapters that need to account for a
+/// [`StoreBatchReservation`] alongside their provider-local runtime state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct StoreBatchReservationKey {
+    provider: u64,
+    nonce: u64,
+}
+
 impl StoreReservation {
     /// Return the provider-local opaque identity for adapter bookkeeping.
     pub fn key(&self) -> StoreReservationKey {
         StoreReservationKey {
+            provider: self.provider,
+            nonce: self.nonce,
+        }
+    }
+}
+
+impl StoreBatchReservation {
+    /// Return the provider-local opaque identity for adapter bookkeeping.
+    pub fn key(&self) -> StoreBatchReservationKey {
+        StoreBatchReservationKey {
             provider: self.provider,
             nonce: self.nonce,
         }
@@ -250,6 +277,17 @@ pub trait BundleStore {
         let _ = metas;
         Err(StoreReserveError::Unsupported)
     }
+    /// Reserve one ordered, all-or-nothing future publication batch. The
+    /// opaque token has provider-local runtime meaning only. Unlike
+    /// [`Self::try_reserve_batch`], its entries can only be committed or
+    /// aborted together.
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        let _ = metas;
+        Err(StoreReserveError::Unsupported)
+    }
     /// Publish bytes against a prior reservation. All token/metadata/length
     /// and replacement checks happen before any visible mutation. A failed
     /// commit retains the reservation for retry or abort; a successful commit
@@ -263,6 +301,18 @@ pub trait BundleStore {
         let _ = (reservation, meta, bytes);
         Err(StoreCommitError::Unsupported)
     }
+    /// Atomically publish entries against an ordered batch reservation. The
+    /// count, order, IDs, declared lengths, replacement generation, and
+    /// capacity must all validate before any entry becomes visible. A failed
+    /// commit leaves the batch available for retry or abort.
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        let _ = (batch, entries);
+        Err(StoreCommitError::Unsupported)
+    }
     /// Release a prior reservation. Aborting an already released reservation
     /// is idempotent and does not affect committed entries.
     fn abort_reservation(
@@ -270,6 +320,15 @@ pub trait BundleStore {
         reservation: &StoreReservation,
     ) -> Result<(), StoreAbortError> {
         let _ = reservation;
+        Err(StoreAbortError::Unsupported)
+    }
+    /// Idempotently release an uncommitted batch reservation. Aborting a
+    /// consumed batch cannot delete records that its commit already published.
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), StoreAbortError> {
+        let _ = batch;
         Err(StoreAbortError::Unsupported)
     }
     /// Fetches a bundle's metadata and raw wire bytes, if present.
@@ -300,12 +359,19 @@ pub trait BundleStore {
 #[derive(Debug, Clone, Copy)]
 struct ReservationRecord {
     id: Id16,
+    meta: BundleMeta,
     declared_size: u32,
     old_len: Option<u64>,
     old_meta: Option<BundleMeta>,
     old_digest: Option<[u8; 32]>,
+    old_generation: u64,
     reserved_bytes: u64,
     reserved_slot: bool,
+}
+
+#[derive(Debug, Clone)]
+struct BatchReservationRecord {
+    records: Vec<ReservationRecord>,
 }
 
 static NEXT_PROVIDER_ID: AtomicUsize = AtomicUsize::new(1);
@@ -318,12 +384,14 @@ fn allocate_provider_id() -> u64 {
 /// Reference in-memory store (also the sim/test store).
 pub struct MemStore {
     map: BTreeMap<Id16, (BundleMeta, Vec<u8>)>,
+    generations: BTreeMap<Id16, u64>,
     bytes: u64,
     max_bytes: Option<u64>,
     max_slots: Option<usize>,
     reserved_bytes: u64,
     reserved_slots: usize,
     reservations: BTreeMap<u64, ReservationRecord>,
+    batch_reservations: BTreeMap<u64, BatchReservationRecord>,
     next_nonce: u64,
     provider_id: u64,
 }
@@ -332,12 +400,14 @@ impl Default for MemStore {
     fn default() -> Self {
         Self {
             map: BTreeMap::new(),
+            generations: BTreeMap::new(),
             bytes: 0,
             max_bytes: None,
             max_slots: None,
             reserved_bytes: 0,
             reserved_slots: 0,
             reservations: BTreeMap::new(),
+            batch_reservations: BTreeMap::new(),
             next_nonce: 1,
             provider_id: allocate_provider_id(),
         }
@@ -374,6 +444,15 @@ impl MemStore {
     /// New slots reserved for future publications.
     pub fn reserved_slots(&self) -> usize {
         self.reserved_slots
+    }
+
+    fn generation_for(&self, id: &Id16) -> u64 {
+        self.generations.get(id).copied().unwrap_or(0)
+    }
+
+    fn bump_generation(&mut self, id: Id16) {
+        let generation = self.generations.entry(id).or_insert(0);
+        *generation = generation.wrapping_add(1);
     }
 
     fn next_reservation(&mut self, record: ReservationRecord) -> Result<StoreReservation, StoreReserveError> {
@@ -420,6 +499,27 @@ impl MemStore {
         Ok(record)
     }
 
+    fn batch_reservation_for(
+        &self,
+        batch: &StoreBatchReservation,
+    ) -> Result<BatchReservationRecord, StoreCommitError> {
+        if batch.provider != self.provider_id {
+            return Err(StoreCommitError::Invalid);
+        }
+        self.batch_reservations
+            .get(&batch.nonce)
+            .cloned()
+            .ok_or(StoreCommitError::Invalid)
+    }
+
+    fn reservation_id_is_pending(&self, id: Id16) -> bool {
+        self.reservations.values().any(|reservation| reservation.id == id)
+            || self
+                .batch_reservations
+                .values()
+                .any(|batch| batch.records.iter().any(|reservation| reservation.id == id))
+    }
+
     fn preflight_reservations(
         &self,
         metas: &[BundleMeta],
@@ -446,12 +546,7 @@ impl MemStore {
         let mut additional_slots = 0usize;
         let mut records = Vec::with_capacity(metas.len());
         for meta in metas {
-            if !ids.insert(meta.id)
-                || self
-                    .reservations
-                    .values()
-                    .any(|reservation| reservation.id == meta.id)
-            {
+            if !ids.insert(meta.id) || self.reservation_id_is_pending(meta.id) {
                 return Err(StoreReserveError::Invalid);
             }
 
@@ -477,10 +572,12 @@ impl MemStore {
                 .ok_or(StoreReserveError::Capacity)?;
             records.push(ReservationRecord {
                 id: meta.id,
+                meta: *meta,
                 declared_size: meta.size,
                 old_len,
                 old_meta,
                 old_digest,
+                old_generation: self.generation_for(&meta.id),
                 reserved_bytes,
                 reserved_slot,
             });
@@ -513,12 +610,14 @@ impl BundleStore for MemStore {
         if let Some((_, old)) = self.map.insert(meta.id, (meta, bytes.to_vec())) {
             self.bytes -= old.len() as u64;
         }
+        self.bump_generation(meta.id);
     }
 
     fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
         if self.max_bytes.is_none()
             && self.max_slots.is_none()
             && self.reservations.is_empty()
+            && self.batch_reservations.is_empty()
         {
             let replaced = self.map.contains_key(&meta.id);
             self.put(meta, bytes);
@@ -528,7 +627,10 @@ impl BundleStore for MemStore {
                 StorePutOutcome::Inserted
             });
         }
-        if usize::try_from(meta.size).ok() != Some(bytes.len()) || !self.reservations.is_empty() {
+        if usize::try_from(meta.size).ok() != Some(bytes.len())
+            || !self.reservations.is_empty()
+            || !self.batch_reservations.is_empty()
+        {
             return Err(StorePutError::Capacity);
         }
 
@@ -573,6 +675,7 @@ impl BundleStore for MemStore {
 
         self.map.insert(meta.id, (meta, bytes.to_vec()));
         self.bytes = projected_bytes;
+        self.bump_generation(meta.id);
         Ok(if replaced {
             StorePutOutcome::Replaced
         } else {
@@ -590,7 +693,7 @@ impl BundleStore for MemStore {
         // A legacy aggregate write has no reservation-aware accounting. Do
         // not let it bypass outstanding capabilities or publish a state whose
         // future reserved capacity is no longer meaningful.
-        if !self.reservations.is_empty() {
+        if !self.reservations.is_empty() || !self.batch_reservations.is_empty() {
             return Err(StoreBatchError::Invalid);
         }
 
@@ -675,6 +778,9 @@ impl BundleStore for MemStore {
         }
         self.map = staged;
         self.bytes = projected_bytes;
+        for entry in entries {
+            self.bump_generation(entry.meta.id);
+        }
         Ok(outcomes)
     }
 
@@ -732,6 +838,43 @@ impl BundleStore for MemStore {
         Ok(tokens)
     }
 
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        let records = self.preflight_reservations(metas)?;
+        let additional_bytes = records.iter().try_fold(0u64, |total, record| {
+            total
+                .checked_add(record.reserved_bytes)
+                .ok_or(StoreReserveError::Capacity)
+        })?;
+        let additional_slots = records.iter().try_fold(0usize, |total, record| {
+            total
+                .checked_add(usize::from(record.reserved_slot))
+                .ok_or(StoreReserveError::Capacity)
+        })?;
+        let nonce = self.next_nonce;
+        let next_nonce = nonce.checked_add(1).ok_or(StoreReserveError::Capacity)?;
+        let reserved_bytes = self
+            .reserved_bytes
+            .checked_add(additional_bytes)
+            .ok_or(StoreReserveError::Capacity)?;
+        let reserved_slots = self
+            .reserved_slots
+            .checked_add(additional_slots)
+            .ok_or(StoreReserveError::Capacity)?;
+
+        self.next_nonce = next_nonce;
+        self.reserved_bytes = reserved_bytes;
+        self.reserved_slots = reserved_slots;
+        self.batch_reservations
+            .insert(nonce, BatchReservationRecord { records });
+        Ok(StoreBatchReservation {
+            provider: self.provider_id,
+            nonce,
+        })
+    }
+
     fn commit_reserved(
         &mut self,
         reservation: &StoreReservation,
@@ -739,7 +882,8 @@ impl BundleStore for MemStore {
         bytes: &[u8],
     ) -> Result<StorePutOutcome, StoreCommitError> {
         let record = self.reservation_for(reservation)?;
-        if meta.id != reservation.id
+        if meta != record.meta
+            || meta.id != reservation.id
             || meta.size != reservation.declared_size
             || usize::try_from(meta.size).ok() != Some(bytes.len())
         {
@@ -749,7 +893,9 @@ impl BundleStore for MemStore {
         let current_old_len = self.map.get(&meta.id).map(|(_, body)| {
             u64::try_from(body.len()).unwrap_or(u64::MAX)
         });
-        if current_old_len != record.old_len {
+        if current_old_len != record.old_len
+            || self.generation_for(&meta.id) != record.old_generation
+        {
             return Err(StoreCommitError::Conflict);
         }
         if let Some((stored_meta, body)) = self.map.get(&meta.id) {
@@ -802,6 +948,7 @@ impl BundleStore for MemStore {
         // map mutation and consumes this reservation exactly once.
         let replaced = self.map.insert(meta.id, (meta, bytes.to_vec())).is_some();
         self.bytes = projected_bytes;
+        self.bump_generation(meta.id);
         self.reservations.remove(&reservation.nonce);
         self.reserved_bytes -= record.reserved_bytes;
         if record.reserved_slot {
@@ -837,6 +984,143 @@ impl BundleStore for MemStore {
         Ok(())
     }
 
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        let batch_record = self.batch_reservation_for(batch)?;
+        if entries.len() != batch_record.records.len() {
+            return Err(StoreCommitError::Invalid);
+        }
+
+        let mut ids = BTreeSet::new();
+        let mut replaced_bytes = 0u64;
+        let mut added_bytes = 0u64;
+        let mut reserved_bytes = 0u64;
+        let mut reserved_slots = 0usize;
+        let mut outcomes = Vec::with_capacity(entries.len());
+        for (entry, record) in entries.iter().zip(&batch_record.records) {
+            if !ids.insert(entry.meta.id)
+                || entry.meta.id != record.id
+                || entry.meta != record.meta
+                || entry.meta.size != record.declared_size
+                || usize::try_from(entry.meta.size).ok() != Some(entry.bytes.len())
+            {
+                return Err(StoreCommitError::Invalid);
+            }
+            let current = self.map.get(&entry.meta.id);
+            let current_old_len = current.map(|(_, body)| u64::try_from(body.len()).unwrap_or(u64::MAX));
+            if current_old_len != record.old_len
+                || self.generation_for(&entry.meta.id) != record.old_generation
+            {
+                return Err(StoreCommitError::Conflict);
+            }
+            if let Some((stored_meta, body)) = current {
+                if usize::try_from(stored_meta.size).ok() != Some(body.len())
+                    || Some(*stored_meta) != record.old_meta
+                    || Some(*blake3::hash(body).as_bytes()) != record.old_digest
+                {
+                    return Err(StoreCommitError::Conflict);
+                }
+            } else if record.old_meta.is_some() || record.old_digest.is_some() {
+                return Err(StoreCommitError::Conflict);
+            }
+            replaced_bytes = replaced_bytes
+                .checked_add(current_old_len.unwrap_or(0))
+                .ok_or(StoreCommitError::Conflict)?;
+            added_bytes = added_bytes
+                .checked_add(u64::from(entry.meta.size))
+                .ok_or(StoreCommitError::Capacity)?;
+            reserved_bytes = reserved_bytes
+                .checked_add(record.reserved_bytes)
+                .ok_or(StoreCommitError::Conflict)?;
+            reserved_slots = reserved_slots
+                .checked_add(usize::from(record.reserved_slot))
+                .ok_or(StoreCommitError::Conflict)?;
+            outcomes.push(if record.old_len.is_some() {
+                StorePutOutcome::Replaced
+            } else {
+                StorePutOutcome::Inserted
+            });
+        }
+
+        let projected_bytes = self
+            .bytes
+            .checked_sub(replaced_bytes)
+            .and_then(|value| value.checked_add(added_bytes))
+            .ok_or(StoreCommitError::Conflict)?;
+        let other_reserved_bytes = self
+            .reserved_bytes
+            .checked_sub(reserved_bytes)
+            .ok_or(StoreCommitError::Conflict)?;
+        if self.max_bytes.is_some_and(|limit| {
+            projected_bytes
+                .checked_add(other_reserved_bytes)
+                .is_none_or(|value| value > limit)
+        }) {
+            return Err(StoreCommitError::Capacity);
+        }
+        let other_reserved_slots = self
+            .reserved_slots
+            .checked_sub(reserved_slots)
+            .ok_or(StoreCommitError::Conflict)?;
+        let projected_slots = self
+            .map
+            .len()
+            .checked_add(other_reserved_slots)
+            .and_then(|value| value.checked_add(reserved_slots))
+            .ok_or(StoreCommitError::Conflict)?;
+        if self.max_slots.is_some_and(|limit| projected_slots > limit) {
+            return Err(StoreCommitError::Capacity);
+        }
+
+        let mut staged = self.map.clone();
+        for entry in entries {
+            staged.insert(entry.meta.id, (entry.meta, entry.bytes.to_vec()));
+        }
+        self.map = staged;
+        self.bytes = projected_bytes;
+        for entry in entries {
+            self.bump_generation(entry.meta.id);
+        }
+        self.batch_reservations.remove(&batch.nonce);
+        self.reserved_bytes -= reserved_bytes;
+        self.reserved_slots -= reserved_slots;
+        Ok(outcomes)
+    }
+
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), StoreAbortError> {
+        if batch.provider != self.provider_id {
+            return Err(StoreAbortError::Invalid);
+        }
+        let Some(record) = self.batch_reservations.get(&batch.nonce).cloned() else {
+            return Ok(());
+        };
+        let reserved_bytes = record.records.iter().try_fold(0u64, |total, item| {
+            total.checked_add(item.reserved_bytes)
+        });
+        let reserved_slots = record.records.iter().try_fold(0usize, |total, item| {
+            total.checked_add(usize::from(item.reserved_slot))
+        });
+        let (Some(reserved_bytes), Some(reserved_slots)) = (reserved_bytes, reserved_slots) else {
+            return Err(StoreAbortError::Invalid);
+        };
+        let Some(next_bytes) = self.reserved_bytes.checked_sub(reserved_bytes) else {
+            return Err(StoreAbortError::Invalid);
+        };
+        let Some(next_slots) = self.reserved_slots.checked_sub(reserved_slots) else {
+            return Err(StoreAbortError::Invalid);
+        };
+        self.batch_reservations.remove(&batch.nonce);
+        self.reserved_bytes = next_bytes;
+        self.reserved_slots = next_slots;
+        Ok(())
+    }
+
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.map.get(id).cloned()
     }
@@ -848,6 +1132,7 @@ impl BundleStore for MemStore {
     fn update_meta(&mut self, meta: BundleMeta) {
         if let Some((m, _)) = self.map.get_mut(&meta.id) {
             *m = meta;
+            self.bump_generation(meta.id);
         }
     }
 
@@ -855,6 +1140,7 @@ impl BundleStore for MemStore {
         match self.map.remove(id) {
             Some((_, b)) => {
                 self.bytes -= b.len() as u64;
+                self.bump_generation(*id);
                 true
             }
             None => false,
@@ -1227,5 +1513,155 @@ mod tests {
         );
         assert!(second.is_empty());
         assert_eq!(second.reserved_bytes(), 0);
+    }
+
+    #[test]
+    fn atomic_batch_reservation_rejects_duplicates_and_nonce_exhaustion_without_prefix() {
+        let mut store = MemStore::with_limits(8, 3);
+        assert_eq!(
+            store.try_reserve_batch_atomic(&[meta(20, 1), meta(20, 1)]),
+            Err(StoreReserveError::Invalid)
+        );
+        assert_eq!(store.reserved_bytes(), 0);
+        assert_eq!(store.reserved_slots(), 0);
+
+        store.next_nonce = u64::MAX;
+        assert_eq!(
+            store.try_reserve_batch_atomic(&[meta(21, 1), meta(22, 1)]),
+            Err(StoreReserveError::Capacity)
+        );
+        assert_eq!(store.reserved_bytes(), 0);
+        assert_eq!(store.reserved_slots(), 0);
+        assert!(store.reservations.is_empty());
+    }
+
+    #[test]
+    fn atomic_batch_commit_publishes_all_entries_and_consumes_the_token() {
+        let mut store = MemStore::with_limits(8, 3);
+        let metas = [meta(23, 2), meta(24, 2)];
+        let batch = store.try_reserve_batch_atomic(&metas).unwrap();
+        let entries = [
+            StoreBatchEntry::new(metas[0], b"ab"),
+            StoreBatchEntry::new(metas[1], b"cd"),
+        ];
+
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &entries),
+            Ok(vec![StorePutOutcome::Inserted, StorePutOutcome::Inserted])
+        );
+        assert_eq!(store.get(&metas[0].id).unwrap().1, b"ab");
+        assert_eq!(store.get(&metas[1].id).unwrap().1, b"cd");
+        assert_eq!(store.reserved_bytes(), 0);
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &entries),
+            Err(StoreCommitError::Invalid)
+        );
+    }
+
+    #[test]
+    fn checked_writes_cannot_bypass_an_outstanding_atomic_batch_reservation() {
+        let mut store = MemStore::with_limits(2, 1);
+        let reserved = meta(35, 2);
+        let batch = store.try_reserve_batch_atomic(&[reserved]).unwrap();
+        let other = meta(36, 2);
+
+        assert_eq!(
+            store.try_put(other, b"cd"),
+            Err(super::StorePutError::Capacity)
+        );
+        assert_eq!(
+            store.try_put_batch(&[StoreBatchEntry::new(other, b"cd")]),
+            Err(StoreBatchError::Invalid)
+        );
+        store
+            .commit_reserved_batch(&batch, &[StoreBatchEntry::new(reserved, b"ab")])
+            .unwrap();
+        assert_eq!(store.get(&reserved.id).unwrap().1, b"ab");
+        assert!(store.get(&other.id).is_none());
+    }
+
+    #[test]
+    fn failed_atomic_batch_commit_retains_reservation_for_retry() {
+        let mut store = MemStore::with_limits(8, 2);
+        let metas = [meta(25, 2), meta(26, 2)];
+        let batch = store.try_reserve_batch_atomic(&metas).unwrap();
+        let malformed = [
+            StoreBatchEntry::new(metas[0], b"ab"),
+            StoreBatchEntry::new(metas[1], b"c"),
+        ];
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &malformed),
+            Err(StoreCommitError::Invalid)
+        );
+        assert!(store.is_empty());
+        assert_eq!(store.reserved_bytes(), 4);
+
+        let entries = [
+            StoreBatchEntry::new(metas[0], b"ab"),
+            StoreBatchEntry::new(metas[1], b"cd"),
+        ];
+        assert_eq!(store.commit_reserved_batch(&batch, &entries).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn atomic_batch_abort_is_idempotent_and_cannot_delete_committed_records() {
+        let mut store = MemStore::with_limits(8, 2);
+        let metas = [meta(27, 2)];
+        let batch = store.try_reserve_batch_atomic(&metas).unwrap();
+        let entries = [StoreBatchEntry::new(metas[0], b"ab")];
+        store.commit_reserved_batch(&batch, &entries).unwrap();
+        assert_eq!(store.abort_reserved_batch(&batch), Ok(()));
+        assert_eq!(store.abort_reserved_batch(&batch), Ok(()));
+        assert_eq!(store.get(&metas[0].id).unwrap().1, b"ab");
+    }
+
+    #[test]
+    fn atomic_batch_detects_replacement_conflict_before_any_publication() {
+        let mut store = MemStore::with_limits(8, 2);
+        store.try_put(meta(28, 3), b"old").unwrap();
+        let metas = [meta(28, 3), meta(29, 2)];
+        let batch = store.try_reserve_batch_atomic(&metas).unwrap();
+        store.put(meta(28, 3), b"new");
+        let entries = [
+            StoreBatchEntry::new(metas[0], b"aaa"),
+            StoreBatchEntry::new(metas[1], b"bb"),
+        ];
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &entries),
+            Err(StoreCommitError::Conflict)
+        );
+        assert_eq!(store.get(&metas[0].id).unwrap().1, b"new");
+        assert!(store.get(&metas[1].id).is_none());
+        assert_eq!(store.reserved_bytes(), 2);
+    }
+
+    #[test]
+    fn atomic_batch_rejects_an_identical_replacement_after_remove_and_reinsert() {
+        let mut store = MemStore::with_limits(8, 1);
+        let existing = meta(34, 2);
+        store.try_put(existing, b"ok").unwrap();
+        let batch = store.try_reserve_batch_atomic(&[existing]).unwrap();
+        assert!(store.remove(&existing.id));
+        store.put(existing, b"ok");
+        let entries = [StoreBatchEntry::new(existing, b"ok")];
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &entries),
+            Err(StoreCommitError::Conflict)
+        );
+        assert_eq!(store.get(&existing.id).unwrap().1, b"ok");
+    }
+
+    #[test]
+    fn atomic_batch_tokens_are_rejected_by_other_providers() {
+        let mut first = MemStore::with_limits(4, 1);
+        let batch = first.try_reserve_batch_atomic(&[meta(30, 1)]).unwrap();
+        let mut second = MemStore::with_limits(4, 1);
+        let entries = [StoreBatchEntry::new(meta(30, 1), b"a")];
+        assert_eq!(
+            second.commit_reserved_batch(&batch, &entries),
+            Err(StoreCommitError::Invalid)
+        );
+        assert_eq!(second.abort_reserved_batch(&batch), Err(super::StoreAbortError::Invalid));
+        assert!(second.is_empty());
     }
 }

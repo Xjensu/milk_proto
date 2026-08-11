@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 
 use mmp_core::store::{
     BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
-    StoreCommitError, StorePutError, StorePutOutcome, StoreReservation, StoreReservationKey,
-    StoreAbortError, StoreReserveError,
+    StoreBatchReservation, StoreBatchReservationKey, StoreCommitError, StorePutError,
+    StorePutOutcome, StoreReservation, StoreReservationKey, StoreAbortError, StoreReserveError,
 };
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
@@ -105,6 +105,9 @@ pub struct SnapshotStore {
     /// Runtime-only reservation metadata. It is deliberately excluded from
     /// snapshots; callers must explicitly commit or abort after restart.
     reservations: BTreeMap<StoreReservationKey, PendingReservation>,
+    /// Runtime-only metadata for atomic batch reservations. Like individual
+    /// reservations, this has no snapshot representation.
+    batch_reservations: BTreeMap<StoreBatchReservationKey, Vec<PendingReservation>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +171,7 @@ impl SnapshotStore {
             authority: None,
             blocklist: None,
             reservations: std::collections::BTreeMap::new(),
+            batch_reservations: std::collections::BTreeMap::new(),
         };
         store.load();
         store
@@ -541,6 +545,9 @@ impl SnapshotStore {
             let replaced = candidate.is_some_and(|meta| meta.id == stored_meta.id)
                 || self.reservations.iter().any(|(key, pending)| {
                     Some(key) != skip && pending.id == stored_meta.id
+                })
+                || self.batch_reservations.values().any(|batch| {
+                    batch.iter().any(|pending| pending.id == stored_meta.id)
                 });
             if replaced {
                 continue;
@@ -557,12 +564,84 @@ impl SnapshotStore {
             }
             total = total.checked_add(bundle_record_size(usize::try_from(pending.declared_size).ok()?)?)?;
         }
+        for batch in self.batch_reservations.values() {
+            for pending in batch {
+                total = total.checked_add(bundle_record_size(
+                    usize::try_from(pending.declared_size).ok()?,
+                )?)?;
+            }
+        }
         if let Some(meta) = candidate {
             total = total.checked_add(
                 bundle_record_size(usize::try_from(meta.size).ok()?)?,
             )?;
         }
 
+        for claim in &self.claims {
+            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+        }
+        for blob in &self.group_blobs {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
+        }
+        if let Some(seen) = &self.seen_index {
+            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+        }
+        if let Some(filter) = &self.receipt_filter {
+            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+        }
+        if let Some(authority) = &self.authority {
+            total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
+        }
+        if let Some(blocklist) = &self.blocklist {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blocklist.len())?)?)?;
+        }
+        Some(total)
+    }
+
+    fn image_size_for_batch_reservation_plan(
+        &self,
+        candidates: &[BundleMeta],
+        skip: Option<&StoreBatchReservationKey>,
+    ) -> Option<u64> {
+        let mut candidate_ids = BTreeSet::new();
+        for meta in candidates {
+            if !candidate_ids.insert(meta.id) {
+                return None;
+            }
+        }
+        let mut total = u64::try_from(MAGIC.len()).ok()?;
+        for stored_meta in self.mem.all_meta() {
+            let replaced = candidate_ids.contains(&stored_meta.id)
+                || self.reservations.values().any(|pending| pending.id == stored_meta.id)
+                || self.batch_reservations.iter().any(|(key, batch)| {
+                    Some(key) != skip && batch.iter().any(|pending| pending.id == stored_meta.id)
+                });
+            if !replaced {
+                let (_, body) = self.mem.get(&stored_meta.id)?;
+                if usize::try_from(stored_meta.size).ok()? != body.len() {
+                    return None;
+                }
+                total = total.checked_add(bundle_record_size(body.len())?)?;
+            }
+        }
+        for pending in self.reservations.values() {
+            total = total.checked_add(bundle_record_size(
+                usize::try_from(pending.declared_size).ok()?,
+            )?)?;
+        }
+        for (key, batch) in &self.batch_reservations {
+            if Some(key) == skip {
+                continue;
+            }
+            for pending in batch {
+                total = total.checked_add(bundle_record_size(
+                    usize::try_from(pending.declared_size).ok()?,
+                )?)?;
+            }
+        }
+        for meta in candidates {
+            total = total.checked_add(bundle_record_size(usize::try_from(meta.size).ok()?)?)?;
+        }
         for claim in &self.claims {
             total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
         }
@@ -984,6 +1063,12 @@ impl BundleStore for SnapshotStore {
         self.mem.put(meta, bytes)
     }
     fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+        // A checked write has no reservation-aware accounting here. Refuse it
+        // while any runtime capability is outstanding so it cannot consume
+        // bytes/image space promised to a later single or atomic batch commit.
+        if !self.reservations.is_empty() || !self.batch_reservations.is_empty() {
+            return Err(StorePutError::Capacity);
+        }
         let replaced = self.mem.meta(&meta.id).is_some();
         let Some(limits) = self.limits else {
             self.mem.put(meta, bytes);
@@ -1012,7 +1097,7 @@ impl BundleStore for SnapshotStore {
         // Replacing the working image would discard MemStore's runtime-only
         // reservation table. Require callers to commit or abort those tokens
         // first rather than silently making them unusable.
-        if !self.reservations.is_empty() {
+        if !self.reservations.is_empty() || !self.batch_reservations.is_empty() {
             return Err(StoreBatchError::Invalid);
         }
         // Match the legacy bounded write's fail-closed behavior: an image
@@ -1108,6 +1193,9 @@ impl BundleStore for SnapshotStore {
         for meta in metas {
             if !ids.insert(meta.id)
                 || self.reservations.values().any(|pending| pending.id == meta.id)
+                || self.batch_reservations.values().any(|batch| {
+                    batch.iter().any(|pending| pending.id == meta.id)
+                })
             {
                 return Err(StoreReserveError::Invalid);
             }
@@ -1151,6 +1239,48 @@ impl BundleStore for SnapshotStore {
         }
         Ok(reservations)
     }
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        if self.load_rejected {
+            return Err(StoreReserveError::Capacity);
+        }
+        if metas.is_empty() {
+            return Err(StoreReserveError::Invalid);
+        }
+        let mut ids = BTreeSet::new();
+        for meta in metas {
+            if !ids.insert(meta.id)
+                || self.reservations.values().any(|pending| pending.id == meta.id)
+                || self.batch_reservations.values().any(|batch| {
+                    batch.iter().any(|pending| pending.id == meta.id)
+                })
+            {
+                return Err(StoreReserveError::Invalid);
+            }
+        }
+        if let Some(limits) = self.limits {
+            let image_size = self
+                .image_size_for_batch_reservation_plan(metas, None)
+                .ok_or(StoreReserveError::Capacity)?;
+            if image_size > limits.max_file_bytes() {
+                return Err(StoreReserveError::Capacity);
+            }
+        }
+        let batch = self.mem.try_reserve_batch_atomic(metas)?;
+        self.batch_reservations.insert(
+            batch.key(),
+            metas
+                .iter()
+                .map(|meta| PendingReservation {
+                    id: meta.id,
+                    declared_size: meta.size,
+                })
+                .collect(),
+        );
+        Ok(batch)
+    }
     fn commit_reserved(
         &mut self,
         reservation: &StoreReservation,
@@ -1181,6 +1311,38 @@ impl BundleStore for SnapshotStore {
         self.reservations.remove(&key);
         Ok(outcome)
     }
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        let key = batch.key();
+        let pending = self
+            .batch_reservations
+            .get(&key)
+            .ok_or(StoreCommitError::Invalid)?;
+        if pending.len() != entries.len()
+            || pending.iter().zip(entries).any(|(pending, entry)| {
+                pending.id != entry.meta.id
+                    || pending.declared_size != entry.meta.size
+                    || usize::try_from(entry.meta.size).ok() != Some(entry.bytes.len())
+            })
+        {
+            return Err(StoreCommitError::Invalid);
+        }
+        if let Some(limits) = self.limits {
+            let metas: Vec<BundleMeta> = entries.iter().map(|entry| entry.meta).collect();
+            let image_size = self
+                .image_size_for_batch_reservation_plan(&metas, Some(&key))
+                .ok_or(StoreCommitError::Conflict)?;
+            if image_size > limits.max_file_bytes() {
+                return Err(StoreCommitError::Capacity);
+            }
+        }
+        let outcomes = self.mem.commit_reserved_batch(batch, entries)?;
+        self.batch_reservations.remove(&key);
+        Ok(outcomes)
+    }
     fn abort_reservation(
         &mut self,
         reservation: &StoreReservation,
@@ -1189,6 +1351,17 @@ impl BundleStore for SnapshotStore {
         let result = self.mem.abort_reservation(reservation);
         if result.is_ok() {
             self.reservations.remove(&key);
+        }
+        result
+    }
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), StoreAbortError> {
+        let key = batch.key();
+        let result = self.mem.abort_reserved_batch(batch);
+        if result.is_ok() {
+            self.batch_reservations.remove(&key);
         }
         result
     }
@@ -1449,6 +1622,88 @@ mod tests {
         assert_eq!(store.total_bytes(), 0);
 
         let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn atomic_batch_reservation_rejects_complete_image_over_limit_without_prefix() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-atomic-batch-limit-{}.mmp",
+            std::process::id()
+        ));
+        let probe_path = std::env::temp_dir().join(format!(
+            "mmp-store-atomic-batch-limit-probe-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&probe_path);
+
+        let metas = [batch_meta(31, 2), batch_meta(32, 2)];
+        let entries = [
+            StoreBatchEntry::new(metas[0], b"ab"),
+            StoreBatchEntry::new(metas[1], b"cd"),
+        ];
+        let mut probe = SnapshotStore::open(&probe_path);
+        let batch = probe.try_reserve_batch_atomic(&metas).unwrap();
+        probe.commit_reserved_batch(&batch, &entries).unwrap();
+        probe.persist().unwrap();
+        let too_small = std::fs::metadata(&probe_path).unwrap().len() - 1;
+
+        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(too_small));
+        assert_eq!(
+            bounded.try_reserve_batch_atomic(&metas),
+            Err(StoreReserveError::Capacity)
+        );
+        assert_eq!(bounded.total_bytes(), 0);
+        assert!(bounded.meta(&metas[0].id).is_none());
+        assert!(bounded.meta(&metas[1].id).is_none());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&probe_path);
+    }
+
+    #[test]
+    fn atomic_batch_reservation_load_rejected_fails_closed_without_mutation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-atomic-batch-rejected-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).unwrap();
+
+        let mut store = SnapshotStore::open(&path);
+        assert!(store.load_rejected());
+        assert_eq!(
+            store.try_reserve_batch_atomic(&[batch_meta(33, 2)]),
+            Err(StoreReserveError::Capacity)
+        );
+        assert_eq!(store.total_bytes(), 0);
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn checked_write_cannot_bypass_an_outstanding_atomic_batch_reservation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-atomic-batch-checked-write-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let mut store = SnapshotStore::open(&path);
+        let reserved = batch_meta(35, 2);
+        let batch = store.try_reserve_batch_atomic(&[reserved]).unwrap();
+        assert_eq!(
+            store.try_put(batch_meta(36, 2), b"no"),
+            Err(StorePutError::Capacity)
+        );
+        let entries = [StoreBatchEntry::new(reserved, b"ok")];
+        assert_eq!(
+            store.commit_reserved_batch(&batch, &entries),
+            Ok(vec![StorePutOutcome::Inserted])
+        );
+        assert_eq!(store.get(&reserved.id).unwrap().1, b"ok");
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
