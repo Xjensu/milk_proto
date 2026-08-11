@@ -23,7 +23,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mmp_core::store::{
-    BundleMeta, BundleStore, StoreBatchEntry, StoreBatchError, StorePutError, StorePutOutcome,
+    BundleMeta, BundleStore, StoreAbortError, StoreBatchEntry, StoreBatchError,
+    StoreBatchReservation, StoreCommitError, StorePutError, StorePutOutcome, StoreReserveError,
 };
 use mmp_core::MemStore;
 use mmp_node::{DeliveryState, Event, Node, Tier};
@@ -585,6 +586,34 @@ impl BundleStore for SharedSnapshot {
         entries: &[StoreBatchEntry<'_>],
     ) -> Result<Vec<StorePutOutcome>, StoreBatchError> {
         self.0.lock().expect("snapshot store mutex poisoned").try_put_batch(entries)
+    }
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        self.0
+            .lock()
+            .expect("snapshot store mutex poisoned")
+            .try_reserve_batch_atomic(metas)
+    }
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        self.0
+            .lock()
+            .expect("snapshot store mutex poisoned")
+            .commit_reserved_batch(batch, entries)
+    }
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), StoreAbortError> {
+        self.0
+            .lock()
+            .expect("snapshot store mutex poisoned")
+            .abort_reserved_batch(batch)
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.0.lock().expect("snapshot store mutex poisoned").get(id)
@@ -1543,6 +1572,89 @@ mod tests {
         assert_eq!(shared.len(), 2);
         assert_eq!(shared.get(&Id16([0x74; 16])).map(|(_, bytes)| bytes), Some(b"one".to_vec()));
         assert_eq!(shared.get(&Id16([0x75; 16])).map(|(_, bytes)| bytes), Some(b"two".to_vec()));
+        remove_snapshot(&path);
+    }
+
+    #[test]
+    fn shared_snapshot_forwards_atomic_reservation_commit_and_records() {
+        let path = temp_snapshot_path();
+        let snapshot = SnapshotStore::open(&path);
+        let mut shared = SharedSnapshot(Arc::new(Mutex::new(snapshot)));
+        let meta = |id_byte: u8, size: usize| BundleMeta {
+            id: Id16([id_byte; 16]),
+            class: class::DIRECT,
+            origin: Id16([0x76; 16]),
+            dest: Id16([0x77; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: size as u32,
+            stored_at: 0,
+            expires_at: 1_000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+        let metas = [meta(0x78, 3), meta(0x79, 3)];
+        let entries = [
+            StoreBatchEntry::new(metas[0], b"one"),
+            StoreBatchEntry::new(metas[1], b"two"),
+        ];
+
+        let batch = shared
+            .try_reserve_batch_atomic(&metas)
+            .expect("snapshot capability must be forwarded");
+        assert_eq!(
+            shared
+                .commit_reserved_batch(&batch, &entries)
+                .expect("reserved batch must commit through adapter"),
+            vec![StorePutOutcome::Inserted, StorePutOutcome::Inserted]
+        );
+        assert_eq!(shared.len(), 2);
+        assert_eq!(
+            shared.get(&metas[0].id).map(|(_, bytes)| bytes),
+            Some(b"one".to_vec())
+        );
+        assert_eq!(
+            shared.get(&metas[1].id).map(|(_, bytes)| bytes),
+            Some(b"two".to_vec())
+        );
+        assert_eq!(
+            shared.abort_reserved_batch(&batch),
+            Ok(()),
+            "aborting a consumed reservation must be forwarded idempotently"
+        );
+        assert_eq!(shared.len(), 2, "abort must not remove committed records");
+        remove_snapshot(&path);
+    }
+
+    #[test]
+    fn shared_snapshot_forwards_atomic_reservation_abort_without_record() {
+        let path = temp_snapshot_path();
+        let snapshot = SnapshotStore::open(&path);
+        let mut shared = SharedSnapshot(Arc::new(Mutex::new(snapshot)));
+        let meta = BundleMeta {
+            id: Id16([0x7a; 16]),
+            class: class::DIRECT,
+            origin: Id16([0x7b; 16]),
+            dest: Id16([0x7c; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: 3,
+            stored_at: 0,
+            expires_at: 1_000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+
+        let batch = shared
+            .try_reserve_batch_atomic(&[meta])
+            .expect("snapshot capability must be forwarded");
+        assert_eq!(shared.len(), 0);
+        assert_eq!(shared.abort_reserved_batch(&batch), Ok(()));
+        assert_eq!(shared.abort_reserved_batch(&batch), Ok(()));
+        assert_eq!(shared.meta(&meta.id), None);
+        assert_eq!(shared.len(), 0, "aborting must not publish a record");
         remove_snapshot(&path);
     }
 

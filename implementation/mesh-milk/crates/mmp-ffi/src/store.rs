@@ -22,7 +22,8 @@
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use mmp_core::store::{
-    BundleMeta, BundleStore, StoreBatchEntry, StoreBatchError, StorePutError, StorePutOutcome,
+    BundleMeta, BundleStore, StoreBatchEntry, StoreBatchError, StoreBatchReservation,
+    StoreCommitError, StorePutError, StorePutOutcome, StoreReserveError,
 };
 use mmp_store::SnapshotStore;
 use mmp_types::ids::Id16;
@@ -42,7 +43,11 @@ impl BundleStore for SharedStore {
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
         self.lock().put(meta, bytes)
     }
-    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+    fn try_put(
+        &mut self,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
         self.lock().try_put(meta, bytes)
     }
     fn try_put_batch(
@@ -50,6 +55,25 @@ impl BundleStore for SharedStore {
         entries: &[StoreBatchEntry<'_>],
     ) -> Result<Vec<StorePutOutcome>, StoreBatchError> {
         self.lock().try_put_batch(entries)
+    }
+    fn try_reserve_batch_atomic(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<StoreBatchReservation, StoreReserveError> {
+        self.lock().try_reserve_batch_atomic(metas)
+    }
+    fn commit_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreCommitError> {
+        self.lock().commit_reserved_batch(batch, entries)
+    }
+    fn abort_reserved_batch(
+        &mut self,
+        batch: &StoreBatchReservation,
+    ) -> Result<(), mmp_core::store::StoreAbortError> {
+        self.lock().abort_reserved_batch(batch)
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.lock().get(id)
@@ -77,5 +101,84 @@ impl BundleStore for SharedStore {
     }
     fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
         self.lock().expire(now_ms)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mmp_core::store::SlotState;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_PATH: AtomicU64 = AtomicU64::new(0);
+
+    fn store() -> SharedStore {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-ffi-shared-store-{}-{}",
+            std::process::id(),
+            NEXT_PATH.fetch_add(1, Ordering::Relaxed)
+        ));
+        SharedStore(Arc::new(Mutex::new(SnapshotStore::open(path))))
+    }
+
+    fn meta(tag: u8, size: u32) -> BundleMeta {
+        BundleMeta {
+            id: Id16([tag; 16]),
+            class: 1,
+            origin: Id16([0xa0; 16]),
+            dest: Id16([0xb0; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size,
+            stored_at: 1,
+            expires_at: 10_000,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        }
+    }
+
+    #[test]
+    fn shared_store_forwards_atomic_batch_reserve_and_commit() {
+        let mut store = store();
+        let first = meta(1, 3);
+        let second = meta(2, 2);
+        let reservation = store
+            .try_reserve_batch_atomic(&[first, second])
+            .expect("SnapshotStore supports atomic batch reservations");
+        let entries = [
+            StoreBatchEntry::new(first, b"abc"),
+            StoreBatchEntry::new(second, b"de"),
+        ];
+
+        assert_eq!(
+            store.commit_reserved_batch(&reservation, &entries).unwrap(),
+            [StorePutOutcome::Inserted, StorePutOutcome::Inserted,]
+        );
+        assert_eq!(store.len(), 2);
+        assert_eq!(store.get(&first.id).unwrap().1, b"abc");
+        assert_eq!(store.get(&second.id).unwrap().1, b"de");
+    }
+
+    #[test]
+    fn shared_store_forwards_atomic_batch_abort() {
+        let mut store = store();
+        let candidate = meta(3, 4);
+        let reservation = store
+            .try_reserve_batch_atomic(&[candidate])
+            .expect("SnapshotStore supports atomic batch reservations");
+
+        assert_eq!(store.abort_reserved_batch(&reservation), Ok(()));
+        assert_eq!(store.meta(&candidate.id), None);
+        // A successful retry proves the adapter delegated the release rather
+        // than retaining the provider's reservation locally.
+        let retry = store
+            .try_reserve_batch_atomic(&[candidate])
+            .expect("aborted reservation must be released by SnapshotStore");
+        let entries = [StoreBatchEntry::new(candidate, b"data")];
+        assert_eq!(
+            store.commit_reserved_batch(&retry, &entries).unwrap(),
+            [StorePutOutcome::Inserted]
+        );
     }
 }
