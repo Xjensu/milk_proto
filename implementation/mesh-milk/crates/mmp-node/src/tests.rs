@@ -12,6 +12,7 @@ use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
+use mmp_types::claim::{friendship_signed_object, EpochAnchor, Friendship, PrekeyBatch, Revocation};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
     NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
@@ -22,7 +23,7 @@ use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload, Sy
 use mmp_types::tlv::Ext;
 
 use crate::diag::JourneyEvent;
-use crate::{ClaimPublishError, DeliveryState, Event, Node, SendError, SentMessage, Tier};
+use crate::{ClaimPublishError, DeliveryState, Event, KnownClaimBody, Node, SendError, SentMessage, Tier};
 
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
@@ -170,6 +171,76 @@ fn recognized_claim_publication_rejects_malformed_bodies_before_side_effects() {
 
     // Forward-compatible fields are still accepted as opaque signed claims.
     assert!(n.try_publish_claim(0xf0, 1, vec![0xff; 3]).is_ok());
+}
+
+#[test]
+fn typed_known_claims_validate_before_signing_and_keep_opaque_path() {
+    let mut n = node(243);
+    let friend = Identity::from_seed(&[244; 32]);
+    let since = 123_456u64;
+    let owner = n.public_key();
+    let countersig = friend.sign(
+        SigDomain::Friend,
+        &friendship_signed_object(&owner, &friend.public(), since),
+    );
+
+    let valid = [
+        KnownClaimBody::Nickname("typed".to_owned()),
+        KnownClaimBody::ExchangeKey(Key32([0x55; 32])),
+        KnownClaimBody::PrekeyBatch(n.core.prekeys.batch(&n.core.identity)),
+        KnownClaimBody::Friendship(Friendship { friend: friend.public(), since, countersig }),
+        KnownClaimBody::GroupEpochAnchor(EpochAnchor {
+            gid: mmp_types::ids::Id16([0x66; 16]),
+            epoch: 3,
+            member_root: [0x77; 32],
+        }),
+    ];
+    for (seq, body) in valid.into_iter().enumerate() {
+        let encoded = n
+            .try_publish_known_claim(seq as u32 + 2, body)
+            .expect("typed complete claim schema should publish");
+        assert!(mmp_types::claim::Claim::decode(&encoded).is_ok());
+    }
+
+    let mut bad_prekey = n.core.prekeys.batch(&n.core.identity);
+    bad_prekey.spk_sig = Sig64::ZERO;
+    let bad_friendship = Friendship {
+        friend: friend.public(),
+        since,
+        countersig: Sig64::ZERO,
+    };
+    let bad_revocation = Revocation {
+        revoked_key: Key32([0x88; 32]),
+        reason: 1,
+        successor: None,
+        successor_countersig: None,
+    };
+    let oversized_prekey = PrekeyBatch {
+        signed_prekey: Key32([0x99; 32]),
+        spk_sig: Sig64::ZERO,
+        prekeys: vec![Key32([0xaa; 32]); mmp_types::consts::PREKEY_BATCH + 1],
+    };
+    let invalid = [
+        KnownClaimBody::Nickname("x".repeat(NICKNAME_MAX + 1)),
+        KnownClaimBody::PrekeyBatch(bad_prekey),
+        KnownClaimBody::PrekeyBatch(oversized_prekey),
+        KnownClaimBody::Friendship(bad_friendship),
+        KnownClaimBody::Revocation(bad_revocation),
+    ];
+    let claims_before = n.own_claims();
+    let store_before = n.store_len();
+    for body in invalid {
+        assert_eq!(
+            n.try_publish_known_claim(99, body),
+            Err(ClaimPublishError::InvalidBody),
+            "invalid typed body must fail before signing or gossip",
+        );
+        assert_eq!(n.own_claims(), claims_before);
+        assert_eq!(n.store_len(), store_before);
+    }
+
+    // Unknown fields remain explicitly opaque through the raw API.
+    assert!(n.try_publish_claim(0xf0, 1, vec![0xff]).is_ok());
 }
 
 #[test]

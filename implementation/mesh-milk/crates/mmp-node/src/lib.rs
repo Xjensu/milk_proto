@@ -57,7 +57,9 @@ use mmp_types::bundle::{
     class, prio, Bundle, FLAG_ASYNC_KEYS, FLAG_HAS_PARENTS, FLAG_WANTS_RECEIPT, LIFETIME_OFFSET,
     SIG_LEN,
 };
-use mmp_types::claim::{field, friendship_signed_object, Claim, Friendship, PrekeyBatch, Revocation};
+use mmp_types::claim::{
+    field, friendship_signed_object, Claim, EpochAnchor, Friendship, PrekeyBatch, Revocation,
+};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS,
     FILE_MAX, FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA,
@@ -478,6 +480,51 @@ pub enum ClaimPublishError {
     /// The local identity already has an adopted identity-revocation
     /// tombstone; the tombstone is immutable and blocks every later claim.
     OwnerRevoked,
+}
+
+/// A typed body for a claim schema whose v1 representation is complete in
+/// this implementation.  The body is still checked against the owner's
+/// identity and the stateful claim rules before it is signed or gossiped.
+///
+/// `AVATAR_ROOT`, `AUTHCERT`, and `REVOCATION_LIST` are deliberately absent:
+/// the frozen documents either leave their body opaque or assign validation
+/// to a separate authority layer.  Callers that relay a future/opaque field
+/// can continue to use [`Node::try_publish_claim`] with its raw bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KnownClaimBody {
+    /// Display nickname (UTF-8, capped by the claim registry).
+    Nickname(String),
+    /// X25519 exchange public key.
+    ExchangeKey(Key32),
+    /// Identity-signed X3DH prekey batch.
+    PrekeyBatch(PrekeyBatch),
+    /// Counter-signed friendship body.
+    Friendship(Friendship),
+    /// Group epoch anchor body.
+    GroupEpochAnchor(EpochAnchor),
+    /// Identity revocation and optional successor countersignature.
+    Revocation(Revocation),
+}
+
+impl KnownClaimBody {
+    /// Convert a typed body to its registered field and canonical body bytes.
+    /// The prekey count is checked before encoding because the legacy
+    /// `PrekeyBatch::encode` method uses a compact `u8` count.
+    fn into_parts(self) -> Result<(u8, Vec<u8>), ClaimPublishError> {
+        match self {
+            Self::Nickname(name) => Ok((field::NICKNAME, name.into_bytes())),
+            Self::ExchangeKey(key) => Ok((field::EXCHANGE_KEY, key.0.to_vec())),
+            Self::PrekeyBatch(batch) => {
+                if batch.prekeys.len() > PREKEY_BATCH {
+                    return Err(ClaimPublishError::InvalidBody);
+                }
+                Ok((field::PREKEY_BATCH, batch.encode()))
+            }
+            Self::Friendship(friendship) => Ok((field::FRIENDSHIP, friendship.encode())),
+            Self::GroupEpochAnchor(anchor) => Ok((field::GROUP_EPOCH_ANCHOR, anchor.encode())),
+            Self::Revocation(revocation) => Ok((field::REVOCATION, revocation.encode())),
+        }
+    }
 }
 
 /// Domain-partitioned, offer-eligible snapshot of the store (RBSR seam).
@@ -1031,6 +1078,24 @@ impl Node {
         body: Vec<u8>,
     ) -> Result<Vec<u8>, ClaimPublishError> {
         self.core.try_publish_claim_now(field_id, seq, body)
+    }
+
+    /// Publish a typed claim whose body schema is complete in this release.
+    /// Validation (including identity-bound signatures and the local
+    /// revocation tombstone) happens in the same path as raw publication,
+    /// before the owner's signature, bundle store, or gossip is touched.
+    ///
+    /// Opaque/future claim fields remain available through
+    /// [`Node::try_publish_claim`]; authority-pointer and avatar-root fields
+    /// are intentionally not represented here while their frozen schemas are
+    /// incomplete or delegated to another layer.
+    pub fn try_publish_known_claim(
+        &mut self,
+        seq: u32,
+        body: KnownClaimBody,
+    ) -> Result<Vec<u8>, ClaimPublishError> {
+        let (field_id, body) = body.into_parts()?;
+        self.try_publish_claim(field_id, seq, body)
     }
 
     /// Publish our nickname as a profile claim (doc 06 §4) — `seq` must
