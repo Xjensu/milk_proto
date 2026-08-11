@@ -13,3 +13,13 @@ The `uniffi-bindgen` CLI binary (Kotlin/Swift codegen) is gated behind the opt-i
 `cli` feature so ordinary mobile-app builds never pull in `clap`/`camino`.
 
 See `docs/API_REFERENCE.md` and `implementation/mesh-milk/MOBILE_INTEGRATION.md`.
+
+## Beta harness observability
+
+`MmpNode::status()` returns a coarse, secret-free snapshot containing the
+selected tier, persistence availability, diagnostics opt-in, and the latest
+accepted monotonic tick. `MmpNode::metrics()` returns local store, callback
+backpressure, and diagnostics counters; persistence failures remain available
+through the existing `last_persist_error()` query. These snapshots
+contain no peer/session identifiers, wire bytes, provider handles, or key
+material; hosts decide whether to display or explicitly export them.

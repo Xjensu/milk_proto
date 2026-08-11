@@ -90,6 +90,53 @@ fn direct_message_delivery_via_ffi_surface() {
 }
 
 #[test]
+fn status_and_metrics_snapshot_is_secret_free_and_tracks_host_state() {
+    let node = node(73);
+
+    let initial = node.status();
+    assert_eq!(initial.tier, FfiTier::Relay);
+    assert!(!initial.persistent_store);
+    assert!(!initial.diagnostics_enabled);
+    assert_eq!(initial.last_tick_ms, 0);
+
+    let initial_metrics = node.metrics();
+    assert_eq!(initial_metrics.store_len, node.store_len());
+    assert_eq!(initial_metrics.close_actions_dropped, 0);
+    assert_eq!(initial_metrics.event_queue_dropped, 0);
+    assert_eq!(initial_metrics.diagnostic_records, 0);
+
+    node.enable_diagnostics();
+    node.tick(42);
+    node.set_tier(FfiTier::Anchor);
+
+    let status = node.status();
+    assert_eq!(status.tier, FfiTier::Anchor);
+    assert!(status.diagnostics_enabled);
+    assert_eq!(status.last_tick_ms, 42);
+
+    let metrics = node.metrics();
+    assert_eq!(metrics.store_len, node.store_len());
+    assert_eq!(metrics.diagnostic_records, 0);
+}
+
+#[test]
+fn status_reports_persistent_store_without_exposing_path() {
+    let dir = TempDir::new("status-persistence");
+    let node = MmpNode::new(
+        vec![74u8; 32],
+        FfiTier::Leaf,
+        Some(dir.file("node.mmp")),
+    )
+    .expect("valid snapshot path");
+
+    let status = node.status();
+    assert!(status.persistent_store);
+    assert_eq!(status.last_tick_ms, 0);
+    let metrics = node.metrics();
+    assert_eq!(metrics.store_len, node.store_len());
+}
+
+#[test]
 fn first_tick_anchors_persisted_message_deadline() {
     let dir = TempDir::new("first-tick-deadline");
     let path = dir.file("alice.mmp");

@@ -402,6 +402,10 @@ fn parse_context(context: &[u8], public: &Key32, node_id: &Id16) -> Result<HashM
 }
 
 #[cfg(test)]
+#[path = "vault_freshness.rs"]
+mod freshness_model;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use mmp_core::MemStore;

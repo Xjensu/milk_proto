@@ -194,6 +194,42 @@ impl From<Tier> for FfiTier {
     }
 }
 
+/// A coarse, secret-free snapshot of the node's host-facing capabilities and
+/// lifecycle clock.  This is intended for beta-app status screens and test
+/// harnesses; it deliberately does not expose provider handles, peer/session
+/// state, or any key material.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiNodeStatus {
+    /// Current relay/storage posture.
+    pub tier: FfiTier,
+    /// Whether this node was constructed with a file-backed snapshot store.
+    pub persistent_store: bool,
+    /// Whether local journey diagnostics are currently recording.
+    pub diagnostics_enabled: bool,
+    /// Most recent monotonic clock sample accepted from the host.
+    pub last_tick_ms: u64,
+}
+
+/// Bounded, local-only operational counters for beta diagnostics.  Values are
+/// snapshots, not telemetry: callers decide whether and how to display or
+/// export them.  No peer identifiers, wire bytes, provider details, or secret
+/// state are included.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiMetrics {
+    /// Number of bundles currently held by the local store.
+    pub store_len: u64,
+    /// Number of transport close actions dropped by the bounded host queue.
+    pub close_actions_dropped: u64,
+    /// Number of app events dropped by the bounded callback queue.
+    pub event_queue_dropped: u64,
+    /// Number of journey records retained while diagnostics were enabled.
+    pub diagnostic_records: u64,
+    /// Number of class-5 announcements whose priority was clamped.
+    pub diagnostic_clamps: u64,
+    /// Number of bundles rejected by the local admission gate.
+    pub diagnostic_drops: u64,
+}
+
 /// Delivery status (mirrors [`DeliveryState`]).
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiDeliveryState {
@@ -654,6 +690,9 @@ pub struct MmpNode {
     /// (see [`store::SharedStore`]), used only to drive persistence timing.
     snapshot: Option<Arc<Mutex<SnapshotStore>>>,
     persist: Mutex<PersistState>,
+    /// Mirrors the opt-in diagnostics switch for the coarse status snapshot.
+    /// The records themselves remain owned by `Node::DiagLog`.
+    diagnostics_enabled: Mutex<bool>,
     /// Serializes native clock callbacks so the monotonic admission check and
     /// persistence timestamp update observe one ordered sequence even when a
     /// host dispatches timer callbacks concurrently.
@@ -804,6 +843,7 @@ impl MmpNode {
             inner: Mutex::new(node),
             snapshot,
             persist: Mutex::new(PersistState::default()),
+            diagnostics_enabled: Mutex::new(false),
             tick_serial: Mutex::new(()),
         }))
     }
@@ -1232,11 +1272,70 @@ impl MmpNode {
     /// Off by default (doc 12 §7.7).
     pub fn enable_diagnostics(&self) {
         self.lock().enable_diagnostics();
+        *self
+            .diagnostics_enabled
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = true;
     }
 
     /// Line-delimited dump of the diagnostics journey log.
     pub fn diag_dump(&self) -> String {
         self.lock().diagnostics().dump()
+    }
+
+    /// Return a coarse, secret-free snapshot of host-facing capability and
+    /// lifecycle state for beta status screens and deterministic harnesses.
+    /// The clock is the latest monotonic sample accepted by [`Self::tick`].
+    pub fn status(&self) -> FfiNodeStatus {
+        let tier = self.lock().tier().into();
+        let last_tick_ms = self
+            .persist
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .last_seen_now_ms;
+        let diagnostics_enabled = *self
+            .diagnostics_enabled
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        FfiNodeStatus {
+            tier,
+            persistent_store: self.snapshot.is_some(),
+            diagnostics_enabled,
+            last_tick_ms,
+        }
+    }
+
+    /// Return local operational counters suitable for a beta diagnostics
+    /// panel. The snapshot contains no identifiers, wire bytes, provider
+    /// handles, or secret state, and is never transmitted by this crate.
+    pub fn metrics(&self) -> FfiMetrics {
+        let (
+            store_len,
+            close_actions_dropped,
+            event_queue_dropped,
+            diagnostic_records,
+            diagnostic_clamps,
+            diagnostic_drops,
+        ) = {
+            let node = self.lock();
+            let diagnostics = node.diagnostics();
+            (
+                node.store_len() as u64,
+                node.close_actions_dropped(),
+                node.event_queue_dropped(),
+                diagnostics.records().len() as u64,
+                diagnostics.clamps,
+                diagnostics.drops,
+            )
+        };
+        FfiMetrics {
+            store_len,
+            close_actions_dropped,
+            event_queue_dropped,
+            diagnostic_records,
+            diagnostic_clamps,
+            diagnostic_drops,
+        }
     }
 
     /// Remove `member` from group `gid` (admin-only): epoch rotates, the
