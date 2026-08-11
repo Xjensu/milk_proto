@@ -38,7 +38,7 @@ use zeroize::Zeroizing;
 use mmp_core::authority::{effective_class5_priority, AuthorityStore, CertReject};
 use mmp_core::bloom::{Bloom, INTERNAL_SALT};
 use mmp_core::ingest::{ingest, Disposition};
-use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError};
+use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StoreReserveError};
 use mmp_core::{
     ClaimStore, IdSource, ReceiptFilter, SeenIndex, SessionEngine, SessionEvent, SessionHost,
 };
@@ -2447,9 +2447,29 @@ impl NodeCore {
             own_origin: true,
             slot: SlotState::Stored,
         };
-        self.store
-            .try_put(meta, &bytes)
-            .map_err(|StorePutError::Capacity| SendError::ResourceLimit)?;
+        match self.store.try_reserve(meta) {
+            Ok(reservation) => {
+                let commit = self.store.commit_reserved(&reservation, meta, &bytes);
+                if commit.is_err() {
+                    // A failed reservation commit is never retried through
+                    // the legacy seam: the provider may have observed a
+                    // partial failure, so publishing again could duplicate
+                    // or overwrite state. The reservation contract keeps a
+                    // failed token abortable; release it best-effort and
+                    // report a local resource failure to the producer.
+                    let _ = self.store.abort_reservation(&reservation);
+                    return Err(SendError::ResourceLimit);
+                }
+            }
+            Err(StoreReserveError::Unsupported) => {
+                self.store
+                    .try_put(meta, &bytes)
+                    .map_err(|StorePutError::Capacity| SendError::ResourceLimit)?;
+            }
+            Err(StoreReserveError::Invalid | StoreReserveError::Capacity) => {
+                return Err(SendError::ResourceLimit);
+            }
+        }
         self.seen.insert(&id, bundle.class, self.now);
         self.diag.log(id, JourneyEvent::Created, self.now);
         Ok(id)

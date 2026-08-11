@@ -6,8 +6,11 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use mmp_core::store::{BundleMeta, BundleStore, SlotState, StorePutError, StorePutOutcome};
-use mmp_core::{IdSource, MemStore, SessionHost};
+use mmp_core::store::{
+    BundleMeta, BundleStore, MemStore, SlotState, StoreAbortError, StoreCommitError,
+    StorePutError, StorePutOutcome, StoreReserveError, StoreReservation,
+};
+use mmp_core::{IdSource, SessionHost};
 use mmp_crypto::{conversation_id, Identity};
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD};
@@ -439,6 +442,127 @@ impl BundleStore for CapacityRejectStore {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ReservationMode {
+    Unsupported,
+    Reject,
+    CommitFails,
+    Accept,
+}
+
+struct ReservationProbeStore {
+    inner: MemStore,
+    mode: ReservationMode,
+    reserve_calls: Arc<AtomicBool>,
+    commit_calls: Arc<AtomicBool>,
+    abort_calls: Arc<AtomicBool>,
+    try_put_calls: Arc<AtomicBool>,
+}
+
+impl ReservationProbeStore {
+    fn new(mode: ReservationMode) -> (Self, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
+        let reserve_calls = Arc::new(AtomicBool::new(false));
+        let commit_calls = Arc::new(AtomicBool::new(false));
+        let abort_calls = Arc::new(AtomicBool::new(false));
+        let try_put_calls = Arc::new(AtomicBool::new(false));
+        (
+            Self {
+                inner: MemStore::new(),
+                mode,
+                reserve_calls: reserve_calls.clone(),
+                commit_calls: commit_calls.clone(),
+                abort_calls: abort_calls.clone(),
+                try_put_calls: try_put_calls.clone(),
+            },
+            reserve_calls,
+            commit_calls,
+            abort_calls,
+            try_put_calls,
+        )
+    }
+}
+
+impl BundleStore for ReservationProbeStore {
+    fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
+        self.inner.put(meta, bytes);
+    }
+
+    fn try_put(
+        &mut self,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
+        self.try_put_calls.store(true, Ordering::Relaxed);
+        self.inner.try_put(meta, bytes)
+    }
+
+    fn try_reserve(&mut self, meta: BundleMeta) -> Result<StoreReservation, StoreReserveError> {
+        self.reserve_calls.store(true, Ordering::Relaxed);
+        match self.mode {
+            ReservationMode::Unsupported => Err(StoreReserveError::Unsupported),
+            ReservationMode::Reject => Err(StoreReserveError::Capacity),
+            ReservationMode::CommitFails | ReservationMode::Accept => self.inner.try_reserve(meta),
+        }
+    }
+
+    fn commit_reserved(
+        &mut self,
+        reservation: &StoreReservation,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StoreCommitError> {
+        self.commit_calls.store(true, Ordering::Relaxed);
+        if matches!(self.mode, ReservationMode::CommitFails) {
+            return Err(StoreCommitError::Capacity);
+        }
+        self.inner.commit_reserved(reservation, meta, bytes)
+    }
+
+    fn abort_reservation(
+        &mut self,
+        reservation: &StoreReservation,
+    ) -> Result<(), StoreAbortError> {
+        self.abort_calls.store(true, Ordering::Relaxed);
+        self.inner.abort_reservation(reservation)
+    }
+
+    fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
+        self.inner.get(id)
+    }
+
+    fn meta(&self, id: &Id16) -> Option<BundleMeta> {
+        self.inner.meta(id)
+    }
+
+    fn update_meta(&mut self, meta: BundleMeta) {
+        self.inner.update_meta(meta);
+    }
+
+    fn remove(&mut self, id: &Id16) -> bool {
+        self.inner.remove(id)
+    }
+
+    fn ids_range(&self, lo: &Id16, hi: &Id16) -> Vec<Id16> {
+        self.inner.ids_range(lo, hi)
+    }
+
+    fn all_meta(&self) -> Vec<BundleMeta> {
+        self.inner.all_meta()
+    }
+
+    fn total_bytes(&self) -> u64 {
+        self.inner.total_bytes()
+    }
+
+    fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
+        self.inner.expire(now_ms)
+    }
+}
+
 /// Provider fixture that accepts a bounded prefix of class-4 writes and then
 /// rejects later symbols. It models a provider that has enough room for a
 /// valid resumable prefix, but not for the complete file operation.
@@ -523,6 +647,76 @@ impl BundleStore for PrefixCapacityStore {
     fn expire(&mut self, now_ms: u64) -> Vec<Id16> {
         self.inner.expire(now_ms)
     }
+}
+
+#[test]
+fn own_publication_prefers_provider_reservation() {
+    let mut n = node(241);
+    let (probe, reserved, committed, aborted, tried) = ReservationProbeStore::new(ReservationMode::Accept);
+    n.core.store = Box::new(probe);
+
+    n.try_set_nickname("reserved", 100).expect("reservation-backed publication");
+
+    assert!(reserved.load(Ordering::Relaxed));
+    assert!(committed.load(Ordering::Relaxed));
+    assert!(!aborted.load(Ordering::Relaxed));
+    assert!(!tried.load(Ordering::Relaxed));
+}
+
+#[test]
+fn own_publication_falls_back_only_for_unsupported_reservation() {
+    let mut n = node(240);
+    let (probe, reserved, committed, aborted, tried) =
+        ReservationProbeStore::new(ReservationMode::Unsupported);
+    n.core.store = Box::new(probe);
+
+    n.try_set_nickname("legacy", 100).expect("legacy publication");
+
+    assert!(reserved.load(Ordering::Relaxed));
+    assert!(!committed.load(Ordering::Relaxed));
+    assert!(!aborted.load(Ordering::Relaxed));
+    assert!(tried.load(Ordering::Relaxed));
+}
+
+#[test]
+fn reservation_rejection_does_not_publish_local_state() {
+    let mut n = node(239);
+    let (probe, reserved, committed, aborted, tried) = ReservationProbeStore::new(ReservationMode::Reject);
+    n.core.store = Box::new(probe);
+    let seen_before = n.core.seen.encode();
+    let diagnostics_before = n.diagnostics().records().len();
+    let claims_before = n.own_claims();
+
+    assert_eq!(n.try_set_nickname("rejected", 100), Err(SendError::ResourceLimit));
+
+    assert!(reserved.load(Ordering::Relaxed));
+    assert!(!committed.load(Ordering::Relaxed));
+    assert!(!aborted.load(Ordering::Relaxed));
+    assert!(!tried.load(Ordering::Relaxed));
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert_eq!(n.diagnostics().records().len(), diagnostics_before);
+    assert_eq!(n.own_claims(), claims_before);
+}
+
+#[test]
+fn reservation_commit_failure_aborts_without_publishing_local_state() {
+    let mut n = node(238);
+    let (probe, reserved, committed, aborted, tried) =
+        ReservationProbeStore::new(ReservationMode::CommitFails);
+    n.core.store = Box::new(probe);
+    let seen_before = n.core.seen.encode();
+    let diagnostics_before = n.diagnostics().records().len();
+    let claims_before = n.own_claims();
+
+    assert_eq!(n.try_set_nickname("commit-fails", 100), Err(SendError::ResourceLimit));
+
+    assert!(reserved.load(Ordering::Relaxed));
+    assert!(committed.load(Ordering::Relaxed));
+    assert!(aborted.load(Ordering::Relaxed));
+    assert!(!tried.load(Ordering::Relaxed));
+    assert_eq!(n.core.seen.encode(), seen_before);
+    assert_eq!(n.diagnostics().records().len(), diagnostics_before);
+    assert_eq!(n.own_claims(), claims_before);
 }
 
 #[test]
