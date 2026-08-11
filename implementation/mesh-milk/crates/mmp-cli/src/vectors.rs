@@ -35,10 +35,10 @@ use mmp_types::consts::{
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
-    write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
-    Range, Summary, SummaryBucket, WantHeads, FT_BLOB_HAVE, FT_BLOB_REQ, FT_BUDGET, FT_BUNDLE,
-    FT_CLOSE, FT_CREDIT, FT_ERROR, FT_FRIEND_ACK, FT_FRIEND_OFFER, FT_HS, FT_ID_PROOF, FT_RECON_IDS,
-    FT_RECON_INIT, FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
+    try_write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
+    Range, Summary, SummaryBucket, WantHeads, FT_BLOB_HAVE, FT_BLOB_REQ, FT_BUDGET, FT_BUNDLE, FT_CLOSE,
+    FT_CREDIT, FT_ERROR, FT_FRIEND_ACK, FT_FRIEND_OFFER, FT_HS, FT_ID_PROOF, FT_RECON_IDS, FT_RECON_INIT,
+    FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
 };
 use mmp_types::ids::{Id16, Key32, Sig64};
 use mmp_types::manifest::{FileEntry, FileManifest};
@@ -638,8 +638,11 @@ fn frames_vector() -> VectorFile {
         "{\n  \"description\": \"deterministic payload and envelope bytes for every registered MMP/1 frame type\",\n  \"frame_count\": 17,\n  \"frames\": [\n",
     );
     for (index, case) in cases.iter().enumerate() {
-        let payload = case.frame.encode_payload();
-        let wire = case.frame.encode();
+        let payload = case
+            .frame
+            .try_encode_payload()
+            .expect("trusted committed vector fixture");
+        let wire = case.frame.try_encode().expect("trusted committed vector fixture");
         json.push_str(&format!(
             "    {{\"name\": \"{}\", \"type\": {}, \"payload\": \"{}\", \"wire\": \"{}\"}}{}\n",
             case.name,
@@ -813,7 +816,7 @@ delivered_id). The derived key is a secret and is intentionally omitted.\",\n  \
 
 fn envelope_vector() -> VectorFile {
     let payload = b"golden frame payload";
-    let wire = write_envelope(FT_BUNDLE, payload);
+    let wire = try_write_envelope(FT_BUNDLE, payload).expect("trusted committed vector fixture");
     let json = format!(
         "{{\n  \"description\": \"link envelope framing (doc 10 §2): [len u16 LE][type u8][payload]\",\n  \
 \"frame_type\": {},\n  \"payload\": \"{}\",\n  \"wire\": \"{}\"\n}}\n",
@@ -1179,7 +1182,8 @@ mod tests {
         assert_eq!(Beacon::decode(&beacon.encode()).unwrap(), beacon);
 
         // Envelope roundtrips.
-        let wire = write_envelope(FT_BUNDLE, b"golden frame payload");
+        let wire =
+            try_write_envelope(FT_BUNDLE, b"golden frame payload").expect("trusted committed vector fixture");
         let parts = read_envelope(&wire).unwrap().unwrap();
         assert_eq!(parts.0, FT_BUNDLE);
         assert_eq!(parts.1, b"golden frame payload");
@@ -1290,13 +1294,20 @@ mod tests {
         assert_eq!(cases.len(), REGISTERED_FRAME_TYPES.len());
         for (case, expected_type) in cases.iter().zip(REGISTERED_FRAME_TYPES) {
             assert_eq!(case.frame.typ(), expected_type, "frame case {} has wrong type", case.name);
-            let wire = case.frame.encode();
+            let wire = case.frame.try_encode().expect("trusted committed vector fixture");
             let (typ, payload, consumed) = read_envelope(&wire)
                 .expect("frame envelope must parse")
                 .expect("complete frame envelope");
             assert_eq!(consumed, wire.len(), "frame {} has trailing bytes", case.name);
             assert_eq!(typ, expected_type, "frame {} has wrong envelope tag", case.name);
-            assert_eq!(payload, case.frame.encode_payload(), "frame {} payload drift", case.name);
+            assert_eq!(
+                payload,
+                case.frame
+                    .try_encode_payload()
+                    .expect("trusted committed vector fixture"),
+                "frame {} payload drift",
+                case.name
+            );
             assert_eq!(Frame::decode_payload(typ, payload).expect("frame payload must decode"), case.frame);
         }
     }
