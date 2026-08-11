@@ -43,6 +43,17 @@ func restoreSecretState(_ bytes: Data) {}
         with tempfile.TemporaryDirectory() as root:
             self.assertTrue(CHECK.scan_directory(Path(root)))
 
+    def test_current_uniffi_exports_contain_no_secret_state_identifiers(self) -> None:
+        """Keep the Rust export boundary closed as the native vault evolves."""
+
+        rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
+        source = rust_source.read_text(encoding="utf-8")
+        start = source.index("#[uniffi::export]")
+        end = source.index("#[cfg(test)]", start)
+        exported_block = source[start:end]
+        violations = [match.group(0) for match in CHECK._FORBIDDEN.finditer(exported_block)]
+        self.assertEqual(violations, [])
+
 
 if __name__ == "__main__":
     unittest.main()
