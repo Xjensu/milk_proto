@@ -1896,9 +1896,11 @@ fn receipt_store_rejection_is_side_effect_free_and_retryable() {
     assert_eq!(bob.core.seen.encode(), seen_before);
     assert_eq!(bob.core.events.len(), events_before);
     assert_eq!(bob.diagnostics().records().len(), diag_before);
+    assert_eq!(bob.core.pending_receipts.len(), 1, "full provider queues one bounded receipt retry");
 
     bob.core.store = Box::new(MemStore::new());
-    bob.core.emit_receipt(&conv_id, &delivered, &alice.core.public);
+    bob.tick(20_001);
+    assert!(bob.core.pending_receipts.is_empty(), "provider recovery drains the retry queue");
     let meta = bob
         .core
         .store

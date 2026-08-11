@@ -150,10 +150,21 @@ const MAX_SENT_RUNTIME: usize = 4096;
 /// certificate, so attacker-controlled attachments cannot erase a pending
 /// valid grant by filling the map.
 const MAX_PENDING_AUTH_CERTS: usize = 256;
+/// Bound receipts waiting for a temporarily full local provider.  A receipt
+/// is control traffic, but retaining it is still local state and must not
+/// become an attacker-sized queue; entries older than the control lifetime
+/// are discarded rather than renewed indefinitely.
+const MAX_PENDING_RECEIPTS: usize = 256;
 
 struct PendingAuthCert {
     cert: AuthCert,
     display_not_after: u32,
+}
+
+#[derive(Clone)]
+struct PendingReceipt {
+    bundle: Bundle,
+    queued_at: u64,
 }
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
@@ -611,6 +622,10 @@ struct NodeCore {
     pending_first_contact: HashMap<Id16, Id16>,
     /// Sender-key dists already sent, keyed (gid, member, epoch).
     sent_dists: HashSet<(Id16, NodeId, u16)>,
+    /// Locally generated receipts that could not be admitted while the
+    /// provider was full.  This is a bounded, process-local retry queue; it
+    /// is deliberately not a wire or cryptographic state extension.
+    pending_receipts: BTreeMap<Id16, PendingReceipt>,
     events: VecDeque<Event>,
     event_queue_dropped: u64,
     sent: HashMap<Id16, SentMessage>,
@@ -768,6 +783,7 @@ impl Node {
             pending_async: HashMap::new(),
             pending_first_contact: HashMap::new(),
             sent_dists: HashSet::new(),
+            pending_receipts: BTreeMap::new(),
             events: VecDeque::with_capacity(EVENT_QUEUE_CAPACITY),
             event_queue_dropped: 0,
             sent: HashMap::new(),
@@ -2045,6 +2061,9 @@ impl Node {
         // Decision D3: assemblies past BLOB_INTEREST_TTL_MS → Abandoned.
         self.core.sweep_blob_ttl(now_ms);
         self.core.enforce_quota();
+        // A receipt rejected only because the provider was full is retried
+        // after expiry/eviction has had a chance to free local capacity.
+        self.core.flush_pending_receipts();
 
         let links: Vec<LinkId> = self.sessions.keys().copied().collect();
         for link in links {
@@ -2382,6 +2401,41 @@ impl NodeCore {
         self.seen.insert(&id, bundle.class, self.now);
         self.diag.log(id, JourneyEvent::Created, self.now);
         Ok(id)
+    }
+
+    fn queue_receipt_retry(&mut self, bundle: Bundle) {
+        let id = bundle.id();
+        if self.pending_receipts.contains_key(&id) || self.pending_receipts.len() >= MAX_PENDING_RECEIPTS {
+            return;
+        }
+        self.pending_receipts.insert(id, PendingReceipt { bundle, queued_at: self.now });
+    }
+
+    /// Retry receipts that were refused by a full provider in deterministic
+    /// content-ID order, and stop after the first capacity refusal because
+    /// later entries cannot fit either. A stale entry is dropped rather than
+    /// receiving a fresh lifetime on a much later retry.
+    fn flush_pending_receipts(&mut self) {
+        let ids: Vec<Id16> = self.pending_receipts.keys().copied().collect();
+        for id in ids {
+            let Some(pending) = self.pending_receipts.get(&id).cloned() else { continue };
+            if self.now.saturating_sub(pending.queued_at) >= LIFETIME_CONTROL_MS {
+                self.pending_receipts.remove(&id);
+                continue;
+            }
+            match self.try_store_own(pending.bundle, L_RECEIPT) {
+                Ok(stored) => {
+                    debug_assert_eq!(stored, id);
+                    self.pending_receipts.remove(&id);
+                }
+                Err(SendError::ResourceLimit) => break,
+                Err(_) => {
+                    // Receipt encoding is already complete and bounded; any
+                    // non-capacity error is not recoverable by retrying.
+                    self.pending_receipts.remove(&id);
+                }
+            }
+        }
     }
 
     /// Doc 18 §3: build, inner-sign (as the authority SUBJECT), and store a
@@ -3178,11 +3232,17 @@ impl NodeCore {
             signature: Sig64::ZERO,
         };
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-        // Receipt publication is best-effort at this API boundary: an
-        // authenticated delivery must not be rolled back merely because the
-        // local provider is full. `try_store_own` is still required so a
-        // rejected receipt does not create false SeenIndex/Created state.
-        let _ = self.try_store_own(bundle, L_RECEIPT);
+        // Receipt publication must not roll back authenticated delivery just
+        // because the local provider is full. Keep a bounded retry candidate;
+        // `try_store_own` still gates SeenIndex/Created state on acceptance.
+        let id = bundle.id();
+        match self.try_store_own(bundle.clone(), L_RECEIPT) {
+            Ok(_) => {
+                self.pending_receipts.remove(&id);
+            }
+            Err(SendError::ResourceLimit) => self.queue_receipt_retry(bundle),
+            Err(_) => {}
+        }
     }
 
     /// Class-0 receipt handling for carriers AND the origin (doc 05 §7).
