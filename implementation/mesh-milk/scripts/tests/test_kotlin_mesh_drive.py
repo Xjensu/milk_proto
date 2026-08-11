@@ -123,6 +123,13 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         advance = self.source.index("private fun advance", link_down)
         self.assertIn("drain()", self.source[link_down:advance])
 
+    def test_overload_latch_blocks_outbound_drain(self) -> None:
+        """Fail-closed host overload must not send frames after diagnostics trip."""
+
+        drain = self.source[self.source.index("private fun drain()"): self.source.index("private fun drainClose()")]
+        self.assertIn("observeHostDiagnostics()", drain)
+        self.assertIn("if (!overloadLatched) drainSend()", drain)
+
     def test_admission_and_overload_paths_close_native_links_and_bound_tracking(self) -> None:
         """A denied or saturated callback must not grow host-side link state."""
 

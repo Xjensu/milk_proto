@@ -16,8 +16,8 @@ generated `MmpNode` bindings.
 - notification fragmentation at `negotiated ATT MTU - 3`, with adapter
   back-pressure retained for the next pump;
 - close/event saturation diagnostics are observed after every drain; any
-  counter increase latches fail-closed mode, stops discovery, and closes all
-  tracked links;
+  counter increase latches fail-closed mode, stops discovery, closes all
+  tracked links, and prevents the same drain from sending queued frames;
 - native links awaiting a disconnect callback are capped at 64, and late
   callbacks are idempotently ignored after logical teardown;
 - foreground relay capability demotion to `MeshTier.LEAF` when unavailable;

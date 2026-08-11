@@ -328,7 +328,7 @@ public class MeshDrive(
     private fun drain() {
         drainClose()
         observeHostDiagnostics()
-        drainSend()
+        if (!overloadLatched) drainSend()
         drainEvents()
     }
 
