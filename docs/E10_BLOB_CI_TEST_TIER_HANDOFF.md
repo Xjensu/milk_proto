@@ -17,6 +17,16 @@ stripe-major bitmap interpretation from regressions that accidentally serve stri
 The test is intentionally test-only: the existing serving implementation already
 applies the correct offset, so no production or wire change was justified.
 
+### Origin-only request guard
+
+`mmp-node/src/tests.rs` also strengthens
+`blob_requests_are_origin_targeted_and_bounded`: a peer that is not the
+manifest's verified sharer receives no requester-originated `BLOB_REQ` frames.
+This records the current safe boundary for partial holders: they may advertise
+and serve verified symbols when asked, but the requester does not invent a pull
+path from an arbitrary nearby cache. The broader non-origin partial-cache
+request policy remains deferred, as recorded in the backlog and handbook.
+
 ### Host CI all-targets coverage
 
 The root workflow host job now runs:
@@ -35,6 +45,7 @@ future drift back to a narrower host matrix.
 ## Verification
 
 - Focused blob regression: 1 passed.
+- Origin-only/partial-holder request guard: covered by the focused blob regression.
 - Full `mmp-node` library suite: 140 passed, 0 failed at the pre-f6f3e59
   blob/CI checkpoint. The current post-f6f3e59 lifecycle count is 145; see
   `docs/E11_LIFECYCLE_CONCURRENCY_HANDOFF.md` for the superseding evidence.

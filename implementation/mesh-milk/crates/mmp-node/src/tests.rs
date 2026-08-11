@@ -990,6 +990,7 @@ fn blob_requests_are_origin_targeted_and_bounded() {
     let sharer = Key32([0x42; 32]);
     let peer = node_id_of(&sharer);
     let other = node_id_of(&Key32([0x43; 32]));
+    let partial_holder = node_id_of(&Key32([0x44; 32]));
 
     for value in 0..(super::MAX_BLOB_REQ_FRAMES_PER_CONTACT * 2) {
         let root = Id16([value as u8; 16]);
@@ -1060,6 +1061,18 @@ fn blob_requests_are_origin_targeted_and_bounded() {
     // Keep the unused value explicit: the target identity is derived from the
     // manifest sharer, not from an arbitrary nearby node.
     assert_ne!(peer, other);
+
+    // A nearby non-origin holder may advertise what it already has and serve
+    // an inbound request, but the requester must not turn that partial cache
+    // into an unsolicited pull source. This is a local admission/scheduling
+    // rule; it does not add a wire field or alter the BLOB_REQ grammar.
+    let partial_holder_frames = n.core.blob_frames(&partial_holder);
+    assert!(
+        partial_holder_frames
+            .iter()
+            .all(|frame| !matches!(frame, mmp_types::frame::Frame::BlobReq { .. })),
+        "non-origin partial holders must not receive requester-originated BLOB_REQ frames"
+    );
 }
 
 #[test]
