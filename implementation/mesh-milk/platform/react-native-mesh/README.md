@@ -53,7 +53,9 @@ read or write it.
 ## Build evidence boundary
 
 `npm run build` requires a TypeScript compiler and the React Native type declarations from
-the consuming app. The repository source-level test checks the API inventory, encoding
-conventions, module rejection, and the no-raw-BLE rule. It does not prove TurboModule
+the consuming app. Repository CI additionally runs `npm run typecheck` with the pinned
+TypeScript dev dependency and a minimal declaration fixture for the imported React Native
+symbols. That fixture checks this wrapper's TypeScript API and does not model TurboModule
 code generation, Kotlin/Swift compilation, background execution, GATT interoperability,
-or behavior on a physical device.
+or behavior on a physical device. The repository source-level test checks the API inventory,
+encoding conventions, module rejection, and the no-raw-BLE rule.
