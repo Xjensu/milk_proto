@@ -2276,6 +2276,9 @@ fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
     let seen_before = alice.core.seen.encode();
     let events_before = alice.core.events.len();
     let diagnostics_before = alice.diagnostics().records().len();
+    let pending_async_before = alice.core.pending_async.clone();
+    let pending_first_before = alice.core.pending_first_contact.clone();
+    let conv_id = conversation_id(&alice.core.public, &bob.core.public);
 
     let data = vec![0x37; 3000];
     assert_eq!(
@@ -2288,6 +2291,10 @@ fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
     assert_eq!(alice.core.seen.encode(), seen_before, "rejected symbols must not enter SeenIndex");
     assert_eq!(alice.core.events.len(), events_before, "manifest must not be attempted after symbol rejection");
     assert_eq!(alice.diagnostics().records().len(), diagnostics_before, "rejected symbols must not emit Created diagnostics");
+    assert_eq!(alice.core.pending_async, pending_async_before, "discarded manifest leaves pending async state unchanged");
+    assert_eq!(alice.core.pending_first_contact, pending_first_before, "discarded manifest leaves pending first-contact state unchanged");
+    assert!(!alice.core.convs.contains_key(&conv_id), "discarded manifest creates no conversation");
+    assert!(alice.core.sent.is_empty(), "discarded manifest creates no delivery entry");
 
     // Recovery is retryable because no false inventory was recorded and no
     // first-contact manifest was committed by the failed attempt.
@@ -2301,6 +2308,28 @@ fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
     for id in alice.core.symbol_of.keys() {
         assert!(alice.core.store.meta(id).is_some(), "every indexed symbol must be durable");
     }
+}
+
+#[test]
+fn send_file_first_contact_manifest_delivers() {
+    let mut alice = node(59);
+    let mut bob = node(60);
+    introduce_exchange_only(&mut alice, &mut bob);
+
+    let data = vec![0x39; 3000];
+    let sent = alice
+        .send_file(&bob.node_id(), "first-contact.bin", "application/octet-stream", &data)
+        .expect("first-contact manifest and symbols are accepted");
+    let events = {
+        contact(&mut alice, &mut bob, 59, 30_000);
+        drain(&mut bob)
+    };
+    assert!(events.iter().any(|event| {
+        matches!(event, Event::FileOffered { entries, .. } if entries.iter().any(|entry| entry.root == sent.root))
+    }));
+    assert!(events.iter().any(|event| {
+        matches!(event, Event::MessageReceived { id, .. } if *id == sent.message_id)
+    }));
 }
 
 #[test]

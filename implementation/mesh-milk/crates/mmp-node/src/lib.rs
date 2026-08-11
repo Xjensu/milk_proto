@@ -44,6 +44,7 @@ use mmp_core::{
 use mmp_crypto::group::SenderKeyDist;
 use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, MerklePath};
 use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
+use mmp_crypto::ratchet::SendChain;
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_crypto::sealed::{open_box, seal_box_with_root};
 use mmp_router::{
@@ -165,6 +166,35 @@ struct PendingAuthCert {
 struct PendingReceipt {
     bundle: Bundle,
     queued_at: u64,
+}
+
+/// State staged together with an application bundle.  The bundle is persisted
+/// first; only then is this candidate applied to the live conversation maps.
+/// This keeps a rejected provider write from consuming a ratchet index or
+/// creating a first-contact conversation.
+enum PreparedAppState {
+    /// A sealed or X3DH first-contact candidate.  The conversation's DAG is
+    /// still empty until the provider returns success and supplies the bundle
+    /// ID.
+    New { conv: Conv },
+    /// A message on an existing conversation.  `send` is the post-send chain
+    /// and `parents` are copied before the provider call so the live DAG is
+    /// untouched on rejection.
+    Existing {
+        conv_id: Id16,
+        send: SendChain,
+        parents: Vec<Id16>,
+        pending_async: bool,
+    },
+}
+
+/// A fully encoded application candidate plus its provider-local state.  It
+/// is intentionally private: the public API remains the frozen MMP/1 wire
+/// contract and legacy stores still observe one ordinary `try_put`.
+struct PreparedAppCandidate {
+    bundle: Bundle,
+    state: PreparedAppState,
+    rng: StdRng,
 }
 
 /// Node runtime tier (doc 04 §3), simplified ladder.
@@ -2638,14 +2668,15 @@ impl NodeCore {
     /// no usable prekey batch is available. The sealed conversation root is
     /// retained locally so the normal receipt and subsequent ratchet paths can
     /// use the same conversation state after the message is delivered.
-    fn send_sealed(
+    fn prepare_sealed_with_rng(
         &mut self,
         peer: &NodeId,
         peer_pub: &Key32,
         conv_id: Id16,
         app: u8,
         payload: &[u8],
-    ) -> Result<Id16, SendError> {
+        mut rng: StdRng,
+    ) -> Result<PreparedAppCandidate, SendError> {
         let peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
         if !self.conversation_capacity_available(&conv_id) {
             return Err(SendError::ResourceLimit);
@@ -2669,27 +2700,37 @@ impl NodeCore {
             payload: placeholder,
             signature: Sig64::ZERO,
         };
-        let (eph, ct, ck0) = seal_box_with_root(
-            &mut self.rng,
-            &peer_exchange,
-            &self.public,
-            peer_pub,
-            &bundle.canonical_aead_ad(),
-            &body,
-        );
+        let (eph, ct, ck0) =
+            seal_box_with_root(&mut rng, &peer_exchange, &self.public, peer_pub, &bundle.canonical_aead_ad(), &body);
         bundle.payload = AsyncPayload::Sealed { eph, ct }.encode();
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
 
-        let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.try_store_own(bundle, budget)?;
-        let mut conv = Conv::new(conv_id, &self.public, peer_pub, *ck0);
-        conv.dag.insert(id, &[]);
-        self.convs.insert(conv_id, conv);
-        self.pending_first_contact.insert(conv_id, id);
-        Ok(id)
+        // The sealed bootstrap body itself is not a ratchet message.  Preserve
+        // the legacy state transition by staging an untouched initial send
+        // chain; the first ordinary direct message starts at index zero after
+        // the receipt confirms this root.
+        let conv = Conv::new(conv_id, &self.public, peer_pub, *ck0);
+        Ok(PreparedAppCandidate {
+            bundle,
+            state: PreparedAppState::New { conv },
+            rng,
+        })
+    }
+
+    #[cfg(test)]
+    fn send_sealed(
+        &mut self,
+        peer: &NodeId,
+        peer_pub: &Key32,
+        conv_id: Id16,
+        app: u8,
+        payload: &[u8],
+    ) -> Result<Id16, SendError> {
+        let candidate = self.prepare_sealed_with_rng(peer, peer_pub, conv_id, app, payload, self.rng.clone())?;
+        self.commit_app_candidate(candidate)
     }
 
     /// Build, sign and store a direct message; the mesh does the rest.
@@ -2717,6 +2758,15 @@ impl NodeCore {
 
     /// The shared class-1 sending machinery (also used for sender-key dists).
     fn send_app(&mut self, peer: &NodeId, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
+        let candidate = self.prepare_app(peer, app, payload)?;
+        self.commit_app_candidate(candidate)
+    }
+
+    /// Build an application bundle and provider-local state without mutating
+    /// live conversation, ratchet, pending, or RNG state. The candidate can
+    /// therefore be discarded if an earlier operation (such as file-symbol
+    /// admission) is rejected.
+    fn prepare_app(&mut self, peer: &NodeId, app: u8, payload: &[u8]) -> Result<PreparedAppCandidate, SendError> {
         if self.claims.revocation(peer).is_some() {
             // Handbook §4.6: never open a new conversation, nor use a
             // prekey batch already on file, for a revoked identity — checked
@@ -2767,15 +2817,23 @@ impl NodeCore {
             // Prefer X3DH against the peer's prekey batch (doc 08 §4.2), but
             // retain the always-available sealed-box baseline when a valid
             // batch is absent, malformed, or suppressed (§4.1).
+            let mut candidate_rng = self.rng.clone();
             let agreement = self
                 .claims
                 .get(peer, field::PREKEY_BATCH)
                 .and_then(|claim| PrekeyBatch::decode(&claim.body).ok())
-                .and_then(|batch| sender_agree(&mut self.rng, &self.identity, &peer_pub, &batch, Some(0)).ok());
+                .and_then(|batch| sender_agree(&mut candidate_rng, &self.identity, &peer_pub, &batch, Some(0)).ok());
             let Some(agreement) = agreement else {
-                return self.send_sealed(peer, &peer_pub, conv_id, app, payload);
+                return self.prepare_sealed_with_rng(peer, &peer_pub, conv_id, app, payload, candidate_rng);
             };
-            return self.send_prekey_first_contact(&peer_pub, Id16(peer.0), conv_id, body, agreement);
+            return self.prepare_prekey_first_contact(
+                &peer_pub,
+                Id16(peer.0),
+                conv_id,
+                body,
+                agreement,
+                candidate_rng,
+            );
         }
 
         let dest = Id16(peer.0);
@@ -2848,30 +2906,27 @@ impl NodeCore {
             return Err(SendError::TooLarge);
         }
         let parents_copy: Vec<Id16> = bundle.parents().to_vec();
-        let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.try_store_own(bundle, budget)?;
-        let conv = self.convs.get_mut(&conv_id).expect("conversation remains");
-        conv.send = candidate_send;
-        conv.dag.insert(id, &parents_copy);
-        if pending.is_some() {
-            self.pending_async.remove(&conv_id);
-            self.pending_first_contact.insert(conv_id, id);
-        }
-        Ok(id)
+        Ok(PreparedAppCandidate {
+            bundle,
+            state: PreparedAppState::Existing {
+                conv_id,
+                send: candidate_send,
+                parents: parents_copy,
+                pending_async: pending.is_some(),
+            },
+            rng: self.rng.clone(),
+        })
     }
 
-    /// Build and durably store the first X3DH/prekey bundle before publishing
-    /// any conversation, pending, DAG, or sender-ratchet state. A capacity
-    /// rejection therefore leaves the caller able to retry the same logical
-    /// first contact after local storage recovers.
-    fn send_prekey_first_contact(
+    fn prepare_prekey_first_contact(
         &mut self,
         peer_pub: &Key32,
         dest: Id16,
         conv_id: Id16,
         body: Vec<u8>,
         agreement: mmp_crypto::prekey::SenderAgreement,
-    ) -> Result<Id16, SendError> {
+        rng: StdRng,
+    ) -> Result<PreparedAppCandidate, SendError> {
         let mut candidate = Conv::new(conv_id, &self.public, peer_pub, *agreement.ck0);
         let (epoch, index) = (candidate.send.epoch, candidate.send.next_index);
         let (msg_key, candidate_send) =
@@ -2911,12 +2966,34 @@ impl NodeCore {
             return Err(SendError::TooLarge);
         }
 
-        let budget = origin_budget(self.utility.n_hat(self.now));
-        let id = self.try_store_own(bundle, budget)?;
         candidate.send = candidate_send;
-        candidate.dag.insert(id, &[]);
-        self.convs.insert(conv_id, candidate);
-        self.pending_first_contact.insert(conv_id, id);
+        Ok(PreparedAppCandidate { bundle, state: PreparedAppState::New { conv: candidate }, rng })
+    }
+
+    /// Persist the candidate bundle before applying its conversation-local
+    /// state. A provider rejection therefore cannot consume a ratchet index,
+    /// create a conversation, or publish a pending first-contact marker.
+    fn commit_app_candidate(&mut self, candidate: PreparedAppCandidate) -> Result<Id16, SendError> {
+        let budget = origin_budget(self.utility.n_hat(self.now));
+        let id = self.try_store_own(candidate.bundle, budget)?;
+        self.rng = candidate.rng;
+        match candidate.state {
+            PreparedAppState::New { mut conv } => {
+                conv.dag.insert(id, &[]);
+                let conv_id = conv.id;
+                self.convs.insert(conv_id, conv);
+                self.pending_first_contact.insert(conv_id, id);
+            }
+            PreparedAppState::Existing { conv_id, send, parents, pending_async } => {
+                let conv = self.convs.get_mut(&conv_id).expect("conversation remains");
+                conv.send = send;
+                conv.dag.insert(id, &parents);
+                if pending_async {
+                    self.pending_async.remove(&conv_id);
+                    self.pending_first_contact.insert(conv_id, id);
+                }
+            }
+        }
         Ok(id)
     }
 
@@ -3623,6 +3700,26 @@ impl NodeCore {
         // requested peer in their destination field.
         let total_symbols = stripes as usize * RS_TOTAL_N;
         let already_complete = self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
+
+        // Prepare the encrypted FILE_MANIFEST before admitting any symbol.
+        // Its conversation and ratchet changes remain staged until the
+        // manifest write succeeds, so a symbol rejection can discard this
+        // candidate without creating a local conversation root.
+        let entry = FileEntry {
+            name: name.as_bytes().to_vec(),
+            mime: mime.as_bytes().to_vec(),
+            size: data.len() as u32,
+            file_root,
+            rs_k: RS_DATA_K as u8,
+            rs_n: RS_TOTAL_N as u8,
+            full_hash,
+            thumb_root: None,
+        };
+        let mut manifest = FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
+        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
+        let manifest_payload = manifest.encode();
+        let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest_payload)?;
+
         if !already_complete {
             for (sym_no, sym) in all_symbols.iter().enumerate() {
                 let block = (sym_no / RS_TOTAL_N) as u16;
@@ -3657,23 +3754,10 @@ impl NodeCore {
             }
         }
 
-        let entry = FileEntry {
-            name: name.as_bytes().to_vec(),
-            mime: mime.as_bytes().to_vec(),
-            size: data.len() as u32,
-            file_root,
-            rs_k: RS_DATA_K as u8,
-            rs_n: RS_TOTAL_N as u8,
-            full_hash,
-            thumb_root: None,
-        };
-        let mut manifest =
-            FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
-        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
-        let message_id = self.send_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
-        // `sent_capacity_available` was checked before symbol minting and
-        // `send_app` does not mutate delivery history, so this cannot fail
-        // under the node's single-threaded mutation model.
+        // Commit the previously prepared manifest only after all symbols have
+        // been admitted. A legacy provider may still reject this final write;
+        // accepted symbols intentionally remain indexed for a later retry.
+        let message_id = self.commit_app_candidate(manifest_candidate)?;
         self.record_sent(message_id, conv_id)?;
         self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
         Ok(FileSend { message_id, root: file_root })
