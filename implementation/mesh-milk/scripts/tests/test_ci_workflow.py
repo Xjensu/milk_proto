@@ -206,6 +206,28 @@ class CIWorkflowTests(unittest.TestCase):
             [step["run"] for step in source_check],
             ["python -m unittest scripts.tests.test_react_native_mesh -v"],
         )
+        install_check = [
+            step
+            for step in steps
+            if step.get("name") == "install React Native package typecheck dependencies (E4-S3)"
+        ]
+        self.assertEqual(len(install_check), 1)
+        self.assertEqual(install_check[0]["run"], "npm ci --ignore-scripts --legacy-peer-deps")
+        self.assertEqual(
+            install_check[0]["working-directory"],
+            "implementation/mesh-milk/platform/react-native-mesh",
+        )
+        typecheck = [
+            step
+            for step in steps
+            if step.get("name") == "typecheck React Native package fixture (E4-S3)"
+        ]
+        self.assertEqual(len(typecheck), 1)
+        self.assertEqual(typecheck[0]["run"], "npm run typecheck")
+        self.assertEqual(
+            typecheck[0]["working-directory"],
+            "implementation/mesh-milk/platform/react-native-mesh",
+        )
         package_check = [
             step
             for step in steps

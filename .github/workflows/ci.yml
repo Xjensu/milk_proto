@@ -235,6 +235,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: test React Native package source contract (E4-S3)
         run: python -m unittest scripts.tests.test_react_native_mesh -v
+      - name: install React Native package typecheck dependencies (E4-S3)
+        run: npm ci --ignore-scripts --legacy-peer-deps
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
+      - name: typecheck React Native package fixture (E4-S3)
+        run: npm run typecheck
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
       - name: validate React Native npm package shape (E4-S3)
         run: npm pack --dry-run --json
         working-directory: implementation/mesh-milk/platform/react-native-mesh
