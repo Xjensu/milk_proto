@@ -225,6 +225,20 @@ jobs:
             implementation/mesh-milk/bindings/kotlin
             implementation/mesh-milk/bindings/swift
 
+  # docs/AGILE_BACKLOG.md E4-S3: validate the checked-in React Native package
+  # contract and npm file allow-list. This is intentionally not a TypeScript or
+  # device-build claim: the package delegates compilation to its consuming app,
+  # while React Native declarations and native runners are supplied downstream.
+  react-native-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test React Native package source contract (E4-S3)
+        run: python -m unittest scripts.tests.test_react_native_mesh -v
+      - name: validate React Native npm package shape (E4-S3)
+        run: npm pack --dry-run --json
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
+
   # docs/AGILE_BACKLOG.md E2-S5: packages mmp-ffi's Android cdylib as a real
   # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
   # classes.jar — a standard, documented AGP dependency shape; this repo has

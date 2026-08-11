@@ -194,6 +194,30 @@ class CIWorkflowTests(unittest.TestCase):
         for command in cargo_steps:
             self.assertIn("--locked", command)
 
+    def test_react_native_package_job_checks_source_and_npm_shape(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["react-native-package"]["steps"]
+        source_check = [
+            step
+            for step in steps
+            if step.get("name") == "test React Native package source contract (E4-S3)"
+        ]
+        self.assertEqual(
+            [step["run"] for step in source_check],
+            ["python -m unittest scripts.tests.test_react_native_mesh -v"],
+        )
+        package_check = [
+            step
+            for step in steps
+            if step.get("name") == "validate React Native npm package shape (E4-S3)"
+        ]
+        self.assertEqual(len(package_check), 1)
+        self.assertEqual(package_check[0]["run"], "npm pack --dry-run --json")
+        self.assertEqual(
+            package_check[0]["working-directory"],
+            "implementation/mesh-milk/platform/react-native-mesh",
+        )
+
     def test_release_job_records_source_and_digest_manifest(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["release"]["steps"]
