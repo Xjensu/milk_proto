@@ -123,6 +123,14 @@ pub trait BufExt {
     fn put_u64(&mut self, v: u64);
     /// `u16 len ‖ bytes`. Caller guarantees `bytes.len() ≤ u16::MAX` via type caps.
     fn put_var(&mut self, bytes: &[u8]);
+    /// Transactionally append `u16 len ‖ bytes`, rejecting values that do not fit.
+    fn try_put_var(&mut self, bytes: &[u8]) -> Result<(), WireError> {
+        if bytes.len() > u16::MAX as usize {
+            return Err(WireError::Oversize);
+        }
+        self.put_var(bytes);
+        Ok(())
+    }
 }
 
 impl BufExt for Vec<u8> {
@@ -139,9 +147,16 @@ impl BufExt for Vec<u8> {
     fn put_u64(&mut self, v: u64) {
         self.extend_from_slice(&v.to_le_bytes());
     }
-    fn put_var(&mut self, bytes: &[u8]) {
-        debug_assert!(bytes.len() <= u16::MAX as usize);
+    fn try_put_var(&mut self, bytes: &[u8]) -> Result<(), WireError> {
+        if bytes.len() > u16::MAX as usize {
+            return Err(WireError::Oversize);
+        }
         self.put_u16(bytes.len() as u16);
         self.extend_from_slice(bytes);
+        Ok(())
+    }
+    fn put_var(&mut self, bytes: &[u8]) {
+        self.try_put_var(bytes)
+            .expect("variable-length field exceeds u16 wire limit");
     }
 }

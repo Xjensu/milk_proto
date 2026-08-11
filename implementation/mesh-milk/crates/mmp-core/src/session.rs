@@ -12,7 +12,8 @@ use mmp_types::consts::{
     HANDSHAKE_BUDGET_MS, L_MAX, MAX_FRAME_PAYLOAD, SESSION_AIRTIME_CAP_MS, SESSION_IDLE_MS,
 };
 use mmp_types::frame::{
-    errcode, read_envelope, write_envelope, Frame, Hello, Range, Summary, FT_HS, MAX_ENVELOPE_PAYLOAD,
+    errcode, read_envelope, try_write_envelope, Frame, Hello, Range, Summary, FT_HS,
+    MAX_ENVELOPE_PAYLOAD,
 };
 use mmp_types::ids::{Id16, Key32, NodeId};
 
@@ -44,15 +45,9 @@ const fn frame_payload_within_cap(len: usize) -> bool {
     len <= MAX_FRAME_PAYLOAD
 }
 
-/// Check collection widths before calling the public infallible frame encoder.
-///
-/// `Frame::encode_payload` is intentionally kept as the existing API, but it
-/// serializes several collection lengths with `u8`/`u16` casts.  A local host
-/// (or a compromised host callback) must not be able to turn those casts into
-/// a different wire value in an otherwise live session.  The aggregate byte
-/// The field-width checks cover narrow counters that could truncate before the
-/// aggregate payload cap is observed; the aggregate width is then checked
-/// without allocating the encoded payload.
+/// Preflight collection widths before queue admission. The fallible
+/// `mmp-types` encoder performs the same validation at the final boundary;
+/// this earlier check avoids retaining oversized frames in pending queues.
 fn frame_wire_widths_valid(frame: &Frame) -> bool {
     let widths_valid = match frame {
         Frame::Summary(summary) => {
@@ -75,14 +70,14 @@ fn frame_wire_widths_valid(frame: &Frame) -> bool {
     // payload cap.  In particular, a WANT/RECON_IDS list can be valid under
     // its u16 element-count field while still being hundreds of KiB on the
     // wire.  Compute the encoded width with checked arithmetic before
-    // `send_frame` calls `Frame::encode_payload`.
+    // `send_frame` calls the fallible frame encoder.
     widths_valid && frame_payload_len(frame).is_some_and(|len| len <= MAX_FRAME_PAYLOAD)
 }
 
 /// Return the canonical payload width without allocating the payload.  This is
-/// deliberately kept in the session layer because `Frame::encode_payload`
-/// remains an infallible compatibility API; untrusted host callbacks must not
-/// be able to turn its intermediate allocation into a memory spike.
+/// deliberately kept in the session layer as a zero-allocation admission check;
+/// untrusted host callbacks must not be able to turn an oversized frame into a
+/// pending-queue or encoder allocation.
 fn frame_payload_len(frame: &Frame) -> Option<usize> {
     let add = |a: usize, b: usize| a.checked_add(b);
     let mul = |a: usize, b: usize| a.checked_mul(b);
@@ -329,7 +324,7 @@ impl SessionEngine {
         let (msg1, hs) = NoiseHandshake::initiator(identity, hello).map_err(|_| ())?;
         let mut s = SessionEngine::new(true, now_ms, hello.credits);
         s.hs = Some(hs);
-        s.queue_raw(write_envelope(FT_HS, &msg1));
+        s.queue_raw(try_write_envelope(FT_HS, &msg1).map_err(|_| ())?);
         Ok(s)
     }
 
@@ -544,7 +539,11 @@ impl SessionEngine {
             return;
         };
         if let Some(reply) = outcome.reply {
-            self.queue_raw(write_envelope(FT_HS, &reply));
+            let Ok(envelope) = try_write_envelope(FT_HS, &reply) else {
+                self.close_silently();
+                return;
+            };
+            self.queue_raw(envelope);
         }
         if let Some(chan) = outcome.channel {
             self.hs = None;
@@ -890,9 +889,9 @@ impl SessionEngine {
             return;
         }
         if !frame_wire_widths_valid(f) {
-            // The public encoder is infallible for API compatibility, so
-            // reject values whose collection lengths would truncate before
-            // they can enter either pending or immediate output queues.
+            // Reject values whose collection lengths or aggregate payload would
+            // fail the fallible wire encoder before they enter either pending
+            // or immediate output queues.
             self.protocol_error(errcode::PROTOCOL);
             return;
         }
@@ -932,7 +931,10 @@ impl SessionEngine {
             self.protocol_error(errcode::PROTOCOL);
             return;
         }
-        let payload = f.encode_payload();
+        let Ok(payload) = f.try_encode_payload() else {
+            self.protocol_error(errcode::OVERSIZE);
+            return;
+        };
         if !frame_payload_within_cap(payload.len()) {
             self.protocol_error(errcode::OVERSIZE);
             return;
@@ -943,7 +945,11 @@ impl SessionEngine {
         let encrypted = chan.encrypt(&payload);
         match encrypted {
             Ok(ct) if envelope_payload_within_cap(ct.len()) => {
-                self.queue_raw(write_envelope(f.typ(), &ct));
+                let Ok(envelope) = try_write_envelope(f.typ(), &ct) else {
+                    self.protocol_error(errcode::OVERSIZE);
+                    return;
+                };
+                self.queue_raw(envelope);
                 if !control {
                     self.tx_credits = self.tx_credits.saturating_sub(1);
                 }
@@ -1094,8 +1100,8 @@ mod wire_budget_tests {
     #[test]
     fn outbound_encoder_width_guard_rejects_payloads_over_cap_before_encoding() {
         // These counts fit their u16/u8 wire fields, but their canonical
-        // payloads exceed MAX_FRAME_PAYLOAD.  The guard must reject them
-        // before Frame::encode_payload allocates a multi-KiB intermediate.
+        // payloads exceed MAX_FRAME_PAYLOAD. The preflight must reject them
+        // before the fallible encoder is asked to allocate an intermediate.
         assert!(!frame_wire_widths_valid(&Frame::Want(vec![Id16::MIN; 256])));
         assert!(!frame_wire_widths_valid(&Frame::ReconIds {
             domain: 0,

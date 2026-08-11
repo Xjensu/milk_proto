@@ -23,7 +23,7 @@ use mmp_tal::{LinkId, LinkQuality, TalEvent};
 use mmp_types::bundle::Bundle;
 use mmp_types::claim::Claim;
 use mmp_types::domain::SigDomain;
-use mmp_types::frame::{read_envelope, write_envelope, Frame, Hello, FT_HS};
+use mmp_types::frame::{read_envelope, try_write_envelope, Frame, Hello, FT_HS};
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 
 /// One adversarial identity. Cheap to construct — Sybil scenarios just make
@@ -96,7 +96,9 @@ impl Adversary {
             peer: None,
             inbox: Vec::new(),
         };
-        s.out.push_back(write_envelope(FT_HS, &msg1));
+        s.out.push_back(
+            try_write_envelope(FT_HS, &msg1).expect("adversary handshake fits envelope"),
+        );
         s
     }
 }
@@ -206,7 +208,9 @@ impl AdversarySession {
         let Some(hs) = self.hs.as_mut() else { return };
         let Ok(outcome) = hs.advance(payload) else { return };
         if let Some(reply) = outcome.reply {
-            self.out.push_back(write_envelope(FT_HS, &reply));
+            if let Ok(envelope) = try_write_envelope(FT_HS, &reply) {
+                self.out.push_back(envelope);
+            }
         }
         if let Some(chan) = outcome.channel {
             self.hs = None;
@@ -238,10 +242,12 @@ impl AdversarySession {
     /// before the channel exists — a scripting error in a test, not a
     /// protocol case worth modeling.
     pub fn send(&mut self, frame: Frame) {
-        let payload = frame.encode_payload();
+        let Ok(payload) = frame.try_encode_payload() else { return };
         let Some(chan) = self.chan.as_mut() else { return };
         if let Ok(ct) = chan.encrypt(&payload) {
-            self.out.push_back(write_envelope(frame.typ(), &ct));
+            if let Ok(envelope) = try_write_envelope(frame.typ(), &ct) {
+                self.out.push_back(envelope);
+            }
         }
     }
 

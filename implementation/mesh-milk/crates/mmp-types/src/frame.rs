@@ -345,6 +345,77 @@ pub enum Frame {
     Close,
 }
 
+fn checked_add_len(total: usize, extra: usize) -> Result<usize, WireError> {
+    total.checked_add(extra).ok_or(WireError::Oversize)
+}
+
+fn checked_mul_len(left: usize, right: usize) -> Result<usize, WireError> {
+    left.checked_mul(right).ok_or(WireError::Oversize)
+}
+
+fn checked_count(len: usize, max: usize) -> Result<(), WireError> {
+    if len <= max { Ok(()) } else { Err(WireError::Oversize) }
+}
+
+fn checked_payload_len(frame: &Frame) -> Result<usize, WireError> {
+    let len = match frame {
+        Frame::Hs(bytes)
+        | Frame::FriendOffer(bytes)
+        | Frame::FriendAck(bytes)
+        | Frame::ProxySummary(bytes)
+        | Frame::Bundle(bytes) => bytes.len(),
+        Frame::IdProof { .. } => 32 + 64,
+        Frame::Credit(_) => 1,
+        Frame::Summary(summary) => {
+            checked_count(summary.receipt_buckets.len(), u8::MAX as usize)?;
+            checked_count(summary.claim_digest.len(), u8::MAX as usize)?;
+            checked_count(summary.group_hints.len(), u8::MAX as usize)?;
+            checked_count(summary.want_heads.len(), u8::MAX as usize)?;
+            let mut total = 1usize;
+            for bucket in &summary.receipt_buckets {
+                checked_count(bucket.bloom.len(), u16::MAX as usize)?;
+                total = checked_add_len(total, 4)?;
+                total = checked_add_len(total, bucket.bloom.len())?;
+            }
+            total = checked_add_len(total, 1)?;
+            total = checked_add_len(total, checked_mul_len(summary.claim_digest.len(), 9)?)?;
+            total = checked_add_len(total, 1)?;
+            total = checked_add_len(total, checked_mul_len(summary.group_hints.len(), 16)?)?;
+            total = checked_add_len(total, 1)?;
+            for heads in &summary.want_heads {
+                checked_count(heads.heads.len(), u8::MAX as usize)?;
+                total = checked_add_len(total, 17)?;
+                total = checked_add_len(total, checked_mul_len(heads.heads.len(), 16)?)?;
+            }
+            total
+        }
+        Frame::ReconInit { .. } => 2 + RANGE_ENCODED_LEN,
+        Frame::ReconRange { ranges, .. } => {
+            checked_count(ranges.len(), u8::MAX as usize)?;
+            checked_add_len(2, checked_mul_len(ranges.len(), RANGE_ENCODED_LEN)?)?
+        }
+        Frame::ReconIds { ids, .. } => {
+            checked_count(ids.len(), u16::MAX as usize)?;
+            checked_add_len(1 + 16 + 16 + 2, checked_mul_len(ids.len(), 16)?)?
+        }
+        Frame::Want(ids) => {
+            checked_count(ids.len(), u16::MAX as usize)?;
+            checked_add_len(2, checked_mul_len(ids.len(), 16)?)?
+        }
+        Frame::Budget { .. } => 16 + 1,
+        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => {
+            checked_count(bitmap.len(), u16::MAX as usize)?;
+            checked_add_len(16 + 2 + 2, bitmap.len())?
+        }
+        Frame::Error { detail, .. } => {
+            checked_count(detail.len(), 256)?;
+            checked_add_len(1 + 2, detail.len())?
+        }
+        Frame::Close => 0,
+    };
+    if len <= MAX_FRAME_PAYLOAD { Ok(len) } else { Err(WireError::Oversize) }
+}
+
 impl Frame {
     /// The wire type tag (one of the `FT_*` constants) for this frame's variant.
     pub fn typ(&self) -> u8 {
@@ -369,8 +440,24 @@ impl Frame {
         }
     }
 
+    /// Fallibly encode this frame's payload without allocating on invalid input.
+    pub fn try_encode_payload(&self) -> Result<Vec<u8>, WireError> {
+        let expected_len = checked_payload_len(self)?;
+        let out = self.encode_payload_unchecked();
+        debug_assert_eq!(out.len(), expected_len);
+        Ok(out)
+    }
+
     /// Encode just this frame's payload bytes (without the `len ‖ typ` envelope).
+    ///
+    /// This compatibility wrapper preserves the historical API for values
+    /// known to satisfy the wire caps. New production code should use
+    /// [`Frame::try_encode_payload`] and handle [`WireError::Oversize`].
     pub fn encode_payload(&self) -> Vec<u8> {
+        self.try_encode_payload().expect("frame payload exceeds frozen wire limits")
+    }
+
+    fn encode_payload_unchecked(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
             Frame::Hs(b) | Frame::FriendOffer(b) | Frame::FriendAck(b) | Frame::ProxySummary(b) => {
@@ -453,14 +540,15 @@ impl Frame {
         out
     }
 
+    /// Fallibly encode the complete `len ‖ typ ‖ payload` envelope.
+    pub fn try_encode(&self) -> Result<Vec<u8>, WireError> {
+        let payload = self.try_encode_payload()?;
+        try_write_envelope(self.typ(), &payload)
+    }
+
     /// Full envelope: `len u16 ‖ typ u8 ‖ payload`.
     pub fn encode(&self) -> Vec<u8> {
-        let payload = self.encode_payload();
-        let mut out = Vec::with_capacity(3 + payload.len());
-        out.put_u16(payload.len() as u16);
-        out.push(self.typ());
-        out.extend_from_slice(&payload);
-        out
+        self.try_encode().expect("frame exceeds frozen wire limits")
     }
 
     /// Decode a frame's payload given its already-extracted type byte; the
@@ -634,13 +722,20 @@ pub fn read_envelope(buf: &[u8]) -> Result<Option<EnvelopeParts<'_>>, WireError>
 }
 
 /// Write a raw envelope around an (already encrypted) payload.
-pub fn write_envelope(typ: u8, payload: &[u8]) -> Vec<u8> {
-    debug_assert!(payload.len() <= MAX_ENVELOPE_PAYLOAD);
+pub fn try_write_envelope(typ: u8, payload: &[u8]) -> Result<Vec<u8>, WireError> {
+    if payload.len() > MAX_ENVELOPE_PAYLOAD || payload.len() > u16::MAX as usize {
+        return Err(WireError::Oversize);
+    }
     let mut out = Vec::with_capacity(3 + payload.len());
     out.put_u16(payload.len() as u16);
     out.push(typ);
     out.extend_from_slice(payload);
-    out
+    Ok(out)
+}
+
+/// Compatibility wrapper for callers that already proved the payload bound.
+pub fn write_envelope(typ: u8, payload: &[u8]) -> Vec<u8> {
+    try_write_envelope(typ, payload).expect("envelope payload exceeds frozen wire limits")
 }
 
 #[cfg(test)]

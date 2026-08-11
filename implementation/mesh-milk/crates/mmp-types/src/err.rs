@@ -3,7 +3,9 @@
 //! Canonical rule: there is exactly one valid encoding of any value. Every
 //! deviation is a distinct, testable rejection reason — parsers never "repair".
 
-/// Decode rejection. Encoding is infallible by construction (types enforce caps).
+/// Decode or fallible-encoding rejection. Compatibility encoding wrappers may
+/// still panic for invalid caller-constructed values; production paths should
+/// use the `try_*` encoder APIs and handle this error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WireError {
     /// Input ended before the structure did.
