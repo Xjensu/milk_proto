@@ -1,6 +1,24 @@
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
-import type { NodeMetrics, NodeStatus } from './MmpClient';
+
+// Keep Codegen declarations self-contained. React Native Codegen resolves
+// TypeScript object declarations from this spec file; app-facing aliases live
+// separately in MmpClient.ts and must not be imported here.
+type NodeStatus = {
+  tier: string;
+  persistentStore: boolean;
+  diagnosticsEnabled: boolean;
+  lastTickMs: number;
+};
+
+type NodeMetrics = {
+  storeLen: number;
+  closeActionsDropped: number;
+  eventQueueDropped: number;
+  diagnosticRecords: number;
+  diagnosticClamps: number;
+  diagnosticDrops: number;
+};
 
 /** TurboModule codegen surface; native implementations validate string enums. */
 export interface Spec extends TurboModule {

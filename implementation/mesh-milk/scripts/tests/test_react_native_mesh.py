@@ -156,6 +156,22 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("metrics(): Promise<NodeMetrics>", self.client)
         self.assertIn("status(): Promise<NodeStatus>", self.turbo)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.turbo)
+        self.assertNotIn("from './MmpClient'", self.turbo)
+        self.assertIn("type NodeStatus = {", self.turbo)
+        self.assertIn("type NodeMetrics = {", self.turbo)
+        for field in (
+            "tier: string",
+            "persistentStore: boolean",
+            "diagnosticsEnabled: boolean",
+            "lastTickMs: number",
+            "storeLen: number",
+            "closeActionsDropped: number",
+            "eventQueueDropped: number",
+            "diagnosticRecords: number",
+            "diagnosticClamps: number",
+            "diagnosticDrops: number",
+        ):
+            self.assertIn(field, self.turbo)
         index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
         self.assertIn("NodeMetrics", index)
         self.assertIn("NodeStatus", index)
