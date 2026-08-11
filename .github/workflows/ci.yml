@@ -245,6 +245,30 @@ jobs:
         run: npm pack --dry-run --json
         working-directory: implementation/mesh-milk/platform/react-native-mesh
 
+  # Downstream consumer compilation gates for the SDK-free coordinator
+  # modules. These jobs do not claim Android/iOS radio behavior: they prove
+  # that an external JVM/Swift package can compile against the public
+  # coordinator surface and run its deterministic host tests.
+  kotlin-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "8.10"
+      - run: gradle test --no-daemon --stacktrace
+        working-directory: implementation/mesh-milk/platform/kotlin-mesh-drive
+
+  swift-consumer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test --package-path implementation/mesh-milk/platform/swift-mesh-drive
+
   # docs/AGILE_BACKLOG.md E2-S5: packages mmp-ffi's Android cdylib as a real
   # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
   # classes.jar — a standard, documented AGP dependency shape; this repo has

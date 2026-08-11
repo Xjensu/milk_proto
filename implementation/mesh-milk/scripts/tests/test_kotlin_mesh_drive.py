@@ -7,6 +7,19 @@ SOURCE = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "
 TOKEN_ALLOCATOR = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "LinkTokenAllocator.kt"
 BINDING_REGISTRY = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "ConnectionBindingRegistry.kt"
 README = ROOT / "platform" / "kotlin-mesh-drive" / "README.md"
+FIXTURE_DIR = ROOT / "platform" / "kotlin-mesh-drive"
+FIXTURE_SETTINGS = FIXTURE_DIR / "settings.gradle.kts"
+FIXTURE_BUILD = FIXTURE_DIR / "build.gradle.kts"
+FIXTURE_TEST = (
+    FIXTURE_DIR
+    / "src"
+    / "test"
+    / "kotlin"
+    / "org"
+    / "mesh_milk"
+    / "platform"
+    / "MeshDriveConsumerTest.kt"
+)
 
 
 class KotlinMeshDriveSourceTests(unittest.TestCase):
@@ -255,6 +268,32 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
     def test_evidence_boundary_is_documented(self) -> None:
         self.assertIn("Android-SDK-free", self.readme)
         self.assertIn("evidence of GATT", self.readme)
+
+    def test_jvm_consumer_fixture_is_pinned_and_sdk_free(self) -> None:
+        """Keep the downstream compilation gate isolated from Android tooling."""
+
+        self.assertTrue(FIXTURE_SETTINGS.exists())
+        self.assertTrue(FIXTURE_BUILD.exists())
+        self.assertTrue(FIXTURE_TEST.exists())
+        build = FIXTURE_BUILD.read_text(encoding="utf-8")
+        self.assertIn('kotlin("jvm") version "2.1.21"', build)
+        self.assertIn('testImplementation(kotlin("test"))', build)
+        self.assertNotIn("com.android", build)
+        self.assertNotIn("androidx", build)
+
+    def test_jvm_consumer_fixture_type_checks_public_coordinator_surface(self) -> None:
+        consumer = FIXTURE_TEST.read_text(encoding="utf-8")
+        for public_type in (
+            "MeshDrive",
+            "MeshNode",
+            "MonotonicClock",
+            "Advertiser",
+            "Scanner",
+            "GattAdapter",
+        ):
+            self.assertIn(public_type, consumer)
+        self.assertIn("drive.start()", consumer)
+        self.assertIn("drive.stop()", consumer)
 
 
 if __name__ == "__main__":

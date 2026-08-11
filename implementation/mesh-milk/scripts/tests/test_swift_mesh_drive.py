@@ -5,6 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 SOURCE = ROOT / "platform" / "swift-mesh-drive" / "Sources" / "MeshDrive.swift"
 README = ROOT / "platform" / "swift-mesh-drive" / "README.md"
+PACKAGE = ROOT / "platform" / "swift-mesh-drive" / "Package.swift"
+CONSUMER_TESTS = ROOT / "platform" / "swift-mesh-drive" / "Tests" / "MeshDriveTests" / "MeshDriveConsumerTests.swift"
 
 
 class SwiftMeshDriveSourceTests(unittest.TestCase):
@@ -12,6 +14,23 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
+        cls.package = PACKAGE.read_text(encoding="utf-8")
+        cls.consumer_tests = CONSUMER_TESTS.read_text(encoding="utf-8")
+
+    def test_swift_package_exposes_sdk_free_library_and_consumer_target(self) -> None:
+        self.assertIn("swift-tools-version: 5.7", self.package)
+        self.assertIn('.library(\n            name: "MeshDrive"', self.package)
+        self.assertIn('.target(\n            name: "MeshDrive"', self.package)
+        self.assertIn('.testTarget(\n            name: "MeshDriveTests"', self.package)
+        self.assertIn('path: "Tests/MeshDriveTests"', self.package)
+        self.assertNotIn("CoreBluetooth", self.package)
+
+    def test_consumer_fixture_imports_only_public_meshdrive_api(self) -> None:
+        self.assertIn("import MeshDrive", self.consumer_tests)
+        self.assertNotIn("@testable import", self.consumer_tests)
+        self.assertIn("MeshDrive(", self.consumer_tests)
+        self.assertIn("try drive.start()", self.consumer_tests)
+        self.assertIn("drive.stop()", self.consumer_tests)
 
     def test_source_is_corebluetooth_free_and_injected(self) -> None:
         lowered = self.source.lower()
