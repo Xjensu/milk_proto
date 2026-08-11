@@ -192,6 +192,7 @@ impl SnapshotStore {
                     }
                 };
                 if !validate_complete_snapshot(&temp_bytes) {
+                    self.load_rejected = true;
                     return;
                 }
                 temp_bytes
@@ -1364,6 +1365,18 @@ mod tests {
         std::fs::write(&temp, incomplete).unwrap();
         let empty = SnapshotStore::open(&path);
         assert_eq!(empty.len(), 0);
+
+        let candidate_before_persist = std::fs::read(&temp).unwrap();
+        let error = empty
+            .persist()
+            .expect_err("an invalid recovery candidate must block replacement");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(!path.exists(), "ambiguous recovery must not create a primary");
+        assert_eq!(
+            std::fs::read(&temp).unwrap(),
+            candidate_before_persist,
+            "the candidate must remain available for host repair"
+        );
 
         // A complete frame with a bad checksum is also rejected, rather than
         // being fed to the normal drop-corrupt-record loader.
