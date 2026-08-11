@@ -65,9 +65,22 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         body = self.source[start:end]
         self.assertIn("val links = activeLinks.toList()", body)
         self.assertIn("links.forEach { node.linkDown(it) }", body)
-        self.assertIn("links.forEach { requestPhysicalClose(it) }", body)
+        self.assertIn("links.forEach { runCatching { requestPhysicalClose(it) } }", body)
         self.assertLess(body.index("node.linkDown(it)"), body.index("activeLinks.clear()"))
         self.assertLess(body.index("activeLinks.clear()"), body.index("requestPhysicalClose(it)"))
+
+    def test_stop_contains_adapter_failures_and_finishes_state_cleanup(self) -> None:
+        """One native teardown failure must not strand other links or discovery."""
+
+        start = self.source.index("public fun stop()")
+        end = self.source.index("public fun pump()", start)
+        body = self.source[start:end]
+        self.assertIn("links.forEach { runCatching { requestPhysicalClose(it) } }", body)
+        self.assertIn("runCatching { scanner.stop() }", body)
+        self.assertIn("runCatching { advertiser.stop() }", body)
+        self.assertLess(body.index("closeRequested.clear()"), body.index("running = false"))
+        self.assertLess(body.index("runCatching { scanner.stop() }"), body.index("running = false"))
+        self.assertLess(body.index("runCatching { advertiser.stop() }"), body.index("running = false"))
 
     def test_monotonic_tick_is_checked_before_node_tick(self) -> None:
         self.assertIn("nowMs >= (previous ?: Long.MIN_VALUE)", self.source)

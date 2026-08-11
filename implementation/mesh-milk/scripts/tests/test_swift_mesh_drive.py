@@ -25,6 +25,32 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("running = false", self.source)
         self.assertIn("case clockMovedBackwards", self.source)
 
+    def test_advertiser_start_failure_stops_partial_native_state(self) -> None:
+        start = self.source.index("try advertiser.start(serviceData: beacon)")
+        catch = self.source.index("} catch {", start)
+        stop = self.source.index("try? advertiser.stop()", catch)
+        throw = self.source.index("throw error", stop)
+        outer = self.source.index("if advertiserStarted { try? advertiser.stop() }")
+
+        self.assertLess(start, catch)
+        self.assertLess(catch, stop)
+        self.assertLess(stop, throw)
+        self.assertLess(throw, outer)
+
+    def test_scanner_start_failure_stops_partial_native_state_before_outer_rollback(self) -> None:
+        start = self.source.index("try scanner.start")
+        catch = self.source.index("} catch {", start)
+        stop = self.source.index("try? scanner.stop()", catch)
+        throw = self.source.index("throw error", stop)
+        outer = self.source.index("if scannerStarted { try? scanner.stop() }")
+        advertiser_rollback = self.source.index("if advertiserStarted { try? advertiser.stop() }")
+
+        self.assertLess(start, catch)
+        self.assertLess(catch, stop)
+        self.assertLess(stop, throw)
+        self.assertLess(throw, outer)
+        self.assertLess(outer, advertiser_rollback)
+
     def test_close_diagnostics_and_send_order_are_explicit(self) -> None:
         self.assertLess(self.source.index("try drainClose()"), self.source.index("observeHostDiagnostics()"))
         self.assertLess(self.source.index("observeHostDiagnostics()"), self.source.index("try drainSend()"))

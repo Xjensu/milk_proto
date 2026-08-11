@@ -189,11 +189,16 @@ public class MeshDrive(
         val links = activeLinks.toList()
         links.forEach { node.linkDown(it) }
         activeLinks.clear()
-        links.forEach { requestPhysicalClose(it) }
+        // A native close can fail after partially touching the controller.
+        // Contain each failure so one broken link cannot prevent teardown of
+        // the remaining links or leave discovery running indefinitely.
+        links.forEach { runCatching { requestPhysicalClose(it) } }
         closeRequested.clear()
         pending.clear()
-        scanner.stop()
-        advertiser.stop()
+        // Stop is best-effort cleanup; always finish the coordinator state
+        // transition even when a platform adapter reports a teardown error.
+        runCatching { scanner.stop() }
+        runCatching { advertiser.stop() }
         advertisedBeacon = null
         running = false
     }

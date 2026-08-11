@@ -132,11 +132,25 @@ public final class MeshDrive {
             let now = clock.nowMs()
             try advance(nowMs: now, emit: false)
             let beacon = node.beacon(nowMs: now)
-            try advertiser.start(serviceData: beacon)
+            do {
+                try advertiser.start(serviceData: beacon)
+            } catch {
+                // A native adapter may allocate state before reporting failure.
+                // Always release that state, while preserving the start error.
+                try? advertiser.stop()
+                throw error
+            }
             advertisedBeacon = beacon
             advertiserStarted = true
-            try scanner.start { [weak self] result in
-                self?.onScanResult(result)
+            do {
+                try scanner.start { [weak self] result in
+                    self?.onScanResult(result)
+                }
+            } catch {
+                // Keep startup failure deterministic even when start partially
+                // initialized the native scanner before throwing.
+                try? scanner.stop()
+                throw error
             }
             scannerStarted = true
             try drain()
