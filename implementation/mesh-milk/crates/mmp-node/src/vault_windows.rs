@@ -69,6 +69,10 @@ struct JournalState {
     base_floor: u64,
     floor: u64,
     record: Option<SealedRecord>,
+    /// Number of bytes ending at the last complete, checksummed entry.
+    /// Anything after this boundary is a tolerated crash tail and must be
+    /// removed before a new append is attempted.
+    valid_len: u64,
 }
 
 impl WindowsDpapiVault {
@@ -146,6 +150,19 @@ impl WindowsDpapiVault {
         let current_len = fs::metadata(&self.journal_path)
             .map(|m| m.len())
             .unwrap_or(0);
+        if current.valid_len > current_len {
+            // The journal changed between the read and metadata probe. Do
+            // not append against an unverified file image.
+            return Err(VaultError::Unavailable);
+        }
+        if current.valid_len < current_len {
+            // `read_journal` intentionally accepts a torn final write so a
+            // restart can recover the last complete generation. Remove that
+            // suffix before appending; otherwise the next valid entry would
+            // follow arbitrary bytes and poison every subsequent read.
+            truncate_journal(&self.journal_path, current.valid_len)?;
+        }
+        let current_len = current.valid_len;
         if current_len.saturating_add(entry.len() as u64) > MAX_JOURNAL_BYTES {
             // Compaction carries the previous floor in the first retained
             // entry, so replacing a long journal cannot make generation N
@@ -479,8 +496,18 @@ fn read_journal(path: &Path) -> Result<JournalState, VaultError> {
         state.floor = generation;
         state.record = Some(record);
         pos = end;
+        state.valid_len = pos as u64;
     }
     Ok(state)
+}
+
+fn truncate_journal(path: &Path, length: u64) -> Result<(), VaultError> {
+    let file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|_| VaultError::Unavailable)?;
+    file.set_len(length).map_err(|_| VaultError::Unavailable)?;
+    file.sync_all().map_err(|_| VaultError::Unavailable)
 }
 
 fn replace_journal(path: &Path, entry: &[u8]) -> Result<(), VaultError> {
@@ -558,6 +585,68 @@ mod tests {
         assert_eq!(state.floor, 1);
         assert_eq!(state.record, Some(record));
         let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn truncated_tail_is_repaired_before_the_next_commit() {
+        let path = temp_path("tail-repair");
+        let context = b"MMPCTX01-tail-repair-context".to_vec();
+        let dek = [0x44; 32];
+        let first = SealedRecord {
+            generation: 1,
+            context: context.clone(),
+            envelope: vec![1, 2, 3],
+            wrapped_dek: vec![4, 5, 6],
+        };
+        let second = SealedRecord {
+            generation: 2,
+            context: context.clone(),
+            envelope: vec![7, 8, 9],
+            wrapped_dek: vec![10, 11, 12],
+        };
+        let second_entry = encode_entry(&second, 0).unwrap();
+
+        let mut vault = WindowsDpapiVault::open(&path).unwrap();
+        vault
+            .commit(
+                0,
+                SealedCandidate {
+                    generation: 1,
+                    context: context.clone(),
+                    envelope: first.envelope.clone(),
+                },
+                &dek,
+            )
+            .unwrap();
+        drop(vault);
+
+        // Model a crash after only a prefix of the next append reached disk.
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&second_entry[..JOURNAL_HEADER_LEN - 1])
+            .unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut reopened = WindowsDpapiVault::open(&path).unwrap();
+        assert_eq!(reopened.generation_floor().unwrap(), 1);
+        reopened
+            .commit(
+                1,
+                SealedCandidate {
+                    generation: 2,
+                    context,
+                    envelope: second.envelope,
+                },
+                &dek,
+            )
+            .unwrap();
+        assert_eq!(reopened.generation_floor().unwrap(), 2);
+        assert_eq!(reopened.load().unwrap().unwrap().generation, 2);
+
+        let _ = fs::remove_file(&path);
+        let mut lock = path.as_os_str().to_os_string();
+        lock.push(".lock");
+        let _ = fs::remove_file(lock);
     }
 
     #[test]
