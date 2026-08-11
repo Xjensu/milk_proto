@@ -47,7 +47,10 @@ struct FreshnessScope {
 
 enum FreshnessState {
     Uninitialized,
-    Initialized { floor: u64 },
+    Initialized {
+        floor: u64,
+        record_digest: [u8; 32],
+    },
 }
 
 trait FreshnessAuthority {
@@ -59,12 +62,17 @@ trait FreshnessAuthority {
         scope: &FreshnessScope,
         expected: u64,
         next: u64,
+        record_digest: [u8; 32],
     ) -> Result<(), VaultError>;
 }
 ```
 
-The authority stores only a protected scope binding and a monotonic floor. It
-does not receive plaintext ratchet state or the data-encryption key. The scope
+The authority stores only a protected scope binding, a monotonic floor, and a
+digest of the exact sealed record published at that floor. It does not receive
+plaintext ratchet state or the data-encryption key. The record digest is
+computed over a domain-separated canonical provider record (including the
+generation, context, envelope, and opaque wrapped-DEK bytes), so two different
+records at the same generation cannot be accepted interchangeably. The scope
 must be immutable for the provider instance, or passed explicitly to every
 authority operation; it must never be inferred from mutable conversation data.
 
@@ -77,10 +85,12 @@ a new signed or transmitted MMP field.
 All operations below run under the existing identity-scoped provider lock:
 
 1. Read and validate the journal and the authority state.
-2. Require exact agreement between their initialized floors and record digest.
-3. Advance the authority with a durable compare-and-swap to the candidate
-   generation.
-4. Publish and flush the complete journal record.
+2. Construct the candidate's complete sealed record and its record digest.
+3. Require exact agreement between the existing journal and authority floor
+   plus record digest.
+4. Advance the authority with a durable compare-and-swap to the candidate
+   generation and digest.
+5. Publish and flush the complete journal record.
 
 If the process fails between steps 3 and 4, the authority is newer than the
 journal. The next open must return a capability/generation failure. It must not
@@ -93,7 +103,7 @@ Freshness states have these semantics:
 | Authority | Journal | Result |
 |---|---|---|
 | Uninitialized | missing | fresh optional vault (`Ok(None)`) |
-| Initialized at `N` | exact record/floor `N` | usable |
+| Initialized at `N` with digest `D` | exact record/floor `N` with digest `D` | usable |
 | Initialized at `N` | missing, lower, higher, or different digest | fail closed |
 | unavailable, locked, reset, or scope-mismatched | any | fail closed |
 
@@ -115,6 +125,24 @@ The current Windows DPAPI journal is therefore not upgraded by this document.
 No registry sidecar, file lock, process-local clock, or DPAPI-protected copy of
 the same generation is sufficient by itself.
 
+## Current Windows target (not implementation approval)
+
+The bounded platform review recommends a TPM 2.0 NV monotonic counter accessed
+through Windows TBS behind a provider or service boundary. A scope must map to
+an explicitly provisioned NV index (or the deployment must deliberately limit
+one scope per vault), and read/increment operations must remain serialized by
+the existing identity lock. Missing, blocked, reset, or unavailable TPM state
+must fail closed. A service-owned registry/IPC authority is acceptable only as
+an interim boundary against a narrower unprivileged file attacker; it is not a
+full-volume rollback defense. CNG TPM-backed keys alone are not a freshness
+counter.
+
+This target is still a gate, not a shipped implementation. It requires a
+Windows proof of concept, scope provisioning and reset policy, reboot and
+power-loss tests, and separate physical-TPM and vTPM evidence. No new TPM Rust
+crate is selected until its Windows TBS compatibility, MSRV, native dependency,
+and supply-chain risk are reviewed.
+
 ## Acceptance matrix
 
 The future provider implementation must add focused tests for these cases:
@@ -130,8 +158,8 @@ The future provider implementation must add focused tests for these cases:
    authority-matching complete generation.
 5. Commit-order crash: authority-newer/journal-old and journal-newer/
    authority-old states both fail closed; neither side is rolled back.
-6. Corrupt, forked, skipped, equal, or overflowing generations reject without
-   mutating the node.
+6. Corrupt, forked (including same-generation/different-digest), skipped,
+   equal, or overflowing generations reject without mutating the node.
 7. Authority unavailable, locked, reset, ACL-denied, or hardware-absent
    returns a coarse capability failure with no journal-floor fallback.
 8. Restore concurrency keeps the provider transaction through validation and
