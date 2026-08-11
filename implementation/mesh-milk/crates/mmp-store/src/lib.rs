@@ -27,13 +27,14 @@
 // `SnapshotStore` is available on a target without an allocator/filesystem.
 #![cfg(feature = "std")]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use mmp_core::store::{
     BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
-    StorePutError, StorePutOutcome,
+    StoreCommitError, StorePutError, StorePutOutcome, StoreReservation, StoreReservationKey,
+    StoreAbortError, StoreReserveError,
 };
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
@@ -101,6 +102,15 @@ pub struct SnapshotStore {
     authority: Option<Vec<u8>>,
     /// Deterministic, non-secret local blocklist record.
     blocklist: Option<Vec<u8>>,
+    /// Runtime-only reservation metadata. It is deliberately excluded from
+    /// snapshots; callers must explicitly commit or abort after restart.
+    reservations: BTreeMap<StoreReservationKey, PendingReservation>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingReservation {
+    id: Id16,
+    declared_size: u32,
 }
 
 /// Bumped from `MMPSNAP1`: pre-existing snapshot files only ever held bundle
@@ -157,6 +167,7 @@ impl SnapshotStore {
             receipt_filter: None,
             authority: None,
             blocklist: None,
+            reservations: std::collections::BTreeMap::new(),
         };
         store.load();
         store
@@ -491,6 +502,65 @@ impl SnapshotStore {
                 return None;
             }
             total = total.checked_add(bundle_record_size(stored_body.len())?)?;
+        }
+
+        for claim in &self.claims {
+            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+        }
+        for blob in &self.group_blobs {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
+        }
+        if let Some(seen) = &self.seen_index {
+            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+        }
+        if let Some(filter) = &self.receipt_filter {
+            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+        }
+        if let Some(authority) = &self.authority {
+            total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
+        }
+        if let Some(blocklist) = &self.blocklist {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blocklist.len())?)?)?;
+        }
+        Some(total)
+    }
+
+    /// Calculate a complete snapshot image after applying one optional
+    /// candidate and all still-pending runtime reservations. Reservations are
+    /// counted as future bundle records so several successful preflights cannot
+    /// collectively exceed `SnapshotLimits`. `skip` is the token being
+    /// committed and is therefore removed from the pending set before the
+    /// candidate is added. No payload bytes are allocated here.
+    fn image_size_for_reservation_plan(
+        &self,
+        candidate: Option<&BundleMeta>,
+        skip: Option<&StoreReservationKey>,
+    ) -> Option<u64> {
+        let mut total = u64::try_from(MAGIC.len()).ok()?;
+        for stored_meta in self.mem.all_meta() {
+            let replaced = candidate.is_some_and(|meta| meta.id == stored_meta.id)
+                || self.reservations.iter().any(|(key, pending)| {
+                    Some(key) != skip && pending.id == stored_meta.id
+                });
+            if replaced {
+                continue;
+            }
+            let (_, body) = self.mem.get(&stored_meta.id)?;
+            if usize::try_from(stored_meta.size).ok() != Some(body.len()) {
+                return None;
+            }
+            total = total.checked_add(bundle_record_size(body.len())?)?;
+        }
+        for (key, pending) in &self.reservations {
+            if Some(key) == skip || candidate.is_some_and(|meta| meta.id == pending.id) {
+                continue;
+            }
+            total = total.checked_add(bundle_record_size(usize::try_from(pending.declared_size).ok()?)?)?;
+        }
+        if let Some(meta) = candidate {
+            total = total.checked_add(
+                bundle_record_size(usize::try_from(meta.size).ok()?)?,
+            )?;
         }
 
         for claim in &self.claims {
@@ -939,6 +1009,12 @@ impl BundleStore for SnapshotStore {
         if entries.is_empty() {
             return Ok(Vec::new());
         }
+        // Replacing the working image would discard MemStore's runtime-only
+        // reservation table. Require callers to commit or abort those tokens
+        // first rather than silently making them unusable.
+        if !self.reservations.is_empty() {
+            return Err(StoreBatchError::Invalid);
+        }
         // Match the legacy bounded write's fail-closed behavior: an image
         // that was not safely loaded cannot be replaced by a new working set.
         if self.load_rejected {
@@ -995,6 +1071,126 @@ impl BundleStore for SnapshotStore {
 
         self.mem = staged;
         Ok(outcomes)
+    }
+    fn try_reserve(&mut self, meta: BundleMeta) -> Result<StoreReservation, StoreReserveError> {
+        if self.load_rejected {
+            return Err(StoreReserveError::Capacity);
+        }
+        if let Some(limits) = self.limits {
+            let image_size = self
+                .image_size_for_reservation_plan(Some(&meta), None)
+                .ok_or(StoreReserveError::Invalid)?;
+            if image_size > limits.max_file_bytes() {
+                return Err(StoreReserveError::Capacity);
+            }
+        }
+        let reservation = self.mem.try_reserve(meta)?;
+        self.reservations.insert(
+            reservation.key(),
+            PendingReservation {
+                id: meta.id,
+                declared_size: meta.size,
+            },
+        );
+        Ok(reservation)
+    }
+    fn try_reserve_batch(
+        &mut self,
+        metas: &[BundleMeta],
+    ) -> Result<Vec<StoreReservation>, StoreReserveError> {
+        if self.load_rejected {
+            return Err(StoreReserveError::Capacity);
+        }
+        if metas.is_empty() {
+            return Err(StoreReserveError::Invalid);
+        }
+        let mut ids = BTreeSet::new();
+        for meta in metas {
+            if !ids.insert(meta.id)
+                || self.reservations.values().any(|pending| pending.id == meta.id)
+            {
+                return Err(StoreReserveError::Invalid);
+            }
+        }
+        if let Some(limits) = self.limits {
+            // Reserve the aggregate plan in one image calculation. The
+            // MemStore call below performs the corresponding byte/slot
+            // accounting and rejects the whole request before mutation.
+            let mut total = self
+                .image_size_for_reservation_plan(None, None)
+                .ok_or(StoreReserveError::Invalid)?;
+            for meta in metas {
+                let delta = bundle_record_size(
+                    usize::try_from(meta.size).map_err(|_| StoreReserveError::Capacity)?,
+                )
+                .ok_or(StoreReserveError::Capacity)?;
+                let old = match self.mem.get(&meta.id) {
+                    Some((_, body)) => {
+                        bundle_record_size(body.len()).ok_or(StoreReserveError::Capacity)?
+                    }
+                    None => 0,
+                };
+                total = total
+                    .checked_sub(old)
+                    .and_then(|value| value.checked_add(delta))
+                    .ok_or(StoreReserveError::Capacity)?;
+            }
+            if total > limits.max_file_bytes() {
+                return Err(StoreReserveError::Capacity);
+            }
+        }
+        let reservations = self.mem.try_reserve_batch(metas)?;
+        for (reservation, meta) in reservations.iter().zip(metas) {
+            self.reservations.insert(
+                reservation.key(),
+                PendingReservation {
+                    id: meta.id,
+                    declared_size: meta.size,
+                },
+            );
+        }
+        Ok(reservations)
+    }
+    fn commit_reserved(
+        &mut self,
+        reservation: &StoreReservation,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StoreCommitError> {
+        let key = reservation.key();
+        let pending = self
+            .reservations
+            .get(&key)
+            .copied()
+            .ok_or(StoreCommitError::Invalid)?;
+        if pending.id != meta.id
+            || pending.declared_size != meta.size
+            || usize::try_from(meta.size).ok() != Some(bytes.len())
+        {
+            return Err(StoreCommitError::Invalid);
+        }
+        if let Some(limits) = self.limits {
+            let image_size = self
+                .image_size_for_reservation_plan(Some(&meta), Some(&key))
+                .ok_or(StoreCommitError::Conflict)?;
+            if image_size > limits.max_file_bytes() {
+                return Err(StoreCommitError::Capacity);
+            }
+        }
+        let outcome = self.mem.commit_reserved(reservation, meta, bytes)?;
+        self.reservations.remove(&key);
+        Ok(outcome)
+    }
+    fn abort_reservation(
+        &mut self,
+        reservation: &StoreReservation,
+    ) -> Result<(), StoreAbortError> {
+        let key = reservation.key();
+        let result = self.mem.abort_reservation(reservation);
+        if result.is_ok() {
+            self.reservations.remove(&key);
+        }
+        result
     }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.mem.get(id)
@@ -1197,6 +1393,59 @@ mod tests {
             Err(StoreBatchError::Capacity)
         );
         assert!(store.meta(&Id16([1; 16])).is_none());
+        assert_eq!(store.total_bytes(), 0);
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn reservation_honors_complete_image_limit_and_replacement_delta() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-reservation-limit-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let old = batch_meta(1, 3);
+        let mut writer = SnapshotStore::open(&path);
+        writer.try_put(old, b"old").unwrap();
+        writer.persist().unwrap();
+        let exact_limit = std::fs::metadata(&path).unwrap().len();
+
+        let mut bounded =
+            SnapshotStore::open_with_limits(&path, SnapshotLimits::new(exact_limit));
+        let replacement = batch_meta(1, 3);
+        let token = bounded.try_reserve(replacement).unwrap();
+        // A second insert would exceed the complete image even though the
+        // current payload quota still has room; reservations account framing.
+        assert_eq!(
+            bounded.try_reserve(batch_meta(2, 1)),
+            Err(StoreReserveError::Capacity)
+        );
+        assert_eq!(
+            bounded.commit_reserved(&token, replacement, b"new"),
+            Ok(StorePutOutcome::Replaced)
+        );
+        assert_eq!(bounded.get(&Id16([1; 16])).unwrap().1, b"new");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reservation_load_rejected_fails_closed_without_mutation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-reservation-rejected-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).unwrap();
+
+        let mut store = SnapshotStore::open(&path);
+        assert!(store.load_rejected());
+        let result = store.try_reserve(batch_meta(1, 3));
+        assert_eq!(result, Err(StoreReserveError::Capacity));
+        assert_eq!(store.try_reserve_batch(&[batch_meta(2, 3)]), Err(StoreReserveError::Capacity));
         assert_eq!(store.total_bytes(), 0);
 
         let _ = std::fs::remove_dir_all(path);
