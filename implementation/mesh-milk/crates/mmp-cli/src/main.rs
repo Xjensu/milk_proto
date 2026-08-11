@@ -133,6 +133,7 @@ Both paths must not begin with '-'.
 const SEND_TIMEOUT: Duration = Duration::from_secs(120);
 
 type HostPersistenceArgs = (Vec<String>, Option<String>, Option<String>);
+type BuiltNode = (Node, Option<Arc<Mutex<SnapshotStore>>>);
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -528,6 +529,10 @@ fn cmd_inspect(args: &[String]) -> ExitCode {
     }
 
     let store = SnapshotStore::open(path);
+    if store.load_rejected() {
+        eprintln!("mmp-cli inspect: snapshot was not loaded safely");
+        return ExitCode::from(2);
+    }
     let mut metas = store.all_meta();
     metas.sort_by_key(|m| m.stored_at);
 
@@ -717,15 +722,25 @@ fn usage_error(subcmd: &str, msg: &str) -> ExitCode {
 /// `store_path` if given, else an in-memory `MemStore` (same store type
 /// `demo` uses, discarded on exit). Returns the shared handle to persist
 /// through later, if a `SnapshotStore` is in play — see [`SharedSnapshot`].
-fn build_node(seed: [u8; 32], store_path: Option<&str>) -> (Node, Option<Arc<Mutex<SnapshotStore>>>) {
+/// A snapshot that failed closed during loading is rejected before a `Node`
+/// exists, so the CLI cannot process traffic against a RAM-only replacement.
+fn build_node(
+    seed: [u8; 32],
+    store_path: Option<&str>,
+) -> Result<BuiltNode, String> {
     match store_path {
         Some(path) => {
             let shared = Arc::new(Mutex::new(SnapshotStore::open(path)));
+            if shared.lock().expect("snapshot store mutex poisoned").load_rejected() {
+                return Err(format!(
+                    "snapshot '{path}' was not loaded safely and cannot be replaced"
+                ));
+            }
             let mut node = Node::new(seed, Box::new(SharedSnapshot(shared.clone())), Tier::Anchor);
             restore_snapshot_state(&mut node, &shared);
-            (node, Some(shared))
+            Ok((node, Some(shared)))
         }
-        None => (Node::new(seed, Box::new(MemStore::new()), Tier::Anchor), None),
+        None => Ok((Node::new(seed, Box::new(MemStore::new()), Tier::Anchor), None)),
     }
 }
 
@@ -847,7 +862,13 @@ fn cmd_connect(args: &[String]) -> ExitCode {
         }
     };
 
-    let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let (mut node, shared) = match build_node(seed, store_path.as_deref()) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("mmp-cli connect: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let mut vault = match open_host_vault(vault_path.as_deref()) {
         Ok(vault) => vault,
         Err(error) => {
@@ -893,7 +914,13 @@ fn cmd_send(args: &[String]) -> ExitCode {
         Err(e) => return usage_error("send", &e),
     };
 
-    let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let (mut node, shared) = match build_node(seed, store_path.as_deref()) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("mmp-cli send: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let mut vault = match open_host_vault(vault_path.as_deref()) {
         Ok(vault) => vault,
         Err(error) => {
@@ -948,7 +975,13 @@ fn cmd_listen(args: &[String]) -> ExitCode {
         }
     };
 
-    let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let (mut node, shared) = match build_node(seed, store_path.as_deref()) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!("mmp-cli listen: {error}");
+            return ExitCode::from(2);
+        }
+    };
     let mut vault = match open_host_vault(vault_path.as_deref()) {
         Ok(vault) => vault,
         Err(error) => {
@@ -1430,13 +1463,13 @@ mod tests {
         let path_string = path.to_string_lossy().into_owned();
         let seed = [0x71; 32];
 
-        let (mut source, _) = build_node(seed, None);
+        let (mut source, _) = build_node(seed, None).expect("in-memory node construction");
         let mut vault = open_host_vault(Some(&path_string)).unwrap();
         restore_host_vault(&mut source, &mut vault).unwrap();
         source.save_secret_state_to_windows_vault(vault.as_mut().unwrap()).unwrap();
         drop(vault);
 
-        let (mut restored, _) = build_node(seed, None);
+        let (mut restored, _) = build_node(seed, None).expect("in-memory node construction");
         let mut reopened = open_host_vault(Some(&path_string)).unwrap();
         restore_host_vault(&mut restored, &mut reopened).unwrap();
         assert_eq!(restored.node_id(), source.node_id());
@@ -1500,6 +1533,36 @@ mod tests {
         assert!(!missing_parent.exists());
     }
 
+    #[test]
+    fn build_node_rejects_unreadable_snapshot_before_hosting() {
+        let path = temp_snapshot_path();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).expect("directory primary simulates an unreadable snapshot");
+        let path_string = path.to_string_lossy().into_owned();
+
+        assert!(
+            build_node([0x52; 32], Some(&path_string)).is_err(),
+            "a rejected snapshot must not produce a live RAM-only node"
+        );
+        assert!(path.is_dir(), "the rejected primary remains available for repair");
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
+    #[test]
+    fn inspect_rejects_unreadable_snapshot_instead_of_reporting_empty() {
+        let path = temp_snapshot_path();
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).expect("directory primary simulates an unreadable snapshot");
+        let path_string = path.to_string_lossy().into_owned();
+
+        assert_eq!(cmd_inspect(&[path_string]), ExitCode::from(2));
+
+        let _ = std::fs::remove_dir_all(path);
+    }
+
     /// The CLI must perform the same bootstrap sequence as the FFI host:
     /// restored claims are usable for a send immediately, group membership is
     /// available before the first contact, receiver-local authority admission
@@ -1514,7 +1577,7 @@ mod tests {
         let peer_seed = [0x22; 32];
         let peer = Node::new(peer_seed, Box::new(MemStore::new()), Tier::Anchor);
 
-        let (mut node, shared) = build_node(seed, Some(&path_string));
+        let (mut node, shared) = build_node(seed, Some(&path_string)).expect("valid snapshot path");
         for claim in peer.own_claims() {
             node.ingest_claim(claim, false);
         }
@@ -1543,7 +1606,7 @@ mod tests {
         drop(shared);
         drop(node);
 
-        let (mut restored, reopened) = build_node(seed, Some(&path_string));
+        let (mut restored, reopened) = build_node(seed, Some(&path_string)).expect("reopen snapshot path");
         assert!(restored.send_text(&peer.node_id(), "after restart").is_ok());
         assert_eq!(restored.nickname_of(&restored.node_id()).as_deref(), Some("restored-cli"));
         assert_eq!(restored.group_members(&gid), vec![restored.node_id()]);
