@@ -2,10 +2,15 @@
 //!
 //! The provider sees only an authenticated envelope, its non-secret context,
 //! and an opaque/wrapped data-encryption key. It must never receive the
-//! plaintext aggregate. This module does not implement a platform backend;
-//! it makes the contract testable before Android/iOS/Linux adapters exist.
+//! plaintext aggregate. The Windows target has a cfg-isolated DPAPI adapter;
+//! other platforms continue to use the provider-neutral test seam until their
+//! native keystore contracts are implemented.
 
 #![allow(dead_code)]
+
+#[cfg(target_os = "windows")]
+#[path = "vault_windows.rs"]
+mod vault_windows;
 
 use std::collections::HashMap;
 

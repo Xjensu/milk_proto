@@ -1,7 +1,9 @@
 # Keystore-backed secret-state design (implementation plan)
 
-Status: Rust-internal primitive and restore seam implemented; no wire change,
-no platform-keystore adapter, and no UniFFI/React Native exposure.
+Status: Rust-internal primitive and restore seam implemented; a Windows-only
+DPAPI adapter now covers the provider transaction contract in the Rust
+workspace. Android/iOS adapters, host wiring, and restart/hardware evidence
+remain open; there is no wire change and no UniFFI/React Native exposure.
 The frozen `specification/` directory is intentionally unchanged.
 
 ## Current boundary
@@ -193,3 +195,25 @@ The implementation must add tests for:
 Only after this matrix passes should an opaque sealed record be added to the
 host persistence flow. This design is intentionally a gate, not a claim that
 restart continuity is already implemented.
+
+## Windows adapter evidence (2026-08-11)
+
+`mmp-node/src/vault_windows.rs` is a target-gated implementation of the
+existing crate-private `SnapshotVault` seam. It uses the maintained
+`windows-sys` 0.61.2 bindings only for user-scope DPAPI and the required
+handle/time APIs; no generic serializer or key/value store was added. DPAPI
+receives a fresh 32-byte DEK and BLAKE3(context) as optional entropy, while the
+plaintext aggregate remains inside the Rust seal/open path.
+
+The adapter stores bounded, checksummed journal entries, calls `sync_all`,
+retains a durable generation floor during journal compaction, and holds an
+exclusive Windows file handle across `with_restore_lock` callbacks. Focused
+Windows-host evidence is six adapter tests plus the complete 162-test
+`mmp-node` library suite and strict Clippy. The Windows target also passes
+`cargo check -p mmp-node --target x86_64-pc-windows-msvc --locked`.
+
+This does not close E4-S4: the adapter is not yet wired into the mobile/FFI
+restart path, and Android Keystore/iOS Keychain implementations plus
+kill/restart and physical-device evidence remain required. The adapter's
+bounded journal and provider transaction are implementation evidence, not a
+claim that all production persistence acceptance cases have passed.

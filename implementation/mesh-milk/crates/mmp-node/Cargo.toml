@@ -24,5 +24,16 @@ rand = { workspace = true }
 rand_core = { workspace = true }
 zeroize = { workspace = true }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# DPAPI is used only to wrap the provider-owned DEK.  The journal, generation
+# floor, and restore lock remain in the adapter so the SnapshotVault contract
+# is not mistaken for a generic key/value store.
+windows-sys = { version = "0.61.2", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemInformation",
+] }
+
 [lints]
 workspace = true
