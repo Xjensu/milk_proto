@@ -20,6 +20,10 @@ generated `MmpNode` bindings.
   tracked links, and prevents the same drain from sending queued frames;
 - native links awaiting a disconnect callback are capped at 64, and late
   callbacks are idempotently ignored after logical teardown;
+- `LinkTokenAllocator` gives every native connection a positive, monotonic
+  process-local token and fails closed before exhaustion; adapters must capture
+  that token in every callback instead of reusing a platform connection handle
+  while old callbacks may still be pending;
 - foreground relay capability demotion to `MeshTier.LEAF` when unavailable;
 - atomic startup rollback: a failed clock/radio/initial drain leaves
   `isRunning == false`, stops any advertiser/scanner that started, and

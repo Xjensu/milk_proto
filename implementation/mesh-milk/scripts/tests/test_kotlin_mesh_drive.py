@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 SOURCE = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "MeshDrive.kt"
+TOKEN_ALLOCATOR = ROOT / "platform" / "kotlin-mesh-drive" / "src" / "main" / "kotlin" / "org" / "mesh_milk" / "platform" / "LinkTokenAllocator.kt"
 README = ROOT / "platform" / "kotlin-mesh-drive" / "README.md"
 
 
@@ -174,6 +175,19 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("node.setTier(if (relayCapable) MeshTier.RELAY else MeshTier.LEAF)", self.source)
         self.assertIn("setForegroundRelayCapable", self.source)
         self.assertIn("pending.removeIf { it.link == link }", self.source)
+
+    def test_link_token_allocator_is_monotonic_and_fails_before_wrap(self) -> None:
+        """Native adapters must not reuse connection IDs while callbacks are pending."""
+
+        self.assertTrue(TOKEN_ALLOCATOR.exists())
+        allocator = TOKEN_ALLOCATOR.read_text(encoding="utf-8")
+        self.assertIn("public class LinkTokenAllocator", allocator)
+        self.assertIn("require(firstToken > 0L)", allocator)
+        self.assertIn("Long.MAX_VALUE", allocator)
+        self.assertIn("throw IllegalStateException", allocator)
+        self.assertIn("@Synchronized", allocator)
+        self.assertIn("nextToken = token + 1L", allocator)
+        self.assertIn("LinkTokenAllocator", self.readme)
 
     def test_link_callbacks_forward_before_draining_host_output(self) -> None:
         """Keep callback ordering compatible with the FFI single-owner contract.
