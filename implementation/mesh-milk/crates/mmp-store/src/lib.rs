@@ -27,10 +27,14 @@
 // `SnapshotStore` is available on a target without an allocator/filesystem.
 #![cfg(feature = "std")]
 
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use mmp_core::store::{BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome};
+use mmp_core::store::{
+    BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
+    StorePutError, StorePutOutcome,
+};
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
 use mmp_types::bundle::{class, prio};
@@ -476,6 +480,40 @@ impl SnapshotStore {
         Some(total)
     }
 
+    /// Return the complete encoded snapshot size for a prepared in-memory
+    /// image. `SnapshotLimits` bounds the complete snapshot rather than only
+    /// bundle payload bytes, so auxiliary records are included here too.
+    fn image_size_for_mem(&self, mem: &MemStore) -> Option<u64> {
+        let mut total = u64::try_from(MAGIC.len()).ok()?;
+        for meta in mem.all_meta() {
+            let (stored_meta, stored_body) = mem.get(&meta.id)?;
+            if usize::try_from(stored_meta.size).ok()? != stored_body.len() {
+                return None;
+            }
+            total = total.checked_add(bundle_record_size(stored_body.len())?)?;
+        }
+
+        for claim in &self.claims {
+            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+        }
+        for blob in &self.group_blobs {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
+        }
+        if let Some(seen) = &self.seen_index {
+            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+        }
+        if let Some(filter) = &self.receipt_filter {
+            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+        }
+        if let Some(authority) = &self.authority {
+            total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
+        }
+        if let Some(blocklist) = &self.blocklist {
+            total = total.checked_add(framed_record_size(1usize.checked_add(blocklist.len())?)?)?;
+        }
+        Some(total)
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -894,6 +932,70 @@ impl BundleStore for SnapshotStore {
         self.mem.put(meta, bytes);
         Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted })
     }
+    fn try_put_batch(
+        &mut self,
+        entries: &[StoreBatchEntry<'_>],
+    ) -> Result<Vec<StorePutOutcome>, StoreBatchError> {
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Match the legacy bounded write's fail-closed behavior: an image
+        // that was not safely loaded cannot be replaced by a new working set.
+        if self.load_rejected {
+            return Err(StoreBatchError::Capacity);
+        }
+
+        // Validate the aggregate request before allocating a staged image.
+        // A duplicate ID or declared-length mismatch must never leave an
+        // earlier batch entry visible.
+        let mut ids = BTreeSet::new();
+        for entry in entries {
+            let byte_len = u64::try_from(entry.bytes.len())
+                .map_err(|_| StoreBatchError::Capacity)?;
+            if byte_len != u64::from(entry.meta.size) || !ids.insert(entry.meta.id) {
+                return Err(StoreBatchError::Invalid);
+            }
+        }
+
+        // Build a private image of the current working set. The provider's
+        // batch implementation then validates and applies the complete
+        // request to that image; the live image is published only after the
+        // optional complete-snapshot limit check succeeds.
+        let mut staged = MemStore::new();
+        let mut existing_bytes = 0u64;
+        for meta in self.mem.all_meta() {
+            let (stored_meta, stored_body) = self
+                .mem
+                .get(&meta.id)
+                .ok_or(StoreBatchError::Invalid)?;
+            if usize::try_from(stored_meta.size).ok() != Some(stored_body.len()) {
+                return Err(StoreBatchError::Invalid);
+            }
+            existing_bytes = existing_bytes
+                .checked_add(
+                    u64::try_from(stored_body.len())
+                        .map_err(|_| StoreBatchError::Capacity)?,
+                )
+                .ok_or(StoreBatchError::Capacity)?;
+            staged.put(stored_meta, &stored_body);
+        }
+        if existing_bytes != self.mem.total_bytes() {
+            return Err(StoreBatchError::Invalid);
+        }
+
+        let outcomes = staged.try_put_batch(entries)?;
+        if let Some(limits) = self.limits {
+            let image_size = self
+                .image_size_for_mem(&staged)
+                .ok_or(StoreBatchError::Capacity)?;
+            if image_size > limits.max_file_bytes() {
+                return Err(StoreBatchError::Capacity);
+            }
+        }
+
+        self.mem = staged;
+        Ok(outcomes)
+    }
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.mem.get(id)
     }
@@ -926,6 +1028,179 @@ impl BundleStore for SnapshotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn batch_meta(id: u8, size: usize) -> BundleMeta {
+        BundleMeta {
+            id: Id16([id; 16]),
+            class: class::DIRECT,
+            origin: Id16([2; 16]),
+            dest: Id16([3; 16]),
+            priority: prio::NORMAL,
+            effective_priority: prio::NORMAL,
+            size: u32::try_from(size).unwrap(),
+            stored_at: 10,
+            expires_at: 1000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        }
+    }
+
+    #[test]
+    fn batch_insert_and_replace_publishes_all_outcomes() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-replace-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let mut store = SnapshotStore::open(&path);
+        store.try_put(batch_meta(1, 3), b"old").unwrap();
+        let replacement = batch_meta(1, 3);
+        let inserted = batch_meta(2, 3);
+        let entries = [
+            StoreBatchEntry::new(replacement, b"new"),
+            StoreBatchEntry::new(inserted, b"add"),
+        ];
+
+        assert_eq!(
+            store.try_put_batch(&entries).unwrap(),
+            vec![StorePutOutcome::Replaced, StorePutOutcome::Inserted]
+        );
+        assert_eq!(store.get(&Id16([1; 16])).unwrap().1, b"new");
+        assert_eq!(store.get(&Id16([2; 16])).unwrap().1, b"add");
+        assert_eq!(store.total_bytes(), 6);
+
+        // The batch seam is working-set atomic; persistence is still the
+        // caller's separate operation. Verify that an explicitly persisted
+        // complete batch reopens as a complete image.
+        store.persist().unwrap();
+        let reopened = SnapshotStore::open(&path);
+        assert_eq!(reopened.get(&Id16([1; 16])).unwrap().1, b"new");
+        assert_eq!(reopened.get(&Id16([2; 16])).unwrap().1, b"add");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_batch_duplicate_or_size_has_no_prefix_mutation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-invalid-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let mut store = SnapshotStore::open(&path);
+        store.try_put(batch_meta(1, 3), b"old").unwrap();
+        let duplicate_entries = [
+            StoreBatchEntry::new(batch_meta(2, 3), b"new"),
+            StoreBatchEntry::new(batch_meta(2, 3), b"dup"),
+        ];
+        assert_eq!(
+            store.try_put_batch(&duplicate_entries),
+            Err(StoreBatchError::Invalid)
+        );
+        assert!(store.meta(&Id16([2; 16])).is_none());
+        assert_eq!(store.get(&Id16([1; 16])).unwrap().1, b"old");
+
+        let size_mismatch = [StoreBatchEntry::new(batch_meta(3, 4), b"bad")];
+        assert_eq!(
+            store.try_put_batch(&size_mismatch),
+            Err(StoreBatchError::Invalid)
+        );
+        assert!(store.meta(&Id16([3; 16])).is_none());
+        assert_eq!(store.total_bytes(), 3);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn batch_image_limit_rejection_has_no_mutation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-limit-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+
+        let mut writer = SnapshotStore::open(&path);
+        writer.try_put(batch_meta(1, 3), b"old").unwrap();
+        writer.persist().unwrap();
+        let limit = std::fs::metadata(&path).unwrap().len();
+
+        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(limit));
+        let entries = [StoreBatchEntry::new(batch_meta(2, 3), b"new")];
+        assert_eq!(
+            bounded.try_put_batch(&entries),
+            Err(StoreBatchError::Capacity)
+        );
+        assert!(bounded.meta(&Id16([2; 16])).is_none());
+        assert_eq!(bounded.get(&Id16([1; 16])).unwrap().1, b"old");
+        assert_eq!(bounded.total_bytes(), 3);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn batch_limit_accounts_replacement_delta_and_insert_as_one_image() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-exact-fit-{}.mmp",
+            std::process::id()
+        ));
+        let probe_path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-exact-fit-probe-{}.mmp",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&probe_path);
+
+        let old = batch_meta(1, 3);
+        let replacement = StoreBatchEntry::new(old, b"new");
+        let inserted = StoreBatchEntry::new(batch_meta(2, 3), b"add");
+        let entries = [replacement, inserted];
+
+        let mut writer = SnapshotStore::open(&path);
+        writer.try_put(old, b"old").unwrap();
+        writer.persist().unwrap();
+
+        // Derive the exact complete-image bound from the same replacement +
+        // insertion, rather than guessing record framing overhead.
+        let mut probe = SnapshotStore::open(&probe_path);
+        probe.try_put(old, b"old").unwrap();
+        probe.try_put_batch(&entries).unwrap();
+        probe.persist().unwrap();
+        let exact_limit = std::fs::metadata(&probe_path).unwrap().len();
+
+        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(exact_limit));
+        assert_eq!(bounded.try_put_batch(&entries).unwrap().len(), 2);
+        assert_eq!(bounded.get(&Id16([1; 16])).unwrap().1, b"new");
+        assert_eq!(bounded.get(&Id16([2; 16])).unwrap().1, b"add");
+
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(probe_path);
+    }
+
+    #[test]
+    fn batch_load_rejected_fails_closed_without_mutation() {
+        let path = std::env::temp_dir().join(format!(
+            "mmp-store-batch-rejected-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir(&path).unwrap();
+
+        let mut store = SnapshotStore::open(&path);
+        assert!(store.load_rejected());
+        let entries = [StoreBatchEntry::new(batch_meta(1, 3), b"new")];
+        assert_eq!(
+            store.try_put_batch(&entries),
+            Err(StoreBatchError::Capacity)
+        );
+        assert!(store.meta(&Id16([1; 16])).is_none());
+        assert_eq!(store.total_bytes(), 0);
+
+        let _ = std::fs::remove_dir_all(path);
+    }
 
     #[test]
     fn checked_record_length_rejects_u32_overflow() {
