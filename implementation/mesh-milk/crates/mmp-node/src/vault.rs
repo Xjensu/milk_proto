@@ -10,7 +10,10 @@
 
 #[cfg(target_os = "windows")]
 #[path = "vault_windows.rs"]
-mod vault_windows;
+pub(crate) mod vault_windows;
+
+#[cfg(target_os = "windows")]
+pub(crate) use vault_windows::WindowsDpapiVault;
 
 use std::collections::HashMap;
 
@@ -251,12 +254,12 @@ pub(crate) fn open_record(
 
 /// Load, unwrap, and validate one generation without exposing plaintext to
 /// the provider. The caller must already hold the provider restore lock.
-fn restore_from_vault_unlocked(
+fn restore_record_unlocked(
     vault: &mut dyn SnapshotVault,
     node_public: &Key32,
     node_id: &Id16,
+    record: SealedRecord,
 ) -> Result<(u64, RestoredState), VaultError> {
-    let record = vault.load()?.ok_or(VaultError::Unavailable)?;
     // Bound all provider-controlled byte vectors before consulting the durable
     // floor or asking a native keystore to unwrap an opaque key handle.
     validate_record_bounds(&record)?;
@@ -310,11 +313,33 @@ pub(crate) fn restore_from_vault_into(
     apply: &mut dyn FnMut(RestoredState) -> Result<(), VaultError>,
 ) -> Result<u64, VaultError> {
     let mut operation = |locked: &mut dyn SnapshotVault| {
-        let (generation, state) = restore_from_vault_unlocked(locked, node_public, node_id)?;
+        let record = locked.load()?.ok_or(VaultError::Unavailable)?;
+        let (generation, state) = restore_record_unlocked(locked, node_public, node_id, record)?;
         apply(state)?;
         Ok(generation)
     };
     vault.with_restore_lock(&mut operation)
+}
+
+/// Restore one generation while holding the provider transaction, treating a
+/// brand-new provider with no committed record as an absent optional
+/// capability.  The record load and state swap occur under the same lock, so
+/// startup cannot miss a concurrent commit or accept a record that changed
+/// between a preflight probe and the actual restore.
+pub(crate) fn restore_from_vault_if_present_into(
+    vault: &mut impl SnapshotVault,
+    node_public: &Key32,
+    node_id: &Id16,
+    apply: &mut dyn FnMut(RestoredState) -> Result<(), VaultError>,
+) -> Result<Option<u64>, VaultError> {
+    let mut operation = |locked: &mut dyn SnapshotVault| {
+        let Some(record) = locked.load()? else { return Ok(0) };
+        let (generation, state) = restore_record_unlocked(locked, node_public, node_id, record)?;
+        apply(state)?;
+        Ok(generation)
+    };
+    let generation = vault.with_restore_lock(&mut operation)?;
+    Ok((generation != 0).then_some(generation))
 }
 
 /// Load, unwrap, and validate one generation through a provider restore

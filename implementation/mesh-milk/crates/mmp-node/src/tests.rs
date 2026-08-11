@@ -25,6 +25,9 @@ use mmp_types::tlv::Ext;
 use crate::diag::JourneyEvent;
 use crate::{ClaimPublishError, DeliveryState, Event, KnownClaimBody, Node, SendError, SentMessage, Tier};
 
+#[cfg(target_os = "windows")]
+use crate::WindowsVault;
+
 fn node(seed: u8) -> Node {
     Node::new([seed; 32], Box::new(MemStore::new()), Tier::Relay)
 }
@@ -4378,4 +4381,37 @@ fn blob_terminal_gc_preserves_active_and_partial_holder_state() {
 
     let _ = std::fs::remove_file(&active_dest);
     let _ = std::fs::remove_file(&abandoned_dest);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn windows_vault_public_facade_roundtrips_without_exposing_secret_bytes() {
+    let path = std::env::temp_dir().join(format!("mmp-node-public-vault-{}.bin", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("bin.lock"));
+
+    let mut source = node(201);
+    let mut vault = WindowsVault::open(&path).expect("open Windows vault");
+    assert_eq!(
+        source
+            .restore_secret_state_from_windows_vault(&mut vault)
+            .expect("empty vault is not an error"),
+        None
+    );
+    assert_eq!(source.save_secret_state_to_windows_vault(&mut vault).unwrap(), 1);
+
+    let expected = source.secret_state_snapshot().unwrap();
+    let mut restored = node(201);
+    let mut reopened = WindowsVault::open(&path).expect("reopen Windows vault");
+    assert_eq!(
+        restored
+            .restore_secret_state_from_windows_vault(&mut reopened)
+            .unwrap(),
+        Some(1)
+    );
+    assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), expected.as_slice());
+
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(path.with_extension("bin.lock"));
+    let _ = std::fs::remove_file(path.with_extension("tmp"));
 }

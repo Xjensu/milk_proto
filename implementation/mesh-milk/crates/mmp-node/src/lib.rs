@@ -690,6 +690,52 @@ pub struct Node {
     beacon_salt: [u8; 16],
 }
 
+/// Coarse result for the Windows desktop keystore adapter.  The adapter's
+/// journal, ciphertext, wrapped DEK, and plaintext secret state never appear
+/// in this public type or in any host binding.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsVaultError {
+    /// The path, envelope, context, or generation was invalid.
+    Invalid,
+    /// The provider could not acquire its capability or complete IO.
+    Unavailable,
+    /// The node had already created live secret/session state.
+    Busy,
+    /// A durable generation was stale or violated the monotonic fence.
+    Generation,
+}
+
+#[cfg(target_os = "windows")]
+/// Opaque Windows DPAPI-backed secret-state vault for desktop hosts.
+///
+/// This is deliberately not a UniFFI object and exposes no record or key
+/// material.  Android/iOS callers continue to use their native keystore
+/// contracts; this type is a host-side Rust/CLI integration seam only.
+pub struct WindowsVault {
+    inner: vault::WindowsDpapiVault,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsVault {
+    /// Open (or prepare) a provider journal at `path`.
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, WindowsVaultError> {
+        vault::WindowsDpapiVault::open(path)
+            .map(|inner| Self { inner })
+            .map_err(map_windows_vault_error)
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn map_windows_vault_error(error: vault::VaultError) -> WindowsVaultError {
+    match error {
+        vault::VaultError::Invalid => WindowsVaultError::Invalid,
+        vault::VaultError::Generation => WindowsVaultError::Generation,
+        vault::VaultError::Unavailable => WindowsVaultError::Unavailable,
+        vault::VaultError::Busy => WindowsVaultError::Busy,
+    }
+}
+
 impl Node {
     /// Create a node from a 32-byte identity seed and a storage backend, and
     /// publish its identity claims (exchange key + prekey batch).
@@ -981,6 +1027,57 @@ impl Node {
             Ok(())
         };
         vault::restore_from_vault_into(vault, &node_public, &node_id, &mut apply)
+    }
+
+    /// Restore the current generation from the opaque Windows desktop vault.
+    ///
+    /// `Ok(None)` is the expected result for a newly created vault.  All
+    /// provider failures remain coarse and atomic: no live node state is
+    /// changed when validation, decryption, locking, or generation checks
+    /// fail.  This method is intentionally absent from UniFFI.
+    #[cfg(target_os = "windows")]
+    pub fn restore_secret_state_from_windows_vault(
+        &mut self,
+        vault: &mut WindowsVault,
+    ) -> Result<Option<u64>, WindowsVaultError> {
+        if !self.sessions.is_empty()
+            || !self.outbox.is_empty()
+            || !self.core.convs.is_empty()
+            || !self.core.established_convs.is_empty()
+            || !self.core.pending_async.is_empty()
+            || !self.core.pending_first_contact.is_empty()
+            || !self.core.sent.is_empty()
+            || !self.core.groups.is_empty()
+            || !self.core.sent_dists.is_empty()
+        {
+            return Err(WindowsVaultError::Busy);
+        }
+        let node_public = self.core.public;
+        let node_id = self.core.node_id;
+        let mut apply = |state: secret_state::RestoredState| {
+            self.core.convs = state.convs;
+            self.core.established_convs = state.established_convs;
+            self.core.prekeys = state.prekeys;
+            self.core.pending_async = state.pending_async;
+            self.core.pending_first_contact = state.pending_first_contact;
+            self.core.sent = state.sent;
+            Ok(())
+        };
+        vault::restore_from_vault_if_present_into(&mut vault.inner, &node_public, &node_id, &mut apply)
+            .map_err(map_windows_vault_error)
+    }
+
+    /// Seal and durably save the current secret aggregate through the opaque
+    /// Windows desktop vault.  A fresh OS-random DEK is generated inside the
+    /// Rust boundary for every generation; it is never returned to the host.
+    /// This method is intentionally absent from UniFFI.
+    #[cfg(target_os = "windows")]
+    pub fn save_secret_state_to_windows_vault(
+        &mut self,
+        vault: &mut WindowsVault,
+    ) -> Result<u64, WindowsVaultError> {
+        let mut rng = rand::rngs::OsRng;
+        vault::save_core_from_vault(&mut vault.inner, &self.core, &mut rng).map_err(map_windows_vault_error)
     }
 
     /// Request a peer to act as a patron for this node. The offer is sent on

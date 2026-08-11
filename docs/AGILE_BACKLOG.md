@@ -307,3 +307,9 @@ Handbook §4.8's five scenarios (replay / flood / quota abuse / eclipse / bloom 
 | A3.4 ratchet decision | Handbook §4.3(4); roadmap risk #4 |
 
 Both source reports (with full command logs and file:line citations) are preserved in the session scratchpad: `spec_gaps.md`, `impl_audit.md`.
+
+Status correction (2026-08-11): the Windows provider is now wired to the PC
+CLI through the opaque `--vault <path>` path; restore runs before clock priming
+and save runs on every BLE drive-loop shutdown path. Remaining host work is
+Android/iOS native keystore wiring plus kill/restart and physical-device
+evidence.

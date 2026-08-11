@@ -25,6 +25,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use mmp_core::store::{BundleMeta, BundleStore, StorePutError, StorePutOutcome};
 use mmp_core::MemStore;
 use mmp_node::{DeliveryState, Event, Node, Tier};
+#[cfg(target_os = "windows")]
+use mmp_node::WindowsVault;
 use mmp_store::SnapshotStore;
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_tal_btleplug::{BleCentral, PeerHandle, PeripheralId};
@@ -41,13 +43,13 @@ USAGE:
     mmp-cli inspect <path>                 print a mmp-store snapshot's bundle table
     mmp-cli vectors [<dir>]                 (re)generate the golden test vectors into <dir>
                                             (default: the repo's vectors/ directory)
-    mmp-cli connect <seedfile> [--store <path>]
+    mmp-cli connect <seedfile> [--store <path>] [--vault <path>]
                                             central role: scan, dial newly-seen peers, drive the
                                             node over real BLE until Ctrl-C
-    mmp-cli send <seedfile> <hex-nodeid> <text> [--store <path>]
+    mmp-cli send <seedfile> <hex-nodeid> <text> [--store <path>] [--vault <path>]
                                             queue a text message, then run the same drive loop as
                                             `connect` until it is delivered or a timeout is hit
-    mmp-cli listen <seedfile> [--store <path>]
+    mmp-cli listen <seedfile> [--store <path>] [--vault <path>]
                                             peripheral role: advertise, accept centrals, and drive
                                             the node over real BLE until Ctrl-C
     mmp-cli --help                         show this message
@@ -102,7 +104,7 @@ const CONNECT_USAGE: &str = "\
 mmp-cli connect — run a BLE central node
 
 USAGE:
-    mmp-cli connect <seedfile> [--store <path>]
+    mmp-cli connect <seedfile> [--store <path>] [--vault <path>]
 
 Both paths must not begin with '-'.
 ";
@@ -111,7 +113,7 @@ const SEND_USAGE: &str = "\
 mmp-cli send — queue a text message and run a BLE central node
 
 USAGE:
-    mmp-cli send <seedfile> <hex-nodeid> <text> [--store <path>]
+    mmp-cli send <seedfile> <hex-nodeid> <text> [--store <path>] [--vault <path>]
 
 The seed and store paths must not begin with '-'.
 ";
@@ -120,7 +122,7 @@ const LISTEN_USAGE: &str = "\
 mmp-cli listen — run a BLE peripheral node
 
 USAGE:
-    mmp-cli listen <seedfile> [--store <path>]
+    mmp-cli listen <seedfile> [--store <path>] [--vault <path>]
 
 Both paths must not begin with '-'.
 ";
@@ -129,6 +131,8 @@ Both paths must not begin with '-'.
 /// up (exit code 1). Real DTN contacts can take a couple of round trips
 /// (doc 06 §5) even over a good link, so this is generous rather than tight.
 const SEND_TIMEOUT: Duration = Duration::from_secs(120);
+
+type HostPersistenceArgs = (Vec<String>, Option<String>, Option<String>);
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -600,7 +604,22 @@ impl BundleStore for SharedSnapshot {
 
 /// Split `args` into exactly `n_positional` required arguments plus an
 /// optional trailing `--store <path>` flag, shared by `connect` and `send`.
+#[cfg(test)]
 fn parse_positional_and_store(args: &[String], n_positional: usize) -> Result<(Vec<String>, Option<String>), String> {
+    let (positional, store, vault) = parse_positional_store_vault(args, n_positional)?;
+    if vault.is_some() {
+        return Err("--vault is not accepted by this command".to_string());
+    }
+    Ok((positional, store))
+}
+
+/// Parse the host-only persistence options shared by the BLE commands.  The
+/// two paths are intentionally separate: `--store` contains non-secret
+/// protocol state, while `--vault` contains only the opaque provider journal.
+fn parse_positional_store_vault(
+    args: &[String],
+    n_positional: usize,
+) -> Result<HostPersistenceArgs, String> {
     if args.len() < n_positional {
         return Err("missing argument(s)".to_string());
     }
@@ -608,14 +627,84 @@ fn parse_positional_and_store(args: &[String], n_positional: usize) -> Result<(V
     if let Some(seedfile) = positional.first() {
         validate_path_argument("seed file", seedfile)?;
     }
-    match &args[n_positional..] {
-        [] => Ok((positional, None)),
-        [flag, path] if flag == "--store" => {
-            validate_path_argument("store path", path)?;
-            Ok((positional, Some(path.clone())))
+    let mut store = None;
+    let mut vault = None;
+    let mut rest = args[n_positional..].iter();
+    while let Some(flag) = rest.next() {
+        let path = rest.next().ok_or_else(|| format!("missing path after {flag}"))?;
+        let (slot, label) = match flag.as_str() {
+            "--store" => (&mut store, "store path"),
+            "--vault" => (&mut vault, "vault path"),
+            _ => return Err(format!("unrecognized option: {flag}")),
+        };
+        if slot.is_some() {
+            return Err(format!("duplicate option: {flag}"));
         }
-        rest => Err(format!("unrecognized trailing argument(s): {}", rest.join(" "))),
+        validate_path_argument(label, path)?;
+        *slot = Some(path.clone());
     }
+    Ok((positional, store, vault))
+}
+
+#[cfg(target_os = "windows")]
+type HostVault = WindowsVault;
+
+#[cfg(not(target_os = "windows"))]
+struct HostVault;
+
+fn open_host_vault(path: Option<&str>) -> Result<Option<HostVault>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        path.map(|path| WindowsVault::open(path).map_err(|error| format!("cannot open Windows vault: {error:?}")))
+            .transpose()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if path.is_some() {
+            Err("--vault is supported only by the Windows desktop provider".to_string())
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+fn restore_host_vault(node: &mut Node, vault: &mut Option<HostVault>) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(vault) = vault {
+            node.restore_secret_state_from_windows_vault(vault)
+                .map(|generation| {
+                    if let Some(generation) = generation {
+                        println!("secret state restored at generation {generation}");
+                    }
+                })
+                .map_err(|error| format!("cannot restore Windows vault: {error:?}"))?;
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (node, vault);
+    Ok(())
+}
+
+fn save_host_vault(node: &mut Node, vault: &mut Option<HostVault>) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(vault) = vault {
+            return match node.save_secret_state_to_windows_vault(vault) {
+                Ok(generation) => {
+                    println!("secret state persisted at generation {generation}");
+                    true
+                }
+                Err(error) => {
+                    eprintln!("mmp-cli: failed to persist Windows vault: {error:?}");
+                    false
+                }
+            };
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    let _ = (node, vault);
+    true
 }
 
 fn usage_error(subcmd: &str, msg: &str) -> ExitCode {
@@ -746,7 +835,7 @@ fn cmd_connect(args: &[String]) -> ExitCode {
     if let Some(result) = subcommand_help("connect", args) {
         return result;
     }
-    let (positional, store_path) = match parse_positional_and_store(args, 1) {
+    let (positional, store_path, vault_path) = match parse_positional_store_vault(args, 1) {
         Ok(v) => v,
         Err(e) => return usage_error("connect", &e),
     };
@@ -759,6 +848,17 @@ fn cmd_connect(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let mut vault = match open_host_vault(vault_path.as_deref()) {
+        Ok(vault) => vault,
+        Err(error) => {
+            eprintln!("mmp-cli connect: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(error) = restore_host_vault(&mut node, &mut vault) {
+        eprintln!("mmp-cli connect: {error}");
+        return ExitCode::from(2);
+    }
     let mut clock = WallClock;
     prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
@@ -770,14 +870,14 @@ fn cmd_connect(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut clock, None))
+    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut vault, &mut clock, None))
 }
 
 fn cmd_send(args: &[String]) -> ExitCode {
     if let Some(result) = subcommand_help("send", args) {
         return result;
     }
-    let (positional, store_path) = match parse_positional_and_store(args, 3) {
+    let (positional, store_path, vault_path) = match parse_positional_store_vault(args, 3) {
         Ok(v) => v,
         Err(e) => return usage_error("send", &e),
     };
@@ -794,6 +894,17 @@ fn cmd_send(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let mut vault = match open_host_vault(vault_path.as_deref()) {
+        Ok(vault) => vault,
+        Err(error) => {
+            eprintln!("mmp-cli send: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(error) = restore_host_vault(&mut node, &mut vault) {
+        eprintln!("mmp-cli send: {error}");
+        return ExitCode::from(2);
+    }
     let mut clock = WallClock;
     prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
@@ -818,14 +929,14 @@ fn cmd_send(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut clock, Some(msg_id)))
+    rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut vault, &mut clock, Some(msg_id)))
 }
 
 fn cmd_listen(args: &[String]) -> ExitCode {
     if let Some(result) = subcommand_help("listen", args) {
         return result;
     }
-    let (positional, store_path) = match parse_positional_and_store(args, 1) {
+    let (positional, store_path, vault_path) = match parse_positional_store_vault(args, 1) {
         Ok(v) => v,
         Err(e) => return usage_error("listen", &e),
     };
@@ -838,6 +949,17 @@ fn cmd_listen(args: &[String]) -> ExitCode {
     };
 
     let (mut node, shared) = build_node(seed, store_path.as_deref());
+    let mut vault = match open_host_vault(vault_path.as_deref()) {
+        Ok(vault) => vault,
+        Err(error) => {
+            eprintln!("mmp-cli listen: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(error) = restore_host_vault(&mut node, &mut vault) {
+        eprintln!("mmp-cli listen: {error}");
+        return ExitCode::from(2);
+    }
     let mut clock = WallClock;
     prime_node_clock(&mut node, &mut clock);
     println!("node id: {}", hex(node.node_id().as_bytes()));
@@ -849,7 +971,7 @@ fn cmd_listen(args: &[String]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    rt.block_on(drive_loop_peripheral(&mut node, shared.as_ref(), &mut clock))
+    rt.block_on(drive_loop_peripheral(&mut node, shared.as_ref(), &mut vault, &mut clock))
 }
 
 /// THE reference "how to host a node" loop (handbook §4.2), central role.
@@ -879,6 +1001,7 @@ fn cmd_listen(args: &[String]) -> ExitCode {
 async fn drive_loop<C: ClockSource>(
     node: &mut Node,
     shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    vault: &mut Option<HostVault>,
     clock: &mut C,
     watch: Option<Id16>,
 ) -> ExitCode {
@@ -889,14 +1012,14 @@ async fn drive_loop<C: ClockSource>(
             // A host may have advanced timers or restored local state before
             // the adapter was opened.  Persist that state even on setup
             // failure, and fail closed if the snapshot cannot be written.
-            let _ = finish(shared, node, 0, 0);
+            let _ = finish(shared, node, vault, 0, 0);
             return ExitCode::from(2);
         }
     };
     if let Err(e) = central.start_scan().await {
         eprintln!("mmp-cli: failed to start BLE scan: {e}");
         central.shutdown_all().await;
-        let _ = finish(shared, node, 0, 0);
+        let _ = finish(shared, node, vault, 0, 0);
         return ExitCode::from(2);
     }
     println!("scanning for MMP peers... (Ctrl-C to stop)");
@@ -946,7 +1069,7 @@ async fn drive_loop<C: ClockSource>(
                 central.control_events_dropped()
             );
             central.shutdown_all().await;
-            finish(shared, node, frames_sent, messages_received);
+            finish(shared, node, vault, frames_sent, messages_received);
             return ExitCode::from(2);
         }
         while let Some((link, bytes)) = node.poll_send() {
@@ -963,7 +1086,7 @@ async fn drive_loop<C: ClockSource>(
                 Event::Delivered { id } if watch == Some(*id) => {
                     println!("message {} delivered", hex(id.as_bytes()));
                     central.shutdown_all().await;
-                    return if finish(shared, node, frames_sent, messages_received) {
+                    return if finish(shared, node, vault, frames_sent, messages_received) {
                         ExitCode::SUCCESS
                     } else {
                         ExitCode::from(2)
@@ -976,7 +1099,7 @@ async fn drive_loop<C: ClockSource>(
         if watch.is_some() && start.elapsed() >= SEND_TIMEOUT {
             println!("timed out after {}s waiting for delivery", SEND_TIMEOUT.as_secs());
             central.shutdown_all().await;
-            return if finish(shared, node, frames_sent, messages_received) {
+            return if finish(shared, node, vault, frames_sent, messages_received) {
                 ExitCode::from(1)
             } else {
                 ExitCode::from(2)
@@ -988,7 +1111,7 @@ async fn drive_loop<C: ClockSource>(
         || node.event_queue_dropped() != 0
         || central.control_events_dropped() != 0;
     central.shutdown_all().await;
-    let persisted = finish(shared, node, frames_sent, messages_received);
+    let persisted = finish(shared, node, vault, frames_sent, messages_received);
     if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
@@ -1030,13 +1153,14 @@ async fn dial_new_peers(central: &BleCentral, dialed: &mut HashSet<PeripheralId>
 async fn drive_loop_peripheral<C: ClockSource>(
     node: &mut Node,
     shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    vault: &mut Option<HostVault>,
     clock: &mut C,
 ) -> ExitCode {
     let peripheral = match PeripheralRole::new().await {
         Ok(p) => p,
         Err(e) => {
             eprintln!("mmp-cli: no usable BLE peripheral backend: {e}");
-            let _ = finish(shared, node, 0, 0);
+            let _ = finish(shared, node, vault, 0, 0);
             return ExitCode::from(2);
         }
     };
@@ -1045,7 +1169,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
     if let Err(e) = peripheral.advertise(node.beacon(last_advertised_ms).to_vec()).await {
         eprintln!("mmp-cli: failed to start advertising: {e}");
         peripheral.shutdown_all().await;
-        let _ = finish(shared, node, 0, 0);
+        let _ = finish(shared, node, vault, 0, 0);
         return ExitCode::from(2);
     }
     println!("advertising for MMP peers... (Ctrl-C to stop)");
@@ -1098,7 +1222,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
                 peripheral.control_events_dropped()
             );
             peripheral.shutdown_all().await;
-            finish(shared, node, frames_sent, messages_received);
+            finish(shared, node, vault, frames_sent, messages_received);
             return ExitCode::from(2);
         }
         while let Some((link, bytes)) = node.poll_send() {
@@ -1120,7 +1244,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
         || node.event_queue_dropped() != 0
         || peripheral.control_events_dropped() != 0;
     peripheral.shutdown_all().await;
-    let persisted = finish(shared, node, frames_sent, messages_received);
+    let persisted = finish(shared, node, vault, frames_sent, messages_received);
     if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
@@ -1130,7 +1254,8 @@ async fn drive_loop_peripheral<C: ClockSource>(
 /// run while silently losing its restart state.
 fn finish(
     shared: Option<&Arc<Mutex<SnapshotStore>>>,
-    node: &Node,
+    node: &mut Node,
+    vault: &mut Option<HostVault>,
     frames_sent: u64,
     messages_received: u64,
 ) -> bool {
@@ -1147,11 +1272,12 @@ fn finish(
         },
         None => true,
     };
+    let vault_persisted = save_host_vault(node, vault);
     println!("--- summary ---");
     println!("frames sent to links:  {frames_sent}");
     println!("messages received:     {messages_received}");
     println!("store_len:             {}", node.store_len());
-    persisted
+    persisted && vault_persisted
 }
 
 #[cfg(test)]
@@ -1279,6 +1405,48 @@ mod tests {
     }
 
     #[test]
+    fn host_persistence_options_are_parsed_separately() {
+        let args = [
+            "seed.hex",
+            "--store",
+            "state.mmp",
+            "--vault",
+            "secret.mmpv",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+        let (positional, store, vault) = parse_positional_store_vault(&args, 1).unwrap();
+        assert_eq!(positional, vec!["seed.hex"]);
+        assert_eq!(store.as_deref(), Some("state.mmp"));
+        assert_eq!(vault.as_deref(), Some("secret.mmpv"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cli_vault_bootstrap_restores_before_host_clock() {
+        let path = env::temp_dir().join(format!("mmp-cli-vault-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let path_string = path.to_string_lossy().into_owned();
+        let seed = [0x71; 32];
+
+        let (mut source, _) = build_node(seed, None);
+        let mut vault = open_host_vault(Some(&path_string)).unwrap();
+        restore_host_vault(&mut source, &mut vault).unwrap();
+        source.save_secret_state_to_windows_vault(vault.as_mut().unwrap()).unwrap();
+        drop(vault);
+
+        let (mut restored, _) = build_node(seed, None);
+        let mut reopened = open_host_vault(Some(&path_string)).unwrap();
+        restore_host_vault(&mut restored, &mut reopened).unwrap();
+        assert_eq!(restored.node_id(), source.node_id());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("bin.lock"));
+        let _ = std::fs::remove_file(path.with_extension("tmp"));
+    }
+
+    #[test]
     fn shared_snapshot_preserves_bounded_try_put_rejection() {
         let path = temp_snapshot_path();
         let snapshot = SnapshotStore::open_with_limits(&path, mmp_store::SnapshotLimits::new(1));
@@ -1322,8 +1490,10 @@ mod tests {
         let shared = Arc::new(Mutex::new(SnapshotStore::open(&path)));
         let node = Node::new([0x41; 32], Box::new(MemStore::new()), Tier::Anchor);
 
+        let mut node = node;
+        let mut vault = None;
         assert!(
-            !finish(Some(&shared), &node, 0, 0),
+            !finish(Some(&shared), &mut node, &mut vault, 0, 0),
             "a successful CLI exit must never be reported when persistence failed"
         );
         assert!(!path.exists());

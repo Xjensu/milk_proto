@@ -1,9 +1,10 @@
 # Keystore-backed secret-state design (implementation plan)
 
 Status: Rust-internal primitive and restore seam implemented; a Windows-only
-DPAPI adapter now covers the provider transaction contract in the Rust
-workspace. Android/iOS adapters, host wiring, and restart/hardware evidence
-remain open; there is no wire change and no UniFFI/React Native exposure.
+DPAPI adapter now covers the provider transaction contract and the PC CLI can
+restore/save it through an opaque host-only facade. Android/iOS adapters,
+mobile wiring, and restart/hardware evidence remain open; there is no wire
+change and no UniFFI/React Native exposure.
 The frozen `specification/` directory is intentionally unchanged.
 
 ## Current boundary
@@ -208,12 +209,22 @@ plaintext aggregate remains inside the Rust seal/open path.
 The adapter stores bounded, checksummed journal entries, calls `sync_all`,
 retains a durable generation floor during journal compaction, and holds an
 exclusive Windows file handle across `with_restore_lock` callbacks. Focused
-Windows-host evidence is six adapter tests plus the complete 162-test
+Windows-host evidence is six adapter tests plus the complete 163-test
 `mmp-node` library suite and strict Clippy. The Windows target also passes
 `cargo check -p mmp-node --target x86_64-pc-windows-msvc --locked`.
 
-This does not close E4-S4: the adapter is not yet wired into the mobile/FFI
-restart path, and Android Keystore/iOS Keychain implementations plus
-kill/restart and physical-device evidence remain required. The adapter's
-bounded journal and provider transaction are implementation evidence, not a
-claim that all production persistence acceptance cases have passed.
+The PC integration is deliberately narrower than a general host API: `mmp-cli`
+accepts a separate `--vault <path>` for `connect`, `send`, and `listen`, opens
+and restores it before clock priming or traffic, and saves a fresh generation
+on every drive-loop shutdown path. The public `mmp-node::WindowsVault` facade
+exposes only coarse status/errors; the provider trait, journal records, DEK,
+and plaintext aggregate remain private. A fresh vault is treated as an empty
+optional capability, while provider failures fail closed rather than being
+reported as a successful run.
+
+This does not close E4-S4: the adapter is not wired into the mobile/FFI restart
+path, and Android Keystore/iOS Keychain implementations plus kill/restart and
+physical-device evidence remain required. The adapter's bounded journal,
+provider transaction, and CLI bootstrap/shutdown path are implementation
+evidence, not a claim that all production persistence acceptance cases have
+passed.
