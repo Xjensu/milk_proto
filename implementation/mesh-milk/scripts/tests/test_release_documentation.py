@@ -36,6 +36,31 @@ class ReleaseDocumentationTests(unittest.TestCase):
             roadmap,
         )
 
+    def test_store_compliance_dossier_and_release_status_are_consistent(self) -> None:
+        dossier = (REPO_ROOT / "docs" / "E8-S3_STORE_COMPLIANCE.md").read_text(
+            encoding="utf-8"
+        )
+        backlog = (REPO_ROOT / "docs" / "AGILE_BACKLOG.md").read_text(
+            encoding="utf-8"
+        )
+        roadmap = (REPO_ROOT / "docs" / "ROADMAP_TO_PRODUCTION.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("# E8-S3 Store-Compliance Dossier", dossier)
+        self.assertIn("### BGTaskScheduler scope", dossier)
+        self.assertIn("does **not** claim an iOS BGTask entitlement", dossier)
+        self.assertIn("iOS 26", dossier)
+        normalized_dossier = " ".join(dossier.split())
+        self.assertIn(
+            "does not claim that `mmp-ffi` is a compliant mobile application",
+            normalized_dossier,
+        )
+        self.assertIn("DOSSIER DONE (E8-S3, 2026-08-09)", roadmap)
+        self.assertIn("does not use `BGTaskScheduler`", roadmap)
+        self.assertIn("E8-S3 · Store-compliance dossier", backlog)
+        self.assertIn("DOSSIER DONE (2026-08-09; app-store gates remain open)", backlog)
+
 
 if __name__ == "__main__":
     unittest.main()

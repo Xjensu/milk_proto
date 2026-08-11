@@ -101,6 +101,21 @@ The consuming app should retain, for a target-API-34-or-newer build:
 
 ## 3. iOS: CoreBluetooth background modes and state restoration
 
+### BGTaskScheduler scope
+
+The repository does not implement or configure `BGTaskScheduler` (there is no
+`BGTaskSchedulerPermittedIdentifiers` entry or background-task API in the
+shipped platform surface). The current design uses CoreBluetooth callbacks,
+state restoration, and explicit lifecycle persistence instead. This dossier
+therefore does **not** claim an iOS BGTask entitlement or a periodic background
+execution guarantee.
+
+If a consuming application later adds `BGTaskScheduler`, that application must
+provide its own permitted identifiers, capability/configuration evidence,
+scheduling and cancellation tests, and App Review justification. A BGTask is
+not a substitute for the CoreBluetooth background modes or restoration gates
+listed below.
+
 ### Platform facts (official documentation)
 
 1. CoreBluetooth background execution modes are declared through
@@ -202,4 +217,3 @@ because platform policy and OS behavior change independently of MMP versions.
 | https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html | CoreBluetooth background behavior and state preservation/restoration procedure |
 | https://developer.apple.com/documentation/technotes/tn3115-bluetooth-state-restoration-app-relaunch-rules?changes=_1 | iOS 26 relaunch conditions, force-quit and Bluetooth-state caveats |
 | https://developer.apple.com/app-store/review/guidelines/ | App Review Guideline 2.5.4 boundary for background services |
-
