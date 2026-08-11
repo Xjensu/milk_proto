@@ -8,6 +8,24 @@ export type GroupIdHex = string;  // 32 lowercase hex chars (16 bytes)
 
 export type Tier = 'leaf' | 'relay' | 'anchor';
 
+/** Secret-free lifecycle snapshot exposed to beta applications and harnesses. */
+export interface NodeStatus {
+  tier: Tier;
+  persistentStore: boolean;
+  diagnosticsEnabled: boolean;
+  lastTickMs: number;
+}
+
+/** Local bounded counters for diagnostics; identifiers and key material are excluded. */
+export interface NodeMetrics {
+  storeLen: number;
+  closeActionsDropped: number;
+  eventQueueDropped: number;
+  diagnosticRecords: number;
+  diagnosticClamps: number;
+  diagnosticDrops: number;
+}
+
 export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 
 export type MmpEvent =
@@ -31,6 +49,8 @@ export interface MmpMeshNative {
   start(tier: Tier): Promise<NodeIdHex>;
   stop(): Promise<void>;
   setTier(tier: Tier): Promise<void>;
+  status(): Promise<NodeStatus>;
+  metrics(): Promise<NodeMetrics>;
 
   // Identity / claims.
   nodeId(): Promise<NodeIdHex>;
@@ -80,6 +100,8 @@ const REQUIRED_NATIVE_METHODS = [
   'start',
   'stop',
   'setTier',
+  'status',
+  'metrics',
   'nodeId',
   'publicKey',
   'ownClaims',
@@ -183,6 +205,14 @@ export class MmpClient {
 
   setTier(tier: Tier): Promise<void> {
     return this.native.setTier(tier);
+  }
+
+  status(): Promise<NodeStatus> {
+    return this.native.status();
+  }
+
+  metrics(): Promise<NodeMetrics> {
+    return this.native.metrics();
   }
 
   nodeId(): Promise<NodeIdHex> {

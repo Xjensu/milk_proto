@@ -30,6 +30,8 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "start",
             "stop",
             "setTier",
+            "status",
+            "metrics",
             "nodeId",
             "publicKey",
             "ownClaims",
@@ -79,6 +81,20 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("claimB64: string", self.client)
         self.assertIn("successorPublicKeyB64: string", self.client)
         self.assertIn("countersigB64: string", self.client)
+        self.assertIn("export interface NodeStatus", self.client)
+        self.assertIn("persistentStore: boolean", self.client)
+        self.assertIn("diagnosticsEnabled: boolean", self.client)
+        self.assertIn("lastTickMs: number", self.client)
+        self.assertIn("export interface NodeMetrics", self.client)
+        for field in (
+            "storeLen",
+            "closeActionsDropped",
+            "eventQueueDropped",
+            "diagnosticRecords",
+            "diagnosticClamps",
+            "diagnosticDrops",
+        ):
+            self.assertIn(f"{field}: number", self.client)
 
     def test_missing_native_module_is_rejected_before_calls(self) -> None:
         self.assertIn("MmpNativeModuleError", self.client)
@@ -106,6 +122,8 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "start",
             "stop",
             "setTier",
+            "status",
+            "metrics",
             "nodeId",
             "publicKey",
             "sendText",
@@ -132,6 +150,18 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         ):
             self.assertIn(f"{method}(", self.turbo)
         self.assertIn("getEnforcing<Spec>('MmpMesh')", self.turbo)
+
+    def test_beta_snapshots_are_secret_free_and_exported(self) -> None:
+        self.assertIn("status(): Promise<NodeStatus>", self.client)
+        self.assertIn("metrics(): Promise<NodeMetrics>", self.client)
+        self.assertIn("status(): Promise<NodeStatus>", self.turbo)
+        self.assertIn("metrics(): Promise<NodeMetrics>", self.turbo)
+        index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
+        self.assertIn("NodeMetrics", index)
+        self.assertIn("NodeStatus", index)
+        lowered = self.client.lower()
+        for forbidden in ("providerhandle", "peerid", "sessionid", "wirebytes"):
+            self.assertNotIn(forbidden, lowered)
 
 
 if __name__ == "__main__":

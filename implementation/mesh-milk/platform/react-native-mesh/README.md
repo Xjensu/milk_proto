@@ -10,6 +10,24 @@ represented by this package and must never be sent through the React Native JS b
 Only base64-encoded opaque values documented by the bridge and ciphertext-free app
 events cross into JavaScript.
 
+## Beta status and metrics
+
+The client exposes two secret-free snapshots for beta-test screens and local
+diagnostics:
+
+```ts
+const status = await client.status();
+// { tier, persistentStore, diagnosticsEnabled, lastTickMs }
+const metrics = await client.metrics();
+// { storeLen, closeActionsDropped, eventQueueDropped,
+//   diagnosticRecords, diagnosticClamps, diagnosticDrops }
+```
+
+The counters are local observations and are not telemetry. They contain no
+peer/session identifiers, provider handles, wire bytes, or key material. The
+native implementation remains the authority for their values and numeric
+encoding.
+
 ## Installation and native registration
 
 The package has no runtime dependencies other than the host application's `react` and

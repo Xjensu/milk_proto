@@ -1,11 +1,14 @@
 import type { TurboModule } from 'react-native';
 import { TurboModuleRegistry } from 'react-native';
+import type { NodeMetrics, NodeStatus } from './MmpClient';
 
 /** TurboModule codegen surface; native implementations validate string enums. */
 export interface Spec extends TurboModule {
   start(tier: string): Promise<string>;
   stop(): Promise<void>;
   setTier(tier: string): Promise<void>;
+  status(): Promise<NodeStatus>;
+  metrics(): Promise<NodeMetrics>;
   nodeId(): Promise<string>;
   publicKey(): Promise<string>;
   sendText(peer: string, text: string): Promise<string>;
