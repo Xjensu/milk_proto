@@ -934,6 +934,14 @@ fn ffi_maps_invalid_priority_to_bad_argument() {
 }
 
 #[test]
+fn ffi_maps_source_io_to_internal() {
+    assert_eq!(
+        super::map_send_error(mmp_node::SendError::SourceIo),
+        super::FfiError::Internal
+    );
+}
+
+#[test]
 fn oversized_nickname_is_rejected_before_claim_or_gossip_side_effects() {
     let node = node(90);
     let claims_before = node.own_claims();

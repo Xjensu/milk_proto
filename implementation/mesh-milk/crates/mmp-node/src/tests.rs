@@ -2,6 +2,7 @@
 //! group messages, receipts purge; a 3-node chain relays store-carry-forward.
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -14,7 +15,8 @@ use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
 use mmp_types::claim::{friendship_signed_object, EpochAnchor, Friendship, PrekeyBatch, Revocation};
 use mmp_types::consts::{
-    BLOB_INTEREST_TTL_MS, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_BUNDLE,
+    BLOB_INTEREST_TTL_MS, FILE_MAX, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS,
+    MAX_BUNDLE,
     NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
@@ -4276,6 +4278,228 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
 
     let _ = std::fs::remove_file(&dest_path);
     let _ = std::fs::remove_file(&part_path);
+}
+
+#[test]
+fn send_file_from_reader_reassembles_and_preserves_manifest_root() {
+    let mut a = node(11);
+    let mut b = node(12);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let data: Vec<u8> = (0..5000u32).map(|i| (i % 239) as u8).collect();
+    let mut reader = Cursor::new(data.clone());
+    let sent = a
+        .send_file_from_reader(&b.node_id(), "reader.bin", "application/octet-stream", &mut reader)
+        .expect("seekable reader send");
+
+    contact(&mut a, &mut b, 1, 10_000);
+    drain(&mut a);
+    let events = drain(&mut b);
+    let offered = events
+        .iter()
+        .find_map(|event| match event {
+            Event::FileOffered { entries, .. } => entries.first(),
+            _ => None,
+        })
+        .expect("reader manifest is offered");
+    assert_eq!(offered.root, sent.root);
+    assert_eq!(offered.size, data.len() as u32);
+
+    let dest_dir = std::env::temp_dir().join("mmp-node-reader-test");
+    std::fs::create_dir_all(&dest_dir).expect("create temp dir");
+    let dest_path = dest_dir.join(format!("recv-{}-{}.bin", std::process::id(), line!()));
+    let _ = std::fs::remove_file(&dest_path);
+    let part_path = {
+        let mut name = dest_path.file_name().unwrap().to_os_string();
+        name.push(".part");
+        dest_path.with_file_name(name)
+    };
+    let _ = std::fs::remove_file(&part_path);
+
+    b.fetch_file(&sent.root, &dest_path).expect("fetch reader file");
+    assert_eq!(std::fs::read(&dest_path).expect("read assembled file"), data);
+    assert!(!part_path.exists(), "reader path leaves no partial file");
+    let _ = std::fs::remove_file(&dest_path);
+    let _ = std::fs::remove_file(&part_path);
+}
+
+#[derive(Debug)]
+struct FailingReader {
+    inner: Cursor<Vec<u8>>,
+    fail_after: usize,
+}
+
+impl Read for FailingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let position = self.inner.position() as usize;
+        if position >= self.fail_after {
+            return Err(std::io::Error::other("injected reader failure"));
+        }
+        let allowed = (self.fail_after - position).min(buf.len());
+        self.inner.read(&mut buf[..allowed])
+    }
+}
+
+impl Seek for FailingReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        self.inner.seek(position)
+    }
+}
+
+struct ReportedSizeReader(u64);
+
+impl Read for ReportedSizeReader {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(0)
+    }
+}
+
+struct MutatingReader {
+    inner: Cursor<Vec<u8>>,
+    saw_initial_start: bool,
+    second_pass: bool,
+    mutated: bool,
+}
+
+impl MutatingReader {
+    fn new(data: Vec<u8>) -> Self {
+        Self { inner: Cursor::new(data), saw_initial_start: false, second_pass: false, mutated: false }
+    }
+}
+
+impl Read for MutatingReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.second_pass && !self.mutated {
+            self.inner.get_mut()[0] ^= 0xff;
+            self.mutated = true;
+        }
+        self.inner.read(buf)
+    }
+}
+
+impl Seek for MutatingReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        let is_start = matches!(position, SeekFrom::Start(0));
+        let result = self.inner.seek(position)?;
+        if is_start {
+            if self.saw_initial_start {
+                self.second_pass = true;
+            } else {
+                self.saw_initial_start = true;
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl Seek for ReportedSizeReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        match position {
+            SeekFrom::End(_) => Ok(self.0),
+            SeekFrom::Start(offset) => Ok(offset),
+            SeekFrom::Current(offset) => Ok(offset.max(0) as u64),
+        }
+    }
+}
+
+#[test]
+fn send_file_from_reader_preflight_failure_is_side_effect_free() {
+    let mut a = node(13);
+    let mut b = node(14);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let data = vec![0x63; 5000];
+    let mut reader = FailingReader { inner: Cursor::new(data), fail_after: 1000 };
+    let store_before = a.core.store.all_meta();
+    let blob_before = a.core.blob_index.clone();
+    let reverse_before = a.core.symbol_of.clone();
+    let events_before = a.core.events.len();
+    let convs_before = a.core.convs.len();
+    let sent_before = a.core.sent.len();
+
+    assert_eq!(
+        a.send_file_from_reader(&b.node_id(), "failed.bin", "application/octet-stream", &mut reader),
+        Err(SendError::SourceIo)
+    );
+    assert_eq!(a.core.store.all_meta(), store_before);
+    assert_eq!(a.core.blob_index, blob_before);
+    assert_eq!(a.core.symbol_of, reverse_before);
+    assert_eq!(a.core.events.len(), events_before);
+    assert_eq!(a.core.convs.len(), convs_before);
+    assert_eq!(a.core.sent.len(), sent_before);
+}
+
+#[test]
+fn send_file_from_reader_rejects_oversize_before_reading_or_mutation() {
+    let mut a = node(17);
+    let mut b = node(18);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let mut reader = ReportedSizeReader(FILE_MAX + 1);
+    let store_before = a.core.store.all_meta();
+    assert_eq!(
+        a.send_file_from_reader(&b.node_id(), "too-large.bin", "application/octet-stream", &mut reader),
+        Err(SendError::TooLarge)
+    );
+    assert_eq!(a.core.store.all_meta(), store_before);
+    assert!(a.core.blob_index.is_empty());
+}
+
+#[test]
+fn send_file_from_reader_rejects_source_mutation_before_storing_invalid_symbols() {
+    let mut a = node(19);
+    let mut b = node(20);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let mut reader = MutatingReader::new(vec![0x42; 5000]);
+    let store_before = a.core.store.all_meta();
+    assert_eq!(
+        a.send_file_from_reader(&b.node_id(), "mutable.bin", "application/octet-stream", &mut reader),
+        Err(SendError::SourceIo)
+    );
+    assert_eq!(a.core.store.all_meta(), store_before);
+    assert!(a.core.blob_index.is_empty());
+    assert!(a.core.symbol_of.is_empty());
+}
+
+#[test]
+fn send_file_from_reader_deduplicates_existing_symbols() {
+    let mut a = node(15);
+    let mut b = node(16);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let data = vec![0x71; 3000];
+    let mut first_reader = Cursor::new(data.clone());
+    let first = a
+        .send_file_from_reader(&b.node_id(), "same.bin", "application/octet-stream", &mut first_reader)
+        .expect("first reader send");
+    contact(&mut a, &mut b, 1, 10_000);
+    drain(&mut a);
+    drain(&mut b);
+    contact(&mut a, &mut b, 2, 20_000);
+    drain(&mut a);
+    drain(&mut b);
+
+    let symbol_count = |n: &Node| {
+        n.core.store.all_meta().iter().filter(|meta| meta.class == class::SYMBOL).count()
+    };
+    let before = symbol_count(&a);
+    let mut second_reader = Cursor::new(data);
+    let second = a
+        .send_file_from_reader(&b.node_id(), "same.bin", "application/octet-stream", &mut second_reader)
+        .expect("deduplicated reader send");
+    assert_eq!(second.root, first.root);
+    assert_eq!(symbol_count(&a), before);
 }
 
 #[test]

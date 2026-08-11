@@ -28,6 +28,7 @@ mod vault;
 pub use blob::BlobState;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use rand::rngs::StdRng;
@@ -504,6 +505,9 @@ pub enum SendError {
     /// Existing conversations remain usable; callers should retry after local
     /// state recovery rather than changing any wire parameters.
     ResourceLimit,
+    /// The seekable source failed during metadata or preflight reading. This
+    /// is a local input error and does not alter the wire protocol.
+    SourceIo,
 }
 
 /// Why a locally-authored claim was rejected before signing or gossip.
@@ -1482,6 +1486,24 @@ impl Node {
     /// apptype-0x01 class-1 message (doc 16, decision D8).
     pub fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
         self.core.send_file(peer, name, mime, data)
+    }
+
+    /// Share a seekable source without buffering the complete file in RAM.
+    ///
+    /// The source is measured and read once to compute the content hash and
+    /// Merkle leaves, then rewound and read one RS stripe at a time while the
+    /// existing class-4 symbol bundles are minted.  The source must remain
+    /// stable between passes.  Provider writes retain `send_file`'s accepted-
+    /// prefix behavior; this API does not promise crash or whole-node
+    /// transactionality.
+    pub fn send_file_from_reader<R: Read + Seek>(
+        &mut self,
+        peer: &NodeId,
+        name: &str,
+        mime: &str,
+        reader: &mut R,
+    ) -> Result<FileSend, SendError> {
+        self.core.send_file_from_reader(peer, name, mime, reader)
     }
 
     /// Explicit user pull (doc 16 §7.1 role-gated policy): requires a cached
@@ -3757,6 +3779,153 @@ impl NodeCore {
         // Commit the previously prepared manifest only after all symbols have
         // been admitted. A legacy provider may still reject this final write;
         // accepted symbols intentionally remain indexed for a later retry.
+        let message_id = self.commit_app_candidate(manifest_candidate)?;
+        self.record_sent(message_id, conv_id)?;
+        self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
+        Ok(FileSend { message_id, root: file_root })
+    }
+
+    /// Reader-backed variant of [`NodeCore::send_file`].  The first pass is
+    /// deliberately side-effect free: only source reads, one-stripe RS
+    /// encoding, the full-file hash, and Merkle leaves are produced.  The
+    /// second pass mints the same wire bundles as the slice API and therefore
+    /// retains its accepted-prefix semantics when a provider or source fails
+    /// after a symbol has been accepted.
+    fn send_file_from_reader<R: Read + Seek>(
+        &mut self,
+        peer: &NodeId,
+        name: &str,
+        mime: &str,
+        reader: &mut R,
+    ) -> Result<FileSend, SendError> {
+        if name.len() > NAME_MAX || mime.len() > MIME_MAX {
+            return Err(SendError::TooLarge);
+        }
+        if self.claims.revocation(peer).is_some() {
+            return Err(SendError::PeerRevoked);
+        }
+        let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
+        let _peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        let conv_id = conversation_id(&self.public, &peer_pub);
+        if self.pending_first_contact.contains_key(&conv_id) {
+            return Err(SendError::ConversationPending);
+        }
+        if !self.conversation_capacity_available(&conv_id) || !self.sent_capacity_available() {
+            return Err(SendError::ResourceLimit);
+        }
+
+        let size = reader.seek(SeekFrom::End(0)).map_err(|_| SendError::SourceIo)?;
+        if size > FILE_MAX || size > u32::MAX as u64 {
+            return Err(SendError::TooLarge);
+        }
+        reader.seek(SeekFrom::Start(0)).map_err(|_| SendError::SourceIo)?;
+        let size_u32 = size as u32;
+        let stripes = blob::stripes_for_size(size_u32);
+        let total_symbols = stripes as usize * RS_TOTAL_N;
+        let mut leaves: Vec<[u8; 32]> = Vec::with_capacity(total_symbols);
+        let mut full_hasher = blake3::Hasher::new();
+        let mut stripe = vec![0u8; STRIPE_DATA_BYTES];
+        let mut remaining = size as usize;
+        for _ in 0..stripes {
+            stripe.fill(0);
+            let take = remaining.min(STRIPE_DATA_BYTES);
+            if take != 0 {
+                reader
+                    .read_exact(&mut stripe[..take])
+                    .map_err(|_| SendError::SourceIo)?;
+                full_hasher.update(&stripe[..take]);
+            }
+            let data_syms: Vec<Vec<u8>> = stripe
+                .chunks(mmp_types::consts::SYMBOL_SIZE)
+                .map(<[u8]>::to_vec)
+                .collect();
+            let symbols = mmp_rs_code::encode(&data_syms, RS_TOTAL_N);
+            leaves.extend(symbols.iter().map(|symbol| hash_block(symbol)));
+            remaining -= take;
+        }
+        debug_assert_eq!(remaining, 0, "reader size accounting invariant");
+        let full_hash = *full_hasher.finalize().as_bytes();
+        let root32 = merkle_root(&leaves);
+        let mut root_bytes = [0u8; 16];
+        root_bytes.copy_from_slice(&root32[..16]);
+        let file_root = Id16(root_bytes);
+
+        let already_complete = self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
+        let entry = FileEntry {
+            name: name.as_bytes().to_vec(),
+            mime: mime.as_bytes().to_vec(),
+            size: size_u32,
+            file_root,
+            rs_k: RS_DATA_K as u8,
+            rs_n: RS_TOTAL_N as u8,
+            full_hash,
+            thumb_root: None,
+        };
+        let mut manifest = FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
+        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
+        let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
+
+        if !already_complete {
+            // A source failure after this point can leave an accepted symbol
+            // prefix, just like the slice API.  No provider or whole-node
+            // transaction is implied by this reader convenience method.
+            reader.seek(SeekFrom::Start(0)).map_err(|_| SendError::SourceIo)?;
+            remaining = size as usize;
+            for block in 0..stripes {
+                stripe.fill(0);
+                let take = remaining.min(STRIPE_DATA_BYTES);
+                if take != 0 {
+                    reader
+                        .read_exact(&mut stripe[..take])
+                        .map_err(|_| SendError::SourceIo)?;
+                }
+                let data_syms: Vec<Vec<u8>> = stripe
+                    .chunks(mmp_types::consts::SYMBOL_SIZE)
+                    .map(<[u8]>::to_vec)
+                    .collect();
+                let symbols = mmp_rs_code::encode(&data_syms, RS_TOTAL_N);
+                for (sym_in_stripe, symbol) in symbols.into_iter().enumerate() {
+                    let sym_no = block as usize * RS_TOTAL_N + sym_in_stripe;
+                    if hash_block(&symbol) != leaves[sym_no] {
+                        // The source changed between passes. Refuse to mint
+                        // a symbol whose Merkle proof would not match the
+                        // manifest root; prior accepted symbols retain the
+                        // legacy accepted-prefix behavior.
+                        return Err(SendError::SourceIo);
+                    }
+                    let path = merkle_path(&leaves, sym_no).encode();
+                    let payload = SymbolPayload { path, symbol }.encode();
+                    let mut bundle = Bundle {
+                        class: class::SYMBOL,
+                        flags: 0,
+                        origin: self.public,
+                        dest: Id16(peer.0),
+                        lifetime_ms: LIFETIME_MESSAGE_MS,
+                        priority: prio::BULK,
+                        exts: vec![Ext::SymbolInfo {
+                            root: file_root,
+                            block,
+                            sym: sym_in_stripe as u16,
+                            k: RS_DATA_K as u8,
+                            n: RS_TOTAL_N as u8,
+                        }],
+                        payload,
+                        signature: Sig64::ZERO,
+                    };
+                    bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+                    debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
+                    let budget = origin_budget(self.utility.n_hat(self.now));
+                    let location = Self::symbol_location(&bundle);
+                    let id = self.try_store_own(bundle, budget)?;
+                    if let Some((root, sym_no)) = location {
+                        self.record_symbol(root, sym_no, id);
+                    }
+                }
+                remaining -= take;
+            }
+            debug_assert_eq!(remaining, 0, "reader size accounting invariant");
+        }
+
         let message_id = self.commit_app_candidate(manifest_candidate)?;
         self.record_sent(message_id, conv_id)?;
         self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });

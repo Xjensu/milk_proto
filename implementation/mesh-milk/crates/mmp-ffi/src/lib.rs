@@ -112,6 +112,11 @@ fn map_send_error(e: SendError) -> FfiError {
         // condition; the generated FFI error surface remains deliberately
         // coarse and does not expose Rust collection capacities.
         SendError::ResourceLimit => FfiError::Internal,
+        // A seekable source read/seek failure is a local I/O condition, not
+        // malformed caller input. The reader-backed API is intentionally not
+        // exposed through UniFFI, so keep this coarse and consistent with
+        // other local I/O failures such as `FetchError::Io`.
+        SendError::SourceIo => FfiError::Internal,
     }
 }
 
