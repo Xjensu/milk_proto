@@ -73,8 +73,7 @@ impl DiagLog {
     /// A fresh, empty log; `enabled` gates whether `log` actually records
     /// anything (the `clamps`/`drops` counters always accrue either way).
     pub fn new(enabled: bool) -> DiagLog {
-        let records = if enabled { Vec::with_capacity(MAX_RECORDS) } else { Vec::new() };
-        DiagLog { enabled, records, clamps: 0, drops: 0 }
+        DiagLog { enabled, records: Vec::new(), clamps: 0, drops: 0 }
     }
 
     /// Stop recording new journey events while retaining records already
