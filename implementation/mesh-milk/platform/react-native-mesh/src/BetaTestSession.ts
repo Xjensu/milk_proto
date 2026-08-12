@@ -151,6 +151,53 @@ export class BetaTestSession {
     this.droppedEvents = 0;
   }
 
+  /**
+   * Wait for the next app-level event of one known type during a test step.
+   *
+   * The temporary listener and timeout are removed on either completion path;
+   * the bound keeps a beta harness from retaining an unbounded pending wait.
+   */
+  waitForEvent<T extends MmpEvent['type']>(
+    type: T,
+    timeoutMs = 10_000,
+  ): Promise<Extract<MmpEvent, { type: T }>> {
+    this.requireStarted();
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+      throw new RangeError('timeoutMs must be a safe integer between 1 and 60000');
+    }
+    return new Promise<Extract<MmpEvent, { type: T }>>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let unsubscribe: (() => void) | null = null;
+      const cleanup = (): void => {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        unsubscribe?.();
+        unsubscribe = null;
+      };
+      const settle = (finish: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        finish();
+      };
+      unsubscribe = this.client.onEvent((event) => {
+        if (event.type === type) {
+          settle(() => resolve(event as Extract<MmpEvent, { type: T }>));
+        }
+      });
+      if (!settled) {
+        timer = setTimeout(() => {
+          settle(() => reject(new BetaTestSessionError(`Timed out waiting for event ${type}`)));
+        }, timeoutMs);
+      }
+    });
+  }
+
   /** Return native diagnostic counters without exposing transport or key material. */
   metrics(): Promise<NodeMetrics> {
     return this.client.metrics();

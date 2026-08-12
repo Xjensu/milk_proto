@@ -29,6 +29,15 @@ class BetaReportSchemaSourceTests(unittest.TestCase):
         self.assertIn("BETA_TEST_REPORT_SCHEMA_VERSION", self.index)
         self.assertIn("schemaVersion` is the local report", self.readme)
 
+    def test_beta_event_wait_is_bounded_and_cleans_up(self) -> None:
+        self.assertIn("waitForEvent<T extends MmpEvent['type']>", self.session)
+        self.assertIn("timeoutMs = 10_000", self.session)
+        self.assertIn("timeoutMs < 1 || timeoutMs > 60_000", self.session)
+        self.assertIn("BetaTestSessionError", self.session)
+        self.assertIn("clearTimeout(timer)", self.session)
+        self.assertIn("unsubscribe?.()", self.session)
+        self.assertIn("Timed out waiting for event", self.session)
+
 
 if __name__ == "__main__":
     unittest.main()

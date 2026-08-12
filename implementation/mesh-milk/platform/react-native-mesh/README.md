@@ -68,6 +68,12 @@ Call `session.clearHistory()` between manual scenarios to reset only this local
 report window and its drop counter; it does not stop the mesh, flush storage, or
 acknowledge protocol events.
 
+For deterministic automated steps, `await session.waitForEvent('delivered',
+10_000)` resolves with the next matching app event. The wait requires a started
+session, accepts a timeout from 1 ms through 60 s, and rejects with
+`BetaTestSessionError` when it expires. Its temporary listener and timer are
+removed on both success and timeout; it never exposes raw transport data.
+
 `BetaTestSession` is also the application-facing composition facade for the
 existing client surface. Once started, the same session exposes direct text,
 group (including application-typed bodies via `groupSendBody`), explicit-pull file, authority/scope, friendship, identity/claim,
