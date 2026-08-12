@@ -110,6 +110,10 @@ const metrics = await client.metrics();
 //   diagnosticRecords, diagnosticClamps, diagnosticDrops }
 ```
 
+Diagnostics recording is opt-in. Call `client.enableDiagnostics()` at the
+start of a scenario and `client.disableDiagnostics()` at its boundary to stop
+new journey records without discarding the current local dump.
+
 The counters are local observations and are not telemetry. They contain no
 peer/session identifiers, provider handles, wire bytes, or key material. The
 native implementation remains the authority for their values and numeric

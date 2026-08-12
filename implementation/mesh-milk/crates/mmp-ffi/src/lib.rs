@@ -1431,6 +1431,17 @@ impl MmpNode {
             .unwrap_or_else(|poison| poison.into_inner()) = true;
     }
 
+    /// Turn off new journey-log recording while retaining records already
+    /// collected in the current local inspection window. The log remains
+    /// local-only and can still be read through [`Self::diag_dump`].
+    pub fn disable_diagnostics(&self) {
+        self.lock().disable_diagnostics();
+        *self
+            .diagnostics_enabled
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = false;
+    }
+
     /// Line-delimited dump of the diagnostics journey log.
     pub fn diag_dump(&self) -> String {
         self.lock().diagnostics().dump()

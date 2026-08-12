@@ -99,6 +99,7 @@ export interface Spec extends TurboModule {
   requestFriendship(peerPublicKeyB64: string): Promise<void>;
   allowFriendshipFrom(peerPublicKeyB64: string): Promise<void>;
   enableDiagnostics(): Promise<void>;
+  disableDiagnostics(): Promise<void>;
   diagDump(): Promise<string>;
   storeLen(): Promise<number>;
   flush(): Promise<void>;

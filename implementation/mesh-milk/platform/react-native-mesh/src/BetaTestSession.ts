@@ -342,6 +342,12 @@ export class BetaTestSession {
     return this.client.enableDiagnostics();
   }
 
+  /** Stop recording new journey records without discarding this report window. */
+  disableDiagnostics(): Promise<void> {
+    this.requireStarted();
+    return this.client.disableDiagnostics();
+  }
+
   diagDump(): Promise<string> {
     this.requireStarted();
     return this.client.diagDump();

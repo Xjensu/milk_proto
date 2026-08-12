@@ -69,6 +69,12 @@ impl DiagLog {
         DiagLog { enabled, records: Vec::new(), clamps: 0, drops: 0 }
     }
 
+    /// Stop recording new journey events while retaining records already
+    /// collected for the current local inspection window.
+    pub fn disable(&mut self) {
+        self.enabled = false;
+    }
+
     /// Append one journey event for `bundle`, if the log is enabled — a
     /// silent no-op otherwise.
     pub fn log(&mut self, bundle: Id16, event: JourneyEvent, ts: u64) {
@@ -90,5 +96,25 @@ impl DiagLog {
             let _ = writeln!(s, "{:>10} {:02x?} {:?}", r.ts, &r.bundle.0[..4], r.event);
         }
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DiagLog, JourneyEvent};
+    use mmp_types::ids::Id16;
+
+    #[test]
+    fn disabling_keeps_existing_records_but_stops_new_events() {
+        let mut log = DiagLog::new(true);
+        let bundle = Id16([7; 16]);
+        log.log(bundle, JourneyEvent::Created, 1);
+        assert_eq!(log.records().len(), 1);
+
+        log.disable();
+        log.log(bundle, JourneyEvent::Stored, 2);
+
+        assert_eq!(log.records().len(), 1);
+        assert_eq!(log.records()[0].event, JourneyEvent::Created);
     }
 }

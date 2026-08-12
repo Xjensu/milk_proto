@@ -29,6 +29,10 @@ through the existing `last_persist_error()` query. These snapshots
 contain no peer/session identifiers, wire bytes, provider handles, or key
 material; hosts decide whether to display or explicitly export them.
 
+Diagnostics recording is opt-in. `enable_diagnostics()` starts a local journey
+window and `disable_diagnostics()` stops recording new events while retaining
+the already collected dump for inspection.
+
 The original `link_up(link, initiator)` remains available and uses the
 conservative BLE default. Hosts with a measured transport can call
 `link_up_with_quality(link, initiator, FfiLinkQuality { mtu, goodput_bps })`;

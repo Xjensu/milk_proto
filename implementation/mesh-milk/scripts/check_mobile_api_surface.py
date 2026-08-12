@@ -34,6 +34,7 @@ EXPECTED_MMP_NODE_METHODS = (
     "closeActionsDropped",
     "createGroup",
     "diagDump",
+    "disableDiagnostics",
     "enableDiagnostics",
     "eventQueueDropped",
     "fetchFile",

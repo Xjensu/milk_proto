@@ -314,6 +314,7 @@ export interface MmpMeshNative {
 
   // Diagnostics.
   enableDiagnostics(): Promise<void>;
+  disableDiagnostics(): Promise<void>;
   diagDump(): Promise<string>;
 
   // Storage / persistence.
@@ -373,6 +374,7 @@ const REQUIRED_NATIVE_METHODS = [
   'groupMembers',
   'groupRemove',
   'enableDiagnostics',
+  'disableDiagnostics',
   'diagDump',
   'storeLen',
   'flush',
@@ -620,6 +622,10 @@ export class MmpClient {
 
   enableDiagnostics(): Promise<void> {
     return this.native.enableDiagnostics();
+  }
+
+  disableDiagnostics(): Promise<void> {
+    return this.native.disableDiagnostics();
   }
 
   diagDump(): Promise<string> {

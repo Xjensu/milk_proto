@@ -890,6 +890,12 @@ impl Node {
         self.core.diag = DiagLog::new(true);
     }
 
+    /// Turn off the opt-in, local-only journey log without discarding records
+    /// already collected for the current inspection window.
+    pub fn disable_diagnostics(&mut self) {
+        self.core.diag.disable();
+    }
+
     /// Override the store quota (bytes) that [`Node::tick`] enforces. The
     /// production quota is fixed by tier (doc 04 §2); this exists so tests and
     /// the simulator can drive real eviction pressure at a small, CI-fast
