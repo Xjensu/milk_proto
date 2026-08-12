@@ -3914,9 +3914,11 @@ impl NodeCore {
     /// Reader-backed variant of [`NodeCore::send_file`].  The first pass is
     /// deliberately side-effect free: only source reads, one-stripe RS
     /// encoding, the full-file hash, and Merkle leaves are produced.  The
-    /// second pass mints the same wire bundles as the slice API and therefore
-    /// retains its accepted-prefix semantics when a provider or source fails
-    /// after a symbol has been accepted.
+    /// second pass mints the same wire bundles as the slice API. Providers
+    /// advertising aggregate reservations get all-or-none symbol/manifest
+    /// publication; `Unsupported` providers retain the legacy accepted-prefix
+    /// behavior for capacity failures. Source short-read or mutation errors
+    /// are detected before any provider write in either mode.
     fn send_file_from_reader<R: Read + Seek>(
         &mut self,
         peer: &NodeId,
@@ -3991,12 +3993,17 @@ impl NodeCore {
         manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
         let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
 
-        if !already_complete {
-            // A source failure after this point can leave an accepted symbol
-            // prefix, just like the slice API.  No provider or whole-node
-            // transaction is implied by this reader convenience method.
+        let message_id = if already_complete {
+            self.commit_app_candidate(manifest_candidate)?
+        } else {
+            // Prepare the complete second-pass symbol set before asking the
+            // provider for aggregate capacity. Source reads and Merkle
+            // consistency checks therefore remain side-effect free: a short
+            // read or source mutation cannot leave a partial atomic batch.
             reader.seek(SeekFrom::Start(0)).map_err(|_| SendError::SourceIo)?;
             remaining = size as usize;
+            let budget = origin_budget(self.utility.n_hat(self.now));
+            let mut symbol_candidates: Vec<PreparedFileSymbol> = Vec::with_capacity(total_symbols);
             for block in 0..stripes {
                 stripe.fill(0);
                 let take = remaining.min(STRIPE_DATA_BYTES);
@@ -4014,9 +4021,8 @@ impl NodeCore {
                     let sym_no = block as usize * RS_TOTAL_N + sym_in_stripe;
                     if hash_block(&symbol) != leaves[sym_no] {
                         // The source changed between passes. Refuse to mint
-                        // a symbol whose Merkle proof would not match the
-                        // manifest root; prior accepted symbols retain the
-                        // legacy accepted-prefix behavior.
+                        // any symbol whose Merkle proof would not match the
+                        // manifest root; no provider mutation has happened.
                         return Err(SendError::SourceIo);
                     }
                     let path = merkle_path(&leaves, sym_no).encode();
@@ -4039,20 +4045,71 @@ impl NodeCore {
                         signature: Sig64::ZERO,
                     };
                     bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-                    debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
-                    let budget = origin_budget(self.utility.n_hat(self.now));
+                    let bytes = bundle.encode();
+                    debug_assert!(bytes.len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
                     let location = Self::symbol_location(&bundle);
-                    let id = self.try_store_own(bundle, budget)?;
-                    if let Some((root, sym_no)) = location {
-                        self.record_symbol(root, sym_no, id);
-                    }
+                    let meta = self.own_bundle_meta(&bundle, budget, &bytes)?;
+                    symbol_candidates.push(PreparedFileSymbol { bundle, bytes, location, meta });
                 }
                 remaining -= take;
             }
             debug_assert_eq!(remaining, 0, "reader size accounting invariant");
-        }
 
-        let message_id = self.commit_app_candidate(manifest_candidate)?;
+            // The manifest is part of the same aggregate publication. Its
+            // candidate conversation/ratchet state remains unpublished until
+            // the provider reports a successful batch commit.
+            let manifest_bytes = manifest_candidate.bundle.encode();
+            let manifest_meta = self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
+            let mut metas: Vec<BundleMeta> = symbol_candidates.iter().map(|candidate| candidate.meta).collect();
+            metas.push(manifest_meta);
+            match self.store.try_reserve_batch_atomic(&metas) {
+                Ok(batch) => {
+                    let commit = {
+                        let mut entries: Vec<StoreBatchEntry<'_>> = symbol_candidates
+                            .iter()
+                            .map(|candidate| StoreBatchEntry::new(candidate.meta, &candidate.bytes))
+                            .collect();
+                        entries.push(StoreBatchEntry::new(manifest_meta, &manifest_bytes));
+                        self.store.commit_reserved_batch(&batch, &entries)
+                    };
+                    let Ok(_outcomes) = commit else {
+                        // A failed aggregate commit is never retried through
+                        // the legacy seam. Release the provider-local token
+                        // best-effort and report a local resource failure;
+                        // no holder indexes or app state were published.
+                        let _ = self.store.abort_reserved_batch(&batch);
+                        return Err(SendError::ResourceLimit);
+                    };
+                    for PreparedFileSymbol { location, meta, .. } in symbol_candidates {
+                        self.seen.insert(&meta.id, meta.class, self.now);
+                        self.diag.log(meta.id, JourneyEvent::Created, self.now);
+                        if let Some((root, sym_no)) = location {
+                            self.record_symbol(root, sym_no, meta.id);
+                        }
+                    }
+                    self.seen.insert(&manifest_meta.id, manifest_meta.class, self.now);
+                    self.diag.log(manifest_meta.id, JourneyEvent::Created, self.now);
+                    self.apply_app_candidate(manifest_candidate.state, manifest_candidate.rng, manifest_meta.id)
+                }
+                Err(StoreReserveError::Unsupported) => {
+                    // Legacy providers retain the existing accepted-prefix
+                    // behavior for capacity failures. An advertised provider
+                    // that rejects reservation must not be weakened into
+                    // single writes after any aggregate failure.
+                    for PreparedFileSymbol { bundle, location, .. } in symbol_candidates {
+                        let id = self.try_store_own(bundle, budget)?;
+                        if let Some((root, sym_no)) = location {
+                            self.record_symbol(root, sym_no, id);
+                        }
+                    }
+                    self.commit_app_candidate(manifest_candidate)?
+                }
+                Err(StoreReserveError::Invalid | StoreReserveError::Capacity) => {
+                    return Err(SendError::ResourceLimit);
+                }
+            }
+        };
+
         self.record_sent(message_id, conv_id)?;
         self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
         Ok(FileSend { message_id, root: file_root })

@@ -87,7 +87,9 @@ New regressions cover:
 10. file-symbol provider rejection with empty local indexes followed by a
     successful retry after provider recovery; and
 11. accepted-prefix storage consistency plus active sent-history rejection
-    before file-symbol minting.
+    before file-symbol minting; and
+12. reader-backed file publication using the same aggregate reservation path,
+    with rollback regressions for reservation rejection and commit failure.
 
 ## Explicit non-claims
 
@@ -102,17 +104,19 @@ and require separate staging work:
 - per-member distribution/rekey transaction, crash, and retry policy (the
   current group-wide marker retries synchronously, while membership changes
   remain locally committed); and
-- aggregate file symbols + manifest transaction semantics. The current file
-  path is only per-symbol fail-closed/resumable: an accepted prefix remains
-  indexed and durable after a later rejection, while the manifest is not
-  attempted after a symbol rejection.
+- fixed-capacity embedded provider wiring, crash recovery, and hardware
+  validation remain open. Host providers that implement the additive atomic
+  batch capability now publish file symbols and the manifest together for
+  both slice-backed and reader-backed producers. Providers returning
+  `Unsupported` retain the legacy accepted-prefix behavior, so a later
+  symbol failure can still leave a durable indexed prefix by design.
 
 `Node::new` retains fixed bootstrap claims in its local discovery view even
 when their provider write is rejected, but cannot report that persistence
 failure through its source-compatible constructor. A complete producer fix
-still needs provider reservation/commit semantics and a batch transaction for
-file symbols. Do not bypass the staged `try_store_own` boundary or claim
-aggregate atomicity until those invariants are tested.
+still needs fixed-capacity provider wiring and crash recovery. Do not bypass
+the staged `try_store_own` boundary or claim aggregate atomicity for providers
+that return `Unsupported`.
 
 ## Next implementation order
 
@@ -121,9 +125,10 @@ aggregate atomicity until those invariants are tested.
    recovery, and restart semantics.
 2. Add candidate-state or batch semantics for group-key distributions/rekeys,
    and a bounded pending-receipt retry/reserved-control policy.
-3. Add the file producer batch/reservation design, including the manifest and
-   any delivery bookkeeping in the same provider commit boundary; retain the
-   current post-admission index policy until that capability exists.
+3. Extend aggregate file publication only where provider semantics are still
+   missing (notably fixed-capacity embedded allocation, crash recovery, and
+   delivery-bookkeeping persistence); preserve the host atomic path and its
+   `Unsupported` legacy fallback.
 4. Select a board-specific allocator/flash policy, then implement the
    `no_std` provider and linked-image/HIL gates.
 

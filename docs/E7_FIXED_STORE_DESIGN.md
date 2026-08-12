@@ -106,9 +106,12 @@ store.abort_reserved_batch(&batch)?; // idempotent if commit did not consume it
 
 The provider must preflight the aggregate replacement delta before any write
 becomes visible. `try_reserve_batch` and repeated `commit_reserved` calls remain
-valid for independently recoverable records, but `send_file` must use the
-atomic form if it requires all-or-none publication. The host implementation
-does not yet wire either form into producer state or a board-specific backend.
+valid for independently recoverable records, but file producers use the
+atomic form when the provider advertises it. The host implementation wires
+both slice-backed and reader-backed file publication to this capability; a
+provider returning `Unsupported` deliberately retains the legacy
+accepted-prefix fallback. A fixed-capacity board backend and crash-recovery
+integration are still open.
 
 ## 3. Capacity policy inputs
 

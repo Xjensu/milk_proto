@@ -754,6 +754,18 @@ impl BundleStore for AtomicBatchProbeStore {
 }
 
 fn assert_atomic_file_failure(mode: BatchReservationMode, expect_commit: bool) {
+    assert_atomic_file_failure_with_source(mode, expect_commit, false);
+}
+
+fn assert_atomic_reader_file_failure(mode: BatchReservationMode, expect_commit: bool) {
+    assert_atomic_file_failure_with_source(mode, expect_commit, true);
+}
+
+fn assert_atomic_file_failure_with_source(
+    mode: BatchReservationMode,
+    expect_commit: bool,
+    reader_source: bool,
+) {
     let mut alice = node(if expect_commit { 73 } else { 72 });
     let mut bob = node(if expect_commit { 74 } else { 75 });
     introduce(&mut alice, &mut bob);
@@ -789,10 +801,13 @@ fn assert_atomic_file_failure(mode: BatchReservationMode, expect_commit: bool) {
         .collect();
 
     let data = vec![0x4a; 3000];
-    assert_eq!(
-        alice.send_file(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &data),
-        Err(SendError::ResourceLimit)
-    );
+    let result = if reader_source {
+        let mut reader = Cursor::new(data.clone());
+        alice.send_file_from_reader(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &mut reader)
+    } else {
+        alice.send_file(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &data)
+    };
+    assert_eq!(result, Err(SendError::ResourceLimit));
 
     assert!(reserve_calls.load(Ordering::Relaxed), "file send must request atomic batch capacity");
     assert_eq!(commit_calls.load(Ordering::Relaxed), expect_commit);
@@ -832,6 +847,16 @@ fn send_file_atomic_reservation_rejection_is_side_effect_free() {
 #[test]
 fn send_file_atomic_commit_failure_is_side_effect_free() {
     assert_atomic_file_failure(BatchReservationMode::CommitFails, true);
+}
+
+#[test]
+fn send_file_from_reader_atomic_reservation_rejection_is_side_effect_free() {
+    assert_atomic_reader_file_failure(BatchReservationMode::Reject, false);
+}
+
+#[test]
+fn send_file_from_reader_atomic_commit_failure_is_side_effect_free() {
+    assert_atomic_reader_file_failure(BatchReservationMode::CommitFails, true);
 }
 
 #[test]
