@@ -4,6 +4,11 @@
 
 use mmp_types::ids::{Id16, NodeId};
 
+/// Maximum number of journey records retained by one local diagnostics
+/// window. Diagnostics are deliberately opt-in, but enabling them must not
+/// turn a long-running node into an unbounded in-memory log sink.
+pub const MAX_RECORDS: usize = 4096;
+
 /// One lifecycle step a bundle passed through, as logged by `NodeCore`'s
 /// various call sites (`try_store_own`, `on_bundle`, `enforce_quota`, `tick`,
 /// `load_for_handoff`, `handle_receipt`).
@@ -45,11 +50,13 @@ pub struct JourneyRecord {
     pub ts: u64,
 }
 
-/// Opt-in, local-only bookkeeping of per-bundle lifecycle events — a plain
+/// Opt-in, local-only bookkeeping of per-bundle lifecycle events — a bounded
 /// in-memory `Vec<JourneyRecord>` with no file or network I/O of its own.
 /// Disabled by default (`Node::new`); `Node::enable_diagnostics` turns it on
 /// so `records`/`dump` have something to answer "why didn't this deliver?"
-/// with. Never persisted and never transmitted.
+/// with. Once [`MAX_RECORDS`] is reached, later records are ignored until the
+/// window is replaced or diagnostics are disabled. Never persisted and never
+/// transmitted.
 #[derive(Default)]
 pub struct DiagLog {
     enabled: bool,
@@ -66,7 +73,8 @@ impl DiagLog {
     /// A fresh, empty log; `enabled` gates whether `log` actually records
     /// anything (the `clamps`/`drops` counters always accrue either way).
     pub fn new(enabled: bool) -> DiagLog {
-        DiagLog { enabled, records: Vec::new(), clamps: 0, drops: 0 }
+        let records = if enabled { Vec::with_capacity(MAX_RECORDS) } else { Vec::new() };
+        DiagLog { enabled, records, clamps: 0, drops: 0 }
     }
 
     /// Stop recording new journey events while retaining records already
@@ -78,7 +86,7 @@ impl DiagLog {
     /// Append one journey event for `bundle`, if the log is enabled — a
     /// silent no-op otherwise.
     pub fn log(&mut self, bundle: Id16, event: JourneyEvent, ts: u64) {
-        if self.enabled {
+        if self.enabled && self.records.len() < MAX_RECORDS {
             self.records.push(JourneyRecord { bundle, event, ts });
         }
     }
@@ -101,7 +109,7 @@ impl DiagLog {
 
 #[cfg(test)]
 mod tests {
-    use super::{DiagLog, JourneyEvent};
+    use super::{DiagLog, JourneyEvent, MAX_RECORDS};
     use mmp_types::ids::Id16;
 
     #[test]
@@ -116,5 +124,18 @@ mod tests {
 
         assert_eq!(log.records().len(), 1);
         assert_eq!(log.records()[0].event, JourneyEvent::Created);
+    }
+
+    #[test]
+    fn recording_window_is_bounded_without_replacing_earlier_events() {
+        let mut log = DiagLog::new(true);
+        let bundle = Id16([8; 16]);
+        for ts in 0..(MAX_RECORDS as u64 + 1) {
+            log.log(bundle, JourneyEvent::Created, ts);
+        }
+
+        assert_eq!(log.records().len(), MAX_RECORDS);
+        assert_eq!(log.records().first().map(|record| record.ts), Some(0));
+        assert_eq!(log.records().last().map(|record| record.ts), Some((MAX_RECORDS - 1) as u64));
     }
 }
