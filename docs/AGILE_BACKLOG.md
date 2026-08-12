@@ -209,6 +209,8 @@ Central + peripheral + `MOBILE_INTEGRATION.md` must pin the same UUID set (still
 **E4-S5 · Battery duty-cycle implementation + measurement harness · M · Deps: E4-S1/E4-S2 · RECORDING TEMPLATE SHIPPED; PLATFORM/HARDWARE WORK OPEN (2026-08-08/11)** — the recording template is committed as `docs/E4-S5_BATTERY_RECORDING_TEMPLATE.md` (`2007cd7`) and captures paired baseline/candidate timing, radio, workload, energy, wake-up, storage, and confidence evidence from doc 09 §7, doc 13, and the manual test guide. **Still open:** configurable duty-cycle parameters in the Android/iOS platform shells and a physical field run; the template explicitly remains incomplete until hardware evidence is attached and does not establish the `<5%/day` target by itself.
 **Acceptance:** duty-cycle parameters configurable from the shell; field-test recording sheet checked in.
 
+**Status update (2026-08-12, `359076e`):** the shell-configuration portion is now covered: Kotlin `MeshDrive` and Swift `MeshRadioShell` expose immutable, validated duty-cycle requests and forward one transport-local request to the native-adapter sink before radio startup. The request bounds include the 2.5% scan-duty cap, coherent burst settings, 4 s supervision timeout, and 60 s per-session airtime cap. These values are not protocol fields; the SDK-free shells do not implement timers or prove controller compliance. Native Android/iOS adapter enforcement, Android SDK/Xcode compilation, physical BLE exchange, and the field-test recording remain open. The existing acceptance line above is therefore satisfied only for shell configurability; the hardware evidence gate is not.
+
 ---
 
 ### EPIC 5 — Phase C: protocol completeness
