@@ -21,6 +21,7 @@ categories = ["embedded", "no-std", "asynchronous"]
 mmp-core = { path = "../mmp-core", default-features = false }
 mmp-router = { path = "../mmp-router", default-features = false }
 mmp-tal = { path = "../mmp-tal", default-features = false }
+mmp-tal-embedded = { path = "../mmp-tal-embedded", default-features = false }
 
 [lints]
 workspace = true
