@@ -85,6 +85,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "deliveryProgress",
             "claimUpdated",
             "compromiseWarning",
+            "friendshipEstablished",
             "peerRevoked",
             "contactSeen",
             "established",
@@ -128,6 +129,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "scopeNameHint: Base64Value | null",
         ):
             self.assertIn(field, self.client)
+        self.assertIn("type: 'friendshipEstablished'; peer: NodeIdHex; since: number", self.client)
         for field in (
             "storeLen",
             "closeActionsDropped",

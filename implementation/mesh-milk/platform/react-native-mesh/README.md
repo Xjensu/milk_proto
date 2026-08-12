@@ -107,6 +107,14 @@ peer/session identifiers, provider handles, wire bytes, or key material. The
 native implementation remains the authority for their values and numeric
 encoding.
 
+Friendship completion is delivered through `client.onEvent` as
+`{ type: 'friendshipEstablished', peer, since }`. The native adapter maps
+`FfiEvent::FriendshipEstablished` to this camel-case event, where `peer` is a
+lowercase 16-byte NodeID hex string and `since` is the host monotonic timestamp
+in milliseconds. It is emitted for both the dependent and patron when the
+friendship is established or renewed; the request/allow promises only enqueue
+the operation and are not completion acknowledgements.
+
 Announcements arrive through `client.onEvent` as the secret-free
 `announcement` event. Its fields are `id`, `scope`, `annType`, `notAfter`,
 `text`, `from`, `official`, `effectivePriority`, and `scopeNameHint`. The

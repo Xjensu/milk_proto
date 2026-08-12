@@ -183,6 +183,7 @@ export type MmpEvent =
   | { type: 'deliveryProgress'; id: MsgIdHex; state: DeliveryState }
   | { type: 'claimUpdated'; owner: NodeIdHex; field: number }
   | { type: 'compromiseWarning'; owner: NodeIdHex }
+  | { type: 'friendshipEstablished'; peer: NodeIdHex; since: number }
   | { type: 'peerRevoked'; peer: NodeIdHex; successor: string | null }
   | { type: 'contactSeen'; peer: NodeIdHex }
   | { type: 'established'; peer: NodeIdHex }
