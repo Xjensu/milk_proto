@@ -356,6 +356,76 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
         self.assertIn("BetaTestSessionError", index)
 
+    def test_beta_session_facade_inventory_and_no_raw_transport(self) -> None:
+        """Keep the beta harness inventory aligned with its documented seam."""
+        for method in (
+            "start",
+            "stop",
+            "flush",
+            "status",
+            "metrics",
+            "setTier",
+            "capabilities",
+            "betaSnapshot",
+            "sendText",
+            "sendBody",
+            "messageState",
+            "waitForEvent",
+            "waitForDelivery",
+            "sendFile",
+            "fetchFile",
+            "cancelFetch",
+            "fileProgress",
+            "createGroup",
+            "groupInvite",
+            "groupSend",
+            "groupSendBody",
+            "groupMembers",
+            "groupRemove",
+            "setWallClock",
+            "pinAuthorityRoot",
+            "subscribeScope",
+            "unsubscribeScope",
+            "mintAuthCert",
+            "publishAnnouncement",
+            "nodeId",
+            "publicKey",
+            "ownClaims",
+            "ingestClaim",
+            "setNickname",
+            "nicknameOf",
+            "revokeIdentity",
+            "tryRevokeIdentity",
+            "revokeIdentityWithSuccessor",
+            "block",
+            "requestFriendship",
+            "allowFriendshipFrom",
+            "enableDiagnostics",
+            "disableDiagnostics",
+            "diagDump",
+            "storeLen",
+            "lastPersistError",
+            "clearHistory",
+            "report",
+            "reportJson",
+        ):
+            signature = "waitForEvent<T extends" if method == "waitForEvent" else f"{method}("
+            self.assertIn(signature, self.beta_session)
+
+        self.assertIn("get isStarted(): boolean", self.beta_session)
+        for forbidden in (
+            "beacon(",
+            "linkUp(",
+            "linkData(",
+            "linkDown(",
+            "onBeacon(",
+            "pollSend(",
+            "pollEvent(",
+            "pollClose(",
+            "tick(",
+        ):
+            self.assertNotIn(forbidden, self.beta_session)
+
     def test_native_surface_excludes_raw_transport_and_clock_injection(self) -> None:
         for forbidden in (
             "beacon(",
