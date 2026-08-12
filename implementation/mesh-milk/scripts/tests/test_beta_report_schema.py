@@ -38,6 +38,14 @@ class BetaReportSchemaSourceTests(unittest.TestCase):
         self.assertIn("unsubscribe?.()", self.session)
         self.assertIn("Timed out waiting for event", self.session)
 
+    def test_filtered_delivery_wait_is_terminal_and_documented(self) -> None:
+        self.assertIn("waitForDelivery(id: MsgIdHex, timeoutMs = 10_000)", self.session)
+        self.assertIn("this.client.messageState(id)", self.session)
+        self.assertIn("event.type === 'delivered' && event.id === id", self.session)
+        self.assertIn("event.type === 'deliveryProgress' && event.id === id", self.session)
+        self.assertIn("state === 'delivered' || state === 'expired'", self.session)
+        self.assertIn("waitForDelivery(id,", self.readme)
+
 
 if __name__ == "__main__":
     unittest.main()

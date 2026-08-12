@@ -74,6 +74,14 @@ session, accepts a timeout from 1 ms through 60 s, and rejects with
 `BetaTestSessionError` when it expires. Its temporary listener and timer are
 removed on both success and timeout; it never exposes raw transport data.
 
+When a test already has a message ID, use `await session.waitForDelivery(id,
+10_000)` instead. It samples the native delivery state before and after
+listener registration, then waits only for the matching message's terminal
+`delivered` or `expired` state. This avoids confusing an unrelated delivery
+event with the scenario under test and closes the state/listener hand-off
+race. The helper is local and deterministic; it does not acknowledge or alter
+the protocol message.
+
 `BetaTestSession` is also the application-facing composition facade for the
 existing client surface. Once started, the same session exposes direct text and
 application-typed direct bodies (`sendBody`), group (including application-typed

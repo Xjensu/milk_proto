@@ -43,6 +43,13 @@ normalizes capability spellings explicitly; the existing bounded
 `BetaTestSession.report()` remains useful when a local event-history window is
 also required.
 
+For deterministic delivery assertions, a beta harness can call
+`BetaTestSession.waitForDelivery(messageId, timeoutMs)`. The helper samples the
+current native state, closes the listener-registration race with a second
+sample, and resolves only for the matching message's terminal `delivered` or
+`expired` state. It is local-only and does not acknowledge or alter the wire
+message.
+
 ## Suggested beta UI use
 
 Call `capabilities()` after constructing the native node and before enabling

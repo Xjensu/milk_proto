@@ -237,6 +237,93 @@ export class BetaTestSession {
     return this.client.messageState(id);
   }
 
+  /**
+   * Wait for a message to reach a terminal delivery state.
+   *
+   * The native state is sampled before subscribing so a message which already
+   * finished does not depend on a future event.  A second sample after the
+   * listener is installed closes the small hand-off window between those two
+   * operations.  Only terminal progress is observable through this helper;
+   * queued/in-mesh progress remains an implementation detail of the wait.
+   */
+  waitForDelivery(id: MsgIdHex, timeoutMs = 10_000): Promise<DeliveryState> {
+    this.requireStarted();
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) {
+      throw new RangeError('timeoutMs must be a safe integer between 1 and 60000');
+    }
+
+    return new Promise<DeliveryState>((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let unsubscribe: (() => void) | null = null;
+
+      const cleanup = (): void => {
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        unsubscribe?.();
+        unsubscribe = null;
+      };
+
+      const settle = (finish: () => void): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        cleanup();
+        finish();
+      };
+
+      timer = setTimeout(() => {
+        settle(() => reject(new BetaTestSessionError(`Timed out waiting for delivery of message ${id}`)));
+      }, timeoutMs);
+
+      const isTerminal = (state: DeliveryState | null): state is 'delivered' | 'expired' =>
+        state === 'delivered' || state === 'expired';
+
+      const handleEvent = (event: MmpEvent): void => {
+        if (event.type === 'delivered' && event.id === id) {
+          settle(() => resolve('delivered'));
+          return;
+        }
+        if (event.type === 'deliveryProgress' && event.id === id && isTerminal(event.state)) {
+          settle(() => resolve(event.state));
+        }
+      };
+
+      const observe = async (): Promise<void> => {
+        try {
+          const initial = await this.client.messageState(id);
+          if (isTerminal(initial)) {
+            settle(() => resolve(initial));
+            return;
+          }
+          if (settled) {
+            return;
+          }
+
+          unsubscribe = this.client.onEvent(handleEvent);
+          if (settled) {
+            cleanup();
+            return;
+          }
+
+          // Recheck after subscription to cover a terminal transition between
+          // the first state sample and listener registration.
+          const afterSubscription = await this.client.messageState(id);
+          if (isTerminal(afterSubscription)) {
+            settle(() => resolve(afterSubscription));
+          }
+        } catch (error) {
+          settle(() => reject(error));
+        }
+      };
+
+      void observe();
+    });
+  }
+
   /** Share a bounded file payload; file bytes remain an explicit app input. */
   sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend> {
     this.requireStarted();
