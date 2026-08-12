@@ -1044,4 +1044,28 @@ mod tests {
             .iter()
             .any(|point| point.profile == RendezvousExperimentProfile::EdrDutyCycle));
     }
+
+    #[test]
+    fn edr_matrix_energy_is_never_below_the_analytic_fixed_hazard_optimum() {
+        let model = RendezvousEnergyModel::from_baseline(1.0, 1.0, 0.12, 4.5).unwrap();
+        let matrix = model.default_experiment_matrix().unwrap();
+        let optimum = model.optimum();
+        let tolerance = optimum.energy.max(1.0) * 1e-12;
+
+        for point in matrix {
+            assert!(
+                point.activity.energy + tolerance >= optimum.energy,
+                "{}x transmit point undercut the analytic optimum: {} < {}",
+                point.tx_scale,
+                point.activity.energy,
+                optimum.energy
+            );
+        }
+
+        let baseline = matrix
+            .iter()
+            .find(|point| point.profile == RendezvousExperimentProfile::BinarySprayBaseline)
+            .expect("matrix must contain one baseline point");
+        assert!((baseline.activity.energy - model.baseline_energy()).abs() <= tolerance);
+    }
 }
