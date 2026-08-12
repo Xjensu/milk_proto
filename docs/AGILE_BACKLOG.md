@@ -321,3 +321,8 @@ the additive caller-owned read, bounded visitation, and expiry-preflight
 contract described by `docs/E7_NRF52_PROVIDER_CONTRACT.md`. A fixed-array test
 double verifies the boundary; this does not claim a board provider, flash
 geometry, crash atomicity, or node integration.
+
+The same slice now includes `mmp-core::FixedBundleStore<SLOTS, B, TOTAL>` as a
+host-testable fixed-array reference provider with bounded reservations and
+commit/abort tests. It remains a capacity model only; board geometry, flash
+recovery, and embedded node integration are still open.

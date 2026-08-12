@@ -329,3 +329,17 @@ The trait intentionally does not invent reservation or indeterminate-write
 semantics. Those remain provider-specific until a named board geometry and
 journal recovery policy are selected; no embedded provider is wired into the
 node yet.
+
+## Fixed reference provider slice (2026-08-12)
+
+`mmp-core::FixedBundleStore<SLOTS, B, TOTAL>` now supplies a host-testable
+reference implementation of the embedded boundary. It stores metadata and
+payload bytes in fixed arrays, rejects invalid or over-capacity writes without
+mutation, charges replacements by positive byte delta, and exposes bounded
+reservation/commit/abort operations with process-local tokens. Its tests cover
+exact fill, reservation pressure, stale/provider-mismatched tokens, short
+reads, expiry preflight, and ordered ID visitation.
+
+This is an executable capacity model, not a flash backend: it has no journal,
+power-loss recovery, allocator policy, board geometry, or `BundleStore`
+compatibility implementation. Those remain required before E7 hardware work.
