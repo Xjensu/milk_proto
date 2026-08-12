@@ -402,6 +402,15 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertIn("-timeout=10", run_script)
         self.assertIn("-rss_limit_mb=2048", run_script)
 
+    def test_fuzz_jobs_enforce_locked_dependency_graph(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        for job_name in ("fuzz-build", "fuzz-run"):
+            self.assertEqual(
+                workflow["jobs"][job_name].get("env", {}).get("CARGOFLAGS"),
+                "--locked",
+                job_name,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

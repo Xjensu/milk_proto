@@ -41,6 +41,10 @@ generated `MmpNode` bindings.
 - atomic startup rollback: a failed clock/radio/initial drain leaves
   `isRunning == false`, stops any advertiser/scanner that started, and
   releases callbacks that admitted a link during startup;
+- transactional link admission: a node-callback, MTU, or initial-drain
+  failure removes the logical link, drops pending frames, and requests
+  physical GATT closure before the error is propagated; duplicate callbacks
+  cannot tear down an already-admitted link;
 - `stop()` releases protocol sessions and requests native GATT teardown for
   every active link before dropping coordinator ownership;
 - scanner/advertiser/GATT/clock dependencies injected through interfaces.

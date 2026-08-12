@@ -398,6 +398,9 @@ public final class MeshDrive {
         initiator: Bool,
         quality: MeshLinkQualityHint? = nil
     ) throws {
+        // Duplicate callbacks are idempotent.  Do not let a malformed second
+        // quality sample tear down an already-admitted physical link.
+        if activeLinks.contains(link) { return }
         if let quality, !quality.isValid {
             // Reject before activeLinks or the Rust session is touched.  The
             // native callback is still torn down on malformed measurements.
@@ -411,7 +414,6 @@ public final class MeshDrive {
             try? gatt.close(link: link)
             return
         }
-        if activeLinks.contains(link) { return }
         guard activeLinks.count < maxTrackedLinks else {
             latchOverload()
             try? gatt.close(link: link)
@@ -423,7 +425,14 @@ public final class MeshDrive {
         } else {
             node.linkUp(link, initiator: initiator)
         }
-        try drain()
+        do {
+            try drain()
+        } catch {
+            // Admission is a transaction across the logical session and the
+            // physical GATT link.  Roll both back before propagating failure.
+            rollbackLinkAdmission(link)
+            throw error
+        }
     }
 
     public func onLinkData(_ link: UInt64, bytes: [UInt8]) throws {
@@ -545,6 +554,14 @@ public final class MeshDrive {
         closeRequested.removeAll()
         pending.removeAll()
         advertisedBeacon = nil
+    }
+
+    private func rollbackLinkAdmission(_ link: UInt64) {
+        pending.removeAll { $0.link == link }
+        if activeLinks.remove(link) != nil {
+            node.linkDown(link)
+        }
+        try? requestPhysicalClose(link)
     }
 
     private func requireRunning() throws {

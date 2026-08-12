@@ -217,6 +217,54 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(gatt.closedLinks.count, 1)
     }
 
+    func testRadioShellClosesPhysicalLinkWhenInitialAdmissionDrainFails() throws {
+        let node = TestNode(send: OutboundFrame(link: 1, bytes: [7]))
+        let gatt = TestGatt(mtuError: TestError.mtuUnavailable)
+        let shell = MeshRadioShell(
+            drive: MeshDrive(
+                node: node,
+                clock: TestClock(now: 1),
+                advertiser: TestAdvertiser(),
+                scanner: TestScanner(),
+                gatt: gatt,
+                foregroundRelayCapable: false
+            )
+        )
+        try shell.start()
+
+        XCTAssertThrowsError(
+            try shell.onLinkUp(MeshConnectionIdentity.create(), role: .central)
+        )
+        XCTAssertEqual(gatt.closedLinks, [1])
+        XCTAssertEqual(shell.activeLinkCount, 0)
+        XCTAssertEqual(node.linkUpInitiators, [true])
+    }
+
+    func testDuplicateMalformedQualityDoesNotCloseAnAdmittedLink() throws {
+        let node = TestNode()
+        let gatt = TestGatt()
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: gatt,
+            foregroundRelayCapable: false
+        )
+        try drive.start()
+        try drive.onLinkUp(1, initiator: true)
+
+        XCTAssertNoThrow(
+            try drive.onLinkUp(
+                1,
+                initiator: false,
+                quality: MeshLinkQualityHint(mtu: 22, goodputBps: 125_000)
+            )
+        )
+        XCTAssertEqual(node.linkUpInitiators, [true])
+        XCTAssertTrue(gatt.closedLinks.isEmpty)
+    }
+
     func testRadioShellReadyCallbackRetriesBackpressuredFrame() throws {
         let node = TestNode(send: OutboundFrame(link: 7, bytes: Array(UInt8(0)..<UInt8(25))))
         let gatt = TestGatt(acceptedNotifications: [false])
@@ -435,6 +483,7 @@ final class MeshDriveConsumerTests: XCTestCase {
 private enum TestError: Error, Equatable {
     case failed
     case persistenceFailed
+    case mtuUnavailable
 }
 
 private final class TestClock: MonotonicClock {
@@ -515,12 +564,17 @@ private final class TestGatt: GattAdapter {
     var gattNotifications: [Notification] = []
     var closedLinks: [UInt64] = []
     private var acceptedNotifications: [Bool]
+    private let mtuError: Error?
 
-    init(acceptedNotifications: [Bool] = []) {
+    init(acceptedNotifications: [Bool] = [], mtuError: Error? = nil) {
         self.acceptedNotifications = acceptedNotifications
+        self.mtuError = mtuError
     }
 
     func mtu(link: UInt64) throws -> Int {
+        if let mtuError {
+            throw mtuError
+        }
         23
     }
 

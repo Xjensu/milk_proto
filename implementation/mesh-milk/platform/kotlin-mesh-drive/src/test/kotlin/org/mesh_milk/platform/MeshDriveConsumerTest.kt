@@ -278,12 +278,13 @@ class MeshDriveConsumerTest {
     @Test
     fun gattBridgeRollsBackWhenInitialDrainFails() {
         val node = FakeNode(send = OutboundFrame(11L, byteArrayOf(1)))
+        val gatt = FailingGatt()
         val drive = MeshDrive(
             node = node,
             clock = MonotonicClock { 1_000L },
             advertiser = RecordingAdvertiser(),
             scanner = NoopScanner(),
-            gatt = FailingGatt(),
+            gatt = gatt,
             foregroundRelayCapable = false,
         )
         drive.start()
@@ -301,6 +302,57 @@ class MeshDriveConsumerTest {
         assertEquals(0, bridge.activeConnections())
         assertEquals(listOf(11L), node.linkUps)
         assertEquals(listOf(11L), node.linkDowns)
+        assertEquals(listOf(1L), gatt.closedLinks)
+    }
+
+    @Test
+    fun linkUpCallbackFailureRollsBackLogicalAndPhysicalAdmission() {
+        val node = FakeNode().also { it.throwOnLinkUp = true }
+        val gatt = RecordingGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+
+        assertFailsWith<IllegalStateException> {
+            bridge.onConnected(ConnectionIdentity.create(), initiator = true)
+        }
+
+        assertEquals(0, bridge.activeConnections())
+        assertEquals(listOf(1L), gatt.closedLinks)
+        assertEquals(listOf(1L), node.linkDowns)
+    }
+
+    @Test
+    fun duplicateMalformedQualityDoesNotCloseAnAdmittedLink() {
+        val node = FakeNode()
+        val gatt = RecordingGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+        val binding = bridge.onConnected(ConnectionIdentity.create(), initiator = true)
+
+        drive.onLinkUp(
+            binding!!.link,
+            initiator = false,
+            quality = LinkQualityHint(mtu = 22, goodputBps = 125_000),
+        )
+
+        assertEquals(listOf(binding.link), node.linkUps)
+        assertTrue(gatt.closedLinks.isEmpty())
     }
 
     @Test
@@ -345,6 +397,7 @@ class MeshDriveConsumerTest {
         val linkUpQualities: MutableList<LinkQualityHint?> = mutableListOf()
         val linkDowns: MutableList<Long> = mutableListOf()
         val linkDataLinks: MutableList<Long> = mutableListOf()
+        var throwOnLinkUp: Boolean = false
 
         override fun setTier(tier: MeshTier) {
             this.tier = tier
@@ -372,6 +425,7 @@ class MeshDriveConsumerTest {
 
         override fun linkUp(link: Long, initiator: Boolean) {
             linkUps += link
+            if (throwOnLinkUp) throw IllegalStateException("link admission failed")
         }
 
         override fun linkUp(link: Long, initiator: Boolean, quality: LinkQualityHint?) {
@@ -442,11 +496,15 @@ class MeshDriveConsumerTest {
     }
 
     private class FailingGatt : GattAdapter {
+        val closedLinks: MutableList<Long> = mutableListOf()
+
         override fun mtu(link: Long): Int = throw IllegalStateException("MTU unavailable")
 
         override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
 
-        override fun close(link: Long) = Unit
+        override fun close(link: Long) {
+            closedLinks += link
+        }
     }
 
     private class RecordingGatt : GattAdapter {

@@ -414,6 +414,14 @@ public class MeshDrive(
         advertisedBeacon = null
     }
 
+    private fun rollbackLinkAdmission(link: Long) {
+        pending.removeIf { it.link == link }
+        if (activeLinks.remove(link)) {
+            runCatching { node.linkDown(link) }
+        }
+        runCatching { requestPhysicalClose(link) }
+    }
+
     /**
      * Advance the node using the injected monotonic time and drain output.
      * Equal timestamps are allowed; backwards time is rejected before the node
@@ -489,6 +497,9 @@ public class MeshDrive(
         quality: LinkQualityHint? = null,
     ) {
         driveLoopOwner.check()
+        // Duplicate callbacks are idempotent.  Do not let a malformed second
+        // quality sample tear down an already-admitted physical link.
+        if (activeLinks.contains(link)) return
         if (quality != null && !quality.isValid()) {
             // Reject before activeLinks or the Rust session is touched.  The
             // physical callback must still be torn down even when validation
@@ -505,19 +516,25 @@ public class MeshDrive(
             runCatching { gatt.close(link) }
             return
         }
-        if (activeLinks.contains(link)) return
         if (activeLinks.size >= maxTrackedLinks) {
             latchOverload()
             runCatching { gatt.close(link) }
             return
         }
         if (!activeLinks.add(link)) return
-        if (quality == null) {
-            node.linkUp(link, initiator)
-        } else {
-            node.linkUp(link, initiator, quality)
+        try {
+            if (quality == null) {
+                node.linkUp(link, initiator)
+            } else {
+                node.linkUp(link, initiator, quality)
+            }
+            drain()
+        } catch (error: Throwable) {
+            // Admission is a transaction across the logical session and the
+            // physical GATT link.  Roll both back before propagating failure.
+            rollbackLinkAdmission(link)
+            throw error
         }
-        drain()
     }
 
     public fun onLinkData(link: Long, bytes: ByteArray) {

@@ -337,6 +337,11 @@ jobs:
   # only the final sanitizer-instrumented link step fails there).
   fuzz-build:
     runs-on: ubuntu-latest
+    # cargo-fuzz 0.13 has no --locked option of its own. Forward Cargo's
+    # lockfile enforcement through the standard CARGOFLAGS environment so
+    # every metadata/build invocation uses fuzz/Cargo.lock reproducibly.
+    env:
+      CARGOFLAGS: --locked
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -363,6 +368,10 @@ jobs:
   fuzz-run:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # Keep scheduled campaigns on the same locked fuzz dependency graph as
+    # the build gate; cargo-fuzz forwards CARGOFLAGS to its Cargo subprocess.
+    env:
+      CARGOFLAGS: --locked
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly

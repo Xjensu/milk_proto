@@ -18,6 +18,9 @@ The coordinator owns only deterministic host policy:
 - transport-close ordering and stale callback rejection;
 - fail-closed handling for sticky close/event queue saturation;
 - startup rollback and physical teardown requests.
+- transactional link admission: node-callback, MTU, and initial-drain
+  failures roll back logical state, pending frames, and the physical GATT
+  link before the error is propagated; duplicate callbacks are idempotent;
 - service-data admission only for the exact observed MMP service UUID;
   missing or mismatched UUID metadata is dropped before `MeshNode.onBeacon`.
 
