@@ -9,4 +9,8 @@ not yet implemented, not silently pretended to work.
 sans-IO core, same as `mmp-tal-btleplug` — `layer-check` only polices crates below
 `mmp-node`. GATT UUIDs are re-exported from `mmp-tal`'s single source of truth.
 
+Linux notifications use a 250 ms per-chunk writability deadline. A timed-out
+notification retires the link and returns `PeriphError::NotifyTimeout`, keeping
+a stalled BlueZ peer from blocking the host drive loop or shutdown path.
+
 See `docs/IMPLEMENTATION_HANDBOOK.md` §4.1 and `specification/09-transport-ble.md`.

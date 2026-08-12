@@ -79,6 +79,8 @@
 
 use core::fmt;
 #[cfg(any(target_os = "linux", test))]
+use core::future::Future;
+#[cfg(any(target_os = "linux", test))]
 use tokio::sync::mpsc;
 
 pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
@@ -160,6 +162,10 @@ pub enum PeriphError {
     /// The peripheral has entered terminal shutdown and cannot advertise
     /// again; construct a new role to restart the backend.
     ShuttingDown,
+    /// A BlueZ notification socket did not become writable within the
+    /// transport-local per-chunk deadline. The link is retired before this
+    /// error is returned so a stalled peer cannot pin the host drive loop.
+    NotifyTimeout,
     /// This build's OS has no peripheral backend (Windows/macOS stubs); the
     /// payload says what implementing one would take.
     Unsupported(&'static str),
@@ -177,11 +183,37 @@ impl fmt::Display for PeriphError {
                 write!(f, "invalid beacon length: expected {expected} bytes, got {actual}")
             }
             PeriphError::ShuttingDown => write!(f, "peripheral is shutting down"),
+            PeriphError::NotifyTimeout => write!(f, "notification timed out"),
             PeriphError::Unsupported(what) => write!(f, "peripheral role unsupported: {what}"),
             #[cfg(target_os = "linux")]
             PeriphError::Bluer(e) => write!(f, "bluer error: {e}"),
         }
     }
+}
+
+/// Maximum time a single notification chunk may wait for BlueZ socket
+/// writability. This is a transport-local bound; it is not a protocol timer.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) const NOTIFY_CHUNK_TIMEOUT_MS: u64 = 250;
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NotifyWaitTimeout;
+
+/// Apply the bounded transport deadline to one notification future. Keeping
+/// this small helper outside the BlueZ module lets the timeout contract be
+/// tested without a live adapter.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) async fn bounded_notify<F, E>(future: F) -> Result<Result<(), E>, NotifyWaitTimeout>
+where
+    F: Future<Output = Result<(), E>>,
+{
+    tokio::time::timeout(
+        tokio::time::Duration::from_millis(NOTIFY_CHUNK_TIMEOUT_MS),
+        future,
+    )
+    .await
+    .map_err(|_| NotifyWaitTimeout)
 }
 
 /// Validate the fixed-size MMP/1 beacon before handing it to an OS advertiser.
@@ -316,5 +348,27 @@ mod tests {
     fn shutdown_fence_rejects_advertisement_admission() {
         assert!(ensure_not_shutting_down(false).is_ok());
         assert!(matches!(ensure_not_shutting_down(true), Err(PeriphError::ShuttingDown)));
+    }
+
+    #[test]
+    fn notify_timeout_is_explicit_and_bounded() {
+        assert_eq!(NOTIFY_CHUNK_TIMEOUT_MS, 250);
+        assert_eq!(
+            PeriphError::NotifyTimeout.to_string(),
+            "notification timed out"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_notify_times_out_without_a_live_adapter() {
+        let result = bounded_notify(async {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                NOTIFY_CHUNK_TIMEOUT_MS * 4,
+            ))
+            .await;
+            Ok::<(), ()>(())
+        })
+        .await;
+        assert_eq!(result, Err(NotifyWaitTimeout));
     }
 }

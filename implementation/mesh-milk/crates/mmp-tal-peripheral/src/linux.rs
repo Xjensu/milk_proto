@@ -51,9 +51,8 @@ use tokio::time::{timeout, Duration};
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
 use crate::{
-    ensure_not_shutting_down, event_channel, mint_link_id, validate_beacon, LinkId, LinkQuality,
-    PeriphError, TalEvent,
-    DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
+    bounded_notify, ensure_not_shutting_down, event_channel, mint_link_id, validate_beacon, LinkId,
+    LinkQuality, NotifyWaitTimeout, PeriphError, TalEvent, DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
 use crate::lifecycle::{
@@ -319,13 +318,22 @@ impl PeripheralRole {
             if !self.links.lock().await.lifecycle.is_current(token) {
                 return Err(PeriphError::UnknownLink);
             }
-            if let Err(e) = writer.send(chunk).await {
-                drop(writer);
-                drop(_write_guard);
-                link_down_if_current(&self.links, &self.event_gate, &self.tx, token).await;
-                // send() speaks io::Error (it is a socket write); bluer's
-                // Error has a lossless From impl for it.
-                return Err(PeriphError::Bluer(e.into()));
+            match bounded_notify(writer.send(chunk)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    drop(writer);
+                    drop(_write_guard);
+                    link_down_if_current(&self.links, &self.event_gate, &self.tx, token).await;
+                    // send() speaks io::Error (it is a socket write); bluer's
+                    // Error has a lossless From impl for it.
+                    return Err(PeriphError::Bluer(e.into()));
+                }
+                Err(NotifyWaitTimeout) => {
+                    drop(writer);
+                    drop(_write_guard);
+                    link_down_if_current(&self.links, &self.event_gate, &self.tx, token).await;
+                    return Err(PeriphError::NotifyTimeout);
+                }
             }
         }
         Ok(())
