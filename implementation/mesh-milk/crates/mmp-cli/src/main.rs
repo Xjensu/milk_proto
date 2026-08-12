@@ -1053,6 +1053,22 @@ fn prime_node_clock<C: ClockSource>(node: &mut Node, clock: &mut C) {
     node.tick(clock.now_ms());
 }
 
+/// Finalize host state when the async runtime cannot be created.  `send`
+/// queues a message before starting the runtime, so this path can carry new
+/// ratchet/secret state even though no BLE drive loop ever starts.  Keep the
+/// same fail-closed persistence boundary as every later loop exit.
+fn runtime_start_failure(
+    subcmd: &str,
+    error: &dyn std::fmt::Display,
+    shared: Option<&Arc<Mutex<SnapshotStore>>>,
+    node: &mut Node,
+    vault: &mut Option<HostVault>,
+) -> ExitCode {
+    eprintln!("mmp-cli {subcmd}: failed to start async runtime: {error}");
+    let _ = finish(shared, node, vault, 0, 0);
+    ExitCode::from(2)
+}
+
 fn cmd_connect(args: &[String]) -> ExitCode {
     if let Some(result) = subcommand_help("connect", args) {
         return result;
@@ -1093,10 +1109,7 @@ fn cmd_connect(args: &[String]) -> ExitCode {
 
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("mmp-cli connect: failed to start async runtime: {e}");
-            return ExitCode::from(2);
-        }
+        Err(e) => return runtime_start_failure("connect", &e, shared.as_ref(), &mut node, &mut vault),
     };
     rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut vault, &mut clock, None))
 }
@@ -1158,10 +1171,7 @@ fn cmd_send(args: &[String]) -> ExitCode {
 
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("mmp-cli send: failed to start async runtime: {e}");
-            return ExitCode::from(2);
-        }
+        Err(e) => return runtime_start_failure("send", &e, shared.as_ref(), &mut node, &mut vault),
     };
     rt.block_on(drive_loop(&mut node, shared.as_ref(), &mut vault, &mut clock, Some(msg_id)))
 }
@@ -1206,10 +1216,7 @@ fn cmd_listen(args: &[String]) -> ExitCode {
 
     let rt = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
-        Err(e) => {
-            eprintln!("mmp-cli listen: failed to start async runtime: {e}");
-            return ExitCode::from(2);
-        }
+        Err(e) => return runtime_start_failure("listen", &e, shared.as_ref(), &mut node, &mut vault),
     };
     rt.block_on(drive_loop_peripheral(&mut node, shared.as_ref(), &mut vault, &mut clock))
 }
@@ -1920,6 +1927,24 @@ mod tests {
         );
         assert!(!path.exists());
         assert!(!missing_parent.exists());
+    }
+
+    #[test]
+    fn runtime_start_failure_persists_before_fail_closed_exit() {
+        let path = temp_snapshot_path();
+        let shared = Arc::new(Mutex::new(SnapshotStore::open(&path)));
+        let mut node = Node::new([0x42; 32], Box::new(MemStore::new()), Tier::Anchor);
+        let mut vault = None;
+        let error = std::io::Error::other("test runtime failure");
+
+        assert_eq!(
+            runtime_start_failure("send", &error, Some(&shared), &mut node, &mut vault),
+            ExitCode::from(2)
+        );
+        assert!(path.exists(), "runtime startup failure must still finalize state");
+        assert!(!SnapshotStore::open(&path).load_rejected());
+
+        remove_snapshot(&path);
     }
 
     #[test]
