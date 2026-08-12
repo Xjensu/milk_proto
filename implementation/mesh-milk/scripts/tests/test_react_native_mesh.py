@@ -331,6 +331,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "ownClaims",
             "ingestClaim",
             "setNickname",
+            "nicknameOf",
             "revokeIdentity",
             "tryRevokeIdentity",
             "revokeIdentityWithSuccessor",
@@ -349,6 +350,9 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("if (!this.started)", self.beta_session)
         self.assertIn("startPromise", self.beta_session)
         self.assertIn("if (this.startPromise !== null)", self.beta_session)
+        self.assertIn("nicknameOf(peer: NodeIdHex): Promise<string | null>", self.beta_session)
+        self.assertIn("return this.client.nicknameOf(peer);", self.beta_session)
+        self.assertIn("locally verified nickname; null does not indicate reachability", self.beta_session)
         index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
         self.assertIn("BetaTestSessionError", index)
 

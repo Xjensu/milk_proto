@@ -446,6 +446,11 @@ export class BetaTestSession {
     return this.client.setNickname(name, seq);
   }
 
+  /** Return a locally verified nickname; null does not indicate reachability. */
+  nicknameOf(peer: NodeIdHex): Promise<string | null> {
+    return this.client.nicknameOf(peer);
+  }
+
   revokeIdentity(reason: number): Promise<string> {
     this.requireStarted();
     return this.client.revokeIdentity(reason);
