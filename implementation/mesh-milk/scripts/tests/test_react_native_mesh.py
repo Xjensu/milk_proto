@@ -121,11 +121,11 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "scope: ScopeIdHex",
             "annType: number",
             "notAfter: number",
-            "text: string",
+            "text: Base64Value",
             "from: NodeIdHex",
             "official: boolean",
             "effectivePriority: number",
-            "scopeNameHint: string | null",
+            "scopeNameHint: Base64Value | null",
         ):
             self.assertIn(field, self.client)
         for field in (

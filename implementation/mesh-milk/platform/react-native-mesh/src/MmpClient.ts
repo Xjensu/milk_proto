@@ -196,11 +196,11 @@ export type MmpEvent =
       scope: ScopeIdHex;
       annType: number;
       notAfter: number;
-      text: string;
+      text: Base64Value;
       from: NodeIdHex;
       official: boolean;
       effectivePriority: number;
-      scopeNameHint: string | null;
+      scopeNameHint: Base64Value | null;
     }
   | { type: 'fileOffered'; conv: MsgIdHex; from: NodeIdHex; sharer: NodeIdHex; entries: FileOffer[] }
   | { type: 'fileReady'; root: FileRootHex; path: string }

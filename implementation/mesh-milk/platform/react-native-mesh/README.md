@@ -109,9 +109,12 @@ encoding.
 
 Announcements arrive through `client.onEvent` as the secret-free
 `announcement` event. Its fields are `id`, `scope`, `annType`, `notAfter`,
-`text`, `from`, `official`, `effectivePriority`, and `scopeNameHint`; use
-`effectivePriority` for notification prominence and treat `scopeNameHint` as a
-display-only hint, never as an authority or admission decision.
+`text`, `from`, `official`, `effectivePriority`, and `scopeNameHint`. The
+variable byte fields `text` and `scopeNameHint` are base64 strings at this
+boundary; decode them explicitly as UTF-8 only when the application has chosen
+that presentation. Use `effectivePriority` for notification prominence and
+treat `scopeNameHint` as a display-only hint, never as an authority or
+admission decision.
 
 ## Installation and native registration
 
