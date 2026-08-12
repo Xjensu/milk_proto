@@ -1,4 +1,42 @@
-use mmp_ffi::{FfiError, FfiTier, MmpNode};
+use std::sync::Arc;
+
+use mmp_ffi::{FfiError, FfiEvent, FfiTier, MmpNode};
+
+fn introduce(a: &MmpNode, b: &MmpNode) {
+    for claim in a.own_claims() {
+        b.ingest_claim(claim, true).expect("well-formed claim");
+    }
+    for claim in b.own_claims() {
+        a.ingest_claim(claim, true).expect("well-formed claim");
+    }
+}
+
+fn drain(node: &MmpNode) -> Vec<FfiEvent> {
+    std::iter::from_fn(|| node.poll_event()).collect()
+}
+
+fn contact(a: &Arc<MmpNode>, b: &Arc<MmpNode>, link: u64, now: u64) {
+    a.tick(now);
+    b.tick(now);
+    a.link_up(link, true);
+    b.link_up(link, false);
+    for _ in 0..300 {
+        let mut quiet = true;
+        while let Some(frame) = a.poll_send() {
+            quiet = false;
+            b.link_data(frame.link, frame.bytes);
+        }
+        while let Some(frame) = b.poll_send() {
+            quiet = false;
+            a.link_data(frame.link, frame.bytes);
+        }
+        if quiet {
+            break;
+        }
+    }
+    a.link_down(link);
+    b.link_down(link);
+}
 
 #[test]
 fn group_application_api_rejects_reserved_tags_and_accepts_custom_tags() {
@@ -16,4 +54,31 @@ fn group_application_api_rejects_reserved_tags_and_accepts_custom_tags() {
     assert!(node
         .group_send_body(gid, 0x42, b"beta payload".to_vec())
         .is_ok());
+}
+
+#[test]
+fn group_application_event_preserves_type_tag_at_ffi_boundary() {
+    let alice = MmpNode::new(vec![0x62; 32], FfiTier::Relay, None).expect("valid Alice");
+    let bob = MmpNode::new(vec![0x63; 32], FfiTier::Relay, None).expect("valid Bob");
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    let gid = alice.create_group();
+    alice.group_invite(gid.clone(), bob.node_id()).expect("group invite");
+    contact(&alice, &bob, 90, 900_000);
+    drain(&alice);
+    drain(&bob);
+
+    let payload = b"group beta payload".to_vec();
+    alice
+        .group_send_body(gid.clone(), 0x42, payload.clone())
+        .expect("custom group body");
+    contact(&alice, &bob, 91, 910_000);
+
+    assert!(drain(&bob).into_iter().any(|event| matches!(
+        event,
+        FfiEvent::GroupMessage { gid: event_gid, apptype, body, .. }
+            if event_gid == gid && apptype == 0x42 && body == payload
+    )));
 }
