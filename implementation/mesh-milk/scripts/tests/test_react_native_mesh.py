@@ -92,6 +92,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "groupMessage",
             "groupEpochChanged",
             "tierChanged",
+            "announcement",
             "fileOffered",
             "fileReady",
             "fileFailed",
@@ -115,6 +116,18 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("diagnosticsEnabled: boolean", self.client)
         self.assertIn("lastTickMs: number", self.client)
         self.assertIn("export interface NodeMetrics", self.client)
+        for field in (
+            "id: MsgIdHex",
+            "scope: ScopeIdHex",
+            "annType: number",
+            "notAfter: number",
+            "text: string",
+            "from: NodeIdHex",
+            "official: boolean",
+            "effectivePriority: number",
+            "scopeNameHint: string | null",
+        ):
+            self.assertIn(field, self.client)
         for field in (
             "storeLen",
             "closeActionsDropped",

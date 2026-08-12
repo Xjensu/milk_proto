@@ -107,6 +107,12 @@ peer/session identifiers, provider handles, wire bytes, or key material. The
 native implementation remains the authority for their values and numeric
 encoding.
 
+Announcements arrive through `client.onEvent` as the secret-free
+`announcement` event. Its fields are `id`, `scope`, `annType`, `notAfter`,
+`text`, `from`, `official`, `effectivePriority`, and `scopeNameHint`; use
+`effectivePriority` for notification prominence and treat `scopeNameHint` as a
+display-only hint, never as an authority or admission decision.
+
 ## Installation and native registration
 
 The package has no runtime dependencies other than the host application's `react` and

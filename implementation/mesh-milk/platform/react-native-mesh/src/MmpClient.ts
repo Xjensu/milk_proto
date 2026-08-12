@@ -190,6 +190,18 @@ export type MmpEvent =
   | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; body: string }
   | { type: 'groupEpochChanged'; gid: GroupIdHex; epoch: number }
   | { type: 'tierChanged'; tier: Tier }
+  | {
+      type: 'announcement';
+      id: MsgIdHex;
+      scope: ScopeIdHex;
+      annType: number;
+      notAfter: number;
+      text: string;
+      from: NodeIdHex;
+      official: boolean;
+      effectivePriority: number;
+      scopeNameHint: string | null;
+    }
   | { type: 'fileOffered'; conv: MsgIdHex; from: NodeIdHex; sharer: NodeIdHex; entries: FileOffer[] }
   | { type: 'fileReady'; root: FileRootHex; path: string }
   | { type: 'fileFailed'; root: FileRootHex; reason: FileFailReason };
