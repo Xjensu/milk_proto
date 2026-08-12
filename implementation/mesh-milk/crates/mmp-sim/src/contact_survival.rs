@@ -442,4 +442,45 @@ mod tests {
             Err(SurvivalError::TooManyCandidates)
         );
     }
+
+    #[test]
+    fn accepted_numeric_boundaries_remain_finite() {
+        let observation = ContactObservation {
+            distance_m: MAX_DISTANCE_M,
+            radial_velocity_mps: MAX_DISTANCE_M,
+            distance_stddev_m: MAX_DISTANCE_M,
+            packet_error_rate: 1.0,
+        };
+        let coefficients = HazardCoefficients {
+            intercept: MAX_ABS_COEFFICIENT,
+            distance: MAX_ABS_COEFFICIENT,
+            radial_velocity: MAX_ABS_COEFFICIENT,
+            distance_stddev: MAX_ABS_COEFFICIENT,
+            packet_error: MAX_ABS_COEFFICIENT,
+        };
+
+        let hazard = stable_hazard_score(observation, coefficients).unwrap();
+        assert!(hazard.is_finite());
+
+        let survival = survival_probability(observation, coefficients, MAX_HORIZON_S).unwrap();
+        assert!(survival.is_finite());
+        assert!((0.0..=1.0).contains(&survival));
+
+        let decision = rank_transfer_candidates(
+            observation,
+            coefficients,
+            &[TransferCandidate {
+                carrier_id: 1,
+                value: MAX_UTILITY,
+                bytes: MAX_TRANSFER_BYTES,
+                goodput_bps: MAX_GOODPUT_BPS,
+                setup_cost: 1.0,
+                per_byte_cost: 0.0,
+            }],
+        )
+        .unwrap();
+        assert!(decision[0].required_seconds.is_finite());
+        assert!(decision[0].modeled_cost.is_finite());
+        assert!(decision[0].score.is_finite());
+    }
 }

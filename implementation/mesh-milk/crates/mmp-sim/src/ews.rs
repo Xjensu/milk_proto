@@ -315,6 +315,40 @@ mod tests {
     }
 
     #[test]
+    fn ews_budget_rejection_does_not_stop_later_affordable_candidates() {
+        // The highest-ranked carrier is individually unaffordable. A budget
+        // rejection must not consume the budget or terminate the scan: a
+        // later, lower-ranked carrier may still fit and improve delivery.
+        let plan = evaluate(
+            &[
+                EwsCandidate { carrier_id: 7, delivery_probability: 0.9, cost: 2.0 },
+                EwsCandidate { carrier_id: 8, delivery_probability: 0.4, cost: 1.0 },
+            ],
+            EwsLimits { cost_budget: 1.0, max_copies: 2, min_marginal_gain_per_cost: 0.0 },
+        )
+        .unwrap();
+
+        assert_eq!(plan.selected_candidates, 1);
+        assert_eq!(plan.total_cost, 1.0);
+        assert!((plan.delivery_probability - 0.4).abs() < 1e-12);
+
+        let rejected = plan.decisions[0];
+        assert_eq!(rejected.carrier_id, 7);
+        assert!(!rejected.accepted);
+        assert_eq!(rejected.rejection, Some(EwsRejectionReason::Budget));
+        assert_eq!(rejected.cumulative_delivery_probability, 0.0);
+        assert_eq!(rejected.cumulative_cost, 0.0);
+
+        let accepted = plan.decisions[1];
+        assert_eq!(accepted.carrier_id, 8);
+        assert!(accepted.accepted);
+        assert_eq!(accepted.rejection, None);
+        assert!((accepted.marginal_delivery_gain - 0.4).abs() < 1e-12);
+        assert!((accepted.cumulative_delivery_probability - 0.4).abs() < 1e-12);
+        assert_eq!(accepted.cumulative_cost, 1.0);
+    }
+
+    #[test]
     fn ews_rejects_invalid_inputs_and_derived_overflow() {
         let limits = EwsLimits { cost_budget: 1.0, max_copies: 1, min_marginal_gain_per_cost: 0.0 };
         assert_eq!(
