@@ -2028,7 +2028,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn cli_vault_bootstrap_restores_before_host_clock() {
+    fn cli_vault_save_on_exit_round_trips_before_host_clock() {
         let path = env::temp_dir().join(format!("mmp-cli-vault-{}.bin", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let path_string = path.to_string_lossy().into_owned();
@@ -2037,7 +2037,10 @@ mod tests {
         let (mut source, _) = build_node(seed, None).expect("in-memory node construction");
         let mut vault = open_host_vault(Some(&path_string)).unwrap();
         restore_host_vault(&mut source, &mut vault).unwrap();
-        source.save_secret_state_to_windows_vault(vault.as_mut().unwrap()).unwrap();
+        assert!(
+            finish(None, &mut source, &mut vault, 0, 0),
+            "CLI exit must persist the Windows vault before reporting success"
+        );
         drop(vault);
 
         let (mut restored, _) = build_node(seed, None).expect("in-memory node construction");
