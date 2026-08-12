@@ -2,6 +2,7 @@ export {
   MmpClient,
   MmpNativeModuleError,
   createMmpClient,
+  mapNativeBetaSnapshot,
   mapNativeCapability,
   mapNativeFileFailReason,
   mapNativeDeliveryState,
@@ -10,6 +11,7 @@ export {
 } from './MmpClient';
 export type {
   Base64Value,
+  BetaSnapshot,
   BlobState,
   Capability,
   Capabilities,
@@ -29,6 +31,7 @@ export type {
   NativeDeliveryState,
   NativeCapability,
   NativeCapabilities,
+  NativeBetaSnapshot,
   NodeMetrics,
   NodeIdHex,
   NodeStatus,

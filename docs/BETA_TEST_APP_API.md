@@ -26,6 +26,23 @@ camel-case values (`directMessaging`, `groupMessaging`, `fileTransfer`,
 is exhaustive and fails closed on an unknown value, so bridge drift cannot be
 silently rendered as a supported feature.
 
+## Versioned native snapshot
+
+Native hosts that need one machine-readable envelope can call
+`mmp-ffi::MmpNode::beta_snapshot()`. It contains the same `status`, `metrics`,
+and `capabilities` records plus `schema_version: 1`. The version belongs to
+this host-facing report and is independent of the MMP/1 wire protocol. The
+record remains secret-free and has no peer/session identifiers, raw transport
+bytes, provider handles, key material, or persistence paths. Hosts should
+branch on `schema_version` and fail closed if they receive a value they do not
+understand.
+
+The React Native facade exposes the same envelope as `betaSnapshot()` after
+native module registration. It rejects unknown `schemaVersion` values and
+normalizes capability spellings explicitly; the existing bounded
+`BetaTestSession.report()` remains useful when a local event-history window is
+also required.
+
 ## Suggested beta UI use
 
 Call `capabilities()` after constructing the native node and before enabling

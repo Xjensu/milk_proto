@@ -35,6 +35,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "status",
             "metrics",
             "capabilities",
+            "betaSnapshot",
             "setWallClock",
             "pinAuthorityRoot",
             "subscribeScope",
@@ -169,6 +170,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "status",
             "metrics",
             "capabilities",
+            "betaSnapshot",
             "setWallClock",
             "pinAuthorityRoot",
             "subscribeScope",
@@ -212,10 +214,16 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("status(): Promise<NodeStatus>", self.client)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.client)
         self.assertIn("capabilities(): Promise<Capabilities>", self.client)
+        self.assertIn("betaSnapshot(): Promise<BetaSnapshot>", self.client)
+        self.assertIn("betaSnapshot(): Promise<BetaSnapshot>", self.turbo)
+        self.assertIn("schemaVersion: number", self.client)
+        self.assertIn("schemaVersion: number", self.turbo)
+        self.assertIn("Unknown native beta snapshot schema", self.client)
         self.assertIn("status(): Promise<NodeStatus>", self.turbo)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.turbo)
         self.assertIn("capabilities(): Promise<Capabilities>", self.turbo)
         self.assertIn("mapNativeCapability", self.client)
+        self.assertIn("mapNativeBetaSnapshot", self.client)
         self.assertIn("Unknown native capability", self.client)
         self.assertNotIn("from './MmpClient'", self.turbo)
         self.assertIn("sendFile(peer: string, name: string, mime: string, dataB64: string)", self.turbo)
@@ -240,6 +248,9 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
         self.assertIn("NodeMetrics", index)
         self.assertIn("NodeStatus", index)
+        self.assertIn("BetaSnapshot", index)
+        self.assertIn("NativeBetaSnapshot", index)
+        self.assertIn("mapNativeBetaSnapshot", index)
         lowered = self.client.lower()
         for forbidden in ("providerhandle", "peerid", "sessionid", "wirebytes"):
             self.assertNotIn(forbidden, lowered)
@@ -276,6 +287,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         for method in (
             "status",
             "metrics",
+            "betaSnapshot",
             "setTier",
             "capabilities",
             "sendText",

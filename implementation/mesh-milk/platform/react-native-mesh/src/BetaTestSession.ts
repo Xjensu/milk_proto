@@ -1,5 +1,6 @@
 import type {
   Base64Value,
+  BetaSnapshot,
   Capabilities,
   DeliveryState,
   FileProgress,
@@ -159,6 +160,11 @@ export class BetaTestSession {
   /** Return the fail-closed, normalized native capability report. */
   capabilities(): Promise<Capabilities> {
     return this.client.capabilities();
+  }
+
+  /** Return the versioned secret-free native snapshot for a beta test step. */
+  betaSnapshot(): Promise<BetaSnapshot> {
+    return this.client.betaSnapshot();
   }
 
   /** Send a direct text message through the native MMP/1 implementation. */

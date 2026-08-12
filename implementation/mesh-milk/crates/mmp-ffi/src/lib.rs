@@ -274,6 +274,25 @@ pub struct FfiMetrics {
     pub diagnostic_drops: u64,
 }
 
+/// Versioned, secret-free snapshot for beta-test applications.
+///
+/// The component records intentionally remain available as independent calls;
+/// this additive record gives hosts one stable machine-readable envelope for
+/// local reports. `schema_version` is incremented only when the record shape
+/// or field semantics change. It describes this API report, not the MMP/1
+/// wire protocol.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiBetaSnapshot {
+    /// Version of this host-facing snapshot record.
+    pub schema_version: u16,
+    /// Secret-free lifecycle and capability state.
+    pub status: FfiNodeStatus,
+    /// Secret-free local operational counters.
+    pub metrics: FfiMetrics,
+    /// Protocol-core capabilities available through this build.
+    pub capabilities: FfiCapabilities,
+}
+
 /// Host-provided link-quality hints for transfer scheduling. These values are
 /// local transport metadata; they are never serialized into MMP/1 frames.
 #[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
@@ -1445,6 +1464,22 @@ impl MmpNode {
             diagnostic_records,
             diagnostic_clamps,
             diagnostic_drops,
+        }
+    }
+
+    /// Return one versioned, secret-free report for beta-test applications.
+    ///
+    /// This is a convenience envelope around [`Self::status`],
+    /// [`Self::metrics`], and [`Self::capabilities`]. It contains no peer or
+    /// session identifiers, wire bytes, provider handles, key material, or
+    /// persistence paths. Hosts that need independently refreshed values may
+    /// continue to call the component methods directly.
+    pub fn beta_snapshot(&self) -> FfiBetaSnapshot {
+        FfiBetaSnapshot {
+            schema_version: 1,
+            status: self.status(),
+            metrics: self.metrics(),
+            capabilities: self.capabilities(),
         }
     }
 

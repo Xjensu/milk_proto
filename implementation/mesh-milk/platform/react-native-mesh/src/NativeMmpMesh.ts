@@ -25,6 +25,13 @@ type Capabilities = {
   persistentStore: boolean;
 };
 
+type BetaSnapshot = {
+  schemaVersion: number;
+  status: NodeStatus;
+  metrics: NodeMetrics;
+  capabilities: Capabilities;
+};
+
 type FileSend = {
   messageId: string;
   root: string;
@@ -46,6 +53,7 @@ export interface Spec extends TurboModule {
   status(): Promise<NodeStatus>;
   metrics(): Promise<NodeMetrics>;
   capabilities(): Promise<Capabilities>;
+  betaSnapshot(): Promise<BetaSnapshot>;
   setWallClock(unixS: number): Promise<void>;
   pinAuthorityRoot(scope: string, issuerPublicKeyB64: string): Promise<void>;
   subscribeScope(scopeName: string): Promise<string>;

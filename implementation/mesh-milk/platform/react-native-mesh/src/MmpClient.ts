@@ -72,6 +72,43 @@ export interface NativeCapabilities {
   persistentStore: boolean;
 }
 
+/** Native versioned envelope for a secret-free beta-test report. */
+export interface NativeBetaSnapshot {
+  schemaVersion: number;
+  status: NodeStatus;
+  metrics: NodeMetrics;
+  capabilities: NativeCapabilities;
+}
+
+/** Versioned, normalized beta-test report exposed to applications. */
+export interface BetaSnapshot {
+  schemaVersion: 1;
+  status: NodeStatus;
+  metrics: NodeMetrics;
+  capabilities: Capabilities;
+}
+
+/**
+ * Normalize the native beta report without accepting an unknown report
+ * version.  The schema version is an API compatibility fence, not a wire
+ * protocol version; callers must fail closed until they understand a newer
+ * native envelope.
+ */
+export function mapNativeBetaSnapshot(value: NativeBetaSnapshot): BetaSnapshot {
+  if (value.schemaVersion !== 1) {
+    throw new MmpNativeModuleError(`Unknown native beta snapshot schema: ${String(value.schemaVersion)}`);
+  }
+  return {
+    schemaVersion: 1,
+    status: value.status,
+    metrics: value.metrics,
+    capabilities: {
+      capabilities: value.capabilities.capabilities.map((capability) => mapNativeCapability(capability)),
+      persistentStore: value.capabilities.persistentStore,
+    },
+  };
+}
+
 export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 
 /**
@@ -216,6 +253,7 @@ export interface MmpMeshNative {
   status(): Promise<NodeStatus>;
   metrics(): Promise<NodeMetrics>;
   capabilities(): Promise<NativeCapabilities>;
+  betaSnapshot(): Promise<NativeBetaSnapshot>;
 
   // Authority, clock, and scope controls. These values are validated by the
   // native FFI adapter; opaque key/certificate bytes use base64.
@@ -300,6 +338,7 @@ const REQUIRED_NATIVE_METHODS = [
   'status',
   'metrics',
   'capabilities',
+  'betaSnapshot',
   'setWallClock',
   'pinAuthorityRoot',
   'subscribeScope',
@@ -430,6 +469,11 @@ export class MmpClient {
       capabilities: report.capabilities.map((value) => mapNativeCapability(value)),
       persistentStore: report.persistentStore,
     }));
+  }
+
+  /** Return the native versioned secret-free report with an explicit schema fence. */
+  betaSnapshot(): Promise<BetaSnapshot> {
+    return this.native.betaSnapshot().then((value) => mapNativeBetaSnapshot(value));
   }
 
   setWallClock(unixS: number): Promise<void> {
