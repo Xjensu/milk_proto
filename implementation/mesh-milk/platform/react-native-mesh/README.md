@@ -75,8 +75,9 @@ session, accepts a timeout from 1 ms through 60 s, and rejects with
 removed on both success and timeout; it never exposes raw transport data.
 
 `BetaTestSession` is also the application-facing composition facade for the
-existing client surface. Once started, the same session exposes direct text,
-group (including application-typed bodies via `groupSendBody`), explicit-pull file, authority/scope, friendship, identity/claim,
+existing client surface. Once started, the same session exposes direct text and
+application-typed direct bodies (`sendBody`), group (including application-typed
+bodies via `groupSendBody`), explicit-pull file, authority/scope, friendship, identity/claim,
 diagnostics, persistence, and runtime tier methods (`setTier`, `sendText`,
 `createGroup`, `sendFile`,
 `fetchFile`, `subscribeScope`, `pinAuthorityRoot`, `requestFriendship`, and the

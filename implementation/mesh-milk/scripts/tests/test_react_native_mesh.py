@@ -54,6 +54,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "requestFriendship",
             "allowFriendshipFrom",
             "sendText",
+            "sendBody",
             "messageState",
             "sendFile",
             "fetchFile",
@@ -182,6 +183,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "nodeId",
             "publicKey",
             "sendText",
+            "sendBody",
             "messageState",
             "sendFile",
             "fetchFile",
@@ -286,6 +288,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("JSON.stringify(await this.report())", self.beta_session)
         self.assertIn("this.client.flush()", self.beta_session)
         self.assertNotIn("auto-upload", self.beta_session.lower())
+        self.assertIn("application-typed direct bodies (`sendBody`)", self.readme)
 
     def test_beta_session_facade_covers_existing_app_operations(self) -> None:
         for method in (
@@ -295,6 +298,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "setTier",
             "capabilities",
             "sendText",
+            "sendBody",
             "messageState",
             "sendFile",
             "fetchFile",
