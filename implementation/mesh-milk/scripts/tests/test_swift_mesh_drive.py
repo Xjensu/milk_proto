@@ -4,6 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 SOURCE = ROOT / "platform" / "swift-mesh-drive" / "Sources" / "MeshDrive.swift"
+SHELL_SOURCE = ROOT / "platform" / "swift-mesh-drive" / "Sources" / "MeshRadioShell.swift"
 README = ROOT / "platform" / "swift-mesh-drive" / "README.md"
 PACKAGE = ROOT / "platform" / "swift-mesh-drive" / "Package.swift"
 CONSUMER_TESTS = ROOT / "platform" / "swift-mesh-drive" / "Tests" / "MeshDriveTests" / "MeshDriveConsumerTests.swift"
@@ -13,6 +14,7 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
+        cls.shell_source = SHELL_SOURCE.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
         cls.package = PACKAGE.read_text(encoding="utf-8")
         cls.consumer_tests = CONSUMER_TESTS.read_text(encoding="utf-8")
@@ -68,6 +70,28 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
             self.assertIn(bound, self.source)
         for test in ("testDutyCycleDefaultsMatchMmpBaselineAndApplyOnceBeforeRadioStart", "testDutyCycleAcceptsValidCandidate", "testDutyCycleRejectsInvalidValuesBeforeRadioStart"):
             self.assertIn(test, self.consumer_tests)
+
+    def test_persistence_flush_is_explicit_host_owned_and_forwarded_by_shell(self) -> None:
+        for symbol in ("PersistenceSink", "NoopPersistenceSink", "flushPersistence", "MmpNode.flush()"):
+            self.assertIn(symbol, self.source)
+        drive_start = self.source.index("public final class MeshDrive")
+        constructor_start = self.source.index("public init(", drive_start)
+        constructor = self.source[constructor_start:self.source.index("    ) {", constructor_start)]
+        self.assertIn("persistenceSink: PersistenceSink = NoopPersistenceSink()", constructor)
+        method_start = self.source.index("public func flushPersistence()")
+        method_end = self.source.index("    public func pump()", method_start)
+        method = self.source[method_start:method_end]
+        self.assertIn("try persistenceSink.flushPersistence()", method)
+        stop_start = self.source.index("public func stop()")
+        stop_end = self.source.index("    public func flushPersistence()", stop_start)
+        self.assertNotIn("flushPersistence", self.source[stop_start:stop_end])
+        shell_start = self.shell_source.index("public func flushPersistence()")
+        shell_method = self.shell_source[shell_start:self.shell_source.index("    ///", shell_start)]
+        self.assertIn("try drive.flushPersistence()", shell_method)
+        self.assertIn("Keychain", self.readme)
+        self.assertIn("durability", self.readme)
+        self.assertIn("in-memory no-op", self.readme)
+        self.assertIn("flushPersistence", self.consumer_tests)
 
     def test_startup_and_monotonic_guards_are_fail_closed(self) -> None:
         self.assertIn("try requireMonotonic(nowMs)", self.source)

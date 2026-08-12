@@ -149,6 +149,20 @@ public struct NoopDutyCycleSink: DutyCycleSink {
     public func applyDutyCycle(_ request: MeshDutyCycleRequest) throws {}
 }
 
+/// Host-owned persistence boundary for the existing mmp-ffi snapshot store.
+/// The coordinator never invokes this callback automatically and never sees
+/// keys or snapshot bytes. A native adapter should wrap `MmpNode.flush()` and
+/// call `MeshDrive.flushPersistence()` at an explicit lifecycle boundary.
+public protocol PersistenceSink {
+    func flushPersistence() throws
+}
+
+public struct NoopPersistenceSink: PersistenceSink {
+    public init() {}
+
+    public func flushPersistence() throws {}
+}
+
 public protocol MeshNode: AnyObject {
     func setTier(_ tier: MeshTier)
     func beacon(nowMs: UInt64) -> [UInt8]
@@ -214,6 +228,7 @@ public final class MeshDrive {
     private let gatt: GattAdapter
     private let dutyCycleRequest: MeshDutyCycleRequest
     private let dutyCycleSink: DutyCycleSink
+    private let persistenceSink: PersistenceSink
     private let eventSink: (Any) -> Void
     private var running = false
     private var relayCapable: Bool
@@ -236,7 +251,8 @@ public final class MeshDrive {
         foregroundRelayCapable: Bool,
         eventSink: @escaping (Any) -> Void = { _ in },
         dutyCycleRequest: MeshDutyCycleRequest = MeshDutyCycleRequest(),
-        dutyCycleSink: DutyCycleSink = NoopDutyCycleSink()
+        dutyCycleSink: DutyCycleSink = NoopDutyCycleSink(),
+        persistenceSink: PersistenceSink = NoopPersistenceSink()
     ) {
         self.node = node
         self.clock = clock
@@ -245,6 +261,7 @@ public final class MeshDrive {
         self.gatt = gatt
         self.dutyCycleRequest = dutyCycleRequest
         self.dutyCycleSink = dutyCycleSink
+        self.persistenceSink = persistenceSink
         self.relayCapable = foregroundRelayCapable
         self.eventSink = eventSink
     }
@@ -314,6 +331,16 @@ public final class MeshDrive {
         try? advertiser.stop()
         advertisedBeacon = nil
         running = false
+    }
+
+    /// Flush host-owned durable state at an explicit lifecycle boundary.
+    ///
+    /// This method is valid while the radio is running or stopped, does not
+    /// stop/start any adapter, and is never called implicitly by `start()` or
+    /// `stop()`. The native host owns the actual `MmpNode.flush()` call and
+    /// Keystore/Keychain policy; errors are propagated unchanged.
+    public func flushPersistence() throws {
+        try persistenceSink.flushPersistence()
     }
 
     public func pump() throws {

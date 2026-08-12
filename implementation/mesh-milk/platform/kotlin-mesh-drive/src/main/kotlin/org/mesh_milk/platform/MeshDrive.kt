@@ -148,6 +148,19 @@ public fun interface DutyCycleSink {
     public fun applyDutyCycle(request: DutyCycleRequest)
 }
 
+/**
+ * Host-owned persistence boundary for the existing mmp-ffi snapshot store.
+ *
+ * The coordinator never invokes this callback automatically.  A native host
+ * should wrap its `MmpNode.flush()` call and invoke [MeshDrive.flushPersistence]
+ * from an explicit background/termination lifecycle hook.  Exceptions are
+ * deliberately propagated so the host can record a durability failure; this
+ * interface never receives keys or snapshot bytes.
+ */
+public fun interface PersistenceSink {
+    public fun flushPersistence()
+}
+
 /** Minimal node/FFI surface needed by the drive loop. */
 public interface MeshNode {
     fun setTier(tier: MeshTier)
@@ -227,6 +240,7 @@ public class MeshDrive(
     private val driveLoopOwner: DriveLoopOwner = ThreadConfinedDriveLoopOwner(),
     private val dutyCycleRequest: DutyCycleRequest = DutyCycleRequest(),
     private val dutyCycleSink: DutyCycleSink = DutyCycleSink { },
+    private val persistenceSink: PersistenceSink = PersistenceSink { },
 ) {
     public companion object {
         /** ATT protocol overhead: negotiated MTU minus these bytes is usable. */
@@ -353,6 +367,19 @@ public class MeshDrive(
         runCatching { advertiser.stop() }
         advertisedBeacon = null
         running = false
+    }
+
+    /**
+     * Flush host-owned durable state at an explicit lifecycle boundary.
+     *
+     * This method is valid while the radio is running or stopped, does not
+     * stop/start any adapter, and is never called implicitly by [start] or
+     * [stop].  A host adapter owns the actual `MmpNode.flush()` call and any
+     * Keystore/Keychain policy; failures are propagated unchanged.
+     */
+    public fun flushPersistence() {
+        driveLoopOwner.check()
+        persistenceSink.flushPersistence()
     }
 
     /**

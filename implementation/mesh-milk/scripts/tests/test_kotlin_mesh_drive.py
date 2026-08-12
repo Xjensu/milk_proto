@@ -58,6 +58,22 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         for bound in ("2000..10000", "exactly 10", "30..scanIntervalMs", "0..30000", "0..6", "15..30", "4000..32000"):
             self.assertIn(bound, self.source)
 
+    def test_persistence_flush_is_explicit_host_owned_and_not_tied_to_stop(self) -> None:
+        for symbol in ("PersistenceSink", "flushPersistence", "MmpNode.flush()"):
+            self.assertIn(symbol, self.source)
+        constructor = self.source[self.source.index("public class MeshDrive("):self.source.index(") {", self.source.index("public class MeshDrive("))]
+        self.assertIn("persistenceSink: PersistenceSink = PersistenceSink { }", constructor)
+        method_start = self.source.rindex("public fun flushPersistence()")
+        method_end = self.source.index("    /**", method_start)
+        method = self.source[method_start:method_end]
+        self.assertIn("driveLoopOwner.check()", method)
+        self.assertIn("persistenceSink.flushPersistence()", method)
+        stop_start = self.source.index("public fun stop()")
+        stop_end = self.source.index("    /**", stop_start)
+        self.assertNotIn("flushPersistence", self.source[stop_start:stop_end])
+        self.assertIn("Keystore durability", self.readme)
+        self.assertIn("in-memory no-op", self.readme)
+
     def test_start_rolls_back_partial_radio_start(self) -> None:
         """A failed startup must not leave the drive claiming to be active."""
 

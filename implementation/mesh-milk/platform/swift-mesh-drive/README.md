@@ -95,3 +95,14 @@ the MMP/1 baseline (5 s advertisement, 10% jitter, 30 ms / 1.28 s scan,
 interval, and 4 s supervision timeout). The shell does not start timers and
 the request is never serialized into protocol frames; native scheduling and
 hardware validation remain platform gates.
+
+`PersistenceSink` is a separate, explicit lifecycle seam for the existing
+`mmp-ffi` snapshot store. A native iOS host should wrap its node's
+`MmpNode.flush()` call and pass that wrapper to `MeshDrive`; the host then calls
+`MeshRadioShell.flushPersistence()` (or `MeshDrive.flushPersistence()`) from a
+background/termination hook. The method is valid while the radio is running or
+stopped, propagates a flush error, and is never invoked automatically by
+`start()` or `stop()`. The default sink is an in-memory no-op. Keychain
+durability, snapshot I/O, retry policy, and observed success/error reporting
+remain native application gates; this SDK-free shell does not receive
+ratchet/prekey material.

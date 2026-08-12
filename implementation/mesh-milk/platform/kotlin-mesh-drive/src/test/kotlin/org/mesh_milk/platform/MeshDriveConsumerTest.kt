@@ -76,6 +76,60 @@ class MeshDriveConsumerTest {
     }
 
     @Test
+    fun persistenceFlushIsExplicitAndRemainsAvailableAfterRadioStop() {
+        val sink = RecordingPersistenceSink()
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            persistenceSink = sink,
+        )
+
+        drive.start()
+        drive.stop()
+        assertEquals(0, sink.calls)
+
+        drive.flushPersistence()
+        assertEquals(1, sink.calls)
+    }
+
+    @Test
+    fun persistenceFlushFailurePropagatesWithoutChangingRadioLifecycle() {
+        val sink = RecordingPersistenceSink(IllegalStateException("flush failed"))
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            persistenceSink = sink,
+        )
+
+        drive.start()
+        assertFailsWith<IllegalStateException> { drive.flushPersistence() }
+        assertTrue(drive.isRunning)
+        drive.stop()
+    }
+
+    @Test
+    fun defaultPersistenceSinkIsAStableNoOp() {
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+        )
+
+        drive.flushPersistence()
+    }
+
+    @Test
     fun publicCoordinatorCanBeStartedAndStoppedByAConsumer() {
         val node = FakeNode()
         val drive = MeshDrive(
@@ -322,6 +376,15 @@ class MeshDriveConsumerTest {
 
         override fun applyDutyCycle(request: DutyCycleRequest) {
             requests += request
+        }
+    }
+
+    private class RecordingPersistenceSink(private val failure: Throwable? = null) : PersistenceSink {
+        var calls = 0
+
+        override fun flushPersistence() {
+            calls += 1
+            failure?.let { throw it }
         }
     }
 

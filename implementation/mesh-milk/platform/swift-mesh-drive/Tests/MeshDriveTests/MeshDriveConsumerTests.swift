@@ -65,6 +65,53 @@ final class MeshDriveConsumerTests: XCTestCase {
         }
     }
 
+    func testPersistenceFlushIsExplicitAndRemainsAvailableAfterRadioStop() throws {
+        let sink = TestPersistenceSink()
+        let drive = MeshDrive(
+            node: TestNode(),
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: TestGatt(),
+            foregroundRelayCapable: false,
+            persistenceSink: sink
+        )
+        let shell = MeshRadioShell(drive: drive)
+
+        try shell.start()
+        shell.stop()
+        XCTAssertEqual(sink.calls, 0)
+
+        try shell.flushPersistence()
+        XCTAssertEqual(sink.calls, 1)
+    }
+
+    func testPersistenceFlushFailurePropagatesWithoutChangingRadioLifecycle() throws {
+        let sink = TestPersistenceSink(error: TestError.persistenceFailed)
+        let drive = MeshDrive(
+            node: TestNode(),
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: TestGatt(),
+            foregroundRelayCapable: false,
+            persistenceSink: sink
+        )
+
+        try drive.start()
+        XCTAssertThrowsError(try drive.flushPersistence()) { error in
+            XCTAssertEqual(error as? TestError, .persistenceFailed)
+        }
+        XCTAssertTrue(drive.isRunning)
+        drive.stop()
+    }
+
+    func testDefaultPersistenceSinkIsAStableNoOp() throws {
+        let drive = makeDrive(node: TestNode())
+
+        XCTAssertNoThrow(try drive.flushPersistence())
+    }
+
     func testRadioShellBindsEachPhysicalIdentityToOneMonotonicLink() throws {
         let node = TestNode()
         let drive = makeDrive(node: node)
@@ -381,8 +428,9 @@ final class MeshDriveConsumerTests: XCTestCase {
     }
 }
 
-private enum TestError: Error {
+private enum TestError: Error, Equatable {
     case failed
+    case persistenceFailed
 }
 
 private final class TestClock: MonotonicClock {
@@ -425,6 +473,22 @@ private final class TestDutyCycleSink: DutyCycleSink {
 
     func applyDutyCycle(_ request: MeshDutyCycleRequest) throws {
         requests.append(request)
+    }
+}
+
+private final class TestPersistenceSink: PersistenceSink {
+    var calls = 0
+    private let error: Error?
+
+    init(error: Error? = nil) {
+        self.error = error
+    }
+
+    func flushPersistence() throws {
+        calls += 1
+        if let error {
+            throw error
+        }
     }
 }
 

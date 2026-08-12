@@ -213,6 +213,13 @@ public final class MeshRadioShell {
         lifecycle = .stopped
     }
 
+    /// Forward an explicit host lifecycle flush without coupling persistence
+    /// to radio teardown. This remains callable after `stop()` for termination
+    /// hooks that release the radio before asking the native adapter to flush.
+    public func flushPersistence() throws {
+        try drive.flushPersistence()
+    }
+
     /// Record the exact callback identity restored by CoreBluetooth.  A
     /// mismatched identifier is rejected rather than silently treated as a
     /// restored controller.

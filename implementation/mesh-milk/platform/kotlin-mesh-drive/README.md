@@ -67,6 +67,16 @@ interval, and 4 s supervision timeout). The shell does not start timers and
 the request is never serialized into protocol frames; native scheduling and
 hardware validation remain platform gates.
 
+`PersistenceSink` is a separate, explicit lifecycle seam for the existing
+`mmp-ffi` snapshot store. A native Android host should wrap its node's
+`MmpNode.flush()` call and pass that wrapper to `MeshDrive`; the host then calls
+`flushPersistence()` from its background/termination hook. The method is valid
+while the drive is running or stopped, propagates a flush error, and is never
+invoked automatically by `start()` or `stop()`. The default sink is an
+in-memory no-op. Keystore durability, snapshot I/O, retry policy, and observed
+success/error reporting remain native application gates; this SDK-free shell
+does not receive ratchet/prekey material.
+
 The Android foreground service should adapt these interfaces to
 `SystemClock.elapsedRealtime()`, `BluetoothLeScanner`, the advertiser, and
 `BluetoothGattServer`. `GattAdapter.close(link)` requests native teardown; the
