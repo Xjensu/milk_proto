@@ -1265,6 +1265,7 @@ async fn drive_loop<C: ClockSource>(
 
     let mut frames_sent = 0u64;
     let mut messages_received = 0u64;
+    let mut transport_ended = false;
 
     loop {
         tokio::select! {
@@ -1280,7 +1281,11 @@ async fn drive_loop<C: ClockSource>(
                     Some(other) => node.on_tal_event(other),
                     // The central's background task ended (adapter gone) —
                     // nothing more will ever arrive; wind down like Ctrl-C.
-                    None => break,
+                    None => {
+                        eprintln!("mmp-cli: BLE event stream ended unexpectedly");
+                        transport_ended = true;
+                        break;
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
@@ -1346,7 +1351,7 @@ async fn drive_loop<C: ClockSource>(
         || central.control_events_dropped() != 0;
     central.shutdown_all().await;
     let persisted = finish(shared, node, vault, frames_sent, messages_received);
-    if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
+    drive_exit_code(transport_ended, overload, persisted)
 }
 
 /// Dial every beacon-sighted peer not already in `dialed`. See `drive_loop`
@@ -1413,6 +1418,7 @@ async fn drive_loop_peripheral<C: ClockSource>(
 
     let mut frames_sent = 0u64;
     let mut messages_received = 0u64;
+    let mut transport_ended = false;
 
     loop {
         tokio::select! {
@@ -1431,7 +1437,11 @@ async fn drive_loop_peripheral<C: ClockSource>(
                     Some(event) => node.on_tal_event(event),
                     // The peripheral's background task ended (adapter gone) —
                     // nothing more will ever arrive; wind down like Ctrl-C.
-                    None => break,
+                    None => {
+                        eprintln!("mmp-cli: BLE event stream ended unexpectedly");
+                        transport_ended = true;
+                        break;
+                    }
                 }
             }
             _ = tokio::signal::ctrl_c() => {
@@ -1479,7 +1489,15 @@ async fn drive_loop_peripheral<C: ClockSource>(
         || peripheral.control_events_dropped() != 0;
     peripheral.shutdown_all().await;
     let persisted = finish(shared, node, vault, frames_sent, messages_received);
-    if overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
+    drive_exit_code(transport_ended, overload, persisted)
+}
+
+/// Convert abnormal drive-loop termination into a fail-closed process exit.
+/// A closed transport event stream is not equivalent to Ctrl-C: it means the
+/// adapter/backend stopped delivering lifecycle events, so a beta harness must
+/// not mistake the persisted snapshot for a healthy run.
+fn drive_exit_code(transport_ended: bool, overload: bool, persisted: bool) -> ExitCode {
+    if transport_ended || overload || !persisted { ExitCode::from(2) } else { ExitCode::SUCCESS }
 }
 
 /// Exit path shared by every `drive_loop` return: persist to disk if a
@@ -1867,6 +1885,14 @@ mod tests {
         assert_eq!(clock.now_ms(), 1_000);
         assert_eq!(clock.now_ms(), 1_001);
         assert_eq!(clock.now_ms(), 999);
+    }
+
+    #[test]
+    fn ended_transport_fails_closed_even_when_state_persisted() {
+        assert_eq!(drive_exit_code(true, false, true), ExitCode::from(2));
+        assert_eq!(drive_exit_code(false, false, true), ExitCode::SUCCESS);
+        assert_eq!(drive_exit_code(false, true, true), ExitCode::from(2));
+        assert_eq!(drive_exit_code(false, false, false), ExitCode::from(2));
     }
 
     #[test]
