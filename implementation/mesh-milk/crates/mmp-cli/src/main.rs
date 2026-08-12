@@ -42,7 +42,7 @@ mmp-cli — MMP/1 reference PC node
 
 USAGE:
     mmp-cli keygen <file>                  generate a 32-byte identity seed, write hex to <file>
-    mmp-cli demo                           run a two-node in-memory exchange and print what happens
+    mmp-cli demo [--json]                  run a two-node in-memory exchange; optionally emit a JSON report
     mmp-cli inspect <path>                 print a mmp-store snapshot's bundle table
     mmp-cli vectors [<dir>]                 (re)generate the golden test vectors into <dir>
                                             (default: the repo's vectors/ directory)
@@ -82,7 +82,11 @@ const DEMO_USAGE: &str = "\
 mmp-cli demo — run a two-node in-memory exchange
 
 USAGE:
-    mmp-cli demo
+    mmp-cli demo [--json]
+
+With --json, stdout contains one deterministic, schema-versioned report and
+no human-readable event lines. Without it, the normal diagnostic transcript is
+printed unchanged.
 ";
 
 const INSPECT_USAGE: &str = "\
@@ -404,9 +408,10 @@ fn cmd_demo(args: &[String]) -> ExitCode {
     if let Some(result) = subcommand_help("demo", args) {
         return result;
     }
-    if !args.is_empty() {
-        return usage_error("demo", "does not accept positional arguments");
-    }
+    let json = match parse_demo_args(args) {
+        Ok(json) => json,
+        Err(error) => return usage_error("demo", &error),
+    };
     let alice_seed = *blake3::hash(b"mmp-cli demo alice").as_bytes();
     let bob_seed = *blake3::hash(b"mmp-cli demo bob").as_bytes();
     let mut alice = Node::new(alice_seed, Box::new(MemStore::new()), Tier::Relay);
@@ -414,9 +419,14 @@ fn cmd_demo(args: &[String]) -> ExitCode {
     alice.enable_diagnostics();
     bob.enable_diagnostics();
 
-    println!("=== mmp-cli demo ===");
-    println!("alice = {}", hex(alice.node_id().as_bytes()));
-    println!("bob   = {}", hex(bob.node_id().as_bytes()));
+    if !json {
+        println!("=== mmp-cli demo ===");
+        println!("alice = {}", hex(alice.node_id().as_bytes()));
+        println!("bob   = {}", hex(bob.node_id().as_bytes()));
+    }
+
+    let mut alice_events = DemoDrain::default();
+    let mut bob_events = DemoDrain::default();
 
     // Out-of-band claim exchange (the QR / first-sync bootstrap).
     for c in alice.own_claims() {
@@ -425,32 +435,81 @@ fn cmd_demo(args: &[String]) -> ExitCode {
     for c in bob.own_claims() {
         alice.ingest_claim(c, true);
     }
-    let _ = drain_and_print("alice", &mut alice);
-    let _ = drain_and_print("bob", &mut bob);
+    if json {
+        alice_events.add(drain_silently(&mut alice));
+        bob_events.add(drain_silently(&mut bob));
+    } else {
+        let _ = drain_and_print("alice", &mut alice);
+        let _ = drain_and_print("bob", &mut bob);
+    }
 
     let msg_id = alice.send_text(&bob.node_id(), "hello from mmp-cli demo").expect("bob's claims are known");
-    println!("\nalice sends text (id {}) ...", hex(msg_id.as_bytes()));
+    if !json {
+        println!("\nalice sends text (id {}) ...", hex(msg_id.as_bytes()));
+    }
 
     // First contact: the message crosses the mesh.
-    println!("\n--- contact 1 (alice <-> bob) ---");
+    if !json {
+        println!("\n--- contact 1 (alice <-> bob) ---");
+    }
     contact(&mut alice, &mut bob, 1, 0);
-    let bob_received = drain_and_print("bob", &mut bob);
-    let _ = drain_and_print("alice", &mut alice);
+    let bob_received = if json {
+        let bob_drain = drain_silently(&mut bob);
+        let received = bob_drain.messages_received != 0;
+        bob_events.add(bob_drain);
+        alice_events.add(drain_silently(&mut alice));
+        received
+    } else {
+        let received = drain_and_print("bob", &mut bob);
+        let _ = drain_and_print("alice", &mut alice);
+        received
+    };
 
     // Second contact: the delivery receipt returns to alice.
-    println!("\n--- contact 2 (alice <-> bob) ---");
+    if !json {
+        println!("\n--- contact 2 (alice <-> bob) ---");
+    }
     contact(&mut alice, &mut bob, 2, 1_000);
-    let _ = drain_and_print("alice", &mut alice);
-    let _ = drain_and_print("bob", &mut bob);
+    if json {
+        alice_events.add(drain_silently(&mut alice));
+        bob_events.add(drain_silently(&mut bob));
+    } else {
+        let _ = drain_and_print("alice", &mut alice);
+        let _ = drain_and_print("bob", &mut bob);
+    }
 
-    let delivered = alice.message_state(&msg_id) == Some(DeliveryState::Delivered);
-    println!("\nmessage state at alice: {:?}", alice.message_state(&msg_id));
-    println!("demo assertions: receiver_message={bob_received}, sender_delivered={delivered}");
+    let sender_state = alice.message_state(&msg_id);
+    let delivered = sender_state == Some(DeliveryState::Delivered);
+    if !json {
+        println!("\nmessage state at alice: {sender_state:?}");
+        println!("demo assertions: receiver_message={bob_received}, sender_delivered={delivered}");
+    }
 
-    println!("\n--- alice diagnostics ---");
-    print!("{}", alice.diagnostics().dump());
-    println!("--- bob diagnostics ---");
-    print!("{}", bob.diagnostics().dump());
+    if !json {
+        println!("\n--- alice diagnostics ---");
+        print!("{}", alice.diagnostics().dump());
+        println!("--- bob diagnostics ---");
+        print!("{}", bob.diagnostics().dump());
+    } else {
+        print_demo_json(&DemoReport {
+            alice: alice.node_id(),
+            bob: bob.node_id(),
+            bundle: msg_id,
+            receiver_message: bob_received,
+            sender_delivered: delivered,
+            sender_state,
+            alice_events: alice_events.events,
+            bob_events: bob_events.events,
+            alice_store_len: alice.store_len(),
+            bob_store_len: bob.store_len(),
+            alice_diagnostic_records: alice.diagnostics().records().len(),
+            bob_diagnostic_records: bob.diagnostics().records().len(),
+            alice_diagnostic_clamps: alice.diagnostics().clamps,
+            bob_diagnostic_clamps: bob.diagnostics().clamps,
+            alice_diagnostic_drops: alice.diagnostics().drops,
+            bob_diagnostic_drops: bob.diagnostics().drops,
+        });
+    }
 
     if bob_received && delivered {
         ExitCode::SUCCESS
@@ -458,6 +517,111 @@ fn cmd_demo(args: &[String]) -> ExitCode {
         eprintln!("mmp-cli demo: protocol loopback did not deliver the message");
         ExitCode::from(1)
     }
+}
+
+fn parse_demo_args(args: &[String]) -> Result<bool, String> {
+    match args {
+        [] => Ok(false),
+        [arg] if arg == "--json" => Ok(true),
+        _ => Err("expected no arguments or exactly --json".to_string()),
+    }
+}
+
+#[derive(Default)]
+struct DemoDrain {
+    events: u32,
+    messages_received: u32,
+}
+
+impl DemoDrain {
+    fn add(&mut self, other: Self) {
+        self.events = self.events.saturating_add(other.events).min(4096);
+        self.messages_received = self
+            .messages_received
+            .saturating_add(other.messages_received)
+            .min(4096);
+    }
+}
+
+fn drain_silently(n: &mut Node) -> DemoDrain {
+    let mut drained = DemoDrain::default();
+    while let Some(event) = n.poll_event() {
+        drained.events = drained.events.saturating_add(1).min(4096);
+        if matches!(event, Event::MessageReceived { .. }) {
+            drained.messages_received = drained.messages_received.saturating_add(1).min(4096);
+        }
+    }
+    drained
+}
+
+struct DemoReport {
+    alice: NodeId,
+    bob: NodeId,
+    bundle: Id16,
+    receiver_message: bool,
+    sender_delivered: bool,
+    sender_state: Option<DeliveryState>,
+    alice_events: u32,
+    bob_events: u32,
+    alice_store_len: usize,
+    bob_store_len: usize,
+    alice_diagnostic_records: usize,
+    bob_diagnostic_records: usize,
+    alice_diagnostic_clamps: u64,
+    bob_diagnostic_clamps: u64,
+    alice_diagnostic_drops: u64,
+    bob_diagnostic_drops: u64,
+}
+
+fn bounded_usize(value: usize) -> usize {
+    value.min(4096)
+}
+
+fn bounded_u32(value: u32) -> u32 {
+    value.min(4096)
+}
+
+fn bounded_u64(value: u64) -> u64 {
+    value.min(4096)
+}
+
+fn delivery_state_name(state: Option<DeliveryState>) -> &'static str {
+    match state {
+        Some(DeliveryState::Queued) => "queued",
+        Some(DeliveryState::InMesh) => "in_mesh",
+        Some(DeliveryState::Delivered) => "delivered",
+        Some(DeliveryState::Expired) => "expired",
+        None => "unknown",
+    }
+}
+
+fn demo_json(report: &DemoReport) -> String {
+    let mut json = String::with_capacity(640);
+    let _ = writeln!(
+        json,
+        "{{\"schema_version\":1,\"command\":\"demo\",\"alice_node_id\":\"{}\",\"bob_node_id\":\"{}\",\"bundle_id\":\"{}\",\"receiver_message\":{},\"sender_delivered\":{},\"sender_delivery_state\":\"{}\",\"contacts\":2,\"alice_events\":{},\"bob_events\":{},\"alice_store_len\":{},\"bob_store_len\":{},\"alice_diagnostic_records\":{},\"bob_diagnostic_records\":{},\"alice_diagnostic_clamps\":{},\"bob_diagnostic_clamps\":{},\"alice_diagnostic_drops\":{},\"bob_diagnostic_drops\":{}}}",
+        hex(report.alice.as_bytes()),
+        hex(report.bob.as_bytes()),
+        hex(report.bundle.as_bytes()),
+        report.receiver_message,
+        report.sender_delivered,
+        delivery_state_name(report.sender_state),
+        bounded_u32(report.alice_events),
+        bounded_u32(report.bob_events),
+        bounded_usize(report.alice_store_len),
+        bounded_usize(report.bob_store_len),
+        bounded_usize(report.alice_diagnostic_records),
+        bounded_usize(report.bob_diagnostic_records),
+        bounded_u64(report.alice_diagnostic_clamps),
+        bounded_u64(report.bob_diagnostic_clamps),
+        bounded_u64(report.alice_diagnostic_drops),
+        bounded_u64(report.bob_diagnostic_drops),
+    );
+    json
+}
+
+fn print_demo_json(report: &DemoReport) {
+    print!("{}", demo_json(report));
 }
 
 /// Run one full contact between two nodes over an in-memory link (mirrors
@@ -1407,6 +1571,45 @@ mod tests {
     #[test]
     fn demo_smoke_requires_receiver_and_delivery_evidence() {
         assert_eq!(cmd_demo(&[]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn demo_argument_parser_accepts_only_explicit_json_mode() {
+        assert_eq!(parse_demo_args(&[]), Ok(false));
+        assert_eq!(parse_demo_args(&["--json".to_string()]), Ok(true));
+        assert!(parse_demo_args(&["--json".to_string(), "extra".to_string()]).is_err());
+        assert!(parse_demo_args(&["--json=true".to_string()]).is_err());
+    }
+
+    #[test]
+    fn demo_json_report_has_stable_schema_and_bounded_public_fields() {
+        let report = DemoReport {
+            alice: Id16([0x11; 16]),
+            bob: Id16([0x22; 16]),
+            bundle: Id16([0x33; 16]),
+            receiver_message: true,
+            sender_delivered: true,
+            sender_state: Some(DeliveryState::Delivered),
+            alice_events: u32::MAX,
+            bob_events: u32::MAX,
+            alice_store_len: usize::MAX,
+            bob_store_len: usize::MAX,
+            alice_diagnostic_records: usize::MAX,
+            bob_diagnostic_records: usize::MAX,
+            alice_diagnostic_clamps: u64::MAX,
+            bob_diagnostic_clamps: u64::MAX,
+            alice_diagnostic_drops: u64::MAX,
+            bob_diagnostic_drops: u64::MAX,
+        };
+        let json = demo_json(&report);
+        assert!(json.ends_with('\n'));
+        assert!(json.starts_with("{\"schema_version\":1,\"command\":\"demo\""));
+        assert!(json.contains("\"alice_node_id\":\"11111111111111111111111111111111\""));
+        assert!(json.contains("\"sender_delivery_state\":\"delivered\""));
+        assert!(json.contains("\"alice_events\":4096"));
+        assert!(json.contains("\"alice_store_len\":4096"));
+        assert!(!json.contains("seed"));
+        assert!(!json.contains("ciphertext"));
     }
 
     #[test]
