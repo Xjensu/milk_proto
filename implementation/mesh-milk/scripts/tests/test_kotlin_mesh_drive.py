@@ -92,6 +92,20 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("Keystore durability", self.readme)
         self.assertIn("in-memory no-op", self.readme)
 
+    def test_secret_state_boundary_is_opaque_explicit_and_fail_closed(self) -> None:
+        for symbol in (
+            "SecretStatePersistence",
+            "restoreSecretState",
+            "persistSecretState",
+            "UnavailableSecretStatePersistence",
+        ):
+            self.assertIn(symbol, self.source)
+        constructor = self.source[self.source.index("public class MeshDrive("):self.source.index(") {", self.source.index("public class MeshDrive("))]
+        self.assertIn("secretStatePersistence: SecretStatePersistence = UnavailableSecretStatePersistence()", constructor)
+        self.assertIn("require(generation == null || generation > 0L)", self.source)
+        self.assertIn("require(generation > 0L)", self.source)
+        self.assertNotIn("ByteArray", self.source[self.source.index("public interface SecretStatePersistence"):self.source.index("/** Minimal node/FFI", self.source.index("public interface SecretStatePersistence"))])
+
     def test_start_rolls_back_partial_radio_start(self) -> None:
         """A failed startup must not leave the drive claiming to be active."""
 

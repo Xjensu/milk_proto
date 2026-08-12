@@ -125,6 +125,27 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("in-memory no-op", self.readme)
         self.assertIn("flushPersistence", self.consumer_tests)
 
+    def test_secret_state_boundary_is_opaque_explicit_and_fail_closed(self) -> None:
+        for symbol in (
+            "SecretStatePersistence",
+            "restoreSecretState",
+            "persistSecretState",
+            "UnavailableSecretStatePersistence",
+            "MeshSecretStateError",
+        ):
+            self.assertIn(symbol, self.source)
+        drive_start = self.source.index("public final class MeshDrive")
+        constructor_start = self.source.index("public init(", drive_start)
+        constructor = self.source[constructor_start:self.source.index("    ) {", constructor_start)]
+        self.assertIn("secretStatePersistence: SecretStatePersistence = UnavailableSecretStatePersistence()", constructor)
+        self.assertIn("if let generation, generation == 0", self.source)
+        self.assertIn("guard generation > 0 else", self.source)
+        self.assertIn("restoreSecretState()", self.shell_source)
+        self.assertIn("persistSecretState()", self.shell_source)
+        self.assertIn("testSecretStatePersistenceIsExplicitAndReturnsOnlyGenerationMetadata", self.consumer_tests)
+        self.assertIn("testUnavailableSecretStateCapabilityFailsClosedAndIsNeverImplicit", self.consumer_tests)
+        self.assertNotIn("[UInt8]", self.source[self.source.index("public protocol SecretStatePersistence"):self.source.index("public protocol MeshNode", self.source.index("public protocol SecretStatePersistence"))])
+
     def test_startup_and_monotonic_guards_are_fail_closed(self) -> None:
         self.assertIn("try requireMonotonic(nowMs)", self.source)
         self.assertIn("rollbackStartLinks()", self.source)

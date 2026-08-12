@@ -116,6 +116,46 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertNoThrow(try drive.flushPersistence())
     }
 
+    func testSecretStatePersistenceIsExplicitAndReturnsOnlyGenerationMetadata() throws {
+        let secret = TestSecretStatePersistence(restoreGeneration: nil, persistGeneration: 7)
+        let drive = makeDrive(node: TestNode(), secretStatePersistence: secret)
+        let shell = MeshRadioShell(drive: drive)
+
+        XCTAssertNil(try shell.restoreSecretState())
+        try shell.start()
+        shell.stop()
+        XCTAssertEqual(try shell.persistSecretState(), 7)
+        XCTAssertEqual(secret.restoreCalls, 1)
+        XCTAssertEqual(secret.persistCalls, 1)
+    }
+
+    func testUnavailableSecretStateCapabilityFailsClosedAndIsNeverImplicit() throws {
+        let drive = makeDrive(node: TestNode())
+
+        XCTAssertThrowsError(try drive.restoreSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .unavailable)
+        }
+        XCTAssertThrowsError(try drive.persistSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .unavailable)
+        }
+
+        // Radio lifecycle must not silently invoke a missing Keychain adapter.
+        try drive.start()
+        drive.stop()
+    }
+
+    func testSecretStateGenerationMustBePositive() throws {
+        let secret = TestSecretStatePersistence(restoreGeneration: 0, persistGeneration: 0)
+        let drive = makeDrive(node: TestNode(), secretStatePersistence: secret)
+
+        XCTAssertThrowsError(try drive.restoreSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidGeneration)
+        }
+        XCTAssertThrowsError(try drive.persistSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidGeneration)
+        }
+    }
+
     func testRadioShellBindsEachPhysicalIdentityToOneMonotonicLink() throws {
         let node = TestNode()
         let drive = makeDrive(node: node)
@@ -431,14 +471,19 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(node.receivedBeaconCount, 0)
     }
 
-    private func makeDrive(node: TestNode, now: UInt64 = 1) -> MeshDrive {
+    private func makeDrive(
+        node: TestNode,
+        now: UInt64 = 1,
+        secretStatePersistence: SecretStatePersistence = UnavailableSecretStatePersistence()
+    ) -> MeshDrive {
         MeshDrive(
             node: node,
             clock: TestClock(now: now),
             advertiser: TestAdvertiser(),
             scanner: TestScanner(),
             gatt: TestGatt(),
-            foregroundRelayCapable: false
+            foregroundRelayCapable: false,
+            secretStatePersistence: secretStatePersistence
         )
     }
 
@@ -588,6 +633,28 @@ private final class TestGatt: GattAdapter {
 
     func close(link: UInt64) throws {
         closedLinks.append(link)
+    }
+}
+
+private final class TestSecretStatePersistence: SecretStatePersistence {
+    let restoreGeneration: UInt64?
+    let persistGeneration: UInt64
+    var restoreCalls = 0
+    var persistCalls = 0
+
+    init(restoreGeneration: UInt64?, persistGeneration: UInt64) {
+        self.restoreGeneration = restoreGeneration
+        self.persistGeneration = persistGeneration
+    }
+
+    func restoreSecretState() throws -> UInt64? {
+        restoreCalls += 1
+        return restoreGeneration
+    }
+
+    func persistSecretState() throws -> UInt64 {
+        persistCalls += 1
+        return persistGeneration
     }
 }
 

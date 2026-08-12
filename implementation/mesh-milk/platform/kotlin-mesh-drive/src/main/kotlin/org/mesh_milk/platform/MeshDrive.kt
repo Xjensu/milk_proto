@@ -175,6 +175,40 @@ public fun interface PersistenceSink {
     public fun flushPersistence()
 }
 
+/**
+ * Host-owned boundary for the Rust-internal keystore-backed secret state.
+ *
+ * Implementations run the native `MmpNode` vault operation in their own
+ * adapter.  The coordinator receives only the committed generation; it never
+ * receives ciphertext, wrapping keys, chain keys, prekeys, or plaintext
+ * snapshots.  A `null` restore generation means a genuinely new provider has
+ * no committed record.  Provider-unavailable, locked, invalid, busy, or
+ * rollback-rejected state must be reported by throwing, so a host cannot
+ * silently continue as if secret continuity existed.
+ */
+public interface SecretStatePersistence {
+    /** Restore an optional generation before radio startup. */
+    public fun restoreSecretState(): Long?
+
+    /** Commit and return the newly durable generation. */
+    public fun persistSecretState(): Long
+}
+
+/**
+ * Explicit fail-closed default.  It is deliberately not an in-memory vault:
+ * the absence of a native keystore capability must remain observable to the
+ * host rather than being mistaken for a fresh or successfully persisted node.
+ */
+public class UnavailableSecretStatePersistence : SecretStatePersistence {
+    override fun restoreSecretState(): Long? {
+        throw IllegalStateException("secret-state persistence unavailable")
+    }
+
+    override fun persistSecretState(): Long {
+        throw IllegalStateException("secret-state persistence unavailable")
+    }
+}
+
 /** Minimal node/FFI surface needed by the drive loop. */
 public interface MeshNode {
     fun setTier(tier: MeshTier)
@@ -255,6 +289,7 @@ public class MeshDrive(
     private val dutyCycleRequest: DutyCycleRequest = DutyCycleRequest(),
     private val dutyCycleSink: DutyCycleSink = DutyCycleSink { },
     private val persistenceSink: PersistenceSink = PersistenceSink { },
+    private val secretStatePersistence: SecretStatePersistence = UnavailableSecretStatePersistence(),
 ) {
     public companion object {
         /** ATT protocol overhead: negotiated MTU minus these bytes is usable. */
@@ -394,6 +429,38 @@ public class MeshDrive(
     public fun flushPersistence() {
         driveLoopOwner.check()
         persistenceSink.flushPersistence()
+    }
+
+    /**
+     * Restore secret continuity explicitly at a host lifecycle boundary.
+     *
+     * This operation is intentionally not called by [start] or [stop].  A
+     * native host should invoke it after constructing the Rust node and before
+     * admitting radio traffic.  The adapter owns the keystore transaction;
+     * only a non-zero generation crosses this coordinator boundary.
+     */
+    public fun restoreSecretState(): Long? {
+        driveLoopOwner.check()
+        val generation = secretStatePersistence.restoreSecretState()
+        require(generation == null || generation > 0L) {
+            "secret-state provider returned an invalid generation"
+        }
+        return generation
+    }
+
+    /**
+     * Persist secret continuity explicitly at a host lifecycle boundary.
+     *
+     * Provider failures propagate unchanged.  A zero generation is rejected
+     * before the host can report success, preserving the Rust vault contract.
+     */
+    public fun persistSecretState(): Long {
+        driveLoopOwner.check()
+        val generation = secretStatePersistence.persistSecretState()
+        require(generation > 0L) {
+            "secret-state provider returned an invalid generation"
+        }
+        return generation
     }
 
     /**

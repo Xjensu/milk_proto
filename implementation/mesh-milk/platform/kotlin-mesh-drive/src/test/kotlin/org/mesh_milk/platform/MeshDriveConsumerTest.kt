@@ -157,6 +157,65 @@ class MeshDriveConsumerTest {
     }
 
     @Test
+    fun secretStatePersistenceIsExplicitAndReturnsOnlyGenerationMetadata() {
+        val secret = RecordingSecretStatePersistence(restoreGeneration = null, persistGeneration = 7L)
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            secretStatePersistence = secret,
+        )
+
+        // Secret-state operations are explicit and may be called before radio
+        // startup (restore) or after teardown (persist).
+        assertEquals(null, drive.restoreSecretState())
+        drive.start()
+        drive.stop()
+        assertEquals(7L, drive.persistSecretState())
+        assertEquals(1, secret.restoreCalls)
+        assertEquals(1, secret.persistCalls)
+    }
+
+    @Test
+    fun unavailableSecretStateCapabilityFailsClosedAndIsNeverImplicit() {
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+        )
+
+        assertFailsWith<IllegalStateException> { drive.restoreSecretState() }
+        assertFailsWith<IllegalStateException> { drive.persistSecretState() }
+        // Starting and stopping the radio must not silently invoke a missing
+        // keystore adapter.
+        drive.start()
+        drive.stop()
+    }
+
+    @Test
+    fun secretStateGenerationMustBePositive() {
+        val secret = RecordingSecretStatePersistence(restoreGeneration = 0L, persistGeneration = 0L)
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            secretStatePersistence = secret,
+        )
+
+        assertFailsWith<IllegalArgumentException> { drive.restoreSecretState() }
+        assertFailsWith<IllegalArgumentException> { drive.persistSecretState() }
+    }
+
+    @Test
     fun publicCoordinatorCanBeStartedAndStoppedByAConsumer() {
         val node = FakeNode()
         val drive = MeshDrive(
@@ -466,6 +525,24 @@ class MeshDriveConsumerTest {
         override fun flushPersistence() {
             calls += 1
             failure?.let { throw it }
+        }
+    }
+
+    private class RecordingSecretStatePersistence(
+        private val restoreGeneration: Long?,
+        private val persistGeneration: Long,
+    ) : SecretStatePersistence {
+        var restoreCalls = 0
+        var persistCalls = 0
+
+        override fun restoreSecretState(): Long? {
+            restoreCalls += 1
+            return restoreGeneration
+        }
+
+        override fun persistSecretState(): Long {
+            persistCalls += 1
+            return persistGeneration
         }
     }
 

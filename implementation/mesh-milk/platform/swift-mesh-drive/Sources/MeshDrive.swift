@@ -179,6 +179,42 @@ public struct NoopPersistenceSink: PersistenceSink {
     public func flushPersistence() throws {}
 }
 
+/// Host-owned boundary for Rust's keystore-backed secret-state vault.
+///
+/// The native adapter performs the vault transaction around its `MmpNode`.
+/// Only the durable generation crosses this coordinator boundary: ciphertext,
+/// wrapping keys, chain keys, prekeys, and plaintext snapshots never do. A
+/// `nil` restore generation means a genuinely new provider has no committed
+/// record. Provider-unavailable, locked, invalid, busy, or rollback-rejected
+/// state must be reported by throwing rather than being treated as a fresh
+/// node.
+public protocol SecretStatePersistence {
+    /// Restore optional secret continuity before radio startup.
+    func restoreSecretState() throws -> UInt64?
+
+    /// Commit secret continuity and return the newly durable generation.
+    func persistSecretState() throws -> UInt64
+}
+
+/// Explicit fail-closed default. This is not an in-memory vault and never
+/// pretends that secret continuity exists without a native capability.
+public struct UnavailableSecretStatePersistence: SecretStatePersistence {
+    public init() {}
+
+    public func restoreSecretState() throws -> UInt64? {
+        throw MeshSecretStateError.unavailable
+    }
+
+    public func persistSecretState() throws -> UInt64 {
+        throw MeshSecretStateError.unavailable
+    }
+}
+
+public enum MeshSecretStateError: Error, Equatable {
+    case unavailable
+    case invalidGeneration
+}
+
 public protocol MeshNode: AnyObject {
     func setTier(_ tier: MeshTier)
     func beacon(nowMs: UInt64) -> [UInt8]
@@ -245,6 +281,7 @@ public final class MeshDrive {
     private let dutyCycleRequest: MeshDutyCycleRequest
     private let dutyCycleSink: DutyCycleSink
     private let persistenceSink: PersistenceSink
+    private let secretStatePersistence: SecretStatePersistence
     private let eventSink: (Any) -> Void
     private var running = false
     private var relayCapable: Bool
@@ -268,7 +305,8 @@ public final class MeshDrive {
         eventSink: @escaping (Any) -> Void = { _ in },
         dutyCycleRequest: MeshDutyCycleRequest = MeshDutyCycleRequest(),
         dutyCycleSink: DutyCycleSink = NoopDutyCycleSink(),
-        persistenceSink: PersistenceSink = NoopPersistenceSink()
+        persistenceSink: PersistenceSink = NoopPersistenceSink(),
+        secretStatePersistence: SecretStatePersistence = UnavailableSecretStatePersistence()
     ) {
         self.node = node
         self.clock = clock
@@ -278,6 +316,7 @@ public final class MeshDrive {
         self.dutyCycleRequest = dutyCycleRequest
         self.dutyCycleSink = dutyCycleSink
         self.persistenceSink = persistenceSink
+        self.secretStatePersistence = secretStatePersistence
         self.relayCapable = foregroundRelayCapable
         self.eventSink = eventSink
     }
@@ -357,6 +396,28 @@ public final class MeshDrive {
     /// Keystore/Keychain policy; errors are propagated unchanged.
     public func flushPersistence() throws {
         try persistenceSink.flushPersistence()
+    }
+
+    /// Restore secret continuity explicitly at a host lifecycle boundary.
+    /// This is intentionally not called by `start()` or `stop()`; the native
+    /// adapter should invoke it after constructing the Rust node and before
+    /// admitting radio traffic.
+    public func restoreSecretState() throws -> UInt64? {
+        let generation = try secretStatePersistence.restoreSecretState()
+        if let generation, generation == 0 {
+            throw MeshSecretStateError.invalidGeneration
+        }
+        return generation
+    }
+
+    /// Persist secret continuity explicitly. Provider failures propagate, and
+    /// a zero generation can never be reported as a successful commit.
+    public func persistSecretState() throws -> UInt64 {
+        let generation = try secretStatePersistence.persistSecretState()
+        guard generation > 0 else {
+            throw MeshSecretStateError.invalidGeneration
+        }
+        return generation
     }
 
     public func pump() throws {

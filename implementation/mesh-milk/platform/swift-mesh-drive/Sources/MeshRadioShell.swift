@@ -220,6 +220,19 @@ public final class MeshRadioShell {
         try drive.flushPersistence()
     }
 
+    /// Forward an explicit secret-state restore through the host lifecycle
+    /// boundary. The native adapter owns the Keychain transaction; only the
+    /// optional durable generation crosses this shell.
+    public func restoreSecretState() throws -> UInt64? {
+        try drive.restoreSecretState()
+    }
+
+    /// Forward an explicit secret-state commit through the host lifecycle
+    /// boundary. Provider errors remain visible to the consuming application.
+    public func persistSecretState() throws -> UInt64 {
+        try drive.persistSecretState()
+    }
+
     /// Record the exact callback identity restored by CoreBluetooth.  A
     /// mismatched identifier is rejected rather than silently treated as a
     /// restored controller.
