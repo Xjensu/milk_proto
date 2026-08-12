@@ -10,4 +10,9 @@ exposes no portable MTU query on any backend.
 `mmp-node`, so `tokio` is expected and allowed here. GATT UUIDs are re-exported from
 `mmp-tal`'s single source of truth, not defined locally.
 
+The single `events()` receiver is a lifecycle boundary: dropping it or
+observing adapter-stream termination fences new scans/dials, retires tracked
+links, and requests physical disconnects. Hosts should treat either condition
+as terminal and recreate the central rather than continuing admission.
+
 See `docs/IMPLEMENTATION_HANDBOOK.md` §4.1 and `specification/09-transport-ble.md`.

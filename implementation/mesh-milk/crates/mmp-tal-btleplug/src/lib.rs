@@ -116,8 +116,11 @@ const DEFAULT_CHUNK: usize = 20;
 /// (preserving stream ordering), while low-priority beacon data may be lost.
 /// The public `events()` receiver remains a bounded Tokio FIFO fed by a
 /// dispatcher, so a stalled consumer cannot hold lifecycle locks.
-fn event_channel() -> (EventSender, mpsc::Receiver<TalEvent>) {
-    event_queue::event_channel()
+fn event_channel<F>(on_closed: F) -> (EventSender, mpsc::Receiver<TalEvent>)
+where
+    F: FnOnce(EventSender) + Send + 'static,
+{
+    event_queue::event_channel_with_close_handler(on_closed)
 }
 
 fn generation_is_current(current: Option<u64>, expected: u64) -> bool {
@@ -382,12 +385,24 @@ impl BleCentral {
             .next()
             .ok_or(BleError::NoAdapter)?;
 
-        let (tx, rx) = event_channel();
         let links: Arc<AsyncMutex<HashMap<LinkId, LinkState>>> =
             Arc::new(AsyncMutex::new(HashMap::new()));
         let event_gate = Arc::new(AsyncMutex::new(()));
         let dial_gate = Arc::new(AsyncMutex::new(()));
         let shutting_down = Arc::new(AtomicBool::new(false));
+
+        let close_links = links.clone();
+        let close_event_gate = event_gate.clone();
+        let close_shutting_down = shutting_down.clone();
+        let (tx, rx) = event_channel(move |tx| {
+            // A dropped public receiver is terminal: no host is left to
+            // consume lifecycle events, so fence admission and retire every
+            // physical link through the same bounded shutdown path.
+            fence_adapter_failure(&close_shutting_down);
+            tokio::spawn(async move {
+                shutdown_links(&close_links, &close_event_gate, &tx).await;
+            });
+        });
 
         tokio::spawn(watch_adapter(
             adapter.clone(),

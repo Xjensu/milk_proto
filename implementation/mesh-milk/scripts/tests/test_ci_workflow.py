@@ -77,7 +77,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(
             checks,
             [
-                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked"
+                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-flash-journal -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked"
             ],
         )
 
@@ -119,7 +119,7 @@ class CIWorkflowTests(unittest.TestCase):
     def test_embedded_shell_sources_keep_the_no_std_boundary(self) -> None:
         """Catch an accidental host-only import before the target job runs."""
 
-        for crate in ("mmp-node-embassy", "mmp-tal-embedded"):
+        for crate in ("mmp-node-embassy", "mmp-tal-embedded", "mmp-flash-journal"):
             source = (
                 WORKSPACE / "crates" / crate / "src" / "lib.rs"
             ).read_text(encoding="utf-8")
