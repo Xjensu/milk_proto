@@ -21,6 +21,7 @@ use mmp_types::frame::FT_BUNDLE;
 use mmp_types::ids::{Id16, NodeId};
 
 pub mod adversary;
+pub mod contact_survival;
 pub mod energy;
 pub mod ews;
 
