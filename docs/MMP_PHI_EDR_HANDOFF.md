@@ -238,3 +238,19 @@ interval policy; inventing those fields in `mmp-sim` would make aggregate
 records look like platform evidence. Until that external contract exists, the
 crate accepts only caller-constructed `RendezvousMeasurement` values and
 performs validation/comparison without inventing readings.
+
+## 2026-08-12 bounded CLI reporting seam
+
+`mmp-cli edr-summary <pair.json> [--json]` now consumes the existing strict
+`PairedRendezvousMeasurement` JSON contract and prints the validated comparison
+without touching the production router or any wire field. The command checks
+the file size before and after reading, rejects option-looking paths, and
+preserves the simulator's fail-closed schema/count/trace validation. Human
+output is intended for local inspection; `--json` emits a deterministic,
+versioned report suitable for a beta harness. The output is explicitly marked
+research-only and must not be read as evidence of a 2× improvement.
+
+The CLI is an adapter over the mature `mmp-sim` parser rather than a second
+JSON implementation. This keeps the input contract and bounds in one place;
+the remaining production gate is still measured platform data with raw-log
+provenance and a pre-registered comparison matrix.

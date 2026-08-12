@@ -13,6 +13,7 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 mmp-node = { path = "../mmp-node" }
+mmp-sim = { path = "../mmp-sim" }
 mmp-core = { path = "../mmp-core" }
 mmp-crypto = { path = "../mmp-crypto" }
 mmp-store = { path = "../mmp-store" }

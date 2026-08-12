@@ -1124,6 +1124,7 @@ dependencies = [
  "mmp-core",
  "mmp-crypto",
  "mmp-node",
+ "mmp-sim",
  "mmp-store",
  "mmp-tal",
  "mmp-tal-btleplug",

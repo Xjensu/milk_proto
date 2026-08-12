@@ -30,6 +30,10 @@ use mmp_core::MemStore;
 use mmp_node::{DeliveryState, Event, Node, Tier};
 #[cfg(target_os = "windows")]
 use mmp_node::WindowsVault;
+use mmp_sim::energy::{
+    PairedRendezvousMeasurement, RateConfidenceInterval, RendezvousComparison,
+    MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES,
+};
 use mmp_store::SnapshotStore;
 use mmp_tal::{LinkQuality, TalEvent};
 use mmp_tal_btleplug::{BleCentral, PeerHandle, PeripheralId};
@@ -46,6 +50,8 @@ USAGE:
     mmp-cli inspect <path>                 print a mmp-store snapshot's bundle table
     mmp-cli vectors [<dir>]                 (re)generate the golden test vectors into <dir>
                                             (default: the repo's vectors/ directory)
+    mmp-cli edr-summary <pair.json> [--json]
+                                            summarize a bounded MMP/Φ EDR measurement pair
     mmp-cli connect <seedfile> [--store <path>] [--vault <path>]
                                             central role: scan, dial newly-seen peers, drive the
                                             node over real BLE until Ctrl-C
@@ -107,6 +113,19 @@ USAGE:
 The optional output directory must not begin with '-'.
 ";
 
+const EDR_SUMMARY_USAGE: &str = "\
+mmp-cli edr-summary — summarize a paired EDR measurement
+
+USAGE:
+    mmp-cli edr-summary <pair.json> [--json]
+
+The input is the strict, bounded mmp-sim paired-rendezvous JSON schema. The
+command reports measurements only; it does not change MMP/1 routing, wire
+fields, or platform scheduling. With --json, stdout contains a deterministic
+schema-versioned summary.
+The input path must not begin with '-'.
+";
+
 const CONNECT_USAGE: &str = "\
 mmp-cli connect — run a BLE central node
 
@@ -165,6 +184,7 @@ fn main() -> ExitCode {
         "demo" => cmd_demo(&args[1..]),
         "inspect" => cmd_inspect(&args[1..]),
         "vectors" => cmd_vectors(&args[1..]),
+        "edr-summary" => cmd_edr_summary(&args[1..]),
         "connect" => cmd_connect(&args[1..]),
         "send" => cmd_send(&args[1..]),
         "listen" => cmd_listen(&args[1..]),
@@ -182,6 +202,7 @@ fn subcommand_usage(subcmd: &str) -> &'static str {
         "demo" => DEMO_USAGE,
         "inspect" => INSPECT_USAGE,
         "vectors" => VECTORS_USAGE,
+        "edr-summary" => EDR_SUMMARY_USAGE,
         "connect" => CONNECT_USAGE,
         "send" => SEND_USAGE,
         "listen" => LISTEN_USAGE,
@@ -202,7 +223,14 @@ fn cmd_help(args: &[String]) -> ExitCode {
         [subcmd]
             if matches!(
                 subcmd.as_str(),
-                "keygen" | "demo" | "inspect" | "vectors" | "connect" | "send" | "listen"
+                "keygen"
+                    | "demo"
+                    | "inspect"
+                    | "vectors"
+                    | "edr-summary"
+                    | "connect"
+                    | "send"
+                    | "listen"
             ) =>
         {
             print!("{}", subcommand_usage(subcmd));
@@ -246,6 +274,183 @@ fn validate_path_argument(label: &str, path: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------- edr-summary --
+
+fn cmd_edr_summary(args: &[String]) -> ExitCode {
+    if let Some(result) = subcommand_help("edr-summary", args) {
+        return result;
+    }
+    let (path, json) = match parse_edr_summary_args(args) {
+        Ok(parsed) => parsed,
+        Err(error) => return usage_error("edr-summary", &error),
+    };
+    let comparison = match read_edr_summary(&path) {
+        Ok(comparison) => comparison,
+        Err(error) => {
+            eprintln!("mmp-cli edr-summary: {error}");
+            return ExitCode::from(2);
+        }
+    };
+    if json {
+        println!("{}", edr_summary_json(&comparison));
+    } else {
+        print_edr_summary(&comparison);
+    }
+    ExitCode::SUCCESS
+}
+
+fn parse_edr_summary_args(args: &[String]) -> Result<(String, bool), String> {
+    match args {
+        [path] => {
+            validate_path_argument("measurement path", path)?;
+            Ok((path.clone(), false))
+        }
+        [path, flag] if flag == "--json" => {
+            validate_path_argument("measurement path", path)?;
+            Ok((path.clone(), true))
+        }
+        [] => Err("missing <pair.json>".to_string()),
+        [_path, flag] => Err(format!("unrecognized option: {flag}")),
+        _ => Err("expected <pair.json> followed by optional --json".to_string()),
+    }
+}
+
+fn read_edr_summary(path: &str) -> Result<RendezvousComparison, String> {
+    validate_path_argument("measurement path", path)?;
+    let limit = u64::try_from(MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES)
+        .expect("measurement size limit fits in u64");
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| format!("cannot inspect '{path}': {error}"))?;
+    if metadata.len() > limit {
+        return Err(format!(
+            "'{path}' is too large: {} bytes (limit {limit})",
+            metadata.len()
+        ));
+    }
+    let bytes = std::fs::read(path).map_err(|error| format!("cannot read '{path}': {error}"))?;
+    if bytes.len() > MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES {
+        return Err(format!(
+            "'{path}' grew beyond the {}-byte limit while it was read",
+            MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES
+        ));
+    }
+    let input = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("'{path}' is not valid UTF-8 JSON"))?;
+    let pair = PairedRendezvousMeasurement::from_json(input)
+        .map_err(|error| format!("cannot decode '{path}': {error}"))?;
+    pair.summary()
+        .map_err(|error| format!("cannot summarize '{path}': {error:?}"))
+}
+
+fn print_edr_summary(comparison: &RendezvousComparison) {
+    println!("MMP/Φ EDR measurement summary (research-only; no protocol change)");
+    println!("trace_id: {}", format_trace_id(comparison.trace_id));
+    println!(
+        "discovery_rate: baseline={:.6} candidate={:.6} delta={:.6}",
+        comparison.baseline_discovery_rate,
+        comparison.candidate_discovery_rate,
+        comparison.discovery_rate_delta
+    );
+    println!(
+        "delivery_rate: baseline={:.6} candidate={:.6} delta={:.6}",
+        comparison.baseline_delivery_rate,
+        comparison.candidate_delivery_rate,
+        comparison.delivery_rate_delta
+    );
+    println!(
+        "energy_mwh: radio={:.6}/{:.6} host={:.6}/{:.6} whole_device={:.6}/{:.6} candidate_over_baseline={}",
+        comparison.baseline_radio_energy_mwh,
+        comparison.candidate_radio_energy_mwh,
+        comparison.baseline_host_energy_mwh,
+        comparison.candidate_host_energy_mwh,
+        comparison.baseline_whole_device_energy_mwh,
+        comparison.candidate_whole_device_energy_mwh,
+        format_optional(comparison.whole_device_energy_ratio)
+    );
+    println!(
+        "latency_ms: discovery={}/{} delivery={}/{}",
+        format_optional(comparison.baseline_discovery_latency_ms),
+        format_optional(comparison.candidate_discovery_latency_ms),
+        format_optional(comparison.baseline_delivery_latency_ms),
+        format_optional(comparison.candidate_delivery_latency_ms)
+    );
+    println!(
+        "confidence95: discovery={}/{} delivery={}/{}",
+        format_interval(comparison.baseline_discovery_rate_ci95),
+        format_interval(comparison.candidate_discovery_rate_ci95),
+        format_interval(comparison.baseline_delivery_rate_ci95),
+        format_interval(comparison.candidate_delivery_rate_ci95)
+    );
+}
+
+fn edr_summary_json(comparison: &RendezvousComparison) -> String {
+    let mut output = String::with_capacity(1_024);
+    write!(
+        output,
+        "{{\"schema_version\":1,\"command\":\"edr-summary\",\"research_only\":true,\"trace_id\":\"{}\",\"baseline_discovery_rate\":{},\"candidate_discovery_rate\":{},\"discovery_rate_delta\":{},\"baseline_delivery_rate\":{},\"candidate_delivery_rate\":{},\"delivery_rate_delta\":{},\"baseline_radio_energy_mwh\":{},\"candidate_radio_energy_mwh\":{},\"baseline_host_energy_mwh\":{},\"candidate_host_energy_mwh\":{},\"baseline_whole_device_energy_mwh\":{},\"candidate_whole_device_energy_mwh\":{},\"whole_device_energy_ratio\":{}",
+        format_trace_id(comparison.trace_id),
+        comparison.baseline_discovery_rate,
+        comparison.candidate_discovery_rate,
+        comparison.discovery_rate_delta,
+        comparison.baseline_delivery_rate,
+        comparison.candidate_delivery_rate,
+        comparison.delivery_rate_delta,
+        comparison.baseline_radio_energy_mwh,
+        comparison.candidate_radio_energy_mwh,
+        comparison.baseline_host_energy_mwh,
+        comparison.candidate_host_energy_mwh,
+        comparison.baseline_whole_device_energy_mwh,
+        comparison.candidate_whole_device_energy_mwh,
+        format_optional_json(comparison.whole_device_energy_ratio),
+    )
+    .expect("writing to a String cannot fail");
+    write!(
+        output,
+        ",\"baseline_discovery_latency_ms\":{},\"candidate_discovery_latency_ms\":{},\"baseline_delivery_latency_ms\":{},\"candidate_delivery_latency_ms\":{},\"baseline_discovery_rate_ci95\":{},\"candidate_discovery_rate_ci95\":{},\"baseline_delivery_rate_ci95\":{},\"candidate_delivery_rate_ci95\":{}}}",
+        format_optional_json(comparison.baseline_discovery_latency_ms),
+        format_optional_json(comparison.candidate_discovery_latency_ms),
+        format_optional_json(comparison.baseline_delivery_latency_ms),
+        format_optional_json(comparison.candidate_delivery_latency_ms),
+        format_interval_json(comparison.baseline_discovery_rate_ci95),
+        format_interval_json(comparison.candidate_discovery_rate_ci95),
+        format_interval_json(comparison.baseline_delivery_rate_ci95),
+        format_interval_json(comparison.candidate_delivery_rate_ci95),
+    )
+    .expect("writing to a String cannot fail");
+    output
+}
+
+fn format_trace_id(trace_id: [u8; 16]) -> String {
+    let mut output = String::with_capacity(32);
+    for byte in trace_id {
+        write!(output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
+}
+
+fn format_optional(value: Option<f64>) -> String {
+    value.map_or_else(|| "undefined".to_string(), |value| format!("{value:.6}"))
+}
+
+fn format_optional_json(value: Option<f64>) -> String {
+    value.map_or_else(|| "null".to_string(), |value| value.to_string())
+}
+
+fn format_interval(interval: Option<RateConfidenceInterval>) -> String {
+    interval.map_or_else(|| "undefined".to_string(), |value| {
+        format!("[{:.6}, {:.6}]", value.lower, value.upper)
+    })
+}
+
+fn format_interval_json(interval: Option<RateConfidenceInterval>) -> String {
+    interval.map_or_else(|| "null".to_string(), |value| {
+        format!(
+            "{{\"successes\":{},\"trials\":{},\"estimate\":{},\"lower\":{},\"upper\":{}}}",
+            value.successes, value.trials, value.estimate, value.lower, value.upper
+        )
+    })
 }
 
 // ------------------------------------------------------------------ keygen --
@@ -1683,11 +1888,106 @@ mod tests {
 
     #[test]
     fn every_documented_subcommand_has_explicit_help() {
-        for subcmd in ["keygen", "demo", "inspect", "vectors", "connect", "send", "listen"] {
+        for subcmd in [
+            "keygen",
+            "demo",
+            "inspect",
+            "vectors",
+            "edr-summary",
+            "connect",
+            "send",
+            "listen",
+        ] {
             let text = subcommand_usage(subcmd);
             assert!(text.contains(&format!("mmp-cli {subcmd}")), "missing help for {subcmd}");
         }
         assert_eq!(cmd_help(&["keygen".to_string()]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn edr_summary_parser_is_strict_and_rejects_option_looking_paths() {
+        assert_eq!(parse_edr_summary_args(&[]), Err("missing <pair.json>".to_string()));
+        assert_eq!(
+            parse_edr_summary_args(&["trace.json".to_string()]),
+            Ok(("trace.json".to_string(), false))
+        );
+        assert_eq!(
+            parse_edr_summary_args(&["trace.json".to_string(), "--json".to_string()]),
+            Ok(("trace.json".to_string(), true))
+        );
+        assert!(parse_edr_summary_args(&["--help".to_string()]).is_err());
+        assert!(parse_edr_summary_args(&[
+            "trace.json".to_string(),
+            "--json=true".to_string()
+        ])
+        .is_err());
+        assert!(parse_edr_summary_args(&["trace.json".to_string(), "extra".to_string()]).is_err());
+    }
+
+    #[test]
+    fn edr_summary_reads_bounded_pair_and_emits_stable_json() {
+        use mmp_sim::energy::{PairedRendezvousMeasurement, RendezvousMeasurement};
+
+        let trace_id = [0x4a; 16];
+        let baseline = RendezvousMeasurement {
+            trace_id,
+            tx_events: 10,
+            rx_windows: 5,
+            contact_attempts: 10,
+            discoveries: 4,
+            offered_bundles: 4,
+            delivered_bundles: 2,
+            useful_payload_bytes: 512,
+            airtime_ms: 10.0,
+            discovery_latency_ms_sum: 40.0,
+            discovery_latency_samples: 4,
+            delivery_latency_ms_sum: 20.0,
+            delivery_latency_samples: 2,
+            radio_energy_mwh: 4.0,
+            host_energy_mwh: 2.0,
+            whole_device_energy_mwh: 8.0,
+            host_wakeups: 5,
+        };
+        let candidate = RendezvousMeasurement {
+            discoveries: 5,
+            delivered_bundles: 3,
+            radio_energy_mwh: 3.0,
+            host_energy_mwh: 1.5,
+            whole_device_energy_mwh: 6.0,
+            discovery_latency_ms_sum: 30.0,
+            delivery_latency_ms_sum: 18.0,
+            ..baseline
+        };
+        let pair = PairedRendezvousMeasurement::new(baseline, candidate).unwrap();
+        let path = env::temp_dir().join(format!("mmp-cli-edr-{}.json", std::process::id()));
+        let path_string = path.to_string_lossy().into_owned();
+        std::fs::write(&path, pair.to_json().unwrap()).unwrap();
+
+        let comparison = read_edr_summary(&path_string).unwrap();
+        assert_eq!(comparison.trace_id, trace_id);
+        assert_eq!(comparison.whole_device_energy_ratio, Some(0.75));
+        let json = edr_summary_json(&comparison);
+        assert!(json.starts_with("{\"schema_version\":1,\"command\":\"edr-summary\""));
+        assert!(json.contains("\"research_only\":true"));
+        assert!(json.contains("\"trace_id\":\"4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a4a\""));
+        assert!(!json.contains("seed"));
+        assert!(!json.contains("ciphertext"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edr_summary_rejects_oversized_input_before_json_decode() {
+        let path = env::temp_dir().join(format!("mmp-cli-edr-large-{}.json", std::process::id()));
+        let path_string = path.to_string_lossy().into_owned();
+        std::fs::write(
+            &path,
+            vec![b' '; MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES + 1],
+        )
+        .unwrap();
+        let error = read_edr_summary(&path_string).expect_err("oversized input must fail closed");
+        assert!(error.contains("too large"));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
