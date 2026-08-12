@@ -212,3 +212,42 @@ explicit re-pin recovery. Full workspace tests and Clippy, 124 Python tests
 release CLI demo, and six transactional-store acceptance-double tests pass.
 The fixed-capacity flash provider, board-specific allocator policy, linked
 image, and HIL evidence remain open E7 work.
+
+## E7-S1 bounded-provider review closure (2026-08-12)
+
+**Task status: DEFERRED-WITH-REASON.** A bounded read-only review rechecked the
+current `BundleStore` contract, the no-default dependency fence, and the
+embedded shell. No implementation was added because the remaining blocker is
+an API and persistence contract, not an unimplemented container.
+
+The review confirmed three production-relevant incompatibilities:
+
+1. `BundleStore::put` is infallible, so a finite provider cannot report a full
+   store without either silently losing data, overwriting records, panicking,
+   or lying to `ingest` about durable admission. The receive-side
+   `try_put` seam is safe, but it does not cover all producer paths.
+2. `get`, `ids_range`, `all_meta`, and `expire` return allocating `Vec` values.
+   That is compatible with the current `no_std + alloc` profile, but it cannot
+   prove the handbook's Core-tier “no alloc growth after init” requirement.
+3. `mmp-store --no-default-features` is intentionally an empty target-check
+   profile and `mmp-node-embassy` currently contains only bounded TAL
+   ingress/egress plumbing. There is no flash journal, crash-recovery policy,
+   allocator policy, or end-to-end embedded node to validate.
+
+Focused evidence from the review:
+
+```text
+cargo test -p mmp-core store --lib                         24 passed
+cargo test -p mmp-store --lib --locked                     35 passed
+cargo test -p mmp-tal-embedded --all-targets --locked       3 passed
+cargo test -p mmp-node-embassy --all-targets --locked       4 passed
+thumbv7em target checks for mmp-core, mmp-store, mmp-node-embassy,
+and mmp-tal-embedded                                         passed
+```
+
+The smallest safe next slice is now explicit: design a caller-owned bounded
+output/iterator API and a flash-log journal/recovery abstraction, choose a
+named board capacity and allocator policy, then implement the provider behind
+the no-std feature fence. Until those decisions and tests exist, adding a
+generic `FixedStore` would create unverifiable capacity and torn-write claims.
+The frozen specification and all wire behavior remain unchanged.
