@@ -1260,6 +1260,7 @@ name = "mmp-tal-embedded"
 version = "0.0.0"
 dependencies = [
  "mmp-tal",
+ "mmp-types",
 ]
 
 [[package]]

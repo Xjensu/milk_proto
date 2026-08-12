@@ -16,6 +16,7 @@ categories = ["embedded", "no-std", "hardware-support"]
 # a host-only default feature, the embedded crate must remain no_std by
 # construction rather than depending on today's empty default feature set.
 mmp-tal = { path = "../mmp-tal", default-features = false }
+mmp-types = { path = "../mmp-types", default-features = false }
 
 [lints]
 workspace = true

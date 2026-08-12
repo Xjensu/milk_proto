@@ -10,7 +10,7 @@ The two E7 crates have different readiness levels:
 
 | Crate | Host/cross check | What is actually present | Blocking gap |
 | --- | --- | --- | --- |
-| `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; re-exports only `mmp-tal::LinkId` and `LinkQuality` | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
+| `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; bounded generic `EmbeddedEventQueue<const CAPACITY>` over the shared `TalEvent` vocabulary | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
 | `mmp-node-embassy` | host check and the same target check pass after `750c807` | `#![no_std]` marker and no executor code | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
 
 The following failure is retained as historical evidence from before
@@ -193,8 +193,8 @@ optimizations as production claims.
 
 ## Files and boundaries
 
-- `implementation/mesh-milk/crates/mmp-tal-embedded/`: placeholder cross-check
-  audited; unchanged.
+- `implementation/mesh-milk/crates/mmp-tal-embedded/`: bounded ingress-seam cross-check
+  and queue implementation.
 - `implementation/mesh-milk/crates/mmp-node-embassy/`: dependency closure
   audited; unchanged.
 - `.github/workflows/ci.yml`: existing lower-crate rlib gate audited; unchanged.
