@@ -233,6 +233,26 @@ mod tests {
     }
 
     #[test]
+    fn malformed_higher_generation_does_not_replace_previous_record() {
+        let mut image = [0u8; 256];
+        let mut used = 0;
+        append(&mut image, &mut used, 4, b"durable");
+
+        let malformed_start = used;
+        let malformed_len = encoded_len(b"partial".len()).unwrap();
+        encode(9, b"partial", &mut image[malformed_start..malformed_start + malformed_len])
+            .unwrap();
+        image[malformed_start + malformed_len - COMMIT_MARKER.len()] ^= 1;
+        used += malformed_len;
+
+        let result = scan(&image[..used]);
+        assert_eq!(result.selected.unwrap().generation, 4);
+        assert_eq!(result.selected.unwrap().payload, b"durable");
+        assert_eq!(result.valid, 1);
+        assert_eq!(result.rejected, 1);
+    }
+
+    #[test]
     fn impossible_length_is_skipped_and_later_record_is_recovered() {
         let mut image = [0u8; 512];
         let mut used = 16;
