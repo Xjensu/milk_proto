@@ -2,6 +2,69 @@ import XCTest
 import MeshDrive
 
 final class MeshDriveConsumerTests: XCTestCase {
+    func testDutyCycleDefaultsMatchMmpBaselineAndApplyOnceBeforeRadioStart() throws {
+        let sink = TestDutyCycleSink()
+        let advertiser = TestAdvertiser()
+        let drive = MeshDrive(
+            node: TestNode(),
+            clock: TestClock(now: 1),
+            advertiser: advertiser,
+            scanner: TestScanner(),
+            gatt: TestGatt(),
+            foregroundRelayCapable: false,
+            dutyCycleSink: sink
+        )
+
+        try drive.start()
+
+        XCTAssertEqual(sink.requests, [MeshDutyCycleRequest()])
+        XCTAssertEqual(advertiser.startCount, 1)
+        drive.stop()
+    }
+
+    func testDutyCycleAcceptsValidCandidate() throws {
+        let request = MeshDutyCycleRequest(
+            baseAdvertisementIntervalMs: 2_000,
+            scanWindowMs: 100,
+            scanIntervalMs: 2_000,
+            burstScanDurationMs: 0,
+            burstScanMaxPerMinute: 0,
+            connectionIntervalMs: 15,
+            supervisionTimeoutMs: 8_000
+        )
+
+        XCTAssertNoThrow(try request.validate())
+    }
+
+    func testDutyCycleRejectsInvalidValuesBeforeRadioStart() {
+        let requests = [
+            MeshDutyCycleRequest(advertisementJitterPercent: 9),
+            MeshDutyCycleRequest(scanWindowMs: 1_281),
+            MeshDutyCycleRequest(burstScanDurationMs: 30_001),
+            MeshDutyCycleRequest(burstScanMaxPerMinute: 7)
+        ]
+
+        for request in requests {
+            let sink = TestDutyCycleSink()
+            let advertiser = TestAdvertiser()
+            let drive = MeshDrive(
+                node: TestNode(),
+                clock: TestClock(now: 1),
+                advertiser: advertiser,
+                scanner: TestScanner(),
+                gatt: TestGatt(),
+                foregroundRelayCapable: false,
+                dutyCycleRequest: request,
+                dutyCycleSink: sink
+            )
+
+            XCTAssertThrowsError(try drive.start())
+            XCTAssertTrue(sink.requests.isEmpty)
+            XCTAssertEqual(advertiser.startCount, 0)
+            XCTAssertFalse(drive.isRunning)
+        }
+    }
+
     func testRadioShellBindsEachPhysicalIdentityToOneMonotonicLink() throws {
         let node = TestNode()
         let drive = makeDrive(node: node)
@@ -297,6 +360,7 @@ private final class TestClock: MonotonicClock {
 
 private final class TestAdvertiser: Advertiser {
     var serviceData: [UInt8]?
+    var startCount = 0
     var stopCount = 0
     private let startError: Error?
 
@@ -308,11 +372,20 @@ private final class TestAdvertiser: Advertiser {
         if let startError {
             throw startError
         }
+        startCount += 1
         self.serviceData = serviceData
     }
 
     func stop() throws {
         stopCount += 1
+    }
+}
+
+private final class TestDutyCycleSink: DutyCycleSink {
+    var requests: [MeshDutyCycleRequest] = []
+
+    func applyDutyCycle(_ request: MeshDutyCycleRequest) throws {
+        requests.append(request)
     }
 }
 

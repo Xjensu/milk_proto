@@ -85,6 +85,69 @@ public data class LinkQualityHint(
     }
 }
 
+/**
+ * Host-only radio scheduling request.  These values tune the native BLE
+ * adapter; they are never encoded into an MMP/1 frame and do not start a
+ * timer in this SDK-free coordinator.
+ */
+public data class DutyCycleRequest(
+    val baseAdvertisementIntervalMs: Int = 5_000,
+    val advertisementJitterPercent: Int = 10,
+    val scanWindowMs: Int = 30,
+    val scanIntervalMs: Int = 1_280,
+    val burstScanDurationMs: Int = 30_000,
+    val burstScanMaxPerMinute: Int = 1,
+    val connectionIntervalMs: Int = 30,
+    val supervisionTimeoutMs: Int = 4_000,
+) {
+    public fun validate() {
+        require(baseAdvertisementIntervalMs in MIN_ADVERTISEMENT_INTERVAL_MS..MAX_ADVERTISEMENT_INTERVAL_MS) {
+            "baseAdvertisementIntervalMs must be 2000..10000"
+        }
+        require(advertisementJitterPercent == CONFORMING_JITTER_PERCENT) {
+            "advertisementJitterPercent must be exactly 10 for MMP/1"
+        }
+        require(scanIntervalMs in MIN_SCAN_INTERVAL_MS..MAX_SCAN_INTERVAL_MS) {
+            "scanIntervalMs must be 30..60000"
+        }
+        require(scanWindowMs in MIN_SCAN_WINDOW_MS..scanIntervalMs) {
+            "scanWindowMs must be 30..scanIntervalMs"
+        }
+        require(burstScanDurationMs in 0..MAX_BURST_SCAN_DURATION_MS) {
+            "burstScanDurationMs must be 0..30000"
+        }
+        require(burstScanMaxPerMinute in 0..MAX_BURST_SCAN_PER_MINUTE) {
+            "burstScanMaxPerMinute must be 0..6"
+        }
+        require(connectionIntervalMs in MIN_CONNECTION_INTERVAL_MS..MAX_CONNECTION_INTERVAL_MS) {
+            "connectionIntervalMs must be 15..30"
+        }
+        require(supervisionTimeoutMs in MIN_SUPERVISION_TIMEOUT_MS..MAX_SUPERVISION_TIMEOUT_MS) {
+            "supervisionTimeoutMs must be 4000..32000"
+        }
+    }
+
+    public companion object {
+        public const val MIN_ADVERTISEMENT_INTERVAL_MS: Int = 2_000
+        public const val MAX_ADVERTISEMENT_INTERVAL_MS: Int = 10_000
+        public const val CONFORMING_JITTER_PERCENT: Int = 10
+        public const val MIN_SCAN_WINDOW_MS: Int = 30
+        public const val MIN_SCAN_INTERVAL_MS: Int = 30
+        public const val MAX_SCAN_INTERVAL_MS: Int = 60_000
+        public const val MAX_BURST_SCAN_DURATION_MS: Int = 30_000
+        public const val MAX_BURST_SCAN_PER_MINUTE: Int = 6
+        public const val MIN_CONNECTION_INTERVAL_MS: Int = 15
+        public const val MAX_CONNECTION_INTERVAL_MS: Int = 30
+        public const val MIN_SUPERVISION_TIMEOUT_MS: Int = 4_000
+        public const val MAX_SUPERVISION_TIMEOUT_MS: Int = 32_000
+    }
+}
+
+/** Adapter-facing sink for transport-local scheduling configuration. */
+public fun interface DutyCycleSink {
+    public fun applyDutyCycle(request: DutyCycleRequest)
+}
+
 /** Minimal node/FFI surface needed by the drive loop. */
 public interface MeshNode {
     fun setTier(tier: MeshTier)
@@ -162,6 +225,8 @@ public class MeshDrive(
     foregroundRelayCapable: Boolean,
     private val eventSink: (Any) -> Unit = {},
     private val driveLoopOwner: DriveLoopOwner = ThreadConfinedDriveLoopOwner(),
+    private val dutyCycleRequest: DutyCycleRequest = DutyCycleRequest(),
+    private val dutyCycleSink: DutyCycleSink = DutyCycleSink { },
 ) {
     public companion object {
         /** ATT protocol overhead: negotiated MTU minus these bytes is usable. */
@@ -218,6 +283,11 @@ public class MeshDrive(
         driveLoopOwner.check()
         check(!running) { "MeshDrive is already running" }
         check(!overloadLatched) { "MeshDrive is latched after host overload; recreate the node" }
+        dutyCycleRequest.validate()
+        // Apply exactly once per successful startup, before any native radio
+        // adapter is started. The data class is immutable and copy() makes
+        // ownership across the host boundary explicit.
+        dutyCycleSink.applyDutyCycle(dutyCycleRequest.copy())
         running = true
         var advertiserStarted = false
         var scannerStarted = false

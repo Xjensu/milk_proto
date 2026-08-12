@@ -53,6 +53,89 @@ public struct MeshLinkQualityHint: Equatable {
     public static let maxGoodputBps = 10_000_000
 }
 
+/// Host-only BLE scheduling configuration. This is transport-local state: it
+/// is not encoded into an MMP/1 frame and this coordinator never starts a
+/// timer from it. The native adapter owns the actual radio scheduling.
+public struct MeshDutyCycleRequest: Equatable {
+    public let baseAdvertisementIntervalMs: Int
+    public let advertisementJitterPercent: Int
+    public let scanWindowMs: Int
+    public let scanIntervalMs: Int
+    public let burstScanDurationMs: Int
+    public let burstScanMaxPerMinute: Int
+    public let connectionIntervalMs: Int
+    public let supervisionTimeoutMs: Int
+
+    public init(
+        baseAdvertisementIntervalMs: Int = 5_000,
+        advertisementJitterPercent: Int = 10,
+        scanWindowMs: Int = 30,
+        scanIntervalMs: Int = 1_280,
+        burstScanDurationMs: Int = 30_000,
+        burstScanMaxPerMinute: Int = 1,
+        connectionIntervalMs: Int = 30,
+        supervisionTimeoutMs: Int = 4_000
+    ) {
+        self.baseAdvertisementIntervalMs = baseAdvertisementIntervalMs
+        self.advertisementJitterPercent = advertisementJitterPercent
+        self.scanWindowMs = scanWindowMs
+        self.scanIntervalMs = scanIntervalMs
+        self.burstScanDurationMs = burstScanDurationMs
+        self.burstScanMaxPerMinute = burstScanMaxPerMinute
+        self.connectionIntervalMs = connectionIntervalMs
+        self.supervisionTimeoutMs = supervisionTimeoutMs
+    }
+
+    public func validate() throws {
+        guard (2_000...10_000).contains(baseAdvertisementIntervalMs) else {
+            throw MeshDutyCycleError.invalidAdvertisementInterval
+        }
+        guard advertisementJitterPercent == 10 else {
+            throw MeshDutyCycleError.invalidAdvertisementJitter
+        }
+        guard (30...60_000).contains(scanIntervalMs) else {
+            throw MeshDutyCycleError.invalidScanInterval
+        }
+        guard (30...scanIntervalMs).contains(scanWindowMs) else {
+            throw MeshDutyCycleError.invalidScanWindow
+        }
+        guard (0...30_000).contains(burstScanDurationMs) else {
+            throw MeshDutyCycleError.invalidBurstDuration
+        }
+        guard (0...6).contains(burstScanMaxPerMinute) else {
+            throw MeshDutyCycleError.invalidBurstRate
+        }
+        guard (15...30).contains(connectionIntervalMs) else {
+            throw MeshDutyCycleError.invalidConnectionInterval
+        }
+        guard (4_000...32_000).contains(supervisionTimeoutMs) else {
+            throw MeshDutyCycleError.invalidSupervisionTimeout
+        }
+    }
+}
+
+public enum MeshDutyCycleError: Error, Equatable {
+    case invalidAdvertisementInterval
+    case invalidAdvertisementJitter
+    case invalidScanWindow
+    case invalidScanInterval
+    case invalidBurstDuration
+    case invalidBurstRate
+    case invalidConnectionInterval
+    case invalidSupervisionTimeout
+}
+
+/// Adapter-facing sink for transport-local scheduling configuration.
+public protocol DutyCycleSink {
+    func applyDutyCycle(_ request: MeshDutyCycleRequest) throws
+}
+
+public struct NoopDutyCycleSink: DutyCycleSink {
+    public init() {}
+
+    public func applyDutyCycle(_ request: MeshDutyCycleRequest) throws {}
+}
+
 public protocol MeshNode: AnyObject {
     func setTier(_ tier: MeshTier)
     func beacon(nowMs: UInt64) -> [UInt8]
@@ -116,6 +199,8 @@ public final class MeshDrive {
     private let advertiser: Advertiser
     private let scanner: Scanner
     private let gatt: GattAdapter
+    private let dutyCycleRequest: MeshDutyCycleRequest
+    private let dutyCycleSink: DutyCycleSink
     private let eventSink: (Any) -> Void
     private var running = false
     private var relayCapable: Bool
@@ -136,13 +221,17 @@ public final class MeshDrive {
         scanner: Scanner,
         gatt: GattAdapter,
         foregroundRelayCapable: Bool,
-        eventSink: @escaping (Any) -> Void = { _ in }
+        eventSink: @escaping (Any) -> Void = { _ in },
+        dutyCycleRequest: MeshDutyCycleRequest = MeshDutyCycleRequest(),
+        dutyCycleSink: DutyCycleSink = NoopDutyCycleSink()
     ) {
         self.node = node
         self.clock = clock
         self.advertiser = advertiser
         self.scanner = scanner
         self.gatt = gatt
+        self.dutyCycleRequest = dutyCycleRequest
+        self.dutyCycleSink = dutyCycleSink
         self.relayCapable = foregroundRelayCapable
         self.eventSink = eventSink
     }
@@ -156,6 +245,10 @@ public final class MeshDrive {
     public func start() throws {
         precondition(!running, "MeshDrive is already running")
         precondition(!overloadLatched, "MeshDrive is latched after host overload")
+        try dutyCycleRequest.validate()
+        // Apply once before any native radio adapter starts. Swift structs have
+        // value semantics, so the sink cannot retain mutable coordinator state.
+        try dutyCycleSink.applyDutyCycle(dutyCycleRequest)
         running = true
         var advertiserStarted = false
         var scannerStarted = false

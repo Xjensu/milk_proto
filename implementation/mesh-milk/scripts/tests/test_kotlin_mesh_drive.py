@@ -45,6 +45,19 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         for parameter in ("clock: MonotonicClock", "advertiser: Advertiser", "scanner: Scanner", "gatt: GattAdapter"):
             self.assertIn(parameter, self.source)
 
+    def test_duty_cycle_request_is_validated_and_applied_before_radio_start(self) -> None:
+        for symbol in ("DutyCycleRequest", "DutyCycleSink", "applyDutyCycle", "dutyCycleRequest.validate()"):
+            self.assertIn(symbol, self.source)
+        for default in ("baseAdvertisementIntervalMs: Int = 5_000", "advertisementJitterPercent: Int = 10", "scanWindowMs: Int = 30", "scanIntervalMs: Int = 1_280", "burstScanDurationMs: Int = 30_000"):
+            self.assertIn(default, self.source)
+        start = self.source.index("public fun start()")
+        body = self.source[start:self.source.index("public fun stop()", start)]
+        self.assertLess(body.index("dutyCycleRequest.validate()"), body.index("advertiser.start"))
+
+    def test_duty_cycle_bounds_are_explicit(self) -> None:
+        for bound in ("2000..10000", "exactly 10", "30..scanIntervalMs", "0..30000", "0..6", "15..30", "4000..32000"):
+            self.assertIn(bound, self.source)
+
     def test_start_rolls_back_partial_radio_start(self) -> None:
         """A failed startup must not leave the drive claiming to be active."""
 

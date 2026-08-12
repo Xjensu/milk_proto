@@ -14,6 +14,68 @@ import kotlin.test.assertTrue
  */
 class MeshDriveConsumerTest {
     @Test
+    fun dutyCycleDefaultsMatchMmpBaselineAndAreAppliedOnceBeforeRadioStart() {
+        val sink = RecordingDutyCycleSink()
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            dutyCycleSink = sink,
+        )
+
+        drive.start()
+
+        assertEquals(listOf(DutyCycleRequest()), sink.requests)
+        drive.stop()
+    }
+
+    @Test
+    fun dutyCycleValidCandidateIsAccepted() {
+        val request = DutyCycleRequest(
+            baseAdvertisementIntervalMs = 2_000,
+            scanWindowMs = 100,
+            scanIntervalMs = 2_000,
+            burstScanDurationMs = 0,
+            burstScanMaxPerMinute = 0,
+            connectionIntervalMs = 15,
+            supervisionTimeoutMs = 8_000,
+        )
+        request.validate()
+    }
+
+    @Test
+    fun dutyCycleRejectsInvalidJitterWindowAndBurstBeforeAdapterStart() {
+        val cases = listOf(
+            DutyCycleRequest(advertisementJitterPercent = 9),
+            DutyCycleRequest(scanWindowMs = 1_281),
+            DutyCycleRequest(burstScanDurationMs = 30_001),
+            DutyCycleRequest(burstScanMaxPerMinute = 7),
+        )
+        cases.forEach { request ->
+            val sink = RecordingDutyCycleSink()
+            val advertiser = RecordingAdvertiser()
+            val drive = MeshDrive(
+                node = FakeNode(),
+                clock = MonotonicClock { 1_000L },
+                advertiser = advertiser,
+                scanner = NoopScanner(),
+                gatt = NoopGatt(),
+                foregroundRelayCapable = false,
+                dutyCycleRequest = request,
+                dutyCycleSink = sink,
+            )
+
+            assertFailsWith<IllegalArgumentException> { drive.start() }
+            assertTrue(sink.requests.isEmpty())
+            assertEquals(0, advertiser.startCount)
+            assertTrue(!drive.isRunning)
+        }
+    }
+
+    @Test
     fun publicCoordinatorCanBeStartedAndStoppedByAConsumer() {
         val node = FakeNode()
         val drive = MeshDrive(
@@ -246,9 +308,21 @@ class MeshDriveConsumerTest {
     }
 
     private class RecordingAdvertiser : Advertiser {
-        override fun start(serviceData: ByteArray) = Unit
+        var startCount = 0
+
+        override fun start(serviceData: ByteArray) {
+            startCount += 1
+        }
 
         override fun stop() = Unit
+    }
+
+    private class RecordingDutyCycleSink : DutyCycleSink {
+        val requests = mutableListOf<DutyCycleRequest>()
+
+        override fun applyDutyCycle(request: DutyCycleRequest) {
+            requests += request
+        }
     }
 
     private class NoopScanner : Scanner {

@@ -58,6 +58,15 @@ Android adapter should override it with a `ScanFilter` for
 `MmpBleService.SERVICE_UUID`; the default implementation exists only for
 plain-JVM consumers and delegates to the legacy callback-only method.
 
+`DutyCycleRequest` is an immutable, transport-local request for the native
+adapter. `MeshDrive.start()` validates it and invokes the injected
+`DutyCycleSink` exactly once before advertiser or scanner startup. Defaults are
+the MMP/1 baseline (5 s advertisement, 10% jitter, 30 ms / 1.28 s scan,
+30-second burst with one permitted burst per minute, 15–30 ms connection
+interval, and 4 s supervision timeout). The shell does not start timers and
+the request is never serialized into protocol frames; native scheduling and
+hardware validation remain platform gates.
+
 The Android foreground service should adapt these interfaces to
 `SystemClock.elapsedRealtime()`, `BluetoothLeScanner`, the advertiser, and
 `BluetoothGattServer`. `GattAdapter.close(link)` requests native teardown; the

@@ -78,3 +78,12 @@ physical disconnect. `ProcessInfo.processInfo.systemUptime` or `DispatchTime`
 should implement `MonotonicClock`; wall-clock `Date` values are not valid for
 protocol ticks. This source module is not evidence of CoreBluetooth behavior,
 background state restoration, battery use, or device interoperability.
+
+`MeshDutyCycleRequest` is an immutable, transport-local request for the native
+adapter. `MeshDrive.start()` validates it and invokes the injected
+`DutyCycleSink` exactly once before advertiser or scanner startup. Defaults are
+the MMP/1 baseline (5 s advertisement, 10% jitter, 30 ms / 1.28 s scan,
+30-second burst with one permitted burst per minute, 15–30 ms connection
+interval, and 4 s supervision timeout). The shell does not start timers and
+the request is never serialized into protocol frames; native scheduling and
+hardware validation remain platform gates.
