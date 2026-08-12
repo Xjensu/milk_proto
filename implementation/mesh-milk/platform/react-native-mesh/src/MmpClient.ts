@@ -637,6 +637,17 @@ export class MmpClient {
   onEvent(handler: (event: MmpEvent) => void): () => void {
     const subscription = this.emitter.addListener('mmp', (event) => {
       if (event.type !== 'deliveryProgress') {
+        if (event.type === 'fileFailed') {
+          // UniFFI emits the native enum spelling (HashMismatch/Abandoned),
+          // while the JS contract intentionally uses camel-case values.
+          // Normalize at the bridge boundary so beta applications never
+          // have to handle two incompatible event schemas.
+          handler({
+            ...event,
+            reason: mapNativeFileFailReason((event as unknown as { reason: unknown }).reason),
+          });
+          return;
+        }
         handler(event);
         return;
       }

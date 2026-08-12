@@ -11,7 +11,7 @@ use mmp_core::store::{
     StoreBatchReservation, StoreCommitError, StorePutError, StorePutOutcome, StoreReserveError,
     StoreReservation,
 };
-use mmp_core::{IdSource, SessionHost};
+use mmp_core::{IdSource, SeenIndex, SessionHost};
 use mmp_crypto::{conversation_id, Identity};
 use mmp_tal::TalEvent;
 use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD};
@@ -91,6 +91,32 @@ fn claim_publication_store_rejection_is_side_effect_free() {
         .records()
         .iter()
         .any(|record| matches!(record.event, JourneyEvent::Created)));
+}
+
+#[test]
+fn rejected_bootstrap_claims_remain_discoverable_without_durable_side_effects() {
+    let n = Node::new([244; 32], Box::new(CapacityRejectStore), Tier::Relay);
+    let claims = n.own_claims();
+
+    // Fixed identity claims are retained in memory so a host can still expose
+    // discovery material even when the provider cannot accept the bootstrap
+    // bundles.  The provider rejection must not make either claim disappear.
+    assert_eq!(claims.len(), 2);
+    assert!(claims.iter().any(|claim| claim.field == mmp_types::claim::field::EXCHANGE_KEY));
+    assert!(claims.iter().any(|claim| claim.field == mmp_types::claim::field::PREKEY_BATCH));
+
+    // A failed durable write is not bundle publication: no bundle, first-sight
+    // dedup entry, or Created diagnostic may be observable.  ClaimUpdated
+    // events are expected because the fixed claims were intentionally kept in
+    // the in-memory discovery view.
+    assert_eq!(n.store_len(), 0);
+    assert_eq!(n.core.seen.encode(), SeenIndex::new().encode());
+    assert!(n
+        .core
+        .events
+        .iter()
+        .all(|event| matches!(event, Event::ClaimUpdated { .. })));
+    assert!(n.diagnostics().records().is_empty());
 }
 
 #[test]

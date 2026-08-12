@@ -358,6 +358,11 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertNotIn("value.lowercase()", self.client)
         self.assertIn("Generic lower-casing is not valid", self.readme)
 
+    def test_file_failure_events_are_normalized_at_the_client_boundary(self) -> None:
+        self.assertIn("if (event.type === 'fileFailed')", self.client)
+        self.assertIn("reason: mapNativeFileFailReason", self.client)
+        self.assertIn("NativeFileFailReason", self.client)
+
     def test_delivery_state_mapping_is_exhaustive_and_fail_closed(self) -> None:
         self.assertIn("export type NativeDeliveryState", self.client)
         for native in (
