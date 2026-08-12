@@ -314,3 +314,18 @@ refactored in this slice. Its store consumers are documented in the review
 record; a future embedded host needs bounded metadata iteration and payload
 scratch ownership before it can consume this seam. The frozen
 `specification/` tree remains unchanged.
+
+## Embedded-facing contract slice (2026-08-12)
+
+`mmp-core::EmbeddedBundleStore` is now an additive, allocation-free-facing
+trait for the next provider implementation. It keeps caller-owned
+`read_meta`, `read_bundle`, `visit_ids`, `visit_meta`, and `expire_into`
+operations separate from the compatibility `BundleStore` trait, whose default
+methods may allocate. Its focused fixed-array test double proves missing-ID
+handling, short-buffer preservation, ordered ID visitation, and expiry
+preflight without claiming a board backend or crash atomicity.
+
+The trait intentionally does not invent reservation or indeterminate-write
+semantics. Those remain provider-specific until a named board geometry and
+journal recovery policy are selected; no embedded provider is wired into the
+node yet.

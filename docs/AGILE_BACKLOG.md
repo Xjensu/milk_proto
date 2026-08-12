@@ -315,3 +315,9 @@ CLI through the opaque `--vault <path>` path; restore runs before clock priming
 and save runs on every BLE drive-loop shutdown path. Remaining host work is
 Android/iOS native keystore wiring plus kill/restart and physical-device
 evidence.
+
+E7-S1 status note (2026-08-12): `mmp-core::EmbeddedBundleStore` now provides
+the additive caller-owned read, bounded visitation, and expiry-preflight
+contract described by `docs/E7_NRF52_PROVIDER_CONTRACT.md`. A fixed-array test
+double verifies the boundary; this does not claim a board provider, flash
+geometry, crash atomicity, or node integration.
