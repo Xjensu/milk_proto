@@ -293,6 +293,49 @@ fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
 }
 
 #[test]
+fn fixed_mmp1_baseline_replay_reports_delivery_and_resource_invariants() {
+    const NODE_COUNT: usize = 4;
+    const SEED: u64 = 0xBACE_1A5E;
+    let schedule = crate::ContactSchedule::new(
+        NODE_COUNT,
+        SEED,
+        vec![
+            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
+            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
+            crate::ContactEvent { left: 2, right: 3, gap_ms: 3_000 },
+            crate::ContactEvent { left: 0, right: 3, gap_ms: 4_000 },
+        ],
+    )
+    .expect("fixed baseline schedule must validate");
+
+    let run_baseline = |schedule: &crate::ContactSchedule| -> crate::ContactScenarioMetrics {
+        let mut sim = Sim::new(NODE_COUNT, schedule.seed());
+        sim.introduce(0, 3);
+        sim.send_text(0, 3, "MMP/1 deterministic baseline");
+        let trace = schedule.replay(&mut sim).expect("baseline replay must match");
+        assert_eq!(trace, schedule.trace_id(), "replay must consume the declared trace");
+
+        let metrics = sim.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+        assert_eq!(metrics.trace_id, schedule.trace_id());
+        assert_eq!(metrics.meetings, schedule.events().len() as u64);
+        assert_eq!(metrics.messages_sent, 1);
+        assert_eq!(metrics.messages_received, 1);
+        assert_eq!(metrics.messages_delivered, 1);
+        assert_eq!(metrics.delivery_ratio, 1.0);
+        assert!(metrics.p50_latency_ms.is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
+        assert!(metrics.p90_latency_ms.is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
+        assert!(metrics.store_high_water_bytes > 0);
+        assert!(metrics.quota_ok);
+        metrics
+    };
+
+    let first = run_baseline(&schedule);
+    let second = run_baseline(&schedule);
+    assert_eq!(first, second, "the MMP/1 baseline must be byte-for-byte reproducible");
+    eprintln!("mmp1_baseline_evidence: {first:?}");
+}
+
+#[test]
 fn replay_schedule_rejects_invalid_contacts_before_mutating_sim() {
     let schedule = crate::ContactSchedule::new(
         2,
