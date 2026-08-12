@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[2]
+WORKFLOW = ROOT.parents[1] / ".github" / "workflows" / "ci.yml"
 SOURCE = ROOT / "platform" / "swift-mesh-drive" / "Sources" / "MeshDrive.swift"
 SHELL_SOURCE = ROOT / "platform" / "swift-mesh-drive" / "Sources" / "MeshRadioShell.swift"
 README = ROOT / "platform" / "swift-mesh-drive" / "README.md"
@@ -14,6 +15,7 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
+        cls.workflow = WORKFLOW.read_text(encoding="utf-8")
         cls.shell_source = SHELL_SOURCE.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
         cls.package = PACKAGE.read_text(encoding="utf-8")
@@ -26,6 +28,18 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         self.assertIn('.testTarget(\n            name: "MeshDriveTests"', self.package)
         self.assertIn('path: "Tests/MeshDriveTests"', self.package)
         self.assertNotIn("CoreBluetooth", self.package)
+
+    def test_ci_consumer_path_matches_workspace_working_directory(self) -> None:
+        """The workflow default makes implementation/mesh-milk the run root."""
+
+        consumer_start = self.workflow.index("  swift-consumer:")
+        consumer_end = self.workflow.index("  # docs/AGILE_BACKLOG.md E2-S5", consumer_start)
+        block = self.workflow[consumer_start:consumer_end]
+        self.assertIn("swift test --package-path platform/swift-mesh-drive", block)
+        self.assertNotIn(
+            "swift test --package-path implementation/mesh-milk/platform/swift-mesh-drive",
+            block,
+        )
 
     def test_consumer_fixture_imports_only_public_meshdrive_api(self) -> None:
         self.assertIn("import MeshDrive", self.consumer_tests)

@@ -269,7 +269,10 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - run: swift test --package-path implementation/mesh-milk/platform/swift-mesh-drive
+      # Top-level defaults.run.working-directory is implementation/mesh-milk;
+      # keep the package path relative to that directory so this consumer gate
+      # does not resolve implementation/mesh-milk twice.
+      - run: swift test --package-path platform/swift-mesh-drive
 
   # docs/AGILE_BACKLOG.md E2-S5: packages mmp-ffi's Android cdylib as a real
   # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
