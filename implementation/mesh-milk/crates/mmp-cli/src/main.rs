@@ -797,6 +797,12 @@ impl BundleStore for SharedSnapshot {
     fn all_meta(&self) -> Vec<BundleMeta> {
         self.0.lock().expect("snapshot store mutex poisoned").all_meta()
     }
+    fn for_each_meta(&self, visitor: &mut dyn FnMut(BundleMeta)) {
+        self.0
+            .lock()
+            .expect("snapshot store mutex poisoned")
+            .for_each_meta(visitor)
+    }
     fn total_bytes(&self) -> u64 {
         self.0.lock().expect("snapshot store mutex poisoned").total_bytes()
     }
