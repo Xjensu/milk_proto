@@ -1174,6 +1174,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmp-flash-journal"
+version = "0.0.0"
+dependencies = [
+ "blake3",
+]
+
+[[package]]
 name = "mmp-node"
 version = "0.0.0"
 dependencies = [

@@ -213,6 +213,40 @@ release CLI demo, and six transactional-store acceptance-double tests pass.
 The fixed-capacity flash provider, board-specific allocator policy, linked
 image, and HIL evidence remain open E7 work.
 
+## Provider-neutral journal scanner slice (2026-08-12)
+
+**Task status: TEST-ONLY.** The repository now contains
+`crates/mmp-flash-journal`, a separate `#![no_std]` and allocation-free byte
+framing/recovery primitive. It intentionally does not implement
+`BundleStore`, choose a board capacity, or claim that a flash write is atomic.
+Keeping this primitive separate from the host-only `mmp-store::SnapshotStore`
+avoids making the target dependency check appear to prove a provider that does
+not yet exist.
+
+The local format is deliberately implementation-private and is not a protocol
+or wire format. A record contains a magic marker, generation, bounded payload
+length, payload, BLAKE3 checksum, and a final commit marker. `scan()` borrows
+the selected payload from the caller's image and deterministically selects the
+highest valid committed generation. Invalid checksums/markers and impossible
+lengths are rejected; a truncated tail stops the scan while preserving earlier
+complete generations. `encode()` writes into caller-owned memory and documents
+that a real provider must write the commit marker last.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-flash-journal --all-targets --offline       6 passed
+cargo check -p mmp-flash-journal \
+  --target thumbv7em-none-eabihf --no-default-features --offline  passed
+cargo clippy -p mmp-flash-journal --all-targets --offline -- -D warnings  passed
+```
+
+The tests cover highest-generation selection, duplicate-generation tie
+breaking, truncated tails, invalid checksum/marker, impossible lengths, and
+caller-buffer bounds. The next E7 step remains a fault-injecting NOR backend
+and a provider transaction adapter; this scanner alone does not establish
+power-loss atomicity, reservation semantics, or end-to-end embedded recovery.
+
 ## E7-S1 bounded-provider review closure (2026-08-12)
 
 **Task status: DEFERRED-WITH-REASON.** A bounded read-only review rechecked the
