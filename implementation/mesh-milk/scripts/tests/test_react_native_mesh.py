@@ -254,6 +254,53 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("this.client.flush()", self.beta_session)
         self.assertNotIn("auto-upload", self.beta_session.lower())
 
+    def test_beta_session_facade_covers_existing_app_operations(self) -> None:
+        for method in (
+            "status",
+            "metrics",
+            "capabilities",
+            "sendText",
+            "messageState",
+            "sendFile",
+            "fetchFile",
+            "cancelFetch",
+            "fileProgress",
+            "createGroup",
+            "groupInvite",
+            "groupSend",
+            "groupMembers",
+            "groupRemove",
+            "setWallClock",
+            "pinAuthorityRoot",
+            "subscribeScope",
+            "unsubscribeScope",
+            "mintAuthCert",
+            "publishAnnouncement",
+            "nodeId",
+            "publicKey",
+            "ownClaims",
+            "ingestClaim",
+            "setNickname",
+            "revokeIdentity",
+            "tryRevokeIdentity",
+            "revokeIdentityWithSuccessor",
+            "block",
+            "requestFriendship",
+            "allowFriendshipFrom",
+            "enableDiagnostics",
+            "diagDump",
+            "storeLen",
+            "lastPersistError",
+        ):
+            self.assertIn(f"{method}(", self.beta_session)
+        self.assertIn("BetaTestSessionError", self.beta_session)
+        self.assertIn("this.requireStarted()", self.beta_session)
+        self.assertIn("if (!this.started)", self.beta_session)
+        self.assertIn("startPromise", self.beta_session)
+        self.assertIn("if (this.startPromise !== null)", self.beta_session)
+        index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
+        self.assertIn("BetaTestSessionError", index)
+
     def test_native_surface_excludes_raw_transport_and_clock_injection(self) -> None:
         for forbidden in (
             "beacon(",

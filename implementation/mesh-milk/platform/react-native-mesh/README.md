@@ -62,6 +62,27 @@ The report contains only status, local counters, capabilities, app-level event
 payloads, and an event-drop count. Event history keeps the newest entries after
 the configured cap; dropped events are counted for test diagnostics.
 
+`BetaTestSession` is also the application-facing composition facade for the
+existing client surface. Once started, the same session exposes direct text,
+group, explicit-pull file, authority/scope, friendship, identity/claim,
+diagnostics, and persistence methods (`sendText`, `createGroup`, `sendFile`,
+`fetchFile`, `subscribeScope`, `pinAuthorityRoot`, `requestFriendship`, and the
+corresponding operations already present on `MmpClient`). It adds no native
+methods and does not alter wire behavior. Operations that can mutate or
+exercise the running mesh fail with `BetaTestSessionError` until `start()` has
+completed; `start()` and `stop()` are idempotent at the facade boundary.
+Concurrent `start()` calls join the first native start operation (the first
+tier argument wins), and a `stop()` issued while startup is pending waits for
+that operation before stopping it. A failed startup removes the listener and
+leaves the session stopped.
+
+The facade delegates validation of IDs, base64 values, authority policy, file
+limits, and enum spellings to `MmpClient`/native. Unknown capabilities and
+delivery states therefore fail closed rather than being coerced. `nodeId()` and
+`publicKey()` expose public identity values only; seeds, private keys, provider
+handles, raw BLE frames, and automatic uploads remain unavailable. `flush()` is
+always explicit, and `report()`/`reportJson()` are local snapshots only.
+
 ## Beta status and metrics
 
 `client.capabilities()` returns the stable, secret-free protocol/API capability
