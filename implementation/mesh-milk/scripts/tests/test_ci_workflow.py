@@ -53,6 +53,31 @@ class CIWorkflowTests(unittest.TestCase):
         ]
         self.assertEqual(len(test_steps), 1)
 
+    def test_linux_host_provisions_bluer_build_prerequisites(self) -> None:
+        """Keep the Linux/BlueZ peripheral compile gate reproducible."""
+
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        host = workflow["jobs"]["host"]
+        self.assertIn("ubuntu-latest", host["strategy"]["matrix"]["os"])
+
+        prerequisite_steps = [
+            step
+            for step in host["steps"]
+            if "apt-get install" in step.get("run", "")
+        ]
+        self.assertEqual(len(prerequisite_steps), 1)
+        prerequisite = prerequisite_steps[0]
+        self.assertEqual(prerequisite.get("if"), "matrix.os == 'ubuntu-latest'")
+        self.assertIn("libdbus-1-dev", prerequisite["run"])
+        self.assertIn("pkg-config", prerequisite["run"])
+
+        build_steps = [
+            step.get("run", "")
+            for step in host["steps"]
+            if step.get("run", "").startswith("cargo build --workspace")
+        ]
+        self.assertEqual(build_steps, ["cargo build --workspace --all-features --locked"])
+
     def test_embedded_transactional_acceptance_double_is_a_named_ci_gate(self) -> None:
         workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
         steps = workflow["jobs"]["host"]["steps"]
