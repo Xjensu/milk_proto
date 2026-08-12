@@ -15,7 +15,7 @@ use crate::noise::{NoiseHandshake, MAX_HANDSHAKE_MESSAGE, MAX_TRANSPORT_CIPHERTE
 use crate::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use crate::ratchet::{direction_chain, RecvChain, SendChain};
 use crate::receipt::{mac_eq, receipt_key, receipt_mac};
-use crate::sealed::{open_box, seal_box, seal_box_with_root};
+use crate::sealed::{open_box, try_seal_box, try_seal_box_with_root};
 use crate::{conversation_id, CryptoError};
 
 fn id(seed: u8) -> Identity {
@@ -231,7 +231,7 @@ fn id_proof_from_wrong_identity_rejected() {
 fn sealed_box_roundtrip() {
     let bob = id(2);
     let mut r = rng();
-    let (eph, ct) = seal_box(&mut r, &bob.exchange_public(), b"ad", b"secret");
+    let (eph, ct) = try_seal_box(&mut r, &bob.exchange_public(), b"ad", b"secret").unwrap();
     assert_eq!(open_box(&bob, &eph, b"ad", &ct).unwrap(), b"secret");
     assert!(open_box(&bob, &eph, b"other-ad", &ct).is_err());
 }
@@ -244,7 +244,7 @@ fn sealed_box_root_matches_recipient_derivation() {
     let ad = b"sealed-header-ad";
     let body = b"first-contact";
     let (eph, ct, sender_root) =
-        seal_box_with_root(&mut r, &bob.exchange_public(), &alice.public(), &bob.public(), ad, body);
+        try_seal_box_with_root(&mut r, &bob.exchange_public(), &alice.public(), &bob.public(), ad, body).unwrap();
 
     assert_eq!(open_box(&bob, &eph, ad, &ct).unwrap(), body);
     let dh = bob.exchange_dh(&eph);
@@ -338,6 +338,16 @@ fn prekey_and_sealed_open_reject_low_order_points() {
     assert!(recipient_agree(&store, &bob, &alice.public(), &alice.exchange_public(), &low, PREKEY_NONE).is_err());
     assert!(recipient_agree(&store, &bob, &alice.public(), &low, &low, PREKEY_NONE).is_err());
     assert!(open_box(&bob, &low, b"ad", &[0; 16]).is_err());
+}
+
+#[test]
+fn sealed_box_construction_rejects_low_order_recipient_before_exposing_output() {
+    let alice = id(1);
+    let low = Key32([0; 32]);
+    let mut r = rng();
+
+    assert!(try_seal_box(&mut r, &low, b"ad", b"secret").is_err());
+    assert!(try_seal_box_with_root(&mut r, &low, &alice.public(), &low, b"ad", b"secret").is_err());
 }
 
 #[test]

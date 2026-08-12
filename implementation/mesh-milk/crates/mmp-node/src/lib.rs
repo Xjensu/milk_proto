@@ -49,7 +49,7 @@ use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, Mer
 use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use mmp_crypto::ratchet::SendChain;
 use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
-use mmp_crypto::sealed::{open_box, seal_box_with_root};
+use mmp_crypto::sealed::{open_box, try_seal_box_with_root};
 use mmp_router::{
     eviction_order, handoff_decision, origin_budget, transfer_order, Handoff, OriginBuckets,
     UtilityState,
@@ -2779,8 +2779,15 @@ impl NodeCore {
             payload: placeholder,
             signature: Sig64::ZERO,
         };
-        let (eph, ct, ck0) =
-            seal_box_with_root(&mut rng, &peer_exchange, &self.public, peer_pub, &bundle.canonical_aead_ad(), &body);
+        let (eph, ct, ck0) = try_seal_box_with_root(
+            &mut rng,
+            &peer_exchange,
+            &self.public,
+            peer_pub,
+            &bundle.canonical_aead_ad(),
+            &body,
+        )
+        .map_err(|_| SendError::UnknownPeer)?;
         bundle.payload = AsyncPayload::Sealed { eph, ct }.encode();
         bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
