@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use mmp_ffi::{FfiError, FfiEvent, FfiTier, MmpNode};
+use mmp_types::consts::MAX_BUNDLE;
 
 fn introduce(a: &MmpNode, b: &MmpNode) {
     for claim in a.own_claims() {
@@ -54,6 +55,40 @@ fn group_application_api_rejects_reserved_tags_and_accepts_custom_tags() {
     assert!(node
         .group_send_body(gid, 0x42, b"beta payload".to_vec())
         .is_ok());
+}
+
+#[test]
+fn oversized_group_body_is_rejected_before_queue_or_group_mutation() {
+    let node = MmpNode::new(vec![0x64; 32], FfiTier::Relay, None).expect("valid in-memory node");
+    let gid = node.create_group();
+    let members_before = node.group_members(gid.clone()).expect("created group is known");
+    let store_before = node.store_len();
+    drain(&node);
+
+    assert!(node.poll_send().is_none());
+    assert!(node.poll_event().is_none());
+
+    assert_eq!(
+        node.group_send_body(gid.clone(), 0x42, vec![0u8; MAX_BUNDLE]),
+        Err(FfiError::BadArg),
+        "the FFI boundary must reject a payload at the frozen bundle cap"
+    );
+
+    assert_eq!(node.store_len(), store_before, "rejected input must not enter the store");
+    assert!(node.poll_send().is_none(), "rejected input must not queue transport work");
+    assert!(node.poll_event().is_none(), "rejected input must not emit an application event");
+    assert_eq!(
+        node.group_members(gid.clone()).expect("group remains known"),
+        members_before,
+        "rejected input must not mutate group membership state"
+    );
+
+    assert!(
+        node.group_send_body(gid, 0x42, b"retry after rejection".to_vec())
+            .is_ok(),
+        "a valid retry must remain usable after rejected input"
+    );
+    assert_eq!(node.store_len(), store_before + 1, "only the valid retry should be stored");
 }
 
 #[test]
