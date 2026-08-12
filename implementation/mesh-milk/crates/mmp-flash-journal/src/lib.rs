@@ -104,10 +104,10 @@ pub fn encode<'a>(
 /// Scan an implementation-local journal image without allocating.
 ///
 /// Invalid checksums, invalid commit markers, and impossible candidate
-/// lengths are skipped. A truncated candidate at the end is treated as an
-/// incomplete append and terminates the scan; earlier valid generations remain
-/// eligible. If multiple valid records share a generation, the first valid
-/// record wins deterministically.
+/// lengths are skipped. A truncated candidate is treated as an incomplete
+/// append and scanning continues byte-by-byte, so a malformed slot containing
+/// a nested marker cannot mask a later complete record. If multiple valid
+/// records share a generation, the first valid record wins deterministically.
 pub fn scan(image: &[u8]) -> ScanResult<'_> {
     let mut cursor = 0usize;
     let mut result = ScanResult {
@@ -136,9 +136,12 @@ pub fn scan(image: &[u8]) -> ScanResult<'_> {
             continue;
         };
         if record_len > image.len() - cursor {
-            // A final partial append cannot be distinguished from a future
-            // record without an index. Preserve earlier complete generations.
-            break;
+            // A final partial append is normally the end of the log, but a
+            // malformed earlier record may contain a nested MAGIC marker.
+            // Keep looking so that such a marker cannot mask a later complete
+            // record placed by a provider that skips a damaged append slot.
+            cursor += 1;
+            continue;
         }
 
         let payload_start = cursor + HEADER_LEN;
@@ -250,6 +253,39 @@ mod tests {
         assert_eq!(result.selected.unwrap().payload, b"durable");
         assert_eq!(result.valid, 1);
         assert_eq!(result.rejected, 1);
+    }
+
+    #[test]
+    fn nested_truncated_marker_does_not_mask_later_generation() {
+        let mut image = [0u8; 512];
+        let mut first = [0u8; 128];
+        let first_payload = [0u8; 64];
+        let first_len = encoded_len(first_payload.len()).unwrap();
+        encode(1, &first_payload, &mut first).unwrap();
+
+        // Corrupt the first record and place a plausible but incomplete
+        // nested candidate in its payload. The scanner must still recover
+        // the complete record appended after this damaged slot.
+        let nested = HEADER_LEN + 4;
+        first[nested..nested + MAGIC.len()].copy_from_slice(&MAGIC);
+        first[nested + 4..nested + 12].copy_from_slice(&99u64.to_le_bytes());
+        first[nested + 12..nested + 16]
+            .copy_from_slice(&(MAX_PAYLOAD_LEN as u32).to_le_bytes());
+        first[first_len - 1] ^= 1;
+        image[..first_len].copy_from_slice(&first[..first_len]);
+
+        let second_len = encoded_len(b"durable".len()).unwrap();
+        encode(
+            2,
+            b"durable",
+            &mut image[first_len..first_len + second_len],
+        )
+        .unwrap();
+
+        let result = scan(&image[..first_len + second_len]);
+        assert_eq!(result.selected.unwrap().generation, 2);
+        assert_eq!(result.selected.unwrap().payload, b"durable");
+        assert_eq!(result.valid, 1);
     }
 
     #[test]

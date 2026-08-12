@@ -113,6 +113,13 @@ provider returning `Unsupported` deliberately retains the legacy
 accepted-prefix fallback. A fixed-capacity board backend and crash-recovery
 integration are still open.
 
+The allocation-free journal scanner now treats a truncated candidate as a
+malformed append and continues byte-by-byte. This prevents a nested `MAGIC`
+marker in a damaged slot from hiding a later complete generation. The
+regression is intentionally limited to scanner recovery; it does not establish
+board-specific write ordering, power-loss atomicity, or a `BundleStore`
+implementation.
+
 ## 3. Capacity policy inputs
 
 Capacity is a board/provider decision, not a protocol constant. A fixed store
