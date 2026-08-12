@@ -79,6 +79,23 @@ pub enum StorePutError {
     Capacity,
 }
 
+/// Why a bounded store read could not produce its result.
+///
+/// The caller-owned read methods below are additive to the legacy allocating
+/// methods. A provider may report the required output length without mutating
+/// the caller's buffers, allowing a fixed-capacity caller to apply its own
+/// admission policy before retrying.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreReadError {
+    /// No bundle exists for the requested ID.
+    NotFound,
+    /// The output slice is too small; no output or store state was mutated.
+    OutputTooSmall {
+        /// Minimum number of elements/bytes required for a retry.
+        required: usize,
+    },
+}
+
 /// A borrowed bundle write used by [`BundleStore::try_put_batch`].
 ///
 /// The metadata is copied into the request while the encoded wire bytes are
@@ -363,6 +380,27 @@ pub trait BundleStore {
         let _ = batch;
         Err(StoreAbortError::Unsupported)
     }
+    /// Copy one bundle into caller-owned storage without requiring the
+    /// provider to allocate a payload vector. On failure, `meta_out`,
+    /// `bytes_out`, and provider state remain unchanged.
+    fn get_into(
+        &self,
+        id: &Id16,
+        meta_out: &mut BundleMeta,
+        bytes_out: &mut [u8],
+    ) -> Result<usize, StoreReadError> {
+        let Some((meta, bytes)) = self.get(id) else {
+            return Err(StoreReadError::NotFound);
+        };
+        if bytes.len() > bytes_out.len() {
+            return Err(StoreReadError::OutputTooSmall {
+                required: bytes.len(),
+            });
+        }
+        bytes_out[..bytes.len()].copy_from_slice(&bytes);
+        *meta_out = meta;
+        Ok(bytes.len())
+    }
     /// Fetches a bundle's metadata and raw wire bytes, if present.
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)>;
     /// Fetches a bundle's metadata only, if present.
@@ -374,8 +412,38 @@ pub trait BundleStore {
     fn remove(&mut self, id: &Id16) -> bool;
     /// Sorted IDs in `[lo, hi]` — the RBSR contract (doc 06 §3).
     fn ids_range(&self, lo: &Id16, hi: &Id16) -> Vec<Id16>;
+    /// Copy sorted IDs in `[lo, hi]` into caller-owned storage. The provider
+    /// must leave the output slice unchanged when it reports insufficient
+    /// capacity.
+    fn ids_range_into(
+        &self,
+        lo: &Id16,
+        hi: &Id16,
+        out: &mut [Id16],
+    ) -> Result<usize, StoreReadError> {
+        let ids = self.ids_range(lo, hi);
+        if ids.len() > out.len() {
+            return Err(StoreReadError::OutputTooSmall {
+                required: ids.len(),
+            });
+        }
+        out[..ids.len()].copy_from_slice(&ids);
+        Ok(ids.len())
+    }
     /// Metadata for every bundle currently in the store.
     fn all_meta(&self) -> Vec<BundleMeta>;
+    /// Copy all bundle metadata into caller-owned storage. The provider must
+    /// leave the output slice unchanged when it reports insufficient capacity.
+    fn all_meta_into(&self, out: &mut [BundleMeta]) -> Result<usize, StoreReadError> {
+        let metas = self.all_meta();
+        if metas.len() > out.len() {
+            return Err(StoreReadError::OutputTooSmall {
+                required: metas.len(),
+            });
+        }
+        out[..metas.len()].copy_from_slice(&metas);
+        Ok(metas.len())
+    }
     /// Total wire-encoded byte size of every stored bundle.
     fn total_bytes(&self) -> u64;
     /// Number of bundles currently in the store.
@@ -386,6 +454,27 @@ pub trait BundleStore {
     }
     /// Delete expired bundles; returns their IDs (diag + receipts bookkeeping).
     fn expire(&mut self, now_ms: u64) -> Vec<Id16>;
+    /// Delete expired bundles and copy their IDs into caller-owned storage.
+    /// Capacity is checked before deletion, so an insufficient output slice
+    /// leaves both the store and the output unchanged.
+    fn expire_into(&mut self, now_ms: u64, out: &mut [Id16]) -> Result<usize, StoreReadError> {
+        let expired = self
+            .all_meta()
+            .into_iter()
+            .filter(|meta| meta.expires_at <= now_ms)
+            .count();
+        if expired > out.len() {
+            return Err(StoreReadError::OutputTooSmall { required: expired });
+        }
+        let ids = self.expire(now_ms);
+        if ids.len() > out.len() {
+            return Err(StoreReadError::OutputTooSmall {
+                required: ids.len(),
+            });
+        }
+        out[..ids.len()].copy_from_slice(&ids);
+        Ok(ids.len())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1150,6 +1239,25 @@ impl BundleStore for MemStore {
         Ok(())
     }
 
+    fn get_into(
+        &self,
+        id: &Id16,
+        meta_out: &mut BundleMeta,
+        bytes_out: &mut [u8],
+    ) -> Result<usize, StoreReadError> {
+        let Some((meta, bytes)) = self.map.get(id) else {
+            return Err(StoreReadError::NotFound);
+        };
+        if bytes.len() > bytes_out.len() {
+            return Err(StoreReadError::OutputTooSmall {
+                required: bytes.len(),
+            });
+        }
+        bytes_out[..bytes.len()].copy_from_slice(bytes);
+        *meta_out = *meta;
+        Ok(bytes.len())
+    }
+
     fn get(&self, id: &Id16) -> Option<(BundleMeta, Vec<u8>)> {
         self.map.get(id).cloned()
     }
@@ -1180,8 +1288,35 @@ impl BundleStore for MemStore {
         self.map.range(*lo..=*hi).map(|(id, _)| *id).collect()
     }
 
+    fn ids_range_into(
+        &self,
+        lo: &Id16,
+        hi: &Id16,
+        out: &mut [Id16],
+    ) -> Result<usize, StoreReadError> {
+        let required = self.map.range(*lo..=*hi).count();
+        if required > out.len() {
+            return Err(StoreReadError::OutputTooSmall { required });
+        }
+        for (slot, (id, _)) in out.iter_mut().zip(self.map.range(*lo..=*hi)) {
+            *slot = *id;
+        }
+        Ok(required)
+    }
+
     fn all_meta(&self) -> Vec<BundleMeta> {
         self.map.values().map(|(m, _)| *m).collect()
+    }
+
+    fn all_meta_into(&self, out: &mut [BundleMeta]) -> Result<usize, StoreReadError> {
+        let required = self.map.len();
+        if required > out.len() {
+            return Err(StoreReadError::OutputTooSmall { required });
+        }
+        for (slot, (meta, _)) in out.iter_mut().zip(self.map.values()) {
+            *slot = *meta;
+        }
+        Ok(required)
     }
 
     fn total_bytes(&self) -> u64 {
@@ -1204,6 +1339,28 @@ impl BundleStore for MemStore {
         }
         dead
     }
+
+    fn expire_into(&mut self, now_ms: u64, out: &mut [Id16]) -> Result<usize, StoreReadError> {
+        let required = self
+            .map
+            .values()
+            .filter(|(meta, _)| meta.expires_at <= now_ms)
+            .count();
+        if required > out.len() {
+            return Err(StoreReadError::OutputTooSmall { required });
+        }
+        let mut count = 0;
+        for (id, (meta, _)) in &self.map {
+            if meta.expires_at <= now_ms {
+                out[count] = *id;
+                count += 1;
+            }
+        }
+        for id in &out[..count] {
+            self.remove(id);
+        }
+        Ok(count)
+    }
 }
 
 #[cfg(test)]
@@ -1212,8 +1369,8 @@ mod tests {
 
     use super::{
         BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
-        StoreBatchReservation, StoreCommitError, StorePutOutcome, StoreReserveError,
-        StoreReservation,
+        StoreBatchReservation, StoreCommitError, StorePutOutcome, StoreReadError,
+        StoreReserveError, StoreReservation,
     };
     use mmp_types::ids::Id16;
 
@@ -1292,6 +1449,59 @@ mod tests {
             Err(StoreBatchError::Unsupported)
         );
         assert!(store.0.is_empty());
+    }
+
+    #[test]
+    fn bounded_reads_are_object_safe_and_fail_without_mutation() {
+        let mut store = MemStore::new();
+        store.put(meta(1, 3), &[7, 8, 9]);
+        let mut expiring = meta(2, 1);
+        expiring.expires_at = 5;
+        store.put(expiring, &[4]);
+
+        let mut output_meta = meta(99, 0);
+        let mut bytes = [0u8; 3];
+        let trait_store: &mut dyn BundleStore = &mut store;
+        assert_eq!(
+            trait_store.get_into(&Id16([1; 16]), &mut output_meta, &mut bytes),
+            Ok(3)
+        );
+        assert_eq!(output_meta.id, Id16([1; 16]));
+        assert_eq!(bytes, [7, 8, 9]);
+
+        let before_meta = output_meta;
+        let before_bytes = bytes;
+        let mut too_small = [0u8; 2];
+        assert_eq!(
+            trait_store.get_into(&Id16([1; 16]), &mut output_meta, &mut too_small),
+            Err(StoreReadError::OutputTooSmall { required: 3 })
+        );
+        assert_eq!(output_meta, before_meta);
+        assert_eq!(too_small, [0, 0]);
+        assert_eq!(bytes, before_bytes);
+        assert_eq!(
+            trait_store.get_into(&Id16([8; 16]), &mut output_meta, &mut bytes),
+            Err(StoreReadError::NotFound)
+        );
+
+        let mut ids = [Id16([0; 16]); 1];
+        assert_eq!(
+            trait_store.ids_range_into(&Id16([1; 16]), &Id16([2; 16]), &mut ids),
+            Err(StoreReadError::OutputTooSmall { required: 2 })
+        );
+        assert_eq!(ids, [Id16([0; 16]); 1]);
+
+        let mut metas = [meta(99, 0); 1];
+        assert_eq!(
+            trait_store.all_meta_into(&mut metas),
+            Err(StoreReadError::OutputTooSmall { required: 2 })
+        );
+        assert_eq!(metas[0].id, Id16([99; 16]));
+
+        let mut expired = [Id16([0; 16]); 1];
+        assert_eq!(trait_store.expire_into(5, &mut expired), Ok(1));
+        assert_eq!(expired[0], Id16([2; 16]));
+        assert_eq!(trait_store.meta(&Id16([2; 16])), None);
     }
 
     #[test]

@@ -272,3 +272,35 @@ phone-to-sensor HIL path. The next E7 change
 must first name the allocator/flash policy and producer transaction boundary;
 adding a generic `BundleStore` implementation before those decisions would
 make capacity and crash-atomicity claims unverifiable.
+
+## Bounded read seam (2026-08-12)
+
+The next safe provider boundary is now implemented as an additive API in
+`mmp-core::BundleStore`. Providers may override `get_into`, `ids_range_into`,
+`all_meta_into`, and `expire_into` to write into caller-owned slices. The
+`MemStore` reference implementation performs these operations without
+creating the legacy result vectors. Every bounded method reports
+`StoreReadError::OutputTooSmall { required }` before mutating output or store
+state; `expire_into` also preflights capacity before deletion.
+
+The allocating `get`, `ids_range`, `all_meta`, and `expire` methods remain in
+the trait for host compatibility and are unchanged. The default bounded
+methods delegate to those legacy methods, so an embedded provider must
+override the bounded methods rather than relying on the defaults. This is an
+API seam, not an embedded backend: no flash geometry, allocator policy,
+journal transaction adapter, or board-specific `BundleStore` exists yet.
+
+Verification for this slice:
+
+```text
+cargo test -p mmp-core --all-targets --locked
+116 unit tests + 5 integration tests passed
+cargo clippy -p mmp-core --all-targets --locked -- -D warnings
+passed
+```
+
+The `mmp-node` host remains allocation-backed and is intentionally not
+refactored in this slice. Its store consumers are documented in the review
+record; a future embedded host needs bounded metadata iteration and payload
+scratch ownership before it can consume this seam. The frozen
+`specification/` tree remains unchanged.

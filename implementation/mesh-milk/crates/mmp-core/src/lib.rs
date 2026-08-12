@@ -35,7 +35,7 @@ pub use seen::SeenIndex;
 pub use session::{Phase, SessionEngine, SessionEvent, SessionHost};
 pub use store::{
     BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError, StorePutError,
-    StorePutOutcome,
+    StorePutOutcome, StoreReadError,
 };
 
 #[cfg(test)]
