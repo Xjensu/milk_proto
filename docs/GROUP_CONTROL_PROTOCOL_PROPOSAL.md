@@ -1,207 +1,248 @@
-# MMP/1 Group-Control Protocol Proposal
+# Future Authenticated Group-Control Envelope
 
-**Status:** non-normative proposal; not implemented and not approved for v1
+**Status: PROPOSAL-ONLY / non-normative.** This document does not amend
+`specification/`, promote `mmp-types::group_control`, or claim production
+readiness. It records a candidate design for review before any wire or state
+machine change is authorized.
 
-**Protocol impact:** would require an explicit specification amendment. This
-document does not change `specification/`, existing wire bytes, or the
-quarantined `mmp-types::group_control` candidate.
+## 1. Scope and evidence
 
-**Evidence basis:** `docs/GROUP_CONTROL_SECURITY_AUDIT.md`,
-`specification/06-sync-spec.md` §8, `specification/08-crypto-spec.md` §6,
-`specification/10-message-format.md` §3.1, and the current
-`mmp-node` sender-key implementation.
+The proposal addresses three open implementation gates identified in
+[`GROUP_CONTROL_SECURITY_AUDIT.md`](GROUP_CONTROL_SECURITY_AUDIT.md):
 
-## 1. Why a proposal is required
+1. late-joiner confidentiality;
+2. confidentiality of messages sent by a remaining non-admin after removal;
+3. bounded admission of authenticated future-epoch state.
 
-The current pairwise sender-key path has a concrete late-joiner defect:
-`Node::group_invite` sends the inviter's current distribution and only then
-adds the member, without advancing the epoch. A new member therefore receives
-the old epoch key and can read earlier same-epoch traffic. This conflicts with
-the late-joiner rule in doc 08 §6.3.
+The evidence baseline is the frozen text of sync §8, crypto §6, and message
+format §3, together with the current `mmp-node` group path. Sync §8 requires
+admin-signed membership operations, an epoch anchor, and an epoch increase for
+every effective membership change. Crypto §6 requires fresh sender keys for a
+new epoch and no distribution to a removed member. Message format §3 currently
+registers no group-control, grant, or bootstrap signing domain. The current
+pairwise `SenderKeyDist` body contains a group, epoch, chain seed, and signing
+key, but no authenticated admin anchor or recipient binding.
 
-There are two related correctness hazards:
+## 2. Confirmed current defects
 
-1. Existing members have no authenticated transition that tells them to mint
-   fresh local keys after an add or remove.
-2. `SenderKeyDist` has no administrator/anchor proof. Accepting a higher epoch
-   from any authenticated member permits unauthorised epoch jumps; requiring
-   exact equality breaks legitimate partitioned re-key convergence.
+These are implementation/specification gaps, not merely hypothetical risks:
 
-The candidate `group_control.rs` file is not a solution. The audit found
-missing signature verification, signer/slot binding, replay frontiers,
-aggregate limits, complete membership-root semantics, and safe bootstrap
-validation.
+- The quarantined bootstrap candidate has structural checks but no implemented
+  signature verification, recipient-bound AEAD, or replay state. It must not be
+  used as a conformance surface.
+- The current invite path distributes the inviter's current-epoch key before
+  adding the member and does not perform the epoch transition required by
+  crypto §6.3. A late joiner can therefore receive current-epoch material
+  without a defined non-retroactive bootstrap boundary.
+- A current member can send a syntactically valid future-epoch distribution.
+  The receiver can learn it without an authenticated anchor proving the
+  membership transition; retaining one entry per `(member, epoch)` also has no
+  protocol-level future-epoch budget.
+- After accepting an administrator's future-epoch distribution, the current
+  non-admin path does not itself advance its local epoch and sender chain.
+  A later message from that member can consequently remain in the old epoch.
+- Candidate anchor and acknowledgement objects currently share the same signed
+  object shape and do not have a role-separated signing preimage. Candidate
+  operations also lack a production consumer that verifies signer authorization,
+  sequence/replay state, and aggregate limits.
 
-## 2. Required security and convergence properties
+Existing local fail-closed checks (authenticated origin binding, stale/non-member
+rejection, duplicate `(member, epoch)` rejection, and bounded unknown-group
+bootstrap) remain useful compatibility hardening. They do not solve the three
+gates above.
 
-Any approved design MUST provide all of the following before it is wired into
-`mmp-node`:
+## 3. Requirements for a future control protocol
 
-- Every effective membership change has one unambiguous operation identity and
-  advances the group epoch exactly once.
-- A late joiner receives only the new epoch's sender-key material and cannot
-  derive earlier epochs from the welcome.
-- A removed member receives no new-epoch key material after the removal is
-  observed by an honest sender.
-- Every accepted epoch transition is authorised by the administrator set and
-  bound to the resulting membership state.
-- Duplicate, stale, skipped, concurrent, and replayed operations are handled
-  deterministically without resetting a sender-key receive chain.
-- The membership root commits to the exact OR-Set state relevant to the
-  checkpoint, including add-tags, removal tombstones, and operation frontier;
-  hashing member IDs alone is insufficient.
-- All remote lengths, operation counts, grants, and nested payloads have
-  aggregate bounds no larger than the existing bundle/session limits.
-- A failed decode, signature check, replay check, or provider write leaves live
-  group state unchanged.
+Any approved design MUST:
 
-## 3. Candidate wire architecture
+1. authenticate the administrator and bind the administrator key to the
+   immutable admin set and slot rules in sync §8.4;
+2. bind every membership operation to one group, base epoch/anchor, operation
+   identifier, signer sequence, and canonical operation bytes;
+3. make an effective membership change and its resulting epoch unambiguous;
+4. deliver sender-key material only to an authorized recipient and only for the
+   resulting epoch (never to a removed member or backward to a late joiner);
+5. let a non-admin atomically install an authenticated future epoch before it
+   can publish a new-epoch group message;
+6. reject stale, duplicate, skipped, conflicting, or unauthenticated controls
+   without mutating durable membership or key state;
+7. impose aggregate bounds on operations, recipients, nested lengths, and
+   future-epoch admission before allocation or storage;
+8. preserve the sync §8 partition behavior: removal takes effect as knowledge
+   reconverges, not by pretending that disconnected nodes have global time;
+9. provide canonical bytes and negative vectors before implementation wiring.
 
-The recommended direction is a new, versioned **group-control envelope** with
-two transport forms. The names below are proposal labels, not assigned v1
-registries.
+## 4. Candidate envelope and schema (not normative)
 
-### 3.1 Authenticated control commit
+The preferred shape is one authenticated control envelope carried inside the
+already-authenticated pairwise channel. The channel supplies confidentiality
+for control traffic; the envelope supplies durable authorization, replay, and
+cross-session binding.
 
-An administrator publishes a signed commit containing:
+Candidate fixed fields, in canonical order:
 
 ```text
-control_version      u8
-group_id             Id16
-admin_key_id         Key32 or registered admin slot
-operation_id         16 or 32 bytes, unique under the admin key
-operation_sequence   u64
-previous_epoch       u16
-new_epoch            u16
-operation_kind       ADD or REMOVE
-subject              NodeId
-result_members_root  [32]byte
-result_frontier      bounded canonical digest/frontier
-signature            Sig64
+version                 u8
+kind                    u8  (bootstrap, membership batch, epoch anchor, key grant, ack)
+group_id                id16
+recipient_node_id       id16 or zero for a group-wide control
+base_epoch              u16
+result_epoch            u16
+base_anchor_hash        hash32
+control_sequence        u64    (per authorized signer)
+control_id              id16   (hash of unsigned canonical object)
+signer_slot              u16
+signer_identity_pubkey   key32
+body_len                 u16
+body                    canonical kind-specific object
+signature               sig64
 ```
 
-The signature preimage must domain-separate group control from bundle,
-AuthCert, announcement, and ordinary claim signatures. `operation_id`,
-sequence, group, both epochs, subject, root, and signer identity must all be
-covered. An acknowledgement must use a distinct role and signing preimage;
-the same bytes must never be valid as both a commit and an acknowledgement.
+The body would be one of:
 
-The commit is delivered through an authenticated channel. Relays may store and
-forward it, but only a member that verifies the administrator authorization,
-the previous-root relationship, and the replay frontier may apply it.
+- `ADD`: member identity/public-key binding and one OR-Set add tag;
+- `REMOVE`: strictly ordered observed add tags;
+- `ANCHOR`: result epoch, complete membership/tombstone/frontier root,
+  previous-anchor hash, and a role-specific anchor signature;
+- `GRANT`: recipient, result epoch, anchor hash, sender signature key, and a
+  pairwise-encrypted sender-chain seed; the seed MUST NOT be covered only by a
+  detached grant that leaves the seed unbound;
+- `BOOTSTRAP`: immutable admin set, initial membership state, initial anchor,
+  recipient-bound grants, and a fresh bootstrap nonce;
+- `ACK`: an explicitly different acknowledgement preimage referring to an
+  anchor hash, not an alias of the anchor signature.
 
-### 3.2 Recipient-bound welcome/key package
+The envelope is a candidate schema, not a declaration of exact widths or frame
+type. A future protocol revision must decide whether batches are one signed
+object or independently signed operations plus a signed batch manifest. It must
+also decide whether grant ciphertext uses the existing pairwise AEAD context or
+an additional recipient-bound wrapper. No decision is made here by implication.
 
-An ADD requires a recipient-bound welcome encrypted to the invitee's pairwise
-conversation. It contains the new epoch, the post-commit membership root, and
-only the sender-key grants permitted for that recipient. Each grant is bound to
-the group, epoch, recipient, sender identity, and the commit operation. Raw
-sender-chain seeds must never be accepted without authenticated encryption and
-recipient binding.
+## 5. Cryptographic, replay, and resource invariants
 
-After applying a commit, each surviving member generates a fresh local sender
-key for `new_epoch` and distributes it through the existing pairwise channel,
-but the distribution is accepted only when it references the verified commit.
-The removed member is excluded from the grant set.
+### 5.1 Signing and channel binding
 
-### 3.3 Bootstrap
+Every signed object needs a distinct, prefix-free domain tag (for example,
+separate tags for control, grant, anchor, acknowledgement, and bootstrap).
+The signed preimage MUST include group, epochs, anchor hash, signer identity,
+signer slot, recipient where applicable, sequence, control ID, and the exact
+canonical body. Verifiers MUST check strict Ed25519 canonicality as required by
+crypto §10 and verify that the public key derives the claimed node identifier.
 
-The first invite cannot be authorized by a bare epoch-1 sender-key record.
-Bootstrap must carry either:
+The envelope is not a replacement for Noise or `ID_PROOF`: it is accepted only
+after the pairwise session is authenticated. The pairwise AEAD associated data
+should bind the envelope version, kind, group, epochs, control ID, and recipient
+to prevent ciphertext relocation. If a separate bootstrap wrapper is chosen,
+its nonce and recipient must be included in both AEAD associated data and the
+signed authorization object.
 
-- an administrator-signed initial membership commit plus a recipient-bound
-  welcome; or
-- an out-of-band verified administrator/membership checkpoint whose encoding
-  and trust ceremony are explicitly specified.
+### 5.2 Replay and ordering
 
-TOFU may remain an application policy, but it must not be described as an
-administrator authorization primitive.
+Receivers maintain, per group and authorized signer, the highest accepted
+sequence plus a bounded set of recently accepted control IDs. A control is
+accepted only if its base anchor is known (or is an explicitly bounded bootstrap
+case), its sequence is not replayed, its operation ID recomputes correctly, and
+its signer is authorized for the immutable admin set. Anchor and ACK roles have
+different domains and state transitions. State mutation is transactional:
+verify, validate all operations, then commit membership/epoch/key changes.
 
-## 4. Replay, ordering, and resource rules
+Future epochs are admitted only through a verified anchor/transition whose
+result epoch is the next valid epoch for that control history. Missing epochs
+are fetched as bounded control history; arbitrary unanchored jumps are rejected.
 
-The receiver should maintain bounded per-group state containing the last
-accepted administrator frontier, the current epoch/root, and a bounded set of
-recent operation IDs. Rules should be:
+### 5.3 Size and admission bounds
 
-1. Reject an operation whose group or signer binding is invalid.
-2. Reject a duplicate operation ID without mutating state.
-3. Reject a sequence rollback or an operation that skips the authenticated
-   frontier unless the protocol explicitly defines a bounded merge proof.
-4. Accept a higher epoch only with a verified administrator commit and a
-   valid membership-root transition.
-5. Retain only a bounded number of previous epochs needed for in-flight
-   decryption; define the exact retention horizon before implementation.
-6. Enforce both per-item and aggregate limits before allocation, signature
-   verification of unbounded nested data, or key installation.
+Before allocation, implementations must enforce the existing frame/bundle
+reassembly limit and tighter control-specific limits: maximum admins,
+operations, remove tags, distributions, nested body length, and total encoded
+batch size. The aggregate limit, not just each item limit, is authoritative.
+Per-group pending controls, future epochs, and replay IDs require finite quotas
+with deterministic eviction/rejection behavior. A quota failure must not
+partially mutate membership or consume a sender-chain index.
 
-Concurrent administrator changes are the hardest case. The v1 proposal should
-choose one explicit policy: deterministic conflict rejection until a common
-frontier is exchanged, or a formally specified OR-Set merge with a new signed
-result root. Silent last-writer-wins is not acceptable for membership security.
+## 6. Migration and compatibility
 
-## 5. Compatibility and migration
+This proposal cannot be silently deployed as MMP/1. A compatible rollout would
+need one of the following approved paths:
 
-This proposal is not wire-compatible with the current bare `SENDER_KEY`
-bootstrap semantics. A safe migration therefore needs an explicit version and
-interoperability policy, for example:
+- **New protocol version/profile:** register a new control frame/domain set and
+  require peers to negotiate it; MMP/1 nodes continue the existing limited
+  pairwise path and must not interpret the new controls.
+- **Opaque extension under a future bundle class:** only if the frozen registry
+  explicitly authorizes the class and defines relay behavior; unknown nodes may
+  relay but must not apply state.
+- **Out-of-band application migration:** keep groups created by MMP/1 in their
+  documented limitations and create new groups under the reviewed control
+  profile.
 
-- keep the current path as a legacy mode that cannot claim full group-control
-  conformance; or
-- introduce a new control version and require peers to negotiate/support it
-  before allowing membership changes; or
-- freeze group membership changes while allowing legacy read-only epoch traffic
-  during a transition.
+No downgrade may cause a member that has seen a removal to resume publishing
+  under an old epoch. A node must never treat a legacy `SenderKeyDist` as proof
+  of an admin transition. Existing MMP/1 groups therefore remain a documented
+  compatibility mode until all required control semantics and vectors are
+  available.
 
-An implementation must not infer the new semantics from an old `SENDER_KEY`
-body, and an old peer must never be tricked into accepting a new control object
-as an ordinary application payload.
+## 7. Required vectors and verification plan
 
-## 6. Required vectors and tests before approval
+Before any implementation change, the approval package should contain:
 
-Before any code or specification amendment is approved, add exact byte vectors
-and negative tests for:
+- exact encode/decode vectors for every control kind, including empty and
+  maximum-size legal bodies;
+- signature vectors for each domain and cross-domain rejection vectors;
+- AEAD vectors showing recipient, group, epoch, anchor, and control-ID binding;
+- replay vectors: duplicate sequence, duplicate control ID, stale anchor,
+  reordered batch, conflicting signer, and bounded missing-epoch catch-up;
+- confidentiality vectors: late joiner cannot decrypt prior epoch, removed
+  member cannot decrypt result epoch, and remaining non-admin can decrypt only
+  after installing the verified new epoch;
+- malformed-wire/property/fuzz cases for truncation, overlong lengths,
+  duplicate fields, non-canonical order, aggregate overflow, and allocation
+  failure;
+- crash-recovery vectors proving verify-before-commit and atomic persistence.
 
-- valid ADD, REMOVE, bootstrap, welcome, and per-member grant packages;
-- wrong signer, wrong admin slot, wrong group, wrong recipient, and wrong epoch;
-- cross-domain signature and role confusion attempts;
-- duplicate, replayed, stale, skipped, and conflicting operations;
-- removed-member grant requests and late-joiner attempts to open old traffic;
-- malformed lengths, aggregate-limit boundaries, duplicate grants, and trailing
-  bytes;
-- crash/failure atomicity during commit, key installation, and persistence;
-- partition/merge traces with deterministic convergence or explicit rejection.
+The existing mandatory test classes (wire/golden, crypto, security/regression,
+property/fuzzing, storage invariants, and key end-to-end scenarios) should be
+reused and parameterized rather than duplicated across platform wrappers.
 
-The mandatory test classes are wire/golden vectors, cryptography,
-security/regression, property/fuzzing, storage invariants, and key end-to-end
-group scenarios. No test result may be used to claim the proposal is
-implemented until two independent implementations agree on the vectors.
+## 8. Threat-model limits
 
-## 7. Rejected shortcuts
+The envelope does not provide global consensus, instant removal during a
+partition, anonymity, traffic-flow confidentiality, or protection from RF
+jamming. A compromised current admin can authorize harmful membership changes;
+that is an authority compromise, not a serialization failure. A relay can
+withhold valid controls and delay convergence. Offline double-spending of a
+routing budget is outside this proposal. These limits must remain explicit in
+the security documentation.
 
-- **Rotate only the administrator's key:** leaves surviving members on the old
-  epoch and does not provide future secrecy from a removed member.
-- **Accept any higher epoch:** permits a malicious current member to flood
-  arbitrary future epochs and consume bounded receiver state.
-- **Require exact epoch equality:** breaks legitimate post-removal convergence
-  across a partition.
-- **Promote the quarantined `group_control.rs` types:** the security audit found
-  unverified signatures, missing replay/role bindings, incomplete roots, and
-  unbounded aggregate encodings.
-- **Use a distributed ledger:** introduces a coordination requirement that the
-  disconnected MMP/1 architecture intentionally does not provide.
+## 9. Rejected alternatives for this proposal
 
-## 8. Approval gate
+- **Promote the quarantined `group_control.rs` unchanged:** rejected because
+  structural codecs do not implement signature verification, role binding,
+  replay state, or aggregate admission.
+- **Require only `dist.epoch == local_epoch + 1`:** rejected because it breaks
+  legitimate partition catch-up and still does not authenticate the transition.
+- **Accept any higher epoch and prune old state:** rejected because a malicious
+  current member can advance state without an anchor and induce memory,
+  confidentiality, or availability failures.
+- **Use MLS as a transparent replacement:** deferred; sync §8 explicitly
+  documents concurrent partitioned membership changes and the lack of an
+  arbiter. A decentralized group-key design may be revisited separately.
+- **Add an application-side signature without a registered protocol domain:**
+  rejected because it creates an unreviewed second wire/security contract.
 
-This proposal should remain documentation-only until the project owner
-approves, in writing:
+## 10. Approval gate
 
-1. the control envelope and registered signing domains;
-2. the concurrency/partition policy;
-3. the migration behavior for legacy peers;
-4. the epoch-retention and aggregate-size constants; and
-5. the required vector and external cryptographic review scope.
+This proposal is ready only for architecture review. Before implementation or
+any specification edit, reviewers must approve:
 
-Only after that approval may `mmp-types`, `mmp-crypto`, `mmp-core`, and
-`mmp-node` be changed in dependency order. Until then, the correct production
-status is **deferred**: the current group path remains an explicitly tracked
-compatibility limitation, not a silently upgraded protocol.
+1. the exact envelope/frame placement and version negotiation;
+2. the domain-tag registry and canonical preimages;
+3. anchor/root and admin-slot semantics;
+4. recipient-bound grant encryption and late-joiner policy;
+5. replay/frontier rules and finite aggregate quotas;
+6. migration behavior for existing MMP/1 groups; and
+7. the complete vector, fuzz, crash-recovery, and end-to-end test matrix.
+
+The approval record should identify the accepted wire revision, compatibility
+profile, and production gates. Until that record exists, the implementation must
+continue to quarantine the candidate module and document the current MMP/1
+limitations rather than pretending that this proposal is implemented.
