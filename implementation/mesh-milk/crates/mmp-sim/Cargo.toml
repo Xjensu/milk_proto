@@ -21,6 +21,9 @@ mmp-rs-code = { path = "../mmp-rs-code" }
 # Adversary (E5-S7, handbook §4.8) bypasses `Node` and speaks raw frames: it
 # needs the Noise XX handshake driver + Ed25519 signing directly.
 mmp-crypto = { path = "../mmp-crypto" }
+hex = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lints]
 workspace = true

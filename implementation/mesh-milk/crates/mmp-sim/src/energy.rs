@@ -5,6 +5,21 @@
 //! normalized transmitter and receiver activity rates. The caller must replace
 //! the idealized result with measured controller, OS, and whole-device energy.
 
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+/// Versioned schema name for one measured rendezvous trace.
+pub const RENDEZVOUS_MEASUREMENT_JSON_SCHEMA: &str = "mmp-sim.rendezvous-measurement";
+/// Versioned schema name for a baseline/candidate pair.
+pub const PAIRED_RENDEZVOUS_MEASUREMENT_JSON_SCHEMA: &str = "mmp-sim.paired-rendezvous-measurement";
+/// Current JSON schema version for both research-only records.
+pub const RENDEZVOUS_MEASUREMENT_JSON_VERSION: u16 = 1;
+/// Maximum accepted UTF-8 byte length for one measurement record.
+pub const MAX_RENDEZVOUS_MEASUREMENT_JSON_BYTES: usize = 4 * 1024;
+/// Maximum accepted UTF-8 byte length for a paired measurement record.
+pub const MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES: usize = 8 * 1024;
+
 /// One normalized rendezvous activity point and its modeled energy split.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RendezvousActivity {
@@ -81,6 +96,103 @@ pub enum MeasurementError {
     SummaryOverflow,
 }
 
+/// Errors raised while decoding or encoding the strict research-record JSON
+/// seam. The JSON representation is intentionally separate from the MMP/1
+/// wire format and must not be used as a protocol serializer.
+#[derive(Debug)]
+pub enum MeasurementJsonError {
+    /// The input is not valid JSON or does not match the required field types.
+    Json(serde_json::Error),
+    /// The input exceeds the bounded harness record size.
+    InputTooLarge { limit: usize, actual: usize },
+    /// The top-level schema marker is not the required record type.
+    WrongSchema {
+        expected: &'static str,
+        actual: String,
+    },
+    /// The record version is not understood by this implementation.
+    UnsupportedVersion(u16),
+    /// The trace identifier is not exactly 16 bytes of lowercase hexadecimal.
+    InvalidTraceId,
+    /// The typed measurement failed its existing semantic validation.
+    Validation(MeasurementError),
+}
+
+impl fmt::Display for MeasurementJsonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Json(error) => write!(f, "invalid rendezvous JSON: {error}"),
+            Self::InputTooLarge { limit, actual } => {
+                write!(
+                    f,
+                    "rendezvous JSON is too large: {actual} bytes (limit {limit})"
+                )
+            }
+            Self::WrongSchema { expected, actual } => {
+                write!(
+                    f,
+                    "wrong rendezvous JSON schema: expected {expected}, got {actual}"
+                )
+            }
+            Self::UnsupportedVersion(version) => {
+                write!(f, "unsupported rendezvous JSON schema version: {version}")
+            }
+            Self::InvalidTraceId => write!(
+                f,
+                "trace_id must be exactly 32 lowercase hexadecimal characters"
+            ),
+            Self::Validation(error) => write!(f, "invalid rendezvous measurement: {error:?}"),
+        }
+    }
+}
+
+impl std::error::Error for MeasurementJsonError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Json(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+/// Private serde representation for the stable, versioned measurement input
+/// contract. `deny_unknown_fields` makes typoed or future fields fail closed;
+/// every field is required so a partial log cannot be mistaken for a complete
+/// observation.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct MeasurementJsonRecord {
+    schema: String,
+    schema_version: u16,
+    trace_id: String,
+    tx_events: u64,
+    rx_windows: u64,
+    contact_attempts: u64,
+    discoveries: u64,
+    offered_bundles: u64,
+    delivered_bundles: u64,
+    useful_payload_bytes: u64,
+    airtime_ms: f64,
+    discovery_latency_ms_sum: f64,
+    discovery_latency_samples: u64,
+    delivery_latency_ms_sum: f64,
+    delivery_latency_samples: u64,
+    radio_energy_mwh: f64,
+    host_energy_mwh: f64,
+    whole_device_energy_mwh: f64,
+    host_wakeups: u64,
+}
+
+/// Private serde representation for a paired baseline/candidate record.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct PairedMeasurementJsonRecord {
+    schema: String,
+    schema_version: u16,
+    baseline: MeasurementJsonRecord,
+    candidate: MeasurementJsonRecord,
+}
+
 impl RendezvousMeasurement {
     /// Validate this externally supplied observation before comparison.
     pub fn validate(&self) -> Result<(), MeasurementError> {
@@ -108,6 +220,115 @@ impl RendezvousMeasurement {
         }
         Ok(())
     }
+
+    /// Serialize one validated measurement to deterministic, versioned JSON.
+    ///
+    /// This is a research-harness interchange format, not a protocol or
+    /// cryptographic encoding. The serializer emits fields in the stable
+    /// declaration order below and writes `trace_id` as lowercase hex.
+    pub fn to_json(&self) -> Result<String, MeasurementJsonError> {
+        self.validate().map_err(MeasurementJsonError::Validation)?;
+        serde_json::to_string(&MeasurementJsonRecord::from_measurement(self))
+            .map_err(MeasurementJsonError::Json)
+    }
+
+    /// Parse one complete measurement record from strict, versioned JSON.
+    /// Unknown or missing fields are rejected by serde and semantic validation
+    /// is applied before the record is returned to the caller.
+    pub fn from_json(input: &str) -> Result<Self, MeasurementJsonError> {
+        ensure_json_size(input, MAX_RENDEZVOUS_MEASUREMENT_JSON_BYTES)?;
+        let record: MeasurementJsonRecord =
+            serde_json::from_str(input).map_err(MeasurementJsonError::Json)?;
+        record.into_measurement()
+    }
+}
+
+impl MeasurementJsonRecord {
+    fn from_measurement(measurement: &RendezvousMeasurement) -> Self {
+        Self {
+            schema: RENDEZVOUS_MEASUREMENT_JSON_SCHEMA.to_owned(),
+            schema_version: RENDEZVOUS_MEASUREMENT_JSON_VERSION,
+            trace_id: hex::encode(measurement.trace_id),
+            tx_events: measurement.tx_events,
+            rx_windows: measurement.rx_windows,
+            contact_attempts: measurement.contact_attempts,
+            discoveries: measurement.discoveries,
+            offered_bundles: measurement.offered_bundles,
+            delivered_bundles: measurement.delivered_bundles,
+            useful_payload_bytes: measurement.useful_payload_bytes,
+            airtime_ms: measurement.airtime_ms,
+            discovery_latency_ms_sum: measurement.discovery_latency_ms_sum,
+            discovery_latency_samples: measurement.discovery_latency_samples,
+            delivery_latency_ms_sum: measurement.delivery_latency_ms_sum,
+            delivery_latency_samples: measurement.delivery_latency_samples,
+            radio_energy_mwh: measurement.radio_energy_mwh,
+            host_energy_mwh: measurement.host_energy_mwh,
+            whole_device_energy_mwh: measurement.whole_device_energy_mwh,
+            host_wakeups: measurement.host_wakeups,
+        }
+    }
+
+    fn into_measurement(self) -> Result<RendezvousMeasurement, MeasurementJsonError> {
+        if self.schema != RENDEZVOUS_MEASUREMENT_JSON_SCHEMA {
+            return Err(MeasurementJsonError::WrongSchema {
+                expected: RENDEZVOUS_MEASUREMENT_JSON_SCHEMA,
+                actual: self.schema,
+            });
+        }
+        if self.schema_version != RENDEZVOUS_MEASUREMENT_JSON_VERSION {
+            return Err(MeasurementJsonError::UnsupportedVersion(
+                self.schema_version,
+            ));
+        }
+        let trace_id = decode_trace_id(&self.trace_id)?;
+        let measurement = RendezvousMeasurement {
+            trace_id,
+            tx_events: self.tx_events,
+            rx_windows: self.rx_windows,
+            contact_attempts: self.contact_attempts,
+            discoveries: self.discoveries,
+            offered_bundles: self.offered_bundles,
+            delivered_bundles: self.delivered_bundles,
+            useful_payload_bytes: self.useful_payload_bytes,
+            airtime_ms: self.airtime_ms,
+            discovery_latency_ms_sum: self.discovery_latency_ms_sum,
+            discovery_latency_samples: self.discovery_latency_samples,
+            delivery_latency_ms_sum: self.delivery_latency_ms_sum,
+            delivery_latency_samples: self.delivery_latency_samples,
+            radio_energy_mwh: self.radio_energy_mwh,
+            host_energy_mwh: self.host_energy_mwh,
+            whole_device_energy_mwh: self.whole_device_energy_mwh,
+            host_wakeups: self.host_wakeups,
+        };
+        measurement
+            .validate()
+            .map_err(MeasurementJsonError::Validation)?;
+        Ok(measurement)
+    }
+}
+
+fn decode_trace_id(value: &str) -> Result<[u8; 16], MeasurementJsonError> {
+    if value.len() != 32
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(MeasurementJsonError::InvalidTraceId);
+    }
+    let decoded = hex::decode(value).map_err(|_| MeasurementJsonError::InvalidTraceId)?;
+    decoded
+        .try_into()
+        .map_err(|_| MeasurementJsonError::InvalidTraceId)
+}
+
+fn ensure_json_size(input: &str, limit: usize) -> Result<(), MeasurementJsonError> {
+    if input.len() > limit {
+        return Err(MeasurementJsonError::InputTooLarge {
+            limit,
+            actual: input.len(),
+        });
+    }
+    Ok(())
 }
 
 /// A baseline/candidate pair collected from the same contact trace.
@@ -128,23 +349,38 @@ impl PairedRendezvousMeasurement {
         if baseline.trace_id != candidate.trace_id {
             return Err(MeasurementError::MismatchedTrace);
         }
-        Ok(Self { baseline, candidate })
+        Ok(Self {
+            baseline,
+            candidate,
+        })
     }
 
     /// Produce a deterministic comparison summary from the validated pair.
     pub fn summary(&self) -> Result<RendezvousComparison, MeasurementError> {
-        let baseline_discovery_rate = rate(self.baseline.discoveries, self.baseline.contact_attempts);
-        let candidate_discovery_rate = rate(self.candidate.discoveries, self.candidate.contact_attempts);
-        let baseline_delivery_rate = rate(self.baseline.delivered_bundles, self.baseline.offered_bundles);
-        let candidate_delivery_rate = rate(self.candidate.delivered_bundles, self.candidate.offered_bundles);
+        let baseline_discovery_rate =
+            rate(self.baseline.discoveries, self.baseline.contact_attempts);
+        let candidate_discovery_rate =
+            rate(self.candidate.discoveries, self.candidate.contact_attempts);
+        let baseline_delivery_rate = rate(
+            self.baseline.delivered_bundles,
+            self.baseline.offered_bundles,
+        );
+        let candidate_delivery_rate = rate(
+            self.candidate.delivered_bundles,
+            self.candidate.offered_bundles,
+        );
         let baseline_discovery_rate_ci95 =
             rate_confidence95(self.baseline.discoveries, self.baseline.contact_attempts)?;
         let candidate_discovery_rate_ci95 =
             rate_confidence95(self.candidate.discoveries, self.candidate.contact_attempts)?;
-        let baseline_delivery_rate_ci95 =
-            rate_confidence95(self.baseline.delivered_bundles, self.baseline.offered_bundles)?;
-        let candidate_delivery_rate_ci95 =
-            rate_confidence95(self.candidate.delivered_bundles, self.candidate.offered_bundles)?;
+        let baseline_delivery_rate_ci95 = rate_confidence95(
+            self.baseline.delivered_bundles,
+            self.baseline.offered_bundles,
+        )?;
+        let candidate_delivery_rate_ci95 = rate_confidence95(
+            self.candidate.delivered_bundles,
+            self.candidate.offered_bundles,
+        )?;
         let whole_device_energy_ratio = ratio(
             self.candidate.whole_device_energy_mwh,
             self.baseline.whole_device_energy_mwh,
@@ -185,6 +421,47 @@ impl PairedRendezvousMeasurement {
                 self.candidate.delivery_latency_samples,
             ),
         })
+    }
+
+    /// Serialize a validated baseline/candidate pair to deterministic JSON.
+    /// The two nested records retain their own schema markers so a standalone
+    /// record and a pair cannot be confused by a harness importer.
+    pub fn to_json(&self) -> Result<String, MeasurementJsonError> {
+        let record = PairedMeasurementJsonRecord {
+            schema: PAIRED_RENDEZVOUS_MEASUREMENT_JSON_SCHEMA.to_owned(),
+            schema_version: RENDEZVOUS_MEASUREMENT_JSON_VERSION,
+            baseline: MeasurementJsonRecord::from_measurement(&self.baseline),
+            candidate: MeasurementJsonRecord::from_measurement(&self.candidate),
+        };
+        serde_json::to_string(&record).map_err(MeasurementJsonError::Json)
+    }
+
+    /// Parse and validate a complete baseline/candidate pair from strict JSON.
+    pub fn from_json(input: &str) -> Result<Self, MeasurementJsonError> {
+        ensure_json_size(input, MAX_PAIRED_RENDEZVOUS_MEASUREMENT_JSON_BYTES)?;
+        let record: PairedMeasurementJsonRecord =
+            serde_json::from_str(input).map_err(MeasurementJsonError::Json)?;
+        record.into_pair()
+    }
+}
+
+impl PairedMeasurementJsonRecord {
+    fn into_pair(self) -> Result<PairedRendezvousMeasurement, MeasurementJsonError> {
+        if self.schema != PAIRED_RENDEZVOUS_MEASUREMENT_JSON_SCHEMA {
+            return Err(MeasurementJsonError::WrongSchema {
+                expected: PAIRED_RENDEZVOUS_MEASUREMENT_JSON_SCHEMA,
+                actual: self.schema,
+            });
+        }
+        if self.schema_version != RENDEZVOUS_MEASUREMENT_JSON_VERSION {
+            return Err(MeasurementJsonError::UnsupportedVersion(
+                self.schema_version,
+            ));
+        }
+        let baseline = self.baseline.into_measurement()?;
+        let candidate = self.candidate.into_measurement()?;
+        PairedRendezvousMeasurement::new(baseline, candidate)
+            .map_err(MeasurementJsonError::Validation)
     }
 }
 
@@ -249,7 +526,10 @@ fn rate(successes: u64, total: u64) -> f64 {
 /// Return a Wilson-score 95% interval without relying on a normal
 /// approximation at the boundaries. `None` is explicit for a zero-sample
 /// trace, where a rate estimate has no evidentiary basis.
-fn rate_confidence95(successes: u64, total: u64) -> Result<Option<RateConfidenceInterval>, MeasurementError> {
+fn rate_confidence95(
+    successes: u64,
+    total: u64,
+) -> Result<Option<RateConfidenceInterval>, MeasurementError> {
     if total == 0 {
         return Ok(None);
     }
@@ -262,8 +542,17 @@ fn rate_confidence95(successes: u64, total: u64) -> Result<Option<RateConfidence
     let margin = z * (p.mul_add(1.0 - p, z_squared / (4.0 * n)) / n).sqrt() / denominator;
     let lower = (center - margin).max(0.0);
     let upper = (center + margin).min(1.0);
-    if [p, center, margin, lower, upper].iter().all(|value| value.is_finite()) {
-        Ok(Some(RateConfidenceInterval { successes, trials: total, estimate: p, lower, upper }))
+    if [p, center, margin, lower, upper]
+        .iter()
+        .all(|value| value.is_finite())
+    {
+        Ok(Some(RateConfidenceInterval {
+            successes,
+            trials: total,
+            estimate: p,
+            lower,
+            upper,
+        }))
     } else {
         Err(MeasurementError::SummaryOverflow)
     }
@@ -342,9 +631,14 @@ impl RendezvousEnergyModel {
         tx_cost_per_activity: f64,
         rx_cost_per_activity: f64,
     ) -> Option<Self> {
-        if [tx_activity, rx_activity, tx_cost_per_activity, rx_cost_per_activity]
-            .iter()
-            .any(|value| !value.is_finite() || *value <= 0.0)
+        if [
+            tx_activity,
+            rx_activity,
+            tx_cost_per_activity,
+            rx_cost_per_activity,
+        ]
+        .iter()
+        .any(|value| !value.is_finite() || *value <= 0.0)
         {
             return None;
         }
@@ -456,11 +750,14 @@ impl RendezvousEnergyModel {
     /// Compute the square-root minimum of `c_tx·λ + c_rx·ρ` subject to
     /// `λ·ρ = hazard_product`.
     pub fn optimum(&self) -> RendezvousActivity {
-        let tx_activity = (self.hazard_product * self.rx_cost_per_activity / self.tx_cost_per_activity).sqrt();
-        let rx_activity = (self.hazard_product * self.tx_cost_per_activity / self.rx_cost_per_activity).sqrt();
+        let tx_activity =
+            (self.hazard_product * self.rx_cost_per_activity / self.tx_cost_per_activity).sqrt();
+        let rx_activity =
+            (self.hazard_product * self.tx_cost_per_activity / self.rx_cost_per_activity).sqrt();
         // The constructor guarantees positive finite inputs, so this cannot
         // fail unless a future caller changes the representation invariants.
-        self.evaluate(tx_activity, rx_activity).expect("valid square-root optimum")
+        self.evaluate(tx_activity, rx_activity)
+            .expect("valid square-root optimum")
     }
 
     /// Baseline energy divided by the idealized optimum energy.
@@ -535,7 +832,12 @@ mod tests {
         assert!(RendezvousEnergyModel::from_baseline(1.0, 1.0, f64::MAX, f64::MAX).is_none());
     }
 
-    fn measurement(trace_id: [u8; 16], discoveries: u64, delivered: u64, energy: f64) -> RendezvousMeasurement {
+    fn measurement(
+        trace_id: [u8; 16],
+        discoveries: u64,
+        delivered: u64,
+        energy: f64,
+    ) -> RendezvousMeasurement {
         RendezvousMeasurement {
             trace_id,
             tx_events: 40,
@@ -574,11 +876,17 @@ mod tests {
         assert_eq!(summary.candidate_delivery_rate, 0.75);
         assert_eq!(summary.delivery_rate_delta, 0.25);
         let baseline_discovery_ci = summary.baseline_discovery_rate_ci95.unwrap();
-        assert_eq!(baseline_discovery_ci.estimate, summary.baseline_discovery_rate);
+        assert_eq!(
+            baseline_discovery_ci.estimate,
+            summary.baseline_discovery_rate
+        );
         assert!(baseline_discovery_ci.lower < baseline_discovery_ci.estimate);
         assert!(baseline_discovery_ci.estimate < baseline_discovery_ci.upper);
         let candidate_delivery_ci = summary.candidate_delivery_rate_ci95.unwrap();
-        assert_eq!(candidate_delivery_ci.estimate, summary.candidate_delivery_rate);
+        assert_eq!(
+            candidate_delivery_ci.estimate,
+            summary.candidate_delivery_rate
+        );
         assert!(candidate_delivery_ci.lower < candidate_delivery_ci.estimate);
         assert!(candidate_delivery_ci.estimate < candidate_delivery_ci.upper);
         assert_eq!(summary.whole_device_energy_ratio, Some(0.75));
@@ -634,6 +942,85 @@ mod tests {
     }
 
     #[test]
+    fn measurement_json_round_trip_is_deterministic_and_lossless() {
+        let value = measurement([0xabu8; 16], 2, 2, 100.0);
+        let json = value.to_json().unwrap();
+        assert_eq!(json, value.to_json().unwrap());
+        assert!(json.contains("\"schema\":\"mmp-sim.rendezvous-measurement\""));
+        assert!(json.contains("\"trace_id\":\"abababababababababababababababab\""));
+        assert_eq!(RendezvousMeasurement::from_json(&json).unwrap(), value);
+    }
+
+    #[test]
+    fn paired_measurement_json_round_trip_preserves_comparison() {
+        let baseline = measurement([7; 16], 2, 2, 100.0);
+        let candidate = measurement([7; 16], 3, 3, 75.0);
+        let pair = PairedRendezvousMeasurement::new(baseline, candidate).unwrap();
+        let json = pair.to_json().unwrap();
+        let decoded = PairedRendezvousMeasurement::from_json(&json).unwrap();
+        assert_eq!(decoded.summary().unwrap(), pair.summary().unwrap());
+    }
+
+    #[test]
+    fn measurement_json_rejects_unknown_missing_bad_schema_and_invalid_values() {
+        let value = measurement([7; 16], 2, 2, 100.0);
+        let json = value.to_json().unwrap();
+        let unknown = json.trim_end_matches('}').to_owned() + ",\"typo\":1}";
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&unknown),
+            Err(MeasurementJsonError::Json(_))
+        ));
+        let missing = json.replacen(",\"host_wakeups\":5", "", 1);
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&missing),
+            Err(MeasurementJsonError::Json(_))
+        ));
+        let wrong_schema = json.replace(
+            "mmp-sim.rendezvous-measurement",
+            "mmp-sim.other-measurement",
+        );
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&wrong_schema),
+            Err(MeasurementJsonError::WrongSchema { .. })
+        ));
+        let invalid_count = json.replace("\"discoveries\":2", "\"discoveries\":5");
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&invalid_count),
+            Err(MeasurementJsonError::Validation(
+                MeasurementError::InconsistentCounts
+            ))
+        ));
+        let invalid_trace = json.replace(
+            "07070707070707070707070707070707",
+            "0707070707070707070707070707070G",
+        );
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&invalid_trace),
+            Err(MeasurementJsonError::InvalidTraceId)
+        ));
+    }
+
+    #[test]
+    fn measurement_json_rejects_nonfinite_and_oversized_input() {
+        let value = measurement([7; 16], 2, 2, 100.0);
+        let json = value.to_json().unwrap();
+        let nonfinite = json.replace("\"airtime_ms\":80.0", "\"airtime_ms\":1e999");
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&nonfinite),
+            Err(MeasurementJsonError::Json(_))
+        ));
+        let oversized = format!(
+            "{}{}",
+            json,
+            " ".repeat(MAX_RENDEZVOUS_MEASUREMENT_JSON_BYTES)
+        );
+        assert!(matches!(
+            RendezvousMeasurement::from_json(&oversized),
+            Err(MeasurementJsonError::InputTooLarge { .. })
+        ));
+    }
+
+    #[test]
     fn edr_experiment_matrix_is_deterministic_and_marks_binary_spray_baseline() {
         let model = RendezvousEnergyModel::from_baseline(1.0, 1.0, 0.12, 4.5).unwrap();
         let first = model.default_experiment_matrix().unwrap();
@@ -642,12 +1029,16 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.len(), 7);
         assert_eq!(first[3].tx_scale, 1.0);
-        assert_eq!(first[3].profile, RendezvousExperimentProfile::BinarySprayBaseline);
+        assert_eq!(
+            first[3].profile,
+            RendezvousExperimentProfile::BinarySprayBaseline
+        );
         for point in first {
-            assert!((point.activity.tx_activity * point.activity.rx_activity
-                - model.hazard_product())
-                .abs()
-                < 1e-9);
+            assert!(
+                (point.activity.tx_activity * point.activity.rx_activity - model.hazard_product())
+                    .abs()
+                    < 1e-9
+            );
         }
         assert!(first
             .iter()

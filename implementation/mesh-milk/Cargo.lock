@@ -1226,12 +1226,15 @@ name = "mmp-sim"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "hex",
  "mmp-core",
  "mmp-crypto",
  "mmp-node",
  "mmp-rs-code",
  "mmp-tal",
  "mmp-types",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
