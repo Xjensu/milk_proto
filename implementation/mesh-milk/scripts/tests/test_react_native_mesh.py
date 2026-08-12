@@ -212,6 +212,18 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("fileFailed", self.readme)
         self.assertNotIn("privateKey", self.client)
 
+    def test_file_failure_enum_mapping_is_explicit(self) -> None:
+        self.assertIn("export type NativeFileFailReason = 'HashMismatch' | 'Abandoned'", self.client)
+        self.assertIn("mapNativeFileFailReason", self.client)
+        self.assertIn("case 'HashMismatch':", self.client)
+        self.assertIn("return 'hashMismatch';", self.client)
+        self.assertIn("case 'Abandoned':", self.client)
+        self.assertIn("return 'abandoned';", self.client)
+        self.assertNotIn("value.toLowerCase()", self.client)
+        self.assertNotIn("value.lowercase()", self.client)
+        self.assertIn("Generic lower-casing is not valid", self.readme)
+        self.assertIn("older `DeliveryState` casing contract is unchanged", self.readme)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,6 +33,30 @@ export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 export type BlobState = 'wanted' | 'fetching' | 'assembled' | 'abandoned';
 export type FileFailReason = 'hashMismatch' | 'abandoned';
 
+/**
+ * Raw UniFFI spellings received by a native event adapter.  These values are
+ * intentionally kept separate from the JavaScript event spelling: converting
+ * an enum by generic lower-casing would produce `hashmismatch`, which is not a
+ * member of `FileFailReason`.
+ */
+export type NativeFileFailReason = 'HashMismatch' | 'Abandoned';
+
+/**
+ * Convert the native enum explicitly before constructing a `fileFailed` event.
+ * Native adapters must use this mapping (or an equivalent exhaustive switch),
+ * never a generic case conversion.
+ */
+export function mapNativeFileFailReason(value: unknown): FileFailReason {
+  switch (value) {
+    case 'HashMismatch':
+      return 'hashMismatch';
+    case 'Abandoned':
+      return 'abandoned';
+    default:
+      throw new MmpNativeModuleError(`Unknown native file failure reason: ${String(value)}`);
+  }
+}
+
 /** Result of accepting a file for sharing. IDs remain lowercase hex strings. */
 export interface FileSend {
   messageId: MsgIdHex;

@@ -88,6 +88,13 @@ automatically. `fileReady` reports the native destination path, while
 `fileFailed` reports a typed abandonment reason. `cancelFetch` stops an active
 assembly without deleting ordinary partial symbols from the mesh store.
 
+Native UniFFI file-failure enums use `HashMismatch` and `Abandoned`; native event
+adapters MUST map them explicitly to the JavaScript values `hashMismatch` and
+`abandoned` (the exported `mapNativeFileFailReason` helper is the reference
+mapping). Generic lower-casing is not valid because `HashMismatch` would become
+`hashmismatch`. The older `DeliveryState` casing contract is unchanged and is
+outside this file-transfer compatibility fix.
+
 For tests, pass a method-complete fake `MmpMeshNative` and an event emitter implementing
 `addListener`. The identity seed remains native-only; there is no JavaScript API that can
 read or write it.
