@@ -1081,6 +1081,16 @@ impl MmpNode {
         self.lock().try_set_nickname(&name, seq).map_err(map_send_error)
     }
 
+    /// Return the locally verified display nickname for `peer`, if one is
+    /// currently stored. The value comes from the existing claim store and is
+    /// UTF-8 decoded by `mmp-node`; no raw claim bytes, signatures, or key
+    /// material cross the FFI boundary. `None` means that no usable nickname
+    /// claim is known locally, not that the peer is unreachable.
+    pub fn nickname_of(&self, peer: Vec<u8>) -> Result<Option<String>, FfiError> {
+        let peer = id16_from(&peer)?;
+        Ok(self.lock().nickname_of(&peer))
+    }
+
     /// Our own signed claims (identity/exchange keys, prekey batch, nickname,
     /// …), encoded for out-of-band exchange (QR ceremony, doc 07 §6.1).
     pub fn own_claims(&self) -> Vec<Vec<u8>> {
