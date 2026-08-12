@@ -46,6 +46,15 @@ uniffi::setup_scaffolding!();
 /// sooner than this interval.
 const PERSIST_INTERVAL_MS: u64 = 30_000;
 
+// Host-provided link hints are scheduling inputs, not wire data. Keep the
+// accepted range broad enough for BLE and future local transports, while
+// rejecting zero and implausibly large values before they reach the session
+// scheduler or generated bindings.
+const MIN_LINK_MTU: u16 = 23;
+const MAX_LINK_MTU: u16 = 4096;
+const MIN_GOODPUT_BPS: u32 = 1;
+const MAX_GOODPUT_BPS: u32 = 10_000_000;
+
 // --------------------------------------------------------------- errors ----
 
 /// FFI-facing error surface. Deliberately coarse: the host app cannot act
@@ -228,6 +237,29 @@ pub struct FfiMetrics {
     pub diagnostic_clamps: u64,
     /// Number of bundles rejected by the local admission gate.
     pub diagnostic_drops: u64,
+}
+
+/// Host-provided link-quality hints for transfer scheduling. These values are
+/// local transport metadata; they are never serialized into MMP/1 frames.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfiLinkQuality {
+    /// Maximum bytes carried by one transport write. Valid range is
+    /// `23..=4096` bytes.
+    pub mtu: u16,
+    /// Estimated link goodput in bits per second. Valid range is
+    /// `1..=10_000_000`.
+    pub goodput_bps: u32,
+}
+
+impl FfiLinkQuality {
+    fn validate(self) -> Result<LinkQuality, FfiError> {
+        if !(MIN_LINK_MTU..=MAX_LINK_MTU).contains(&self.mtu)
+            || !(MIN_GOODPUT_BPS..=MAX_GOODPUT_BPS).contains(&self.goodput_bps)
+        {
+            return Err(FfiError::BadArg);
+        }
+        Ok(LinkQuality { mtu: self.mtu, goodput_bps: self.goodput_bps })
+    }
 }
 
 /// Delivery status (mirrors [`DeliveryState`]).
@@ -1153,10 +1185,35 @@ impl MmpNode {
     }
 
     /// A reliable, ordered link came up; `initiator` is true if we dialed.
-    /// Link quality is not yet plumbed through the FFI, so we assume the
-    /// pessimistic BLE-GATT floor (doc 02 Track B) via [`LinkQuality::default`].
+    /// This compatibility wrapper uses the pessimistic BLE-GATT floor (doc 02
+    /// Track B). Hosts with measured hints can use
+    /// [`Self::link_up_with_quality`].
     pub fn link_up(&self, link: u64, initiator: bool) {
-        self.lock().on_tal_event(TalEvent::LinkUp { link, initiator, quality: LinkQuality::default() });
+        // Preserve the original infallible API and its conservative default.
+        self.link_up_with_quality(
+            link,
+            initiator,
+            FfiLinkQuality {
+                mtu: LinkQuality::default().mtu,
+                goodput_bps: LinkQuality::default().goodput_bps,
+            },
+        )
+        .expect("the built-in default link quality is valid");
+    }
+
+    /// A reliable, ordered link came up with host-supplied scheduling hints.
+    /// The hints remain local and are not encoded into any MMP/1 frame. Values
+    /// outside the conservative transport range return [`FfiError::BadArg`]
+    /// before the link is admitted.
+    pub fn link_up_with_quality(
+        &self,
+        link: u64,
+        initiator: bool,
+        quality: FfiLinkQuality,
+    ) -> Result<(), FfiError> {
+        let quality = quality.validate()?;
+        self.lock().on_tal_event(TalEvent::LinkUp { link, initiator, quality });
+        Ok(())
     }
 
     /// Bytes arrived on `link`.

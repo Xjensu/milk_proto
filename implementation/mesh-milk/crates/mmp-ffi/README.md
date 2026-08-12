@@ -23,3 +23,9 @@ backpressure, and diagnostics counters; persistence failures remain available
 through the existing `last_persist_error()` query. These snapshots
 contain no peer/session identifiers, wire bytes, provider handles, or key
 material; hosts decide whether to display or explicitly export them.
+
+The original `link_up(link, initiator)` remains available and uses the
+conservative BLE default. Hosts with a measured transport can call
+`link_up_with_quality(link, initiator, FfiLinkQuality { mtu, goodput_bps })`;
+the values are validated locally and are scheduling hints only. Native adapter
+bindings must regenerate from the UniFFI definition before using this method.

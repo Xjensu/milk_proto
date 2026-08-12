@@ -7,7 +7,7 @@
 //! bindings-generation step here) — it exercises the exact Rust surface
 //! those bindings call into.
 
-use super::{FfiError, FfiEvent, FfiTier, MmpNode};
+use super::{FfiError, FfiEvent, FfiLinkQuality, FfiTier, MmpNode};
 use mmp_core::store::BundleStore;
 use mmp_store::SnapshotStore;
 use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE, NICKNAME_MAX};
@@ -134,6 +134,69 @@ fn status_reports_persistent_store_without_exposing_path() {
     assert_eq!(status.last_tick_ms, 0);
     let metrics = node.metrics();
     assert_eq!(metrics.store_len, node.store_len());
+}
+
+#[test]
+fn link_quality_is_validated_before_session_admission() {
+    let node = node(75);
+
+    assert_eq!(
+        node.link_up_with_quality(
+            7,
+            true,
+            FfiLinkQuality {
+                mtu: 22,
+                goodput_bps: 50_000,
+            },
+        ),
+        Err(FfiError::BadArg)
+    );
+    assert_eq!(
+        node.link_up_with_quality(
+            8,
+            true,
+            FfiLinkQuality {
+                mtu: 23,
+                goodput_bps: 0,
+            },
+        ),
+        Err(FfiError::BadArg)
+    );
+    assert_eq!(
+        node.link_up_with_quality(
+            9,
+            true,
+            FfiLinkQuality {
+                mtu: 4097,
+                goodput_bps: 50_000,
+            },
+        ),
+        Err(FfiError::BadArg)
+    );
+    assert_eq!(
+        node.link_up_with_quality(
+            10,
+            true,
+            FfiLinkQuality {
+                mtu: 247,
+                goodput_bps: 10_000_001,
+            },
+        ),
+        Err(FfiError::BadArg)
+    );
+
+    // A valid hint is accepted on a fresh link. The default wrapper remains
+    // available separately and is exercised by the existing transport tests.
+    node.link_up_with_quality(
+        11,
+        true,
+        FfiLinkQuality {
+            mtu: 247,
+            goodput_bps: 125_000,
+        },
+    )
+    .expect("valid quality must admit the link");
+    assert!(node.poll_send().is_some(), "admitted link starts its handshake");
 }
 
 #[test]
