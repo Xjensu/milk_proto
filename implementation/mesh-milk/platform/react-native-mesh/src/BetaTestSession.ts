@@ -133,6 +133,18 @@ export class BetaTestSession {
     return this.client.status();
   }
 
+  /**
+   * Clear the local event history at a test-case boundary.
+   *
+   * This does not stop the native mesh, flush storage, or acknowledge any
+   * protocol event; it only resets the bounded report window and its local
+   * drop counter.
+   */
+  clearHistory(): void {
+    this.events.length = 0;
+    this.droppedEvents = 0;
+  }
+
   /** Return native diagnostic counters without exposing transport or key material. */
   metrics(): Promise<NodeMetrics> {
     return this.client.metrics();

@@ -61,6 +61,9 @@ await session.stop();
 The report contains only status, local counters, capabilities, app-level event
 payloads, and an event-drop count. Event history keeps the newest entries after
 the configured cap; dropped events are counted for test diagnostics.
+Call `session.clearHistory()` between manual scenarios to reset only this local
+report window and its drop counter; it does not stop the mesh, flush storage, or
+acknowledge protocol events.
 
 `BetaTestSession` is also the application-facing composition facade for the
 existing client surface. Once started, the same session exposes direct text,
