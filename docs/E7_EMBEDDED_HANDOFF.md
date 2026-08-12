@@ -51,6 +51,9 @@ cargo check --target thumbv7em-none-eabihf --no-default-features `
 
 # Current Embassy shell closure (passes after `750c807`; no executor or store yet).
 cargo check -p mmp-node-embassy --target thumbv7em-none-eabihf --no-default-features
+
+# Provider-neutral journal boundary (scanner + aligned backend contract).
+cargo check -p mmp-flash-journal --target thumbv7em-none-eabihf --no-default-features
 ```
 
 The successful checks demonstrate only compilation for a target without a
