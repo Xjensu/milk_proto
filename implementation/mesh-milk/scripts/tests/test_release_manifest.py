@@ -107,6 +107,30 @@ class ReleaseManifestTests(unittest.TestCase):
                     ref="ref",
                 )
 
+    def test_manifest_rejects_source_identity_the_verifier_would_reject(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = []
+            for name in ("artifact", "signature", "certificate"):
+                path = root / name
+                path.write_bytes(name.encode())
+                files.append(path)
+
+            with self.assertRaisesRegex(ValueError, "40-64 lowercase hexadecimal"):
+                MANIFEST.build_manifest(
+                    *files,
+                    repository="repo",
+                    commit="not-a-commit",
+                    ref="refs/tags/v1.2.3",
+                )
+            with self.assertRaisesRegex(ValueError, "must start with refs/"):
+                MANIFEST.build_manifest(
+                    *files,
+                    repository="repo",
+                    commit="a" * 40,
+                    ref="tag-v1.2.3",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

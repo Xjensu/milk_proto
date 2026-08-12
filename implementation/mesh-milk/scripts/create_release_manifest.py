@@ -15,12 +15,20 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
 
 
 FORMAT = "mesh-milk-release-manifest-v1"
+_COMMIT = re.compile(r"^[0-9a-f]{40,64}$")
+
+
+def _source_string(value: str, *, label: str) -> str:
+    if not isinstance(value, str) or not value or value != value.strip() or "\x00" in value:
+        raise ValueError(f"{label} must be a non-empty string without surrounding whitespace")
+    return value
 
 
 def _record(path: Path, *, kind: str) -> dict[str, Any]:
@@ -53,12 +61,13 @@ def build_manifest(
 ) -> dict[str, Any]:
     """Build the JSON-compatible manifest without writing any files."""
 
-    if not repository:
-        raise ValueError("repository must be non-empty")
-    if not commit:
-        raise ValueError("commit must be non-empty")
-    if not ref:
-        raise ValueError("ref must be non-empty")
+    repository = _source_string(repository, label="repository")
+    commit = _source_string(commit, label="commit")
+    ref = _source_string(ref, label="ref")
+    if not _COMMIT.fullmatch(commit):
+        raise ValueError("commit must be 40-64 lowercase hexadecimal characters")
+    if not ref.startswith("refs/"):
+        raise ValueError("ref must start with refs/")
     return {
         "format": FORMAT,
         "source": {"repository": repository, "commit": commit, "ref": ref},

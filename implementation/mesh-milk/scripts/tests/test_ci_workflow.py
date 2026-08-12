@@ -39,7 +39,11 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertTrue(
             any(step.get("run") == "cargo install cargo-ndk --locked" for step in steps)
         )
-        ndk_checks = [step for step in steps if step.get("run") == "cargo ndk -t arm64-v8a check --workspace"]
+        ndk_checks = [
+            step
+            for step in steps
+            if step.get("run") == "cargo ndk -t arm64-v8a check --workspace --locked"
+        ]
         self.assertEqual(len(ndk_checks), 1)
         self.assertEqual(ndk_checks[0]["env"]["ANDROID_NDK_HOME"], "${{ steps.setup-ndk.outputs.ndk-path }}")
 
