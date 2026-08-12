@@ -47,6 +47,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "ownClaims",
             "ingestClaim",
             "setNickname",
+            "nicknameOf",
             "revokeIdentity",
             "tryRevokeIdentity",
             "revokeIdentityWithSuccessor",
@@ -196,6 +197,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "groupMembers",
             "groupRemove",
             "setNickname",
+            "nicknameOf",
             "revokeIdentity",
             "tryRevokeIdentity",
             "revokeIdentityWithSuccessor",
@@ -276,6 +278,14 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("certB64: Base64Value | null", self.client)
         self.assertIn("setWallClock(unixS: number)", self.client)
         self.assertIn("notAfter: number", self.client)
+
+    def test_nickname_query_is_local_verified_and_nullable(self) -> None:
+        self.assertIn("nicknameOf(peer: NodeIdHex): Promise<string | null>", self.client)
+        self.assertIn("return this.native.nicknameOf(peer);", self.client)
+        self.assertIn("locally verified display nickname", self.client)
+        self.assertIn("does not perform a network lookup", self.client)
+        self.assertIn("nicknameOf(peer: string): Promise<string | null>", self.turbo)
+        self.assertIn("'nicknameOf'", self.client)
 
     def test_beta_session_is_bounded_local_and_deterministic(self) -> None:
         self.assertIn("maxEvents", self.beta_session)

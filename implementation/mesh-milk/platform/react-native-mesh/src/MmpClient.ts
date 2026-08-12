@@ -388,6 +388,13 @@ export interface MmpMeshNative {
   ownClaims(): Promise<string[]>;
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   setNickname(name: string, seq: number): Promise<void>;
+  /**
+   * Read the locally verified display nickname for a peer. This is a
+   * read-only claim-store projection; it does not perform a network lookup or
+   * report reachability. A null result means no usable nickname is known
+   * locally.
+   */
+  nicknameOf(peer: NodeIdHex): Promise<string | null>;
   revokeIdentity(reason: number): Promise<string>;
   tryRevokeIdentity(reason: number): Promise<string>;
   revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string>;
@@ -459,6 +466,7 @@ const REQUIRED_NATIVE_METHODS = [
   'ownClaims',
   'ingestClaim',
   'setNickname',
+  'nicknameOf',
   'revokeIdentity',
   'tryRevokeIdentity',
   'revokeIdentityWithSuccessor',
@@ -691,6 +699,15 @@ export class MmpClient {
 
   setNickname(name: string, seq: number): Promise<void> {
     return this.native.setNickname(name, seq);
+  }
+
+  /**
+   * Return a locally verified display nickname, if one is currently known.
+   * This never performs a network lookup; null is not an offline/reachability
+   * signal and peers remain identified by their stable NodeID.
+   */
+  nicknameOf(peer: NodeIdHex): Promise<string | null> {
+    return this.native.nicknameOf(peer);
   }
 
   ownClaims(): Promise<string[]> {

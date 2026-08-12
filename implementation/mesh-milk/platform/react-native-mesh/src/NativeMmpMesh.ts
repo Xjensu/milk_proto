@@ -90,6 +90,7 @@ export interface Spec extends TurboModule {
   groupMembers(gid: string): Promise<string[]>;
   groupRemove(gid: string, member: string): Promise<number>;
   setNickname(name: string, seq: number): Promise<void>;
+  nicknameOf(peer: string): Promise<string | null>;
   revokeIdentity(reason: number): Promise<string>;
   tryRevokeIdentity(reason: number): Promise<string>;
   revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string>;
