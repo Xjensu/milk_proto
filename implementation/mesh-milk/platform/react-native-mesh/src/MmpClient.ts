@@ -15,6 +15,41 @@ export type SignatureB64 = Base64Value;
 
 export type Tier = 'leaf' | 'relay' | 'anchor';
 
+/**
+ * Native UniFFI spellings for the relay tier enum.  The Rust FFI exposes
+ * `FfiTier::{Leaf, Relay, Anchor}`; generated Kotlin bindings may use upper
+ * snake case.  Keep this conversion explicit so native enum naming never
+ * leaks into the application-facing contract.
+ */
+export type NativeTier =
+  | 'Leaf' | 'Relay' | 'Anchor'
+  | 'LEAF' | 'RELAY' | 'ANCHOR'
+  | 'leaf' | 'relay' | 'anchor';
+
+/** Normalize a native tier and reject unknown values instead of guessing. */
+export function mapNativeTier(value: unknown): Tier {
+  switch (value) {
+    case 'Leaf':
+    case 'LEAF':
+    case 'leaf':
+      return 'leaf';
+    case 'Relay':
+    case 'RELAY':
+    case 'relay':
+      return 'relay';
+    case 'Anchor':
+    case 'ANCHOR':
+    case 'anchor':
+      return 'anchor';
+    default:
+      throw new MmpNativeModuleError(`Unknown native tier: ${String(value)}`);
+  }
+}
+
+function mapNativeStatus(value: NodeStatus): NodeStatus {
+  return { ...value, tier: mapNativeTier(value.tier) };
+}
+
 /** Secret-free lifecycle snapshot exposed to beta applications and harnesses. */
 export interface NodeStatus {
   tier: Tier;
@@ -100,7 +135,7 @@ export function mapNativeBetaSnapshot(value: NativeBetaSnapshot): BetaSnapshot {
   }
   return {
     schemaVersion: 1,
-    status: value.status,
+    status: mapNativeStatus(value.status),
     metrics: value.metrics,
     capabilities: {
       capabilities: value.capabilities.capabilities.map((capability) => mapNativeCapability(capability)),
@@ -497,7 +532,7 @@ export class MmpClient {
   }
 
   status(): Promise<NodeStatus> {
-    return this.native.status();
+    return this.native.status().then((value) => mapNativeStatus(value));
   }
 
   metrics(): Promise<NodeMetrics> {
@@ -710,6 +745,13 @@ export class MmpClient {
             ...event,
             root: requireNativeString(ready.root, 'root'),
             path: requireNativeString(ready.path, 'path'),
+          });
+          return;
+        }
+        if (event.type === 'tierChanged') {
+          handler({
+            ...event,
+            tier: mapNativeTier((event as unknown as { tier: unknown }).tier),
           });
           return;
         }

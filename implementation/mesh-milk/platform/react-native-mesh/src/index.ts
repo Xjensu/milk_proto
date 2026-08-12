@@ -7,6 +7,7 @@ export {
   mapNativeFileOffer,
   mapNativeFileFailReason,
   mapNativeDeliveryState,
+  mapNativeTier,
   mmp,
   requireMmpNativeModule,
 } from './MmpClient';
@@ -30,6 +31,7 @@ export type {
   MsgIdHex,
   NativeFileFailReason,
   NativeDeliveryState,
+  NativeTier,
   NativeCapability,
   NativeCapabilities,
   NativeBetaSnapshot,

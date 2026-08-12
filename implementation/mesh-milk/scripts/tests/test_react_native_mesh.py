@@ -418,6 +418,21 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("generated Kotlin spellings `QUEUED`, `IN_MESH`", self.readme)
         self.assertIn("Unknown native values throw `MmpNativeModuleError`", self.readme)
 
+    def test_tier_enum_is_normalized_at_status_snapshot_and_event_boundaries(self) -> None:
+        self.assertIn("export type NativeTier", self.client)
+        self.assertIn("export function mapNativeTier", self.client)
+        for native in ("Leaf", "Relay", "Anchor", "LEAF", "RELAY", "ANCHOR"):
+            self.assertIn(f"case '{native}':", self.client)
+        for public in ("leaf", "relay", "anchor"):
+            self.assertIn(f"return '{public}';", self.client)
+        self.assertIn("Unknown native tier", self.client)
+        self.assertIn("return this.native.status().then((value) => mapNativeStatus(value));", self.client)
+        self.assertIn("status: mapNativeStatus(value.status)", self.client)
+        self.assertIn("tier: mapNativeTier((event as unknown as { tier: unknown }).tier)", self.client)
+        index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
+        self.assertIn("mapNativeTier", index)
+        self.assertIn("NativeTier", index)
+
 
 if __name__ == "__main__":
     unittest.main()
