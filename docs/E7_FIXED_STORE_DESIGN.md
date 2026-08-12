@@ -17,132 +17,98 @@ fn try_put(
 ) -> Result<StorePutOutcome, StorePutError>;
 ```
 
-`put` cannot report a full fixed-capacity store. `try_put` is sufficient for
-receive-side admission, but it does not reserve capacity while a producer is
-encrypting a message or preparing a multi-bundle file. Replacing the historical
-infallible own-origin path with `try_put` without staged state would leave
-pairwise/group ratchets, conversation state, and file indexes advanced when the
-provider rejects the write.
+`put` cannot report a full fixed-capacity store. The additive `try_put` seam now
+handles receive-side admission, while the current `BundleStore` trait also
+contains provider-neutral batch and reservation methods for producers. The
+seams are implemented by the host `SnapshotStore` and the in-memory reference
+store, but no producer has yet staged every cryptographic/index state transition
+around them. Calling a reservation method from an own-origin path without
+staging state would still leave pairwise/group ratchets, conversation state, or
+file indexes advanced when a provider rejects a write.
 
-The next seam must therefore be additive. Existing implementations and callers
-continue to compile and retain their current behavior. A provider opts into
-transactional writes only after it can satisfy the invariants below.
+## 2. Implemented additive API (current tree)
 
-## 2. Proposed additive API
-
-Add a separate provider capability rather than changing `BundleStore` in place.
-The initial shape is intentionally single-bundle; a batch extension is required
-for file symbols and other operations that create several bundles.
+The transactional seam is additive on `mmp_core::BundleStore`; there is no
+second `TransactionalBundleStore` trait to implement. The current methods are:
 
 ```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StoreReservation {
-    // Private fields. The value is provider-local and cannot be serialized or
-    // constructed from wire input.
-    _private: (u64, u32),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreReserveError {
-    /// The requested replacement/insert does not fit the configured policy.
-    Capacity,
-    /// `meta.size` or the requested byte length is not representable or is
-    /// inconsistent with the provider's limits.
-    TooLarge,
-    /// The provider cannot issue another reservation until an outstanding
-    /// operation is completed.
-    Busy,
-    /// The provider is unavailable without changing durable state.
-    Unavailable,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StoreCommitError {
-    /// The token, bundle ID, or byte length does not match the reservation.
-    ReservationMismatch,
-    /// The provider could not complete the write and guarantees that no
-    /// partial bundle became visible.
-    Capacity,
-    /// The provider failed before publishing a complete commit. The caller
-    /// must not reuse candidate cryptographic state until recovery resolves it.
-    Unavailable,
-    /// The candidate bytes or metadata failed provider-local validation.
-    Invalid,
-}
-
-pub trait TransactionalBundleStore: BundleStore {
-    /// Reserve the exact final encoded byte length. Existing IDs reserve only
-    /// the replacement delta, not a second copy of the old bytes.
-    fn reserve_bundle(
-        &mut self,
-        meta: BundleMeta,
-        byte_len: u32,
-    ) -> Result<StoreReservation, StoreReserveError>;
-
-    /// Atomically publish one reserved bundle. Success consumes the token;
-    /// failure leaves no new bytes or metadata visible.
-    fn commit_bundle(
-        &mut self,
-        reservation: StoreReservation,
-        meta: BundleMeta,
-        bytes: &[u8],
-    ) -> Result<StorePutOutcome, StoreCommitError>;
-
-    /// Idempotently release an uncommitted reservation. It must not remove a
-    /// previously committed bundle when called with an already-consumed token.
-    fn abort_bundle(&mut self, reservation: StoreReservation);
-}
+fn try_put_batch(
+    &mut self,
+    entries: &[StoreBatchEntry<'_>],
+) -> Result<Vec<StorePutOutcome>, StoreBatchError>;
+fn try_reserve(&mut self, meta: BundleMeta)
+    -> Result<StoreReservation, StoreReserveError>;
+fn try_reserve_batch(&mut self, metas: &[BundleMeta])
+    -> Result<Vec<StoreReservation>, StoreReserveError>;
+fn try_reserve_batch_atomic(&mut self, metas: &[BundleMeta])
+    -> Result<StoreBatchReservation, StoreReserveError>;
+fn commit_reserved(
+    &mut self,
+    reservation: &StoreReservation,
+    meta: BundleMeta,
+    bytes: &[u8],
+) -> Result<StorePutOutcome, StoreCommitError>;
+fn commit_reserved_batch(
+    &mut self,
+    batch: &StoreBatchReservation,
+    entries: &[StoreBatchEntry<'_>],
+) -> Result<Vec<StorePutOutcome>, StoreCommitError>;
+fn abort_reservation(&mut self, reservation: &StoreReservation)
+    -> Result<(), StoreAbortError>;
+fn abort_reserved_batch(&mut self, batch: &StoreBatchReservation)
+    -> Result<(), StoreAbortError>;
 ```
 
-The exact Rust spelling can change during implementation, but the following
-properties are part of the contract:
+`StoreReservation` and `StoreBatchReservation` are provider-local,
+runtime-only tokens. Their fields are private; `from_parts` exists for external
+provider adapters, which must still validate the provider namespace, nonce,
+ID, declared size, and pending state before commit or abort. Tokens are not
+serialized and are deliberately absent from `SnapshotStore` persistence.
+
+The implemented contract is:
 
 * `StoreReservation` is opaque, process-local, non-wire state. It is not a
   capability that a peer can request or forge, and it is not persisted across a
   restart.
-* `reserve_bundle` accounts for the final `byte_len`, metadata overhead, and
-  replacement delta. It includes all currently outstanding reservations in the
-  capacity calculation.
-* `commit_bundle` checks the token, ID, declared size, and actual `bytes.len()`
-  before publishing. It never evicts an existing own-origin bundle as a hidden
-  side effect.
+* `try_reserve` accounts for `BundleMeta::size`, metadata overhead, replacement
+  delta, and all currently outstanding reservations. The commit path then
+  checks the actual `bytes.len()` against that declaration.
+* `commit_reserved` checks the token, ID, declared size, and actual
+  `bytes.len()` before publishing. It never evicts an existing own-origin
+  bundle as a hidden side effect.
 * A successful commit consumes the reservation exactly once. A failed commit
   either leaves the reservation abortable or returns an explicit unavailable
   outcome; it must never report failure after publishing a partial bundle.
-* A provider that cannot prove these properties must continue using the legacy
-  `put`/`try_put` surface and must not implement this capability by estimation.
+* `try_put_batch` validates the complete request and publishes it atomically at
+  the provider-call working-set level; it makes no crash-recovery or
+  unknown-outcome claim.
+* `try_reserve_batch` preflights several independent reservations. Each token
+  can be committed or aborted separately, so this is not an all-or-none write.
+* `try_reserve_batch_atomic` creates one ordered all-or-nothing batch token;
+  `commit_reserved_batch` validates count, order, IDs, declared sizes, and
+  capacity before any entry becomes visible.
+* A provider that cannot prove these properties must leave the methods at their
+  fail-closed defaults and use the legacy `put`/`try_put` surface. The current
+  host implementation proves provider-call atomicity only; it is not a
+  fixed-capacity no-`alloc` flash provider.
 
-### 2.1 Batch extension
+### 2.1 Batch semantics
 
 `send_file` creates symbols and a manifest. Per-bundle reservations are not
-enough to make that operation all-or-none. The follow-up batch capability should
-use the same opaque-token model:
+enough to make that operation all-or-none, so the implemented atomic batch
+capability uses the same opaque-token model:
 
 ```rust
-trait TransactionalBundleBatch: TransactionalBundleStore {
-    type Batch;
-
-    fn begin_batch(&mut self) -> Result<Self::Batch, StoreReserveError>;
-    fn reserve_in_batch(
-        &mut self,
-        batch: &mut Self::Batch,
-        meta: BundleMeta,
-        byte_len: u32,
-    ) -> Result<(), StoreReserveError>;
-    fn commit_batch(
-        &mut self,
-        batch: Self::Batch,
-        writes: &[(&BundleMeta, &[u8])],
-    ) -> Result<Vec<StorePutOutcome>, StoreCommitError>;
-    fn abort_batch(&mut self, batch: Self::Batch);
-}
+let batch = store.try_reserve_batch_atomic(&metas)?;
+let outcomes = store.commit_reserved_batch(&batch, &entries)?;
+store.abort_reserved_batch(&batch)?; // idempotent if commit did not consume it
 ```
 
-The batch is provider-local and may be implemented with a fixed array on an
-embedded target. It must preflight the aggregate replacement delta before any
-write becomes visible. The batch API is not required to land in the first
-single-bundle implementation, but `send_file` must not pretend that repeated
-single commits are transactional.
+The provider must preflight the aggregate replacement delta before any write
+becomes visible. `try_reserve_batch` and repeated `commit_reserved` calls remain
+valid for independently recoverable records, but `send_file` must use the
+atomic form if it requires all-or-none publication. The host implementation
+does not yet wire either form into producer state or a board-specific backend.
 
 ## 3. Capacity policy inputs
 
@@ -207,7 +173,8 @@ prevents replay loops even when this node had no room to retain the bytes.
 
 ### Own-origin producer invariants
 
-No producer should call `commit_bundle` until all candidate state is staged:
+No producer should call `commit_reserved` or `commit_reserved_batch` until all
+candidate state is staged:
 
 | Producer | Candidate state that must remain unpublished until commit |
 | --- | --- |
@@ -239,16 +206,17 @@ The legacy APIs remain valid during migration:
   existing host callers.
 * `BundleStore::try_put` remains the receive-side bounded seam and maps capacity
   to `DropReason::StoreRejected`.
-* `TransactionalBundleStore` is an opt-in capability. `NodeCore` should detect
-  it only after each producer has an explicit staged-state path; there is no
-  safe generic downcast from `dyn BundleStore`.
+* The reservation and batch methods are opt-in capabilities on `BundleStore`.
+  Their default implementations return `Unsupported`, so `NodeCore` should
+  invoke them only after each producer has an explicit staged-state path; there
+  is no safe generic downcast from `dyn BundleStore`.
 
 ## 6. Acceptance plan
 
 ### Host/provider tests
 
-Implement a deterministic fixed store test double before a board backend. It
-must cover:
+The host implementation and acceptance double already cover the first provider
+preflight. A future fixed-capacity backend must retain these tests and add:
 
 1. Exact-fill insert, one-byte-over capacity rejection, and replacement using
    the delta rather than double-counting old bytes.
