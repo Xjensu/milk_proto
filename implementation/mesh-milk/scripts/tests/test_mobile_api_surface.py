@@ -20,6 +20,10 @@ class MobileApiSurfaceTests(unittest.TestCase):
     def test_manifest_includes_event_queue_backpressure_accessor(self) -> None:
         self.assertIn("eventQueueDropped", CHECK.EXPECTED_MMP_NODE_METHODS)
 
+    def test_manifest_includes_fallible_nickname_lookup(self) -> None:
+        self.assertIn("nicknameOf", CHECK.EXPECTED_MMP_NODE_METHODS)
+        self.assertIn("nicknameOf", CHECK.EXPECTED_MMP_NODE_THROWING_METHODS)
+
     def test_manifest_matches_rust_uniffi_mmp_node_exports(self) -> None:
         rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
         source = rust_source.read_text(encoding="utf-8")
@@ -137,6 +141,30 @@ class MobileApiSurfaceTests(unittest.TestCase):
             self.assertEqual(len(violations), 2)
             self.assertIn("throwing annotation for MmpNode.setNickname", violations[0])
             self.assertIn("throws for MmpNode.setNickname", violations[1])
+
+    def test_reports_missing_nickname_lookup_throwing_contract_per_language(self) -> None:
+        methods = CHECK.EXPECTED_MMP_NODE_METHODS
+        throwing_methods = CHECK.EXPECTED_MMP_NODE_THROWING_METHODS
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            kotlin = root_path / "kotlin"
+            swift = root_path / "swift"
+            kotlin.mkdir()
+            swift.mkdir()
+            kotlin_source = kotlin_surface(methods, throwing_methods).replace(
+                "    @Throws(FfiException::class)\n    override fun `nicknameOf`",
+                "    override fun `nicknameOf`",
+            )
+            swift_source = swift_surface(methods, throwing_methods).replace(
+                "    func nicknameOf() throws",
+                "    func nicknameOf()",
+            )
+            (kotlin / "mmp_ffi.kt").write_text(kotlin_source, encoding="utf-8")
+            (swift / "mmp_ffi.swift").write_text(swift_source, encoding="utf-8")
+            violations = CHECK.scan_bindings(kotlin, swift)
+            self.assertEqual(len(violations), 2)
+            self.assertIn("throwing annotation for MmpNode.nicknameOf", violations[0])
+            self.assertIn("throws for MmpNode.nicknameOf", violations[1])
 
     def test_requires_language_specific_generated_sources(self) -> None:
         with tempfile.TemporaryDirectory() as root:
