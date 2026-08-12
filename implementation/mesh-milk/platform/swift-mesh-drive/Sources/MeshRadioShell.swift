@@ -240,7 +240,8 @@ public final class MeshRadioShell {
     /// A nil result means the native adapter must close the physical link.
     public func onLinkUp(
         _ identity: MeshConnectionIdentity,
-        role: MeshRadioRole
+        role: MeshRadioRole,
+        quality: MeshLinkQualityHint? = nil
     ) throws -> MeshConnectionBinding? {
         guard lifecycle != .stopped, drive.isRunning else { return nil }
         if let existing = registry.binding(for: identity) {
@@ -250,7 +251,7 @@ public final class MeshRadioShell {
             return nil
         }
         do {
-            try drive.onLinkUp(binding.link, initiator: role.initiator)
+            try drive.onLinkUp(binding.link, initiator: role.initiator, quality: quality)
             if !drive.isRunning || drive.isOverloaded {
                 _ = registry.close(binding)
                 return nil

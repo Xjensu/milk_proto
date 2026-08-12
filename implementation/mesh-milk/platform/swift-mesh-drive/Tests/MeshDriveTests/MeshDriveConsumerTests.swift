@@ -62,6 +62,47 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(node.receivedDataCount, 1)
     }
 
+    func testRadioShellForwardsQualityAndRejectsInvalidBeforeAdmission() throws {
+        let node = TestNode()
+        let gatt = TestGatt()
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: gatt,
+            foregroundRelayCapable: false
+        )
+        let shell = MeshRadioShell(drive: drive)
+        try shell.start()
+        let quality = MeshLinkQualityHint(mtu: 247, goodputBps: 125_000)
+        let binding = try XCTUnwrap(
+            try shell.onLinkUp(
+                MeshConnectionIdentity.create(),
+                role: .central,
+                quality: quality
+            )
+        )
+        XCTAssertEqual(node.linkUpQualityHints, [quality])
+        try shell.onLinkDown(binding)
+
+        XCTAssertThrowsError(
+            try shell.onLinkUp(
+                MeshConnectionIdentity.create(),
+                role: .peripheral,
+                quality: MeshLinkQualityHint(mtu: 22, goodputBps: 125_000)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? MeshDriveError,
+                .invalidLinkQuality(mtu: 22, goodputBps: 125_000)
+            )
+        }
+        XCTAssertEqual(shell.activeLinkCount, 0)
+        XCTAssertEqual(node.linkUpInitiators, [true])
+        XCTAssertEqual(gatt.closedLinks.count, 1)
+    }
+
     func testRadioShellReadyCallbackRetriesBackpressuredFrame() throws {
         let node = TestNode(send: OutboundFrame(link: 7, bytes: Array(UInt8(0)..<UInt8(25))))
         let gatt = TestGatt(acceptedNotifications: [false])
@@ -292,6 +333,7 @@ private final class TestGatt: GattAdapter {
     }
 
     var gattNotifications: [Notification] = []
+    var closedLinks: [UInt64] = []
     private var acceptedNotifications: [Bool]
 
     init(acceptedNotifications: [Bool] = []) {
@@ -310,12 +352,15 @@ private final class TestGatt: GattAdapter {
         return acceptedNotifications.removeFirst()
     }
 
-    func close(link: UInt64) throws {}
+    func close(link: UInt64) throws {
+        closedLinks.append(link)
+    }
 }
 
 private final class TestNode: MeshNode {
     var tier: MeshTier?
     var linkUpInitiators: [Bool] = []
+    var linkUpQualityHints: [MeshLinkQualityHint?] = []
     var receivedDataCount = 0
     var tripOverloadOnLinkUp = false
     private var eventDrops: UInt64 = 0
@@ -351,6 +396,10 @@ private final class TestNode: MeshNode {
         linkIsUp = true
         linkUpInitiators.append(initiator)
         if tripOverloadOnLinkUp { eventDrops = 1 }
+    }
+    func linkUp(_ link: UInt64, initiator: Bool, quality: MeshLinkQualityHint?) {
+        linkUpQualityHints.append(quality)
+        linkUp(link, initiator: initiator)
     }
     func linkData(_ link: UInt64, bytes: [UInt8]) {
         receivedDataCount += 1

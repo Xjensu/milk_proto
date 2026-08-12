@@ -65,6 +65,26 @@ public data class OutboundFrame(
     val bytes: ByteArray,
 )
 
+/**
+ * Local transport measurements used by the Rust scheduler.  This record is
+ * never serialized into an MMP/1 frame.  Values are validated at admission so
+ * a malformed native callback cannot create an unbounded scheduling hint.
+ */
+public data class LinkQualityHint(
+    val mtu: Int,
+    val goodputBps: Int,
+) {
+    public fun isValid(): Boolean =
+        mtu in MIN_MTU..MAX_MTU && goodputBps in MIN_GOODPUT_BPS..MAX_GOODPUT_BPS
+
+    public companion object {
+        public const val MIN_MTU: Int = 23
+        public const val MAX_MTU: Int = 4096
+        public const val MIN_GOODPUT_BPS: Int = 1
+        public const val MAX_GOODPUT_BPS: Int = 10_000_000
+    }
+}
+
 /** Minimal node/FFI surface needed by the drive loop. */
 public interface MeshNode {
     fun setTier(tier: MeshTier)
@@ -80,6 +100,13 @@ public interface MeshNode {
     fun pollEvent(): Any?
     fun onBeacon(serviceData: ByteArray, rssi: Byte)
     fun linkUp(link: Long, initiator: Boolean)
+    /**
+     * Optional measured transport quality.  The default delegates to the
+     * legacy callback so existing FFI adapters remain source-compatible.
+     */
+    fun linkUp(link: Long, initiator: Boolean, quality: LinkQualityHint?) {
+        linkUp(link, initiator)
+    }
     fun linkData(link: Long, bytes: ByteArray)
     fun linkDown(link: Long)
 }
@@ -345,8 +372,21 @@ public class MeshDrive(
         node.onBeacon(payload.copyOf(), result.rssi)
     }
 
-    public fun onLinkUp(link: Long, initiator: Boolean) {
+    public fun onLinkUp(
+        link: Long,
+        initiator: Boolean,
+        quality: LinkQualityHint? = null,
+    ) {
         driveLoopOwner.check()
+        if (quality != null && !quality.isValid()) {
+            // Reject before activeLinks or the Rust session is touched.  The
+            // physical callback must still be torn down even when validation
+            // fails before logical admission.
+            runCatching { gatt.close(link) }
+            throw IllegalArgumentException(
+                "invalid link quality mtu=${quality.mtu} goodputBps=${quality.goodputBps}",
+            )
+        }
         // A callback can race with fail-closed shutdown.  It must never leave
         // a newly-created native link alive merely because the coordinator is
         // no longer accepting protocol work.
@@ -361,7 +401,11 @@ public class MeshDrive(
             return
         }
         if (!activeLinks.add(link)) return
-        node.linkUp(link, initiator)
+        if (quality == null) {
+            node.linkUp(link, initiator)
+        } else {
+            node.linkUp(link, initiator, quality)
+        }
         drain()
     }
 
@@ -540,6 +584,7 @@ public class GattLinkBridge(
     public fun onConnected(
         identity: ConnectionIdentity,
         initiator: Boolean,
+        quality: LinkQualityHint? = null,
     ): ConnectionBindingRegistry.ConnectionBinding? {
         drive.checkDriveLoopOwner()
         val binding = bindings.open(identity) ?: return null
@@ -548,7 +593,7 @@ public class GattLinkBridge(
             return null
         }
         try {
-            drive.onLinkUp(binding.link, initiator)
+            drive.onLinkUp(binding.link, initiator, quality)
             if (!drive.isRunning || drive.isOverloaded) {
                 bindings.close(binding)
                 return null

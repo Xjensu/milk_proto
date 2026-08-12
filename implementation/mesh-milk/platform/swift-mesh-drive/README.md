@@ -11,6 +11,9 @@ The coordinator owns only deterministic host policy:
 - monotonic `pump`/`pumpAt` and rotating-beacon refresh;
 - pull-based send/event draining;
 - ATT MTU minus three fragmentation with adapter backpressure;
+- optional `MeshLinkQualityHint` values (MTU `23...4096`, goodput
+  `1...10,000,000` bit/s) validated before admission and forwarded to
+  quality-aware FFI adapters; the legacy callback uses the Rust default;
 - bounded active-link and pending-frame state;
 - transport-close ordering and stale callback rejection;
 - fail-closed handling for sticky close/event queue saturation;
@@ -48,10 +51,20 @@ guard let binding = try shell.onLinkUp(identity, role: .central) else {
     return
 }
 
+// If the adapter has measured transport quality, pass it as local scheduling
+// metadata. It is never encoded in an MMP/1 frame.
+let quality = MeshLinkQualityHint(mtu: 247, goodputBps: 125_000)
+guard let measuredBinding = try shell.onLinkUp(
+    MeshConnectionIdentity.create(), role: .central, quality: quality
+) else {
+    return
+}
+
 // Capture `binding` in every callback for this physical connection.
 try shell.onLinkData(binding, bytes: value)
 try shell.onReadyToSend(binding)
 try shell.onLinkDown(binding) // after CoreBluetooth reports disconnect
+try shell.onLinkDown(measuredBinding) // after CoreBluetooth reports disconnect
 ```
 
 `MeshRadioShell` and `MeshDrive` are intentionally SDK-free.  The exact

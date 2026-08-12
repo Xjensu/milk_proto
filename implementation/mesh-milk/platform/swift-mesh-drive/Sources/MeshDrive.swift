@@ -30,6 +30,29 @@ public struct OutboundFrame {
     }
 }
 
+/// Local transport measurements used by the Rust scheduler.  The record is
+/// never serialized into an MMP/1 frame; admission validates it before a
+/// physical callback can create a logical protocol session.
+public struct MeshLinkQualityHint: Equatable {
+    public let mtu: Int
+    public let goodputBps: Int
+
+    public init(mtu: Int, goodputBps: Int) {
+        self.mtu = mtu
+        self.goodputBps = goodputBps
+    }
+
+    public var isValid: Bool {
+        (Self.minMtu...Self.maxMtu).contains(mtu)
+            && (Self.minGoodputBps...Self.maxGoodputBps).contains(goodputBps)
+    }
+
+    public static let minMtu = 23
+    public static let maxMtu = 4_096
+    public static let minGoodputBps = 1
+    public static let maxGoodputBps = 10_000_000
+}
+
 public protocol MeshNode: AnyObject {
     func setTier(_ tier: MeshTier)
     func beacon(nowMs: UInt64) -> [UInt8]
@@ -41,8 +64,17 @@ public protocol MeshNode: AnyObject {
     func pollEvent() -> Any?
     func onBeacon(serviceData: [UInt8], rssi: Int8)
     func linkUp(_ link: UInt64, initiator: Bool)
+    /// Optional measured transport quality.  The default delegates to the
+    /// legacy callback so existing FFI adapters remain source-compatible.
+    func linkUp(_ link: UInt64, initiator: Bool, quality: MeshLinkQualityHint?)
     func linkData(_ link: UInt64, bytes: [UInt8])
     func linkDown(_ link: UInt64)
+}
+
+public extension MeshNode {
+    func linkUp(_ link: UInt64, initiator: Bool, quality: MeshLinkQualityHint?) {
+        linkUp(link, initiator: initiator)
+    }
 }
 
 public protocol MonotonicClock {
@@ -207,7 +239,20 @@ public final class MeshDrive {
         node.onBeacon(serviceData: payload, rssi: result.rssi)
     }
 
-    public func onLinkUp(_ link: UInt64, initiator: Bool) throws {
+    public func onLinkUp(
+        _ link: UInt64,
+        initiator: Bool,
+        quality: MeshLinkQualityHint? = nil
+    ) throws {
+        if let quality, !quality.isValid {
+            // Reject before activeLinks or the Rust session is touched.  The
+            // native callback is still torn down on malformed measurements.
+            try? gatt.close(link: link)
+            throw MeshDriveError.invalidLinkQuality(
+                mtu: quality.mtu,
+                goodputBps: quality.goodputBps
+            )
+        }
         guard running, !overloadLatched else {
             try? gatt.close(link: link)
             return
@@ -219,7 +264,11 @@ public final class MeshDrive {
             return
         }
         guard activeLinks.insert(link).inserted else { return }
-        node.linkUp(link, initiator: initiator)
+        if let quality {
+            node.linkUp(link, initiator: initiator, quality: quality)
+        } else {
+            node.linkUp(link, initiator: initiator)
+        }
         try drain()
     }
 
@@ -353,4 +402,5 @@ public enum MeshDriveError: Error, Equatable {
     case notRunning
     case clockMovedBackwards
     case invalidMtu(Int)
+    case invalidLinkQuality(mtu: Int, goodputBps: Int)
 }

@@ -3,6 +3,7 @@ package org.meshmilk.platform
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 /**
@@ -159,11 +160,46 @@ class MeshDriveConsumerTest {
         assertEquals(listOf(11L), node.linkDowns)
     }
 
+    @Test
+    fun gattBridgeForwardsValidQualityAndRejectsInvalidBeforeAdmission() {
+        val node = FakeNode()
+        val gatt = RecordingGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+        val quality = LinkQualityHint(mtu = 247, goodputBps = 125_000)
+        val binding = bridge.onConnected(ConnectionIdentity.create(), initiator = true, quality = quality)
+
+        assertTrue(binding != null)
+        assertEquals(listOf(quality), node.linkUpQualities)
+        bridge.onDisconnected(binding!!)
+
+        val rejected = ConnectionIdentity.create()
+        assertFailsWith<IllegalArgumentException> {
+            bridge.onConnected(
+                rejected,
+                initiator = false,
+                quality = LinkQualityHint(mtu = 22, goodputBps = 125_000),
+            )
+        }
+        assertEquals(0, bridge.activeConnections())
+        assertEquals(listOf(binding.link), node.linkUps)
+        assertTrue(gatt.closedLinks.size == 1)
+    }
+
     private class FakeNode : MeshNode {
         var tier: MeshTier? = null
         var tickCount: Int = 0
         val beacons: MutableList<ByteArray> = mutableListOf()
         val linkUps: MutableList<Long> = mutableListOf()
+        val linkUpQualities: MutableList<LinkQualityHint?> = mutableListOf()
         val linkDowns: MutableList<Long> = mutableListOf()
         val linkDataLinks: MutableList<Long> = mutableListOf()
 
@@ -193,6 +229,11 @@ class MeshDriveConsumerTest {
 
         override fun linkUp(link: Long, initiator: Boolean) {
             linkUps += link
+        }
+
+        override fun linkUp(link: Long, initiator: Boolean, quality: LinkQualityHint?) {
+            linkUpQualities += quality
+            linkUp(link, initiator)
         }
 
         override fun linkData(link: Long, bytes: ByteArray) {
@@ -242,5 +283,17 @@ class MeshDriveConsumerTest {
         override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
 
         override fun close(link: Long) = Unit
+    }
+
+    private class RecordingGatt : GattAdapter {
+        val closedLinks: MutableList<Long> = mutableListOf()
+
+        override fun mtu(link: Long): Int = MeshDrive.MIN_ATT_MTU
+
+        override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
+
+        override fun close(link: Long) {
+            closedLinks += link
+        }
     }
 }

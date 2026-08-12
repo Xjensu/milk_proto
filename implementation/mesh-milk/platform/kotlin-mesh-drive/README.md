@@ -21,6 +21,9 @@ generated `MmpNode` bindings.
 - link-up/data/down forwarding with stale-link input ignored;
 - notification fragmentation at `negotiated ATT MTU - 3`, with adapter
   back-pressure retained for the next pump;
+- optional `LinkQualityHint` values (MTU `23..=4096`, goodput
+  `1..=10,000,000` bit/s) are validated before link admission and forwarded to
+  quality-aware FFI adapters; the legacy callback uses the Rust default;
 - close/event saturation diagnostics are observed after every drain; any
   counter increase latches fail-closed mode, stops discovery, closes all
   tracked links, and prevents the same drain from sending queued frames;
@@ -67,6 +70,13 @@ restart when the payload has not changed. Refresh the beacon on the platform's
 advertising cadence (or at least once per protocol beacon slot) using the same
 monotonic timestamp supplied to the drive loop; never substitute a wall-clock
 value.
+
+When the native adapter has a negotiated MTU and a conservative goodput
+estimate, pass them to `GattLinkBridge.onConnected(..., quality =
+LinkQualityHint(...))`. The hint is host-local scheduling metadata and is not
+wire data. Values outside the documented range close the physical link and
+are rejected before `MeshNode.linkUp`; derive goodput conservatively rather
+than copying an optimistic application-level rate.
 Once `closeActionsDropped()` or `eventQueueDropped()` increases, the
 coordinator stops admitting links and requires a recreated node for recovery;
 the adapter should still deliver any eventual disconnect callbacks, which are
