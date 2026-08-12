@@ -269,6 +269,11 @@ store is usable on a board.
 
 ## 7. Implementation order and stop conditions
 
+The board-specific design gate is recorded in
+`docs/E7_NRF52_PROVIDER_CONTRACT.md`. It is a host-testable contract proposal,
+not evidence that an nRF52 backend or no-allocation `BundleStore` already
+exists.
+
 1. Review and freeze the additive capability and board policy inputs.
 2. Implement a host fixed store and deterministic transaction test double;
    leave the legacy `BundleStore` path unchanged.
