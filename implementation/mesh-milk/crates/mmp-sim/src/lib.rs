@@ -22,6 +22,7 @@ use mmp_types::ids::{Id16, NodeId};
 
 pub mod adversary;
 pub mod contact_survival;
+pub mod dof;
 pub mod energy;
 pub mod ews;
 

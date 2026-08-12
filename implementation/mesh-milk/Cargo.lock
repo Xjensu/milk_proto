@@ -1229,6 +1229,7 @@ dependencies = [
  "mmp-core",
  "mmp-crypto",
  "mmp-node",
+ "mmp-rs-code",
  "mmp-tal",
  "mmp-types",
 ]
