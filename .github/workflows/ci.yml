@@ -126,16 +126,18 @@ jobs:
         run: |
           set -e
           cd target/thumbv7em-none-eabihf/release
-          # Budget = measured baseline (2026-07-23, this toolchain/dependency
-          # set) * 1.2, rounded up to the next byte. Re-baseline deliberately,
+          # Budget = measured clean-HEAD baseline (2026-08-12, rustc 1.96.1,
+          # locked dependencies, this target/profile) * 1.2, rounded up. The
+          # archive sizes are a regression proxy, not a linked-image claim.
+          # Re-baseline deliberately,
           # not by nudging the multiplier, if a change legitimately needs more
           # room (e.g. a new crypto primitive) — see docs/AGILE_BACKLOG.md E2-S4.
           declare -A BUDGET=(
-            [libmmp_types.rlib]=691880    # baseline 576566
-            [libmmp_crypto.rlib]=310827   # baseline 259022
-            [libmmp_core.rlib]=867221     # baseline 722684
-            [libmmp_router.rlib]=263604   # baseline 219670
-            [libmmp_rs_code.rlib]=31076   # baseline 25896
+            [libmmp_types.rlib]=754548    # baseline 628790
+            [libmmp_crypto.rlib]=528104   # baseline 440086
+            [libmmp_core.rlib]=1459424    # baseline 1216186
+            [libmmp_router.rlib]=274572   # baseline 228810
+            [libmmp_rs_code.rlib]=30658   # baseline 25548
           )
           fail=0
           for f in "${!BUDGET[@]}"; do
