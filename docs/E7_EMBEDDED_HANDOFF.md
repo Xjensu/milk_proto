@@ -11,7 +11,7 @@ The two E7 crates have different readiness levels:
 | Crate | Host/cross check | What is actually present | Blocking gap |
 | --- | --- | --- | --- |
 | `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; bounded generic `EmbeddedEventQueue<const CAPACITY>` over the shared `TalEvent` vocabulary | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
-| `mmp-node-embassy` | host check and the same target check pass after `750c807` | `#![no_std]` marker and no executor code | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
+| `mmp-node-embassy` | host check and the same target check pass; focused pump tests pass | `#![no_std]`; bounded `EmbeddedEventPump<INGRESS_CAPACITY, EGRESS_CAPACITY>` reusing the embedded TAL ingress queue and adding fixed-capacity egress | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
 
 The following failure is retained as historical evidence from before
 `750c807`; it is not the current result:
@@ -195,8 +195,8 @@ optimizations as production claims.
 
 - `implementation/mesh-milk/crates/mmp-tal-embedded/`: bounded ingress-seam cross-check
   and queue implementation.
-- `implementation/mesh-milk/crates/mmp-node-embassy/`: dependency closure
-  audited; unchanged.
+- `implementation/mesh-milk/crates/mmp-node-embassy/`: bounded pump implementation
+  and dependency closure; executor, flash, and hardware remain out of scope.
 - `.github/workflows/ci.yml`: existing lower-crate rlib gate audited; unchanged.
 - `specification/`: unchanged.
 - `implementation/mesh-milk/crates/mmp-types/`: untouched (including existing
@@ -221,8 +221,8 @@ Finished `dev` profile ...
 ```
 
 Both commands pass with the installed target. `mmp-node-embassy` therefore
-belongs in the no_std *compile-closure* regression, even though it remains a
-seven-line `#![no_std]` shell. The root CI `no-std-size-gate` now runs the
+belongs in the no_std *compile-closure* regression. Its bounded pump is now
+covered by focused host tests; the root CI `no-std-size-gate` runs the
 combined check before the lower-crate rlib size proxy. A future reintroduction
 of a default `std` edge will fail this target check rather than waiting for a
 hardware build.
@@ -230,9 +230,9 @@ hardware build.
 This regression proves only that the declared dependency graph is target
 checkable. It does not close E7-S1's fixed-capacity flash store, E7-S2's radio
 backend, E7-S3's Embassy executor wiring, the linked-image flash/RAM budget,
-the OQ-7 benchmark, or phone-to-sensor HIL. Those acceptance gates and the
-historical failure explanation above remain valid as implementation work still
-outstanding; the historical failure block above is not the current result.
+the OQ-7 benchmark, or phone-to-sensor HIL. The bounded pump is an additive
+host-side seam and does not change those acceptance gates; the historical
+failure block above is not the current result.
 
 ## Source-boundary regression (2026-08-09)
 
@@ -257,9 +257,10 @@ cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-store \
 Finished `dev` profile
 ```
 
-This is a regression improvement, not an embedded implementation. The shells
-still contain no Embassy executor, radio backend, flash provider, linked board
-image, static-RAM measurement, or phone-to-sensor HIL path. The next E7 change
+This is a source-boundary regression around the bounded pump, not a complete
+embedded implementation. The shells still contain no Embassy executor, radio
+backend, flash provider, linked board image, static-RAM measurement, or
+phone-to-sensor HIL path. The next E7 change
 must first name the allocator/flash policy and producer transaction boundary;
 adding a generic `BundleStore` implementation before those decisions would
 make capacity and crash-atomicity claims unverifiable.

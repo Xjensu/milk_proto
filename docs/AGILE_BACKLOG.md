@@ -51,7 +51,7 @@ Radio crates are byte shuttles — no protocol logic that isn't equally testable
 | Rust desktop/server app | `mmp_node::Node` (sans-IO: `tick(now_ms)`, `on_tal_event`, `poll_send`, `poll_event`) | `mmp-tal-btleplug` (central) + `mmp-tal-peripheral` (new) | API complete; peripheral role missing (E3-S1) |
 | Android / iOS app | `mmp-ffi` UniFFI `MmpNode` object (Kotlin/Swift bindings) + platform-owned GATT shell per `MOBILE_INTEGRATION.md` | Platform BLE stack (Kotlin/Swift modules, E4-S1/S2) | FFI surface complete; SDK-free Android/Swift radio-shell boundaries now exist; native bindings, SDK builds, and hardware remain open gates |
 | React Native app | npm package wrapping the TurboModule spec in `REACT_NATIVE_INTEGRATION.md` | same as mobile | Spec-only |
-| IoT (nRF52/ESP32) | `mmp-node-embassy` shell over the same sans-IO engines, `heapless` feature on lower crates | `mmp-tal-embedded` over nrf-softdevice / esp-hal | 7–11-line stubs (E7) |
+| IoT (nRF52/ESP32) | `mmp-node-embassy` bounded `EmbeddedEventPump` over the same sans-IO engines; fixed-capacity ingress/egress seam shipped, executor and flash policy remain open | `mmp-tal-embedded` over nrf-softdevice / esp-hal | bounded host/cross-checkable shell; hardware backend and target binary remain open (E7) |
 
 Interop guarantee across PC ↔ phone ↔ IoT comes from one wire format (`mmp-types`, hand-written codec, golden vectors E5-S4) — not from shared runtime code.
 
@@ -261,7 +261,7 @@ Handbook §4.8's five scenarios (replay / flood / quota abuse / eclipse / bloom 
 
 **E7-S1 · `heapless` fixed-capacity feature on lower crates · L · Deps: E2-S4** — handbook §4.9 budget (≈44 KiB RAM total on Core tier); no `alloc` growth after init.
 **E7-S2 · `mmp-tal-embedded` over nrf-softdevice / esp-hal · L · Deps: E7-S1, E3-S3.**
-**E7-S3 · `mmp-node-embassy` executor shell · M · Deps: E7-S1** — wiring, not protocol (engines are sans-IO).
+**E7-S3 · `mmp-node-embassy` executor shell · M · Deps: E7-S1 · BOUNDED PUMP SLICE SHIPPED (2026-08-12)** — `EmbeddedEventPump<INGRESS_CAPACITY, EGRESS_CAPACITY>` now reuses the embedded TAL ingress queue and provides a fixed-capacity egress FIFO with explicit `Full`/`Oversize` backpressure. This is wiring, not protocol; the Embassy executor, board TAL, flash store, and linked-image gates remain open.
 **E7-S4 · OQ-7 RS-decode benchmark on nRF52-class silicon · S · Deps: E7-S2** — the doc 12 §8 gate; "believed trivial, not yet benchmarked."
 **Acceptance (epic):** ≤256 KiB flash / ≤48 KiB RAM measured on target; a T0 sensor exchanges bundles with a phone via friendship buffering (needs E5-S2).
 
