@@ -408,6 +408,30 @@ mod tests {
     }
 
     #[test]
+    fn decode_rejects_all_truncations_without_panic_or_mutation() {
+        let mut original = Node::new([87; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut peer = Node::new([88; 32], Box::new(MemStore::new()), Tier::Relay);
+        introduce(&mut original, &mut peer);
+        original.send_text(&peer.node_id(), "truncate").expect("first send");
+        let snapshot = original.secret_state_snapshot().expect("aggregate snapshot");
+
+        let mut restored = Node::new([87; 32], Box::new(MemStore::new()), Tier::Relay);
+        let before = restored.secret_state_snapshot().expect("empty snapshot");
+        for end in 0..snapshot.len() {
+            assert_eq!(
+                restored.restore_secret_state(&snapshot[..end]),
+                Err(SecretStateError::Invalid),
+                "truncated aggregate at byte {end} must fail closed"
+            );
+            assert_eq!(
+                restored.secret_state_snapshot().unwrap().as_slice(),
+                before.as_slice(),
+                "failed truncated restore at byte {end} must not mutate live state"
+            );
+        }
+    }
+
+    #[test]
     fn decode_rejects_pending_first_contact_without_sent_bundle() {
         let mut original = Node::new([85; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([86; 32], Box::new(MemStore::new()), Tier::Relay);
