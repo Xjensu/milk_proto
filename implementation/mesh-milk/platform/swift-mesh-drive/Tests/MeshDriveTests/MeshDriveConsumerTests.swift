@@ -540,6 +540,28 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertFalse(drive.isRunning)
         XCTAssertEqual(advertiser.stopCount, 1)
     }
+
+    func testStartupOverloadReturnsAnErrorAndRollsBackRadioResources() {
+        let node = TestNode()
+        node.tripOverloadOnStart = true
+        let advertiser = TestAdvertiser()
+        let scanner = TestScanner()
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: advertiser,
+            scanner: scanner,
+            gatt: TestGatt(),
+            foregroundRelayCapable: false
+        )
+
+        XCTAssertThrowsError(try drive.start()) { error in
+            XCTAssertEqual(error as? MeshDriveError, .hostOverload)
+        }
+        XCTAssertFalse(drive.isRunning)
+        XCTAssertEqual(advertiser.stopCount, 1)
+        XCTAssertEqual(scanner.stopCount, 1)
+    }
 }
 
 private enum TestError: Error, Equatable {
@@ -682,6 +704,7 @@ private final class TestNode: MeshNode {
     var receivedBeacons: [[UInt8]] = []
     var receivedDataCount = 0
     var tripOverloadOnLinkUp = false
+    var tripOverloadOnStart = false
     private var eventDrops: UInt64 = 0
     private var nextSend: OutboundFrame?
     private var linkIsUp = false
@@ -698,7 +721,11 @@ private final class TestNode: MeshNode {
         [UInt8(nowMs / 1_000)]
     }
 
-    func tick(nowMs: UInt64) {}
+    func tick(nowMs: UInt64) {
+        if tripOverloadOnStart {
+            eventDrops = 1
+        }
+    }
     func pollClose() -> UInt64? { nil }
     func closeActionsDropped() -> UInt64 { 0 }
     func eventQueueDropped() -> UInt64 { eventDrops }

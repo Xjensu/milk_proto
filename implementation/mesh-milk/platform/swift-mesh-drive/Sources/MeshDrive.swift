@@ -366,7 +366,9 @@ public final class MeshDrive {
             }
             scannerStarted = true
             try drain()
-            precondition(running, "MeshDrive failed closed during startup")
+            guard running else {
+                throw MeshDriveError.hostOverload
+            }
         } catch {
             if scannerStarted { try? scanner.stop() }
             if advertiserStarted { try? advertiser.stop() }
@@ -645,6 +647,7 @@ public final class MeshDrive {
 
 public enum MeshDriveError: Error, Equatable {
     case notRunning
+    case hostOverload
     case clockMovedBackwards
     case invalidMtu(Int)
     case invalidLinkQuality(mtu: Int, goodputBps: Int)

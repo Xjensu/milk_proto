@@ -156,6 +156,8 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("rollbackStartLinks()", self.source)
         self.assertIn("running = false", self.source)
         self.assertIn("case clockMovedBackwards", self.source)
+        self.assertIn("throw MeshDriveError.hostOverload", self.source)
+        self.assertIn("testStartupOverloadReturnsAnErrorAndRollsBackRadioResources", self.consumer_tests)
 
     def test_advertiser_start_failure_stops_partial_native_state(self) -> None:
         start = self.source.index("try advertiser.start(serviceData: beacon)")
