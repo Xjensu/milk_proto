@@ -303,3 +303,29 @@ named board capacity and allocator policy, then implement the provider behind
 the no-std feature fence. Until those decisions and tests exist, adding a
 generic `FixedStore` would create unverifiable capacity and torn-write claims.
 The frozen specification and all wire behavior remain unchanged.
+
+## Partial-write recovery evidence (2026-08-12)
+
+**Task status: TEST-ONLY.** The journal backend test suite now includes a
+test-only `PartialNor` double that mutates a requested write prefix before
+returning an injected error. It attempts every prefix length of a second
+record after a fully committed generation, then reads the image into a fresh
+buffer to simulate restart. Every genuinely torn prefix leaves generation 1
+selected; an error after all bytes were programmed is treated as an unknown
+outcome and recovery selects generation 2.
+
+This closes the evidence gap where the previous `FaultNor` could fail only
+before mutation. It does not claim that a real board has the same write
+ordering, erase behavior, or atomicity. The provider still needs a named
+geometry, commit-marker ordering, partial-erase policy, generation-floor
+policy, and an explicit unknown-outcome contract before `BundleStore`
+integration can be implemented.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-flash-journal --all-targets --locked  11 passed
+cargo clippy -p mmp-flash-journal --all-targets --locked -- -D warnings  passed
+cargo check -p mmp-flash-journal \
+  --target thumbv7em-none-eabihf --no-default-features --locked  passed
+```

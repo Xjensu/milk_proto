@@ -78,6 +78,78 @@ mod tests {
         fail_next: Cell<Option<FaultOp>>,
     }
 
+    /// Test-only backend that models a write which mutates a prefix and then
+    /// reports an error. This is deliberately stronger than `FaultNor`'s
+    /// fail-before-mutation behavior: a provider must treat the result as
+    /// unknown and rely on recovery scanning.
+    struct PartialNor<const CAPACITY: usize> {
+        bytes: [u8; CAPACITY],
+        geometry: Geometry,
+        fail_after: Option<usize>,
+    }
+
+    impl<const CAPACITY: usize> PartialNor<CAPACITY> {
+        fn new() -> Self {
+            Self {
+                bytes: [0xff; CAPACITY],
+                geometry: Geometry::new(CAPACITY, 1, 1).unwrap(),
+                fail_after: None,
+            }
+        }
+
+        fn fail_after(&mut self, bytes: usize) {
+            self.fail_after = Some(bytes);
+        }
+
+        fn check_range(&self, offset: usize, len: usize) -> Result<(), BackendError> {
+            let end = offset.checked_add(len).ok_or(BackendError::OutOfBounds)?;
+            if end > self.geometry.capacity {
+                Err(BackendError::OutOfBounds)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl<const CAPACITY: usize> JournalBackend for PartialNor<CAPACITY> {
+        type Error = BackendError;
+
+        fn geometry(&self) -> Geometry {
+            self.geometry
+        }
+
+        fn read(&self, offset: usize, out: &mut [u8]) -> Result<(), Self::Error> {
+            self.check_range(offset, out.len())?;
+            out.copy_from_slice(&self.bytes[offset..offset + out.len()]);
+            Ok(())
+        }
+
+        fn write(&mut self, offset: usize, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.check_range(offset, bytes.len())?;
+            if bytes.iter().enumerate().any(|(index, value)| {
+                value | self.bytes[offset + index] != self.bytes[offset + index]
+            }) {
+                return Err(BackendError::ProgramViolation);
+            }
+            let failure = self.fail_after.take();
+            let written = failure.map_or(bytes.len(), |limit| limit.min(bytes.len()));
+            for (index, value) in bytes[..written].iter().enumerate() {
+                self.bytes[offset + index] &= *value;
+            }
+            if failure.is_some() {
+                Err(BackendError::InjectedFailure)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn erase(&mut self, offset: usize, len: usize) -> Result<(), Self::Error> {
+            self.check_range(offset, len)?;
+            self.bytes[offset..offset + len].fill(0xff);
+            Ok(())
+        }
+    }
+
     impl<const CAPACITY: usize> FaultNor<CAPACITY> {
         fn new(write_alignment: usize, erase_alignment: usize) -> Self {
             Self {
@@ -215,5 +287,38 @@ mod tests {
         assert_eq!(result.selected.unwrap().payload, b"keep");
         assert!(second_len > 8);
         assert_eq!(image[first_len..first_len + 4], MAGIC);
+    }
+
+    #[test]
+    fn partial_write_at_every_record_boundary_recovers_previous_generation() {
+        let mut first = [0u8; 128];
+        let first_len = encoded_len(4).unwrap();
+        encode(1, b"keep", &mut first).unwrap();
+
+        let mut second = [0u8; 128];
+        let second_len = encoded_len(6).unwrap();
+        encode(2, b"newer!", &mut second).unwrap();
+
+        for cut in 0..=second_len {
+            let mut nor = PartialNor::<128>::new();
+            nor.write(0, &first[..first_len]).unwrap();
+            nor.fail_after(cut);
+            assert_eq!(
+                nor.write(first_len, &second[..second_len]),
+                Err(BackendError::InjectedFailure)
+            );
+
+            let mut image = [0xff; 128];
+            nor.read(0, &mut image).unwrap();
+            let result = scan(&image);
+            if cut == second_len {
+                // An error after all bytes were programmed is an unknown
+                // outcome: recovery may legitimately select the new record.
+                assert_eq!(result.selected.unwrap().generation, 2);
+            } else {
+                assert_eq!(result.selected.unwrap().generation, 1);
+                assert_eq!(result.selected.unwrap().payload, b"keep");
+            }
+        }
     }
 }
