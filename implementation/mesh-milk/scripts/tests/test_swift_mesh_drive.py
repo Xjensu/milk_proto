@@ -38,6 +38,22 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         for protocol in ("MeshNode", "MonotonicClock", "Advertiser", "Scanner", "GattAdapter"):
             self.assertIn(f"protocol {protocol}", self.source)
 
+    def test_scan_admission_requires_observed_mmp_service_uuid(self) -> None:
+        self.assertIn("public enum MmpBleService", self.source)
+        self.assertIn("serviceUUID = \"6d6d7031-0000-4d4d-5031-6d6573686d6c\"", self.source)
+        self.assertIn("serviceUuid: String? = nil", self.source)
+        start = self.source.index("public func onScanResult")
+        end = self.source.index("public func onLinkUp", start)
+        body = self.source[start:end]
+        self.assertIn("let observedServiceUuid = result.serviceUuid", body)
+        self.assertIn("observedServiceUuid.lowercased() == MmpBleService.serviceUUID", body)
+        self.assertIn("testScanResultRequiresExactMmpServiceUuid", self.consumer_tests)
+        self.assertIn("testScanResultEmptyPayloadAndStoppedDriveRemainIgnored", self.consumer_tests)
+        self.assertIn("serviceUuid: MmpBleService.serviceUUID.uppercased()", self.consumer_tests)
+        self.assertIn('serviceUuid: \"wrong\"', self.consumer_tests)
+        self.assertIn("Native CoreBluetooth adapters SHOULD install a targeted scan filter", self.readme)
+        self.assertIn("remains fail-closed", self.readme)
+
     def test_duty_cycle_request_is_validated_and_applied_before_radio_start(self) -> None:
         for symbol in ("MeshDutyCycleRequest", "DutyCycleSink", "applyDutyCycle", "try dutyCycleRequest.validate()"):
             self.assertIn(symbol, self.source)

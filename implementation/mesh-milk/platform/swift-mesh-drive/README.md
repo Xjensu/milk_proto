@@ -18,6 +18,8 @@ The coordinator owns only deterministic host policy:
 - transport-close ordering and stale callback rejection;
 - fail-closed handling for sticky close/event queue saturation;
 - startup rollback and physical teardown requests.
+- service-data admission only for the exact observed MMP service UUID;
+  missing or mismatched UUID metadata is dropped before `MeshNode.onBeacon`.
 
 `MeshRadioShell` is the protocol-neutral boundary for a CoreBluetooth adapter.
 It adds the iOS lifecycle rules that a raw `MeshDrive` call site must not
@@ -72,6 +74,12 @@ CoreBluetooth delegate ordering, restoration callbacks, background behavior,
 and radio interoperability are verified only by the macOS/Xcode CI job (and,
 for the final gate, on physical iOS hardware); this Linux/Windows workspace
 cannot claim those results.
+
+Native CoreBluetooth adapters SHOULD install a targeted scan filter for
+`MmpBleService.serviceUUID` and populate `ScanResult.serviceUuid` from the
+UUID actually observed.  The SDK-free shell does not implement or claim
+CoreBluetooth filtering; it remains fail-closed when that metadata is absent
+or does not match.
 
 The native adapter must call `onLinkDown` only after CoreBluetooth reports the
 physical disconnect. `ProcessInfo.processInfo.systemUptime` or `DispatchTime`

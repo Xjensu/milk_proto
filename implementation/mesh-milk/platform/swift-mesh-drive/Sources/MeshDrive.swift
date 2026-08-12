@@ -10,13 +10,26 @@ public enum MeshTier {
     case relay
 }
 
+/// Development service UUID used by the native BLE adapter for MMP beacons.
+///
+/// The value is transport metadata, not wire payload.  A production SIG
+/// assignment remains a release gate; keeping the value in this SDK-free
+/// contract prevents platform adapters from silently drifting apart.
+public enum MmpBleService {
+    public static let serviceUUID = "6d6d7031-0000-4d4d-5031-6d6573686d6c"
+}
+
 public struct ScanResult {
     public let serviceData: [UInt8]?
     public let rssi: Int8
+    /// UUID observed by the native scanner for the service-data payload.
+    /// Missing or mismatched values are rejected before `MeshNode.onBeacon`.
+    public let serviceUuid: String?
 
-    public init(serviceData: [UInt8]?, rssi: Int8) {
+    public init(serviceData: [UInt8]?, rssi: Int8, serviceUuid: String? = nil) {
         self.serviceData = serviceData
         self.rssi = rssi
+        self.serviceUuid = serviceUuid
     }
 }
 
@@ -328,7 +341,12 @@ public final class MeshDrive {
     }
 
     public func onScanResult(_ result: ScanResult) {
-        guard running, let payload = result.serviceData, !payload.isEmpty else { return }
+        guard running,
+              let observedServiceUuid = result.serviceUuid,
+              observedServiceUuid.lowercased() == MmpBleService.serviceUUID,
+              let payload = result.serviceData,
+              !payload.isEmpty
+        else { return }
         node.onBeacon(serviceData: payload, rssi: result.rssi)
     }
 

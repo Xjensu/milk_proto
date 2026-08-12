@@ -293,6 +293,45 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(scanner.stopCount, 1)
     }
 
+    func testScanResultRequiresExactMmpServiceUuid() throws {
+        let node = TestNode()
+        let drive = makeDrive(node: node)
+
+        // A callback before startup remains ignored.
+        drive.onScanResult(
+            ScanResult(serviceData: [9], rssi: -40, serviceUuid: MmpBleService.serviceUUID)
+        )
+        XCTAssertEqual(node.receivedBeaconCount, 0)
+
+        try drive.start()
+        drive.onScanResult(
+            ScanResult(serviceData: [1], rssi: -41, serviceUuid: MmpBleService.serviceUUID.uppercased())
+        )
+        drive.onScanResult(ScanResult(serviceData: [2], rssi: -42, serviceUuid: "wrong"))
+        drive.onScanResult(ScanResult(serviceData: [3], rssi: -43))
+
+        XCTAssertEqual(node.receivedBeaconCount, 1)
+        XCTAssertEqual(node.receivedBeacons, [[1]])
+        drive.stop()
+    }
+
+    func testScanResultEmptyPayloadAndStoppedDriveRemainIgnored() throws {
+        let node = TestNode()
+        let drive = makeDrive(node: node)
+
+        try drive.start()
+        drive.onScanResult(
+            ScanResult(serviceData: [], rssi: -40, serviceUuid: MmpBleService.serviceUUID)
+        )
+        XCTAssertEqual(node.receivedBeaconCount, 0)
+
+        drive.stop()
+        drive.onScanResult(
+            ScanResult(serviceData: [4], rssi: -40, serviceUuid: MmpBleService.serviceUUID)
+        )
+        XCTAssertEqual(node.receivedBeaconCount, 0)
+    }
+
     private func makeDrive(node: TestNode, now: UInt64 = 1) -> MeshDrive {
         MeshDrive(
             node: node,
@@ -434,6 +473,7 @@ private final class TestNode: MeshNode {
     var tier: MeshTier?
     var linkUpInitiators: [Bool] = []
     var linkUpQualityHints: [MeshLinkQualityHint?] = []
+    var receivedBeacons: [[UInt8]] = []
     var receivedDataCount = 0
     var tripOverloadOnLinkUp = false
     private var eventDrops: UInt64 = 0
@@ -464,7 +504,10 @@ private final class TestNode: MeshNode {
     }
 
     func pollEvent() -> Any? { nil }
-    func onBeacon(serviceData: [UInt8], rssi: Int8) {}
+    func onBeacon(serviceData: [UInt8], rssi: Int8) {
+        receivedBeacons.append(serviceData)
+    }
+    var receivedBeaconCount: Int { receivedBeacons.count }
     func linkUp(_ link: UInt64, initiator: Bool) {
         linkIsUp = true
         linkUpInitiators.append(initiator)
