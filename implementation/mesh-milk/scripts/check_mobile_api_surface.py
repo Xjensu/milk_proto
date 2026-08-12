@@ -28,6 +28,7 @@ EXPECTED_MMP_NODE_METHODS = (
     "allowFriendshipFrom",
     "beacon",
     "block",
+    "capabilities",
     "cancelFetch",
     "closeActionsDropped",
     "createGroup",

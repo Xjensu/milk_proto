@@ -32,6 +32,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "setTier",
             "status",
             "metrics",
+            "capabilities",
             "nodeId",
             "publicKey",
             "ownClaims",
@@ -175,8 +176,12 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
     def test_beta_snapshots_are_secret_free_and_exported(self) -> None:
         self.assertIn("status(): Promise<NodeStatus>", self.client)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.client)
+        self.assertIn("capabilities(): Promise<Capabilities>", self.client)
         self.assertIn("status(): Promise<NodeStatus>", self.turbo)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.turbo)
+        self.assertIn("capabilities(): Promise<Capabilities>", self.turbo)
+        self.assertIn("mapNativeCapability", self.client)
+        self.assertIn("Unknown native capability", self.client)
         self.assertNotIn("from './MmpClient'", self.turbo)
         self.assertIn("sendFile(peer: string, name: string, mime: string, dataB64: string)", self.turbo)
         self.assertIn("fetchFile(root: string, dest: string)", self.turbo)

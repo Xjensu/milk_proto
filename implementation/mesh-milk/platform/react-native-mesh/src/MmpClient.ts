@@ -28,6 +28,45 @@ export interface NodeMetrics {
   diagnosticDrops: number;
 }
 
+export type NativeCapability =
+  | 'DirectMessaging' | 'DIRECT_MESSAGING' | 'directMessaging' | 'direct_messaging'
+  | 'GroupMessaging' | 'GROUP_MESSAGING' | 'groupMessaging' | 'group_messaging'
+  | 'FileTransfer' | 'FILE_TRANSFER' | 'fileTransfer' | 'file_transfer'
+  | 'Announcements' | 'ANNOUNCEMENTS' | 'announcements'
+  | 'Diagnostics' | 'DIAGNOSTICS' | 'diagnostics'
+  | 'TransportInjection' | 'TRANSPORT_INJECTION' | 'transportInjection' | 'transport_injection';
+
+export type Capability =
+  | 'directMessaging'
+  | 'groupMessaging'
+  | 'fileTransfer'
+  | 'announcements'
+  | 'diagnostics'
+  | 'transportInjection';
+
+export function mapNativeCapability(value: unknown): Capability {
+  switch (value) {
+    case 'DirectMessaging': case 'DIRECT_MESSAGING': case 'directMessaging': case 'direct_messaging': return 'directMessaging';
+    case 'GroupMessaging': case 'GROUP_MESSAGING': case 'groupMessaging': case 'group_messaging': return 'groupMessaging';
+    case 'FileTransfer': case 'FILE_TRANSFER': case 'fileTransfer': case 'file_transfer': return 'fileTransfer';
+    case 'Announcements': case 'ANNOUNCEMENTS': case 'announcements': return 'announcements';
+    case 'Diagnostics': case 'DIAGNOSTICS': case 'diagnostics': return 'diagnostics';
+    case 'TransportInjection': case 'TRANSPORT_INJECTION': case 'transportInjection': case 'transport_injection': return 'transportInjection';
+    default: throw new MmpNativeModuleError(`Unknown native capability: ${String(value)}`);
+  }
+}
+
+/** Stable capability report for beta-test UI; persistence is node-specific. */
+export interface Capabilities {
+  capabilities: Capability[];
+  persistentStore: boolean;
+}
+
+export interface NativeCapabilities {
+  capabilities: NativeCapability[];
+  persistentStore: boolean;
+}
+
 export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 
 /**
@@ -158,6 +197,7 @@ export interface MmpMeshNative {
   setTier(tier: Tier): Promise<void>;
   status(): Promise<NodeStatus>;
   metrics(): Promise<NodeMetrics>;
+  capabilities(): Promise<NativeCapabilities>;
 
   // Identity / claims.
   nodeId(): Promise<NodeIdHex>;
@@ -217,6 +257,7 @@ const REQUIRED_NATIVE_METHODS = [
   'setTier',
   'status',
   'metrics',
+  'capabilities',
   'nodeId',
   'publicKey',
   'ownClaims',
@@ -332,6 +373,13 @@ export class MmpClient {
 
   metrics(): Promise<NodeMetrics> {
     return this.native.metrics();
+  }
+
+  capabilities(): Promise<Capabilities> {
+    return this.native.capabilities().then((report) => ({
+      capabilities: report.capabilities.map((value) => mapNativeCapability(value)),
+      persistentStore: report.persistentStore,
+    }));
   }
 
   nodeId(): Promise<NodeIdHex> {

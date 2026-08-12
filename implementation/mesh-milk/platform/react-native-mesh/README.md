@@ -12,6 +12,11 @@ events cross into JavaScript.
 
 ## Beta status and metrics
 
+`client.capabilities()` returns the stable, secret-free protocol/API capability
+list and whether this node uses a file-backed store. Values describe core
+support only; native permissions, background policy, and BLE hardware remain
+separate platform-health evidence. Unknown native capability values fail closed.
+
 The client exposes two secret-free snapshots for beta-test screens and local
 diagnostics:
 

@@ -20,6 +20,11 @@ type NodeMetrics = {
   diagnosticDrops: number;
 };
 
+type Capabilities = {
+  capabilities: string[];
+  persistentStore: boolean;
+};
+
 type FileSend = {
   messageId: string;
   root: string;
@@ -40,6 +45,7 @@ export interface Spec extends TurboModule {
   setTier(tier: string): Promise<void>;
   status(): Promise<NodeStatus>;
   metrics(): Promise<NodeMetrics>;
+  capabilities(): Promise<Capabilities>;
   nodeId(): Promise<string>;
   publicKey(): Promise<string>;
   sendText(peer: string, text: string): Promise<string>;

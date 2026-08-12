@@ -7,7 +7,7 @@
 //! bindings-generation step here) — it exercises the exact Rust surface
 //! those bindings call into.
 
-use super::{FfiError, FfiEvent, FfiLinkQuality, FfiTier, MmpNode};
+use super::{FfiCapability, FfiError, FfiEvent, FfiLinkQuality, FfiTier, MmpNode};
 use mmp_core::store::BundleStore;
 use mmp_store::SnapshotStore;
 use mmp_types::consts::{LIFETIME_MESSAGE_MS, MAX_BUNDLE, NICKNAME_MAX};
@@ -117,6 +117,36 @@ fn status_and_metrics_snapshot_is_secret_free_and_tracks_host_state() {
     let metrics = node.metrics();
     assert_eq!(metrics.store_len, node.store_len());
     assert_eq!(metrics.diagnostic_records, 0);
+}
+
+#[test]
+fn capabilities_report_is_stable_and_secret_free() {
+    let node = node(76);
+    let report = node.capabilities();
+    assert_eq!(
+        report.capabilities,
+        vec![
+            FfiCapability::DirectMessaging,
+            FfiCapability::GroupMessaging,
+            FfiCapability::FileTransfer,
+            FfiCapability::Announcements,
+            FfiCapability::Diagnostics,
+            FfiCapability::TransportInjection,
+        ]
+    );
+    assert!(!report.persistent_store);
+}
+
+#[test]
+fn capabilities_report_marks_file_backed_persistence_only() {
+    let dir = TempDir::new("capabilities-persistence");
+    let node = MmpNode::new(
+        vec![77u8; 32],
+        FfiTier::Relay,
+        Some(dir.file("node.mmp")),
+    )
+    .expect("valid snapshot path");
+    assert!(node.capabilities().persistent_store);
 }
 
 #[test]

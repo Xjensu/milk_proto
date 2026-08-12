@@ -183,6 +183,41 @@ pub enum FfiTier {
     Anchor,
 }
 
+/// A capability exposed by the current MMP/1 host API.  This is a
+/// secret-free discovery aid for beta applications; it describes API/core
+/// support only and does not claim that a platform radio or background policy
+/// is available.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfiCapability {
+    /// Direct text messaging and delivery receipts.
+    DirectMessaging,
+    /// Sender-key group messaging and membership changes.
+    GroupMessaging,
+    /// Explicit-pull verified file transfer.
+    FileTransfer,
+    /// Scope subscriptions and class-5 announcements.
+    Announcements,
+    /// Local journey diagnostics and bounded metrics.
+    Diagnostics,
+    /// Host-driven beacon/link injection and wire/event polling.
+    TransportInjection,
+}
+
+/// Stable, secret-free capability report for beta-test applications.
+///
+/// `capabilities` has a deterministic order matching [`FfiCapability`]
+/// declaration order. `persistent_store` is the only dynamic field: it is
+/// true only when this node was constructed with a file-backed snapshot store.
+/// The report describes library support, not native BLE permissions,
+/// background execution, or hardware availability.
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq)]
+pub struct FfiCapabilities {
+    /// API/core capabilities supported by this build.
+    pub capabilities: Vec<FfiCapability>,
+    /// Whether this node has a file-backed persistence store.
+    pub persistent_store: bool,
+}
+
 impl From<FfiTier> for Tier {
     fn from(t: FfiTier) -> Self {
         match t {
@@ -1359,6 +1394,24 @@ impl MmpNode {
             persistent_store: self.snapshot.is_some(),
             diagnostics_enabled,
             last_tick_ms,
+        }
+    }
+
+    /// Return the stable, secret-free capability report used by beta-test
+    /// applications to enable supported screens and show explicit gaps.
+    /// Native radio permissions, background execution, and hardware support
+    /// remain platform-owned and are intentionally not inferred here.
+    pub fn capabilities(&self) -> FfiCapabilities {
+        FfiCapabilities {
+            capabilities: vec![
+                FfiCapability::DirectMessaging,
+                FfiCapability::GroupMessaging,
+                FfiCapability::FileTransfer,
+                FfiCapability::Announcements,
+                FfiCapability::Diagnostics,
+                FfiCapability::TransportInjection,
+            ],
+            persistent_store: self.snapshot.is_some(),
         }
     }
 
