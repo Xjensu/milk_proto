@@ -369,6 +369,19 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("reason: mapNativeFileFailReason", self.client)
         self.assertIn("NativeFileFailReason", self.client)
 
+    def test_file_events_normalize_optional_thumbnail_and_fail_closed(self) -> None:
+        self.assertIn("export function mapNativeFileOffer", self.client)
+        self.assertIn("thumbRoot === undefined || thumbRoot === null", self.client)
+        self.assertIn("thumbRoot: thumbRoot === undefined || thumbRoot === null", self.client)
+        self.assertIn("if (event.type === 'fileOffered')", self.client)
+        self.assertIn("entries.map((entry) => mapNativeFileOffer(entry))", self.client)
+        self.assertIn("Malformed native fileOffered entries", self.client)
+        self.assertIn("if (event.type === 'fileReady')", self.client)
+        self.assertIn("requireNativeString(ready.root, 'root')", self.client)
+        self.assertIn("requireNativeString(ready.path, 'path')", self.client)
+        self.assertIn("export {", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
+        self.assertIn("mapNativeFileOffer", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
+
     def test_delivery_state_mapping_is_exhaustive_and_fail_closed(self) -> None:
         self.assertIn("export type NativeDeliveryState", self.client)
         for native in (

@@ -189,6 +189,39 @@ export function mapNativeFileFailReason(value: unknown): FileFailReason {
   }
 }
 
+function requireNativeString(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new MmpNativeModuleError(`Malformed native file event field: ${field}`);
+  }
+  return value;
+}
+
+/**
+ * Normalize one native file offer without changing opaque encodings.  Some
+ * native bridges omit an absent UniFFI Option instead of serializing it as
+ * null; the public API deliberately exposes a stable nullable field.
+ */
+export function mapNativeFileOffer(value: unknown): FileOffer {
+  if (value === null || typeof value !== 'object') {
+    throw new MmpNativeModuleError('Malformed native file offer');
+  }
+  const raw = value as Record<string, unknown>;
+  const size = raw.size;
+  if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0) {
+    throw new MmpNativeModuleError('Malformed native file offer field: size');
+  }
+  const thumbRoot = raw.thumbRoot;
+  return {
+    nameB64: requireNativeString(raw.nameB64, 'nameB64'),
+    mimeB64: requireNativeString(raw.mimeB64, 'mimeB64'),
+    size,
+    root: requireNativeString(raw.root, 'root'),
+    thumbRoot: thumbRoot === undefined || thumbRoot === null
+      ? null
+      : requireNativeString(thumbRoot, 'thumbRoot'),
+  };
+}
+
 /** Result of accepting a file for sharing. IDs remain lowercase hex strings. */
 export interface FileSend {
   messageId: MsgIdHex;
@@ -657,6 +690,26 @@ export class MmpClient {
           handler({
             ...event,
             reason: mapNativeFileFailReason((event as unknown as { reason: unknown }).reason),
+          });
+          return;
+        }
+        if (event.type === 'fileOffered') {
+          const entries = (event as unknown as { entries: unknown }).entries;
+          if (!Array.isArray(entries)) {
+            throw new MmpNativeModuleError('Malformed native fileOffered entries');
+          }
+          handler({
+            ...event,
+            entries: entries.map((entry) => mapNativeFileOffer(entry)),
+          });
+          return;
+        }
+        if (event.type === 'fileReady') {
+          const ready = event as unknown as { root: unknown; path: unknown };
+          handler({
+            ...event,
+            root: requireNativeString(ready.root, 'root'),
+            path: requireNativeString(ready.path, 'path'),
           });
           return;
         }
