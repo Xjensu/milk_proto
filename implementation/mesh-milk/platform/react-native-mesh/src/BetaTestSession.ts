@@ -138,6 +138,12 @@ export class BetaTestSession {
     return this.client.metrics();
   }
 
+  /** Change the local routing/storage tier for an active beta session. */
+  setTier(tier: Tier): Promise<void> {
+    this.requireStarted();
+    return this.client.setTier(tier);
+  }
+
   /** Return the fail-closed, normalized native capability report. */
   capabilities(): Promise<Capabilities> {
     return this.client.capabilities();

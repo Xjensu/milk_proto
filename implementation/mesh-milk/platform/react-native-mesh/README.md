@@ -65,7 +65,8 @@ the configured cap; dropped events are counted for test diagnostics.
 `BetaTestSession` is also the application-facing composition facade for the
 existing client surface. Once started, the same session exposes direct text,
 group, explicit-pull file, authority/scope, friendship, identity/claim,
-diagnostics, and persistence methods (`sendText`, `createGroup`, `sendFile`,
+diagnostics, persistence, and runtime tier methods (`setTier`, `sendText`,
+`createGroup`, `sendFile`,
 `fetchFile`, `subscribeScope`, `pinAuthorityRoot`, `requestFriendship`, and the
 corresponding operations already present on `MmpClient`). It adds no native
 methods and does not alter wire behavior. Operations that can mutate or

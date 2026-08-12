@@ -258,6 +258,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         for method in (
             "status",
             "metrics",
+            "setTier",
             "capabilities",
             "sendText",
             "messageState",
