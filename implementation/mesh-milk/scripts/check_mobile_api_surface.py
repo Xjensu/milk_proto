@@ -27,6 +27,7 @@ from pathlib import Path
 EXPECTED_MMP_NODE_METHODS = (
     "allowFriendshipFrom",
     "beacon",
+    "betaSnapshot",
     "block",
     "capabilities",
     "cancelFetch",
