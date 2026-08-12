@@ -441,6 +441,9 @@ public class MeshDrive(
      */
     public fun restoreSecretState(): Long? {
         driveLoopOwner.check()
+        check(!running) {
+            "restoreSecretState must run before MeshDrive.start"
+        }
         val generation = secretStatePersistence.restoreSecretState()
         require(generation == null || generation > 0L) {
             "secret-state provider returned an invalid generation"
@@ -456,6 +459,9 @@ public class MeshDrive(
      */
     public fun persistSecretState(): Long {
         driveLoopOwner.check()
+        check(!running) {
+            "persistSecretState must run after MeshDrive.stop"
+        }
         val generation = secretStatePersistence.persistSecretState()
         require(generation > 0L) {
             "secret-state provider returned an invalid generation"

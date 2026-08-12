@@ -216,6 +216,27 @@ class MeshDriveConsumerTest {
     }
 
     @Test
+    fun secretStateOperationsAreRejectedWhileRadioIsRunning() {
+        val secret = RecordingSecretStatePersistence(restoreGeneration = 3L, persistGeneration = 4L)
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            secretStatePersistence = secret,
+        )
+
+        drive.start()
+        assertFailsWith<IllegalStateException> { drive.restoreSecretState() }
+        assertFailsWith<IllegalStateException> { drive.persistSecretState() }
+        assertEquals(0, secret.restoreCalls)
+        assertEquals(0, secret.persistCalls)
+        drive.stop()
+    }
+
+    @Test
     fun publicCoordinatorCanBeStartedAndStoppedByAConsumer() {
         val node = FakeNode()
         val drive = MeshDrive(

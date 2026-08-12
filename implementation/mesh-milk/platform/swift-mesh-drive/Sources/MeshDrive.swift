@@ -213,6 +213,8 @@ public struct UnavailableSecretStatePersistence: SecretStatePersistence {
 public enum MeshSecretStateError: Error, Equatable {
     case unavailable
     case invalidGeneration
+    /// Secret continuity may only be restored before radio traffic starts.
+    case invalidLifecycle
 }
 
 public protocol MeshNode: AnyObject {
@@ -403,6 +405,12 @@ public final class MeshDrive {
     /// adapter should invoke it after constructing the Rust node and before
     /// admitting radio traffic.
     public func restoreSecretState() throws -> UInt64? {
+        // Restoring after startup could replace the continuity state while
+        // links are already admitted.  Fail closed instead of allowing a
+        // native adapter to create a split-brain session lifecycle.
+        guard !running else {
+            throw MeshSecretStateError.invalidLifecycle
+        }
         let generation = try secretStatePersistence.restoreSecretState()
         if let generation, generation == 0 {
             throw MeshSecretStateError.invalidGeneration
@@ -411,8 +419,13 @@ public final class MeshDrive {
     }
 
     /// Persist secret continuity explicitly. Provider failures propagate, and
-    /// a zero generation can never be reported as a successful commit.
+    /// a zero generation can never be reported as a successful commit. The
+    /// operation is serialized at the lifecycle boundary after radio teardown,
+    /// matching the Rust vault's no-live-session restore invariant.
     public func persistSecretState() throws -> UInt64 {
+        guard !running else {
+            throw MeshSecretStateError.invalidLifecycle
+        }
         let generation = try secretStatePersistence.persistSecretState()
         guard generation > 0 else {
             throw MeshSecretStateError.invalidGeneration

@@ -27,6 +27,7 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.source = SOURCE.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
+        cls.consumer_tests = FIXTURE_TEST.read_text(encoding="utf-8")
 
     def test_source_is_android_sdk_free(self) -> None:
         lowered = self.source.lower()
@@ -105,6 +106,19 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("require(generation == null || generation > 0L)", self.source)
         self.assertIn("require(generation > 0L)", self.source)
         self.assertNotIn("ByteArray", self.source[self.source.index("public interface SecretStatePersistence"):self.source.index("/** Minimal node/FFI", self.source.index("public interface SecretStatePersistence"))])
+
+    def test_secret_state_operations_are_lifecycle_gated(self) -> None:
+        restore_start = self.source.index("    public fun restoreSecretState(): Long? {")
+        restore_end = self.source.index("    /**", restore_start)
+        restore = self.source[restore_start:restore_end]
+        persist_start = self.source.index("    public fun persistSecretState(): Long {")
+        persist_end = self.source.index("    /**", persist_start)
+        persist = self.source[persist_start:persist_end]
+        self.assertIn("check(!running)", restore)
+        self.assertIn("before MeshDrive.start", restore)
+        self.assertIn("check(!running)", persist)
+        self.assertIn("after MeshDrive.stop", persist)
+        self.assertIn("secretStateOperationsAreRejectedWhileRadioIsRunning", self.consumer_tests)
 
     def test_start_rolls_back_partial_radio_start(self) -> None:
         """A failed startup must not leave the drive claiming to be active."""

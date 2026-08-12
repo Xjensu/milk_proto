@@ -156,6 +156,23 @@ final class MeshDriveConsumerTests: XCTestCase {
         }
     }
 
+    func testSecretStateRestoreIsRejectedAfterRadioStartup() throws {
+        let secret = TestSecretStatePersistence(restoreGeneration: 9, persistGeneration: 10)
+        let drive = makeDrive(node: TestNode(), secretStatePersistence: secret)
+
+        try drive.start()
+        defer { drive.stop() }
+
+        XCTAssertThrowsError(try drive.restoreSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidLifecycle)
+        }
+        XCTAssertThrowsError(try drive.persistSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidLifecycle)
+        }
+        XCTAssertEqual(secret.restoreCalls, 0)
+        XCTAssertEqual(secret.persistCalls, 0)
+    }
+
     func testRadioShellBindsEachPhysicalIdentityToOneMonotonicLink() throws {
         let node = TestNode()
         let drive = makeDrive(node: node)
