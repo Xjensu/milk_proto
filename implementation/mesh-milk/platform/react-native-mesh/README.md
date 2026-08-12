@@ -59,7 +59,10 @@ await session.stop();
 ```
 
 The report contains only status, local counters, capabilities, app-level event
-payloads, and an event-drop count. Event history keeps the newest entries after
+payloads, and an event-drop count. Its `schemaVersion` is the local report
+compatibility fence (currently `1`, independent of the MMP/1 wire version); a
+consumer must reject unknown values before decoding the remaining fields. Event
+history keeps the newest entries after
 the configured cap; dropped events are counted for test diagnostics.
 Call `session.clearHistory()` between manual scenarios to reset only this local
 report window and its drop counter; it does not stop the mesh, flush storage, or

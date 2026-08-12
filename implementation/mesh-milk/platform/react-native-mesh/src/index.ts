@@ -42,5 +42,9 @@ export type {
   Tier,
 } from './MmpClient';
 export type { Spec as NativeMmpMeshSpec } from './NativeMmpMesh';
-export { BetaTestSession, BetaTestSessionError } from './BetaTestSession';
+export {
+  BETA_TEST_REPORT_SCHEMA_VERSION,
+  BetaTestSession,
+  BetaTestSessionError,
+} from './BetaTestSession';
 export type { BetaTestReport, BetaTestSessionOptions } from './BetaTestSession';

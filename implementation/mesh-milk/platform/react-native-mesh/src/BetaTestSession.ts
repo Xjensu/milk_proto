@@ -24,8 +24,13 @@ export interface BetaTestSessionOptions {
   maxEvents?: number;
 }
 
+/** Version of the local beta report envelope (independent of MMP/1 wire data). */
+export const BETA_TEST_REPORT_SCHEMA_VERSION = 1 as const;
+
 /** A deterministic, local-only snapshot suitable for a beta-test report. */
 export interface BetaTestReport {
+  /** Consumers must reject report versions they do not understand. */
+  schemaVersion: typeof BETA_TEST_REPORT_SCHEMA_VERSION;
   status: NodeStatus;
   metrics: NodeMetrics;
   capabilities: Capabilities;
@@ -369,6 +374,7 @@ export class BetaTestSession {
       this.client.capabilities(),
     ]);
     return {
+      schemaVersion: BETA_TEST_REPORT_SCHEMA_VERSION,
       status,
       metrics,
       capabilities,
