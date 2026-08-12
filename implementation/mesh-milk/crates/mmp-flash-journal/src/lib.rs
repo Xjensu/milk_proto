@@ -58,6 +58,49 @@ pub enum EncodeError {
     OutputTooSmall,
 }
 
+/// Geometry validation failures for [`write_record`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteGeometryError {
+    /// The backend returned a zero write alignment.
+    ZeroWriteAlignment,
+    /// The absolute record offset is not aligned to the backend write unit.
+    UnalignedOffset,
+    /// The record length could not be rounded up to a write unit.
+    LengthOverflow,
+    /// The rounded record does not fit in the backend geometry.
+    OutOfBounds,
+}
+
+/// Errors returned by [`write_record`].
+///
+/// A [`JournalWriteError::CommitWrite`] means that the final write unit may
+/// have reached the flash device before the backend reported an error. Its
+/// outcome is therefore indeterminate: the caller must recover by scanning
+/// the journal before retrying, and must not treat it as an ordinary capacity
+/// rejection or abort. The [`JournalWriteError::BodyWrite`] variant can also
+/// leave a partial body on a backend with indeterminate write semantics, but
+/// it cannot have requested the commit-marker unit yet.
+#[derive(Debug, PartialEq, Eq)]
+pub enum JournalWriteError<E> {
+    /// Encoding failed, including an output buffer shorter than the encoded
+    /// (unpadded) record.
+    Encode(EncodeError),
+    /// The scratch buffer held the encoded record but not its required erased
+    /// alignment padding.
+    ScratchTooSmall {
+        /// Number of bytes required for the complete aligned write image.
+        required: usize,
+    },
+    /// The backend geometry or absolute record offset is not usable.
+    Geometry(WriteGeometryError),
+    /// A complete aligned prefix write failed before the final unit.
+    BodyWrite(E),
+    /// The final aligned unit containing the commit marker failed.
+    ///
+    /// This is an indeterminate outcome and requires recovery scanning.
+    CommitWrite(E),
+}
+
 /// Return the encoded length for a payload, if it is representable.
 pub const fn encoded_len(payload_len: usize) -> Option<usize> {
     if payload_len > MAX_PAYLOAD_LEN {
@@ -99,6 +142,96 @@ pub fn encode<'a>(
     out[checksum_start..checksum_start + CHECKSUM_LEN].copy_from_slice(&checksum);
     out[checksum_start + CHECKSUM_LEN..length].copy_from_slice(&COMMIT_MARKER);
     Ok(&out[..length])
+}
+
+/// Encode and append one record using aligned backend writes.
+///
+/// `record_offset` is an absolute offset in the backend's address space. The
+/// caller supplies `scratch`, which must hold the encoded record followed by
+/// erased (`0xff`) padding through the next write-unit boundary. All aligned
+/// body bytes before the marker-containing region are written in one prefix
+/// call (when non-empty), followed by exactly one final aligned call
+/// containing the commit marker. If the marker straddles a physical write-unit
+/// boundary, that final call spans the minimum number of complete units needed
+/// to contain it; it is still one backend call and the marker is never
+/// requested in an earlier call.
+///
+/// This helper enforces ordering at the backend-call boundary only. It does
+/// not claim that a backend write is power-loss atomic, nor that a backend
+/// error is fail-before-mutation. In particular, [`JournalWriteError::CommitWrite`]
+/// is explicitly indeterminate and the caller must scan the journal to resolve
+/// it before retrying or reusing any generation.
+pub fn write_record<B: JournalBackend>(
+    backend: &mut B,
+    record_offset: usize,
+    generation: u64,
+    payload: &[u8],
+    scratch: &mut [u8],
+) -> Result<usize, JournalWriteError<B::Error>> {
+    let geometry = backend.geometry();
+    let alignment = geometry.write_alignment;
+    if alignment == 0 {
+        return Err(JournalWriteError::Geometry(
+            WriteGeometryError::ZeroWriteAlignment,
+        ));
+    }
+    if !record_offset.is_multiple_of(alignment) {
+        return Err(JournalWriteError::Geometry(
+            WriteGeometryError::UnalignedOffset,
+        ));
+    }
+
+    let encoded_length = encoded_len(payload.len())
+        .ok_or(JournalWriteError::Encode(EncodeError::PayloadTooLarge))?;
+    let padded_length = align_up(encoded_length, alignment).ok_or(JournalWriteError::Geometry(
+        WriteGeometryError::LengthOverflow,
+    ))?;
+    let end = record_offset
+        .checked_add(padded_length)
+        .ok_or(JournalWriteError::Geometry(
+            WriteGeometryError::LengthOverflow,
+        ))?;
+    if end > geometry.capacity {
+        return Err(JournalWriteError::Geometry(WriteGeometryError::OutOfBounds));
+    }
+
+    let encoded = encode(generation, payload, scratch).map_err(JournalWriteError::Encode)?;
+    debug_assert_eq!(encoded.len(), encoded_length);
+    if scratch.len() < padded_length {
+        return Err(JournalWriteError::ScratchTooSmall {
+            required: padded_length,
+        });
+    }
+    scratch[encoded_length..padded_length].fill(0xff);
+
+    // Start the final aligned span at the unit containing the first marker
+    // byte. This is deliberately not always `padded_length - alignment`: for
+    // example, a four-byte marker can straddle an eight-byte boundary. The
+    // span then covers the complete physical units through the padded end,
+    // keeping every marker byte out of the prefix call.
+    let marker_offset = encoded_length - COMMIT_MARKER.len();
+    let prefix_length = marker_offset - marker_offset % alignment;
+    if prefix_length != 0 {
+        backend
+            .write(record_offset, &scratch[..prefix_length])
+            .map_err(JournalWriteError::BodyWrite)?;
+    }
+    backend
+        .write(
+            record_offset + prefix_length,
+            &scratch[prefix_length..padded_length],
+        )
+        .map_err(JournalWriteError::CommitWrite)?;
+    Ok(padded_length)
+}
+
+const fn align_up(value: usize, alignment: usize) -> Option<usize> {
+    let remainder = value % alignment;
+    if remainder == 0 {
+        Some(value)
+    } else {
+        value.checked_add(alignment - remainder)
+    }
 }
 
 /// Scan an implementation-local journal image without allocating.
@@ -184,6 +317,92 @@ fn checksum(body: &[u8]) -> [u8; CHECKSUM_LEN] {
 mod tests {
     use super::*;
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct WriteCall {
+        offset: usize,
+        len: usize,
+    }
+
+    struct TraceBackend<const CAPACITY: usize> {
+        bytes: [u8; CAPACITY],
+        geometry: Geometry,
+        calls: [Option<WriteCall>; 8],
+        call_count: usize,
+        fail_at: Option<usize>,
+    }
+
+    impl<const CAPACITY: usize> TraceBackend<CAPACITY> {
+        fn new(write_alignment: usize) -> Self {
+            Self {
+                bytes: [0xff; CAPACITY],
+                geometry: Geometry::new(CAPACITY, write_alignment, 1).unwrap(),
+                calls: [None; 8],
+                call_count: 0,
+                fail_at: None,
+            }
+        }
+
+        fn check_range(&self, offset: usize, len: usize) -> Result<(), BackendError> {
+            let end = offset.checked_add(len).ok_or(BackendError::OutOfBounds)?;
+            if end > self.geometry.capacity {
+                Err(BackendError::OutOfBounds)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl<const CAPACITY: usize> JournalBackend for TraceBackend<CAPACITY> {
+        type Error = BackendError;
+
+        fn geometry(&self) -> Geometry {
+            self.geometry
+        }
+
+        fn read(&self, offset: usize, out: &mut [u8]) -> Result<(), Self::Error> {
+            self.check_range(offset, out.len())?;
+            out.copy_from_slice(&self.bytes[offset..offset + out.len()]);
+            Ok(())
+        }
+
+        fn write(&mut self, offset: usize, bytes: &[u8]) -> Result<(), Self::Error> {
+            self.check_range(offset, bytes.len())?;
+            if self.geometry.write_alignment == 0
+                || !offset.is_multiple_of(self.geometry.write_alignment)
+                || !bytes.len().is_multiple_of(self.geometry.write_alignment)
+            {
+                return Err(BackendError::Unaligned);
+            }
+            let call = WriteCall {
+                offset,
+                len: bytes.len(),
+            };
+            if let Some(slot) = self.calls.get_mut(self.call_count) {
+                *slot = Some(call);
+            }
+            let index = self.call_count;
+            self.call_count = self.call_count.saturating_add(1);
+            if self.fail_at == Some(index) {
+                return Err(BackendError::InjectedFailure);
+            }
+            if bytes.iter().enumerate().any(|(index, value)| {
+                value | self.bytes[offset + index] != self.bytes[offset + index]
+            }) {
+                return Err(BackendError::ProgramViolation);
+            }
+            for (index, value) in bytes.iter().enumerate() {
+                self.bytes[offset + index] &= *value;
+            }
+            Ok(())
+        }
+
+        fn erase(&mut self, offset: usize, len: usize) -> Result<(), Self::Error> {
+            self.check_range(offset, len)?;
+            self.bytes[offset..offset + len].fill(0xff);
+            Ok(())
+        }
+    }
+
     fn append(image: &mut [u8], used: &mut usize, generation: u64, payload: &[u8]) -> usize {
         let mut record = [0u8; 16 + 64 + 32 + 4];
         let encoded = encode(generation, payload, &mut record).unwrap();
@@ -243,8 +462,12 @@ mod tests {
 
         let malformed_start = used;
         let malformed_len = encoded_len(b"partial".len()).unwrap();
-        encode(9, b"partial", &mut image[malformed_start..malformed_start + malformed_len])
-            .unwrap();
+        encode(
+            9,
+            b"partial",
+            &mut image[malformed_start..malformed_start + malformed_len],
+        )
+        .unwrap();
         image[malformed_start + malformed_len - COMMIT_MARKER.len()] ^= 1;
         used += malformed_len;
 
@@ -269,18 +492,12 @@ mod tests {
         let nested = HEADER_LEN + 4;
         first[nested..nested + MAGIC.len()].copy_from_slice(&MAGIC);
         first[nested + 4..nested + 12].copy_from_slice(&99u64.to_le_bytes());
-        first[nested + 12..nested + 16]
-            .copy_from_slice(&(MAX_PAYLOAD_LEN as u32).to_le_bytes());
+        first[nested + 12..nested + 16].copy_from_slice(&(MAX_PAYLOAD_LEN as u32).to_le_bytes());
         first[first_len - 1] ^= 1;
         image[..first_len].copy_from_slice(&first[..first_len]);
 
         let second_len = encoded_len(b"durable".len()).unwrap();
-        encode(
-            2,
-            b"durable",
-            &mut image[first_len..first_len + second_len],
-        )
-        .unwrap();
+        encode(2, b"durable", &mut image[first_len..first_len + second_len]).unwrap();
 
         let result = scan(&image[..first_len + second_len]);
         assert_eq!(result.selected.unwrap().generation, 2);
@@ -325,5 +542,131 @@ mod tests {
             encode(1, &too_large, &mut out),
             Err(EncodeError::PayloadTooLarge)
         );
+    }
+
+    #[test]
+    fn write_record_keeps_marker_in_one_final_aligned_call() {
+        // 52-byte framing means payloads 3, 4, and 5 exercise immediately
+        // below, exactly at, and immediately above an eight-byte boundary.
+        for (generation, payload) in [(1, b"abc".as_slice()), (2, b"abcd"), (3, b"abcde")] {
+            let mut backend = TraceBackend::<128>::new(8);
+            let mut scratch = [0x55; 96];
+            let encoded_length = encoded_len(payload.len()).unwrap();
+            let padded_length = align_up(encoded_length, 8).unwrap();
+            let prefix_length = (encoded_length - COMMIT_MARKER.len()) / 8 * 8;
+            let written = write_record(&mut backend, 8, generation, payload, &mut scratch).unwrap();
+
+            assert_eq!(written, padded_length);
+            assert_eq!(backend.call_count, 2);
+            assert_eq!(
+                backend.calls[0],
+                Some(WriteCall {
+                    offset: 8,
+                    len: prefix_length,
+                })
+            );
+            assert_eq!(
+                backend.calls[1],
+                Some(WriteCall {
+                    offset: 8 + prefix_length,
+                    len: padded_length - prefix_length,
+                })
+            );
+            assert!(8 + prefix_length <= 8 + encoded_length - COMMIT_MARKER.len());
+            assert_eq!(
+                &backend.bytes[8 + encoded_length - COMMIT_MARKER.len()..8 + encoded_length],
+                &COMMIT_MARKER
+            );
+            assert!(backend.bytes[8 + encoded_length..8 + padded_length]
+                .iter()
+                .all(|byte| *byte == 0xff));
+
+            let result = scan(&backend.bytes);
+            assert_eq!(result.selected.unwrap().generation, generation);
+            assert_eq!(result.selected.unwrap().payload, payload);
+        }
+
+        // A byte-programmable backend is valid too: the final backend call
+        // simply spans the four marker bytes as four aligned one-byte units.
+        let mut byte_backend = TraceBackend::<128>::new(1);
+        let mut byte_scratch = [0; 96];
+        let written =
+            write_record(&mut byte_backend, 3, 4, b"byte-unit", &mut byte_scratch).unwrap();
+        assert_eq!(byte_backend.call_count, 2);
+        assert_eq!(byte_backend.calls[1].unwrap().len, COMMIT_MARKER.len());
+        assert_eq!(scan(&byte_backend.bytes).selected.unwrap().generation, 4);
+        assert_eq!(written, encoded_len(9).unwrap());
+    }
+
+    #[test]
+    fn write_record_rejects_unaligned_offset_and_short_scratch() {
+        let mut backend = TraceBackend::<128>::new(8);
+        let mut scratch = [0; 96];
+        assert_eq!(
+            write_record(&mut backend, 1, 1, b"payload", &mut scratch),
+            Err(JournalWriteError::Geometry(
+                WriteGeometryError::UnalignedOffset
+            ))
+        );
+
+        backend.geometry.write_alignment = 0;
+        assert_eq!(
+            write_record(&mut backend, 0, 1, b"payload", &mut scratch),
+            Err(JournalWriteError::Geometry(
+                WriteGeometryError::ZeroWriteAlignment
+            ))
+        );
+        backend.geometry.write_alignment = 8;
+        assert_eq!(
+            write_record(&mut backend, 128, 1, b"payload", &mut scratch),
+            Err(JournalWriteError::Geometry(WriteGeometryError::OutOfBounds))
+        );
+
+        let encoded_length = encoded_len(5).unwrap();
+        let padded_length = align_up(encoded_length, 8).unwrap();
+        let mut encoded_only = [0; 57];
+        assert_eq!(
+            write_record(&mut backend, 0, 1, b"abcde", &mut encoded_only),
+            Err(JournalWriteError::ScratchTooSmall {
+                required: padded_length
+            })
+        );
+
+        let mut too_short = [0; 56];
+        assert_eq!(
+            write_record(&mut backend, 0, 1, b"abcde", &mut too_short),
+            Err(JournalWriteError::Encode(EncodeError::OutputTooSmall))
+        );
+        assert_eq!(backend.call_count, 0);
+    }
+
+    #[test]
+    fn write_record_classifies_prefix_and_final_failures() {
+        let mut prefix_failure = TraceBackend::<128>::new(8);
+        prefix_failure.fail_at = Some(0);
+        let mut scratch = [0; 96];
+        assert_eq!(
+            write_record(&mut prefix_failure, 0, 1, b"payload", &mut scratch),
+            Err(JournalWriteError::BodyWrite(BackendError::InjectedFailure))
+        );
+        assert_eq!(prefix_failure.call_count, 1);
+        assert!(prefix_failure.bytes.iter().all(|byte| *byte == 0xff));
+
+        let mut backend = TraceBackend::<256>::new(8);
+        let first_payload = b"durable";
+        let mut first_scratch = [0; 96];
+        let first_padded =
+            write_record(&mut backend, 0, 1, first_payload, &mut first_scratch).unwrap();
+        backend.fail_at = Some(backend.call_count + 1);
+        let mut second_scratch = [0; 96];
+        assert_eq!(
+            write_record(&mut backend, first_padded, 2, b"newer", &mut second_scratch,),
+            Err(JournalWriteError::CommitWrite(
+                BackendError::InjectedFailure
+            ))
+        );
+        let result = scan(&backend.bytes);
+        assert_eq!(result.selected.unwrap().generation, 1);
+        assert_eq!(result.selected.unwrap().payload, first_payload);
     }
 }
