@@ -4468,22 +4468,23 @@ impl SessionHost for NodeCore {
     type Ids = SyncView;
 
     fn ids(&mut self, peer: &NodeId) -> &mut SyncView {
-        let mut entries: Vec<(Id16, u8)> = self
-            .store
-            .all_meta()
-            .into_iter()
-            .filter(|m| m.remaining_ms(self.now) >= OFFER_MIN_LIFETIME_MS)
-            .map(|m| {
-                // Domain partition (doc 06 §2) — exactly one domain per bundle.
-                let domain = match m.class {
-                    0 | 3 => 0,
-                    1 if m.dest == *peer || m.dest == self.node_id => 1,
-                    2 => 2,
-                    _ => 3,
-                };
-                (m.id, domain)
-            })
-            .collect();
+        let now = self.now;
+        let local_node = self.node_id;
+        let peer = *peer;
+        let mut entries = Vec::with_capacity(self.store.len());
+        self.store.for_each_meta(&mut |m| {
+            if m.remaining_ms(now) < OFFER_MIN_LIFETIME_MS {
+                return;
+            }
+            // Domain partition (doc 06 §2) — exactly one domain per bundle.
+            let domain = match m.class {
+                0 | 3 => 0,
+                1 if m.dest == peer || m.dest == local_node => 1,
+                2 => 2,
+                _ => 3,
+            };
+            entries.push((m.id, domain));
+        });
         entries.sort();
         self.sync_view = SyncView { entries };
         &mut self.sync_view

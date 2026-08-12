@@ -290,6 +290,16 @@ override the bounded methods rather than relying on the defaults. This is an
 API seam, not an embedded backend: no flash geometry, allocator policy,
 journal transaction adapter, or board-specific `BundleStore` exists yet.
 
+The same slice now exposes `for_each_meta`, an object-safe metadata visitor.
+`MemStore` and `SnapshotStore` override it so a provider can enumerate
+metadata without first constructing the legacy `all_meta()` vector. The
+default implementation remains allocation-backed for compatibility. The host
+`NodeCore::ids` path uses this visitor but still owns and sorts its
+`(BundleID, domain)` `Vec`; that preserves the exact RBSR ordering and is not a
+claim of allocator-free embedded operation. An embedded host still needs a
+named fixed-capacity `SyncView` or ordered iterator with an explicit overflow
+policy.
+
 Verification for this slice:
 
 ```text

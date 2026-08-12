@@ -1383,6 +1383,9 @@ impl BundleStore for SnapshotStore {
     fn all_meta(&self) -> Vec<BundleMeta> {
         self.mem.all_meta()
     }
+    fn for_each_meta(&self, visitor: &mut dyn FnMut(BundleMeta)) {
+        self.mem.for_each_meta(visitor)
+    }
     fn total_bytes(&self) -> u64 {
         self.mem.total_bytes()
     }

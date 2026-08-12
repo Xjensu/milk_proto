@@ -432,6 +432,16 @@ pub trait BundleStore {
     }
     /// Metadata for every bundle currently in the store.
     fn all_meta(&self) -> Vec<BundleMeta>;
+    /// Visit every bundle metadata record in provider order without
+    /// requiring the provider to allocate a result vector. The callback must
+    /// not mutate the store or retain the copied metadata after it returns.
+    /// Providers with a stable order should document it; callers that need a
+    /// canonical order must sort their own output.
+    fn for_each_meta(&self, visitor: &mut dyn FnMut(BundleMeta)) {
+        for meta in self.all_meta() {
+            visitor(meta);
+        }
+    }
     /// Copy all bundle metadata into caller-owned storage. The provider must
     /// leave the output slice unchanged when it reports insufficient capacity.
     fn all_meta_into(&self, out: &mut [BundleMeta]) -> Result<usize, StoreReadError> {
@@ -1308,6 +1318,12 @@ impl BundleStore for MemStore {
         self.map.values().map(|(m, _)| *m).collect()
     }
 
+    fn for_each_meta(&self, visitor: &mut dyn FnMut(BundleMeta)) {
+        for (meta, _) in self.map.values() {
+            visitor(*meta);
+        }
+    }
+
     fn all_meta_into(&self, out: &mut [BundleMeta]) -> Result<usize, StoreReadError> {
         let required = self.map.len();
         if required > out.len() {
@@ -1502,6 +1518,19 @@ mod tests {
         assert_eq!(trait_store.expire_into(5, &mut expired), Ok(1));
         assert_eq!(expired[0], Id16([2; 16]));
         assert_eq!(trait_store.meta(&Id16([2; 16])), None);
+    }
+
+    #[test]
+    fn for_each_meta_visits_every_record_in_provider_order() {
+        let mut store = MemStore::new();
+        store.put(meta(3, 0), &[]);
+        store.put(meta(1, 0), &[]);
+        store.put(meta(2, 0), &[]);
+
+        let mut ids = Vec::new();
+        let trait_store: &dyn BundleStore = &store;
+        trait_store.for_each_meta(&mut |record| ids.push(record.id));
+        assert_eq!(ids, vec![Id16([1; 16]), Id16([2; 16]), Id16([3; 16])]);
     }
 
     #[test]
