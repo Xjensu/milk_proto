@@ -92,8 +92,18 @@ Native UniFFI file-failure enums use `HashMismatch` and `Abandoned`; native even
 adapters MUST map them explicitly to the JavaScript values `hashMismatch` and
 `abandoned` (the exported `mapNativeFileFailReason` helper is the reference
 mapping). Generic lower-casing is not valid because `HashMismatch` would become
-`hashmismatch`. The older `DeliveryState` casing contract is unchanged and is
-outside this file-transfer compatibility fix.
+`hashmismatch`.
+
+Delivery states are normalized just as explicitly. `MmpClient.messageState()` and
+`deliveryProgress` events accept the native spellings `Queued`, `InMesh`,
+`Delivered`, and `Expired`, the generated Kotlin spellings `QUEUED`, `IN_MESH`,
+`DELIVERED`, and `EXPIRED`, and the historical lower-case spellings `inmesh` and
+`in_mesh` for compatibility. They become the public values `queued`, `inMesh`,
+`delivered`, and `expired`. Unknown native values throw `MmpNativeModuleError`
+instead of being silently coerced. Use the exported `mapNativeDeliveryState`
+helper when writing a custom native event adapter; generic lower-casing is not
+valid because `InMesh` would become `inmesh` and Kotlin's `IN_MESH` would become
+`in_mesh`.
 
 For tests, pass a method-complete fake `MmpMeshNative` and an event emitter implementing
 `addListener`. The identity seed remains native-only; there is no JavaScript API that can

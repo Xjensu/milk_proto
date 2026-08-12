@@ -3,6 +3,7 @@ export {
   MmpNativeModuleError,
   createMmpClient,
   mapNativeFileFailReason,
+  mapNativeDeliveryState,
   mmp,
   requireMmpNativeModule,
 } from './MmpClient';
@@ -22,6 +23,7 @@ export type {
   MmpMeshNative,
   MsgIdHex,
   NativeFileFailReason,
+  NativeDeliveryState,
   NodeMetrics,
   NodeIdHex,
   NodeStatus,

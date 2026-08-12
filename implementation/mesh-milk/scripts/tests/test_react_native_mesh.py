@@ -222,7 +222,42 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertNotIn("value.toLowerCase()", self.client)
         self.assertNotIn("value.lowercase()", self.client)
         self.assertIn("Generic lower-casing is not valid", self.readme)
-        self.assertIn("older `DeliveryState` casing contract is unchanged", self.readme)
+
+    def test_delivery_state_mapping_is_exhaustive_and_fail_closed(self) -> None:
+        self.assertIn("export type NativeDeliveryState", self.client)
+        for native in (
+            "Queued",
+            "InMesh",
+            "Delivered",
+            "Expired",
+            "QUEUED",
+            "IN_MESH",
+            "DELIVERED",
+            "EXPIRED",
+            "queued",
+            "inMesh",
+            "inmesh",
+            "in_mesh",
+            "delivered",
+            "expired",
+        ):
+            self.assertIn(f"case '{native}':", self.client)
+        for public in ("queued", "inMesh", "delivered", "expired"):
+            self.assertIn(f"return '{public}';", self.client)
+        self.assertIn("Unknown native delivery state", self.client)
+        self.assertIn("throw new MmpNativeModuleError", self.client)
+        self.assertIn("mapNativeDeliveryState((event as unknown as { state: unknown }).state)", self.client)
+        self.assertIn("messageState(id: MsgIdHex): Promise<string | null>", self.client)
+
+    def test_delivery_state_is_normalized_at_query_and_event_boundaries(self) -> None:
+        self.assertIn("mapNativeDeliveryState(value)", self.client)
+        self.assertIn("value === null ? null", self.client)
+        self.assertIn("event.type !== 'deliveryProgress'", self.client)
+        self.assertIn("handler(event)", self.client)
+        self.assertIn("mapNativeDeliveryState", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
+        self.assertIn("historical lower-case spellings `inmesh` and", self.readme)
+        self.assertIn("generated Kotlin spellings `QUEUED`, `IN_MESH`", self.readme)
+        self.assertIn("Unknown native values throw `MmpNativeModuleError`", self.readme)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,57 @@ export interface NodeMetrics {
 
 export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 
+/**
+ * Native UniFFI spellings for a delivery-state enum.  The bridge accepts the
+ * canonical Rust names and the historical lower-case spelling emitted by the
+ * first mobile adapters; all values are converted explicitly before they are
+ * exposed to JavaScript.
+ */
+export type NativeDeliveryState =
+  | 'Queued'
+  | 'InMesh'
+  | 'Delivered'
+  | 'Expired'
+  | 'QUEUED'
+  | 'IN_MESH'
+  | 'DELIVERED'
+  | 'EXPIRED'
+  | 'queued'
+  | 'inMesh'
+  | 'inmesh'
+  | 'in_mesh'
+  | 'delivered'
+  | 'expired';
+
+/**
+ * Map the native enum without relying on generic case conversion.  Unknown
+ * values fail closed so an adapter drift cannot silently change UI state.
+ */
+export function mapNativeDeliveryState(value: unknown): DeliveryState {
+  switch (value) {
+    case 'Queued':
+    case 'QUEUED':
+    case 'queued':
+      return 'queued';
+    case 'InMesh':
+    case 'IN_MESH':
+    case 'inMesh':
+    case 'inmesh':
+    case 'in_mesh':
+      return 'inMesh';
+    case 'Delivered':
+    case 'DELIVERED':
+    case 'delivered':
+      return 'delivered';
+    case 'Expired':
+    case 'EXPIRED':
+    case 'expired':
+      return 'expired';
+    default:
+      throw new MmpNativeModuleError(`Unknown native delivery state: ${String(value)}`);
+  }
+}
+
 export type BlobState = 'wanted' | 'fetching' | 'assembled' | 'abandoned';
 export type FileFailReason = 'hashMismatch' | 'abandoned';
 
@@ -121,7 +172,8 @@ export interface MmpMeshNative {
 
   // Messaging.
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex>;
-  messageState(id: MsgIdHex): Promise<DeliveryState | null>;
+  /** Returns a native enum string; MmpClient validates and normalizes it. */
+  messageState(id: MsgIdHex): Promise<string | null>;
 
   // File transfer. Data and variable-length manifest fields use base64;
   // content-addressed IDs use lowercase hex. Full files are explicit-pull.
@@ -295,7 +347,9 @@ export class MmpClient {
   }
 
   messageState(id: MsgIdHex): Promise<DeliveryState | null> {
-    return this.native.messageState(id);
+    return this.native.messageState(id).then((value) =>
+      value === null ? null : mapNativeDeliveryState(value),
+    );
   }
 
   /** Share a file; `dataB64` is decoded by the native adapter, never by the core API. */
@@ -387,7 +441,19 @@ export class MmpClient {
 
   /** Subscribe only to app-level events; raw BLE frames never cross this boundary. */
   onEvent(handler: (event: MmpEvent) => void): () => void {
-    const subscription = this.emitter.addListener('mmp', handler);
+    const subscription = this.emitter.addListener('mmp', (event) => {
+      if (event.type !== 'deliveryProgress') {
+        handler(event);
+        return;
+      }
+
+      // Native event adapters may still provide Rust/legacy enum spellings;
+      // normalize only this event and preserve every unrelated payload byte.
+      handler({
+        ...event,
+        state: mapNativeDeliveryState((event as unknown as { state: unknown }).state),
+      });
+    });
     return () => subscription.remove();
   }
 }
