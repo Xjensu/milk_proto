@@ -333,7 +333,16 @@ pub(crate) fn restore_from_vault_if_present_into(
     apply: &mut dyn FnMut(RestoredState) -> Result<(), VaultError>,
 ) -> Result<Option<u64>, VaultError> {
     let mut operation = |locked: &mut dyn SnapshotVault| {
-        let Some(record) = locked.load()? else { return Ok(0) };
+        let Some(record) = locked.load()? else {
+            // A missing record is optional only for a genuinely fresh
+            // provider.  Once a durable floor exists, treating loss as
+            // `Ok(None)` would silently convert record loss into a rollback
+            // bypass and allow a caller to continue with empty secret state.
+            if locked.generation_floor()? != 0 {
+                return Err(VaultError::Generation);
+            }
+            return Ok(0);
+        };
         let (generation, state) = restore_record_unlocked(locked, node_public, node_id, record)?;
         apply(state)?;
         Ok(generation)
@@ -1268,6 +1277,30 @@ mod tests {
         let candidate = seal_core(&node.core, 2, 50_001, &[10; 32], &mut rng).unwrap();
         assert_eq!(vault.commit(1, candidate, &[10; 32]), Err(VaultError::Generation));
         assert_eq!(vault.load().unwrap(), None);
+        assert_eq!(vault.high_water_generation(), 1);
+    }
+
+    #[test]
+    fn optional_restore_rejects_record_loss_after_initialization() {
+        let node = Node::new([98; 32], Box::new(MemStore::new()), Tier::Relay);
+        let mut vault = ReferenceSnapshotVault::new();
+        let mut rng = StdRng::seed_from_u64(17);
+        assert_eq!(save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(), 1);
+        vault.simulate_record_loss();
+
+        let mut applied = false;
+        let result = restore_from_vault_if_present_into(
+            &mut vault,
+            &node.core.public,
+            &node.core.node_id,
+            &mut |_state| {
+                applied = true;
+                Ok(())
+            },
+        );
+
+        assert_eq!(result, Err(VaultError::Generation));
+        assert!(!applied, "record loss must fail before state application");
         assert_eq!(vault.high_water_generation(), 1);
     }
 

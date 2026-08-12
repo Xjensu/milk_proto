@@ -76,9 +76,11 @@ the table; the compositions in §1 above are the only project-specific *arrangem
 **Key hierarchy** (doc 08 §2): permanent Ed25519 identity key signs an X25519 exchange-key claim
 and a prekey-batch claim; the exchange key doubles as the Noise XX static; each session produces
 ephemeral transport keys; the first session between two identities derives a Conversation root
-`CK₀`, from which conversation ratchet chains, the receipt MAC key, and group sender keys are all
-derived. Identity keys never rotate — compromise means identity replacement, not key rotation
-(consistent with the petname trust model having no registrar to attest a rotation).
+`CK₀`, from which conversation ratchet chains and the receipt MAC key are derived. Group sender
+keys are separate per-group/per-epoch random keys, distributed over pairwise conversation
+channels, and are not derived from `CK₀`. Identity keys never rotate — compromise means identity
+replacement, not key rotation (consistent with the petname trust model having no registrar to
+attest a rotation).
 
 **Ratchet-state persistence (doc 08 §5.3 amendment, 2026-07-16):** phones/PCs persist conversation
 ratchet state across restart, but only keystore-wrapped; Core/`no_std` targets never persist it.
