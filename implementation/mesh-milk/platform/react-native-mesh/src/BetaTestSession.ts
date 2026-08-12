@@ -173,6 +173,12 @@ export class BetaTestSession {
     return this.client.sendText(peer, text);
   }
 
+  /** Send an application-defined body through the running MMP/1 session. */
+  sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    this.requireStarted();
+    return this.client.sendBody(peer, apptype, payloadB64);
+  }
+
   /** Inspect native delivery state; unknown enum values fail in MmpClient. */
   messageState(id: MsgIdHex): Promise<DeliveryState | null> {
     this.requireStarted();

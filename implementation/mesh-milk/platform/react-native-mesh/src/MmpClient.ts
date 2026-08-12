@@ -292,6 +292,8 @@ export interface MmpMeshNative {
 
   // Messaging.
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex>;
+  /** Send an application-defined body; payload bytes are base64 at the JS boundary. */
+  sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex>;
   /** Returns a native enum string; MmpClient validates and normalizes it. */
   messageState(id: MsgIdHex): Promise<string | null>;
 
@@ -357,6 +359,7 @@ const REQUIRED_NATIVE_METHODS = [
   'requestFriendship',
   'allowFriendshipFrom',
   'sendText',
+  'sendBody',
   'messageState',
   'sendFile',
   'fetchFile',
@@ -523,6 +526,10 @@ export class MmpClient {
 
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex> {
     return this.native.sendText(peer, text);
+  }
+
+  sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    return this.native.sendBody(peer, apptype, payloadB64);
   }
 
   messageState(id: MsgIdHex): Promise<DeliveryState | null> {

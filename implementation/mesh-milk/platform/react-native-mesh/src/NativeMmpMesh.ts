@@ -78,6 +78,7 @@ export interface Spec extends TurboModule {
   sendText(peer: string, text: string): Promise<string>;
   /** Returns the Rust enum spelling; MmpClient performs explicit mapping. */
   messageState(id: string): Promise<string | null>;
+  sendBody(peer: string, apptype: number, payloadB64: string): Promise<string>;
   sendFile(peer: string, name: string, mime: string, dataB64: string): Promise<FileSend>;
   fetchFile(root: string, dest: string): Promise<void>;
   cancelFetch(root: string): Promise<void>;

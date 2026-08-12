@@ -55,6 +55,10 @@ const MAX_LINK_MTU: u16 = 4096;
 const MIN_GOODPUT_BPS: u32 = 1;
 const MAX_GOODPUT_BPS: u32 = 10_000_000;
 
+/// First application-defined body tag; lower tags are reserved for MMP/1
+/// control and built-in payloads exposed through dedicated methods.
+const MIN_CUSTOM_APPTYPE: u8 = 0x10;
+
 // --------------------------------------------------------------- errors ----
 
 /// FFI-facing error surface. Deliberately coarse: the host app cannot act
@@ -994,6 +998,27 @@ impl MmpNode {
         self.lock().send_text(&dest, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
     }
 
+    /// Send an application-defined body to `dest`, returning its BundleID.
+    ///
+    /// `apptype` must be in the host-application range `0x10..=0xff`.
+    /// Reserved MMP/1 body tags have dedicated methods; the core performs the
+    /// existing bundle-size and admission checks before queueing the body.
+    pub fn send_body(
+        &self,
+        dest: Vec<u8>,
+        apptype: u8,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
+        if apptype < MIN_CUSTOM_APPTYPE {
+            return Err(FfiError::BadArg);
+        }
+        let dest = id16_from(&dest)?;
+        self.lock()
+            .send_body(&dest, apptype, &payload)
+            .map(|id| id.0.to_vec())
+            .map_err(map_send_error)
+    }
+
     /// Current delivery state of a message we sent, if we're still tracking it.
     pub fn message_state(&self, id: Vec<u8>) -> Result<Option<FfiDeliveryState>, FfiError> {
         let id = id16_from(&id)?;
@@ -1538,3 +1563,6 @@ impl MmpNode {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod send_body_tests;
