@@ -4967,6 +4967,44 @@ fn send_file_from_reader_rejects_source_mutation_before_storing_invalid_symbols(
 }
 
 #[test]
+fn send_file_from_reader_preserves_only_durable_prefix_on_legacy_capacity_failure() {
+    let mut a = node(21);
+    let mut b = node(22);
+    introduce(&mut a, &mut b);
+    drain(&mut a);
+    drain(&mut b);
+
+    let conv_id = conversation_id(&a.core.public, &b.core.public);
+    a.core.store = Box::new(PrefixCapacityStore::new(8));
+    let data = vec![0x52; 3000];
+    let mut reader = Cursor::new(data);
+
+    assert_eq!(
+        a.send_file_from_reader(&b.node_id(), "reader-prefix.bin", "application/octet-stream", &mut reader),
+        Err(SendError::ResourceLimit)
+    );
+
+    let durable_symbols = a
+        .core
+        .store
+        .all_meta()
+        .into_iter()
+        .filter(|meta| meta.class == class::SYMBOL)
+        .count();
+    assert_eq!(durable_symbols, 8, "legacy reader path retains the accepted prefix");
+    let indexed_symbols: usize = a.core.blob_index.values().map(BTreeMap::len).sum();
+    assert_eq!(indexed_symbols, 8, "holder index tracks only durable symbols");
+    assert_eq!(a.core.symbol_of.len(), 8, "reverse index tracks only durable symbols");
+    for id in a.core.symbol_of.keys() {
+        assert!(a.core.store.meta(id).is_some(), "every indexed symbol is durable");
+        assert!(a.core.seen.contains(id), "every accepted symbol is in SeenIndex");
+    }
+    assert!(!a.core.convs.contains_key(&conv_id), "manifest failure does not create a conversation");
+    assert!(!a.core.pending_first_contact.contains_key(&conv_id));
+    assert!(a.core.sent.is_empty(), "manifest failure does not create delivery state");
+}
+
+#[test]
 fn send_file_from_reader_deduplicates_existing_symbols() {
     let mut a = node(15);
     let mut b = node(16);

@@ -70,9 +70,36 @@ Then choose one of two public shapes:
 * a provider-associated reservation type with a generic `NodeCore`/adapter path
   that does not pretend the current `dyn BundleStore` can discover it.
 
-The selected shape must be implemented by at least one real provider before it
-is re-exported from `mmp-core`. Until then, keep own-origin producers on the
-legacy `put` seam and keep `try_put` receive-only.
+The selected shape must be implemented by at least one independent production
+provider before it is considered an extensibility contract. Until then,
+`MemStore`/`SnapshotStore` may use the in-tree reservation methods, while
+legacy providers retain the `try_put` fallback and must not be treated as
+transactional.
+
+## Verification update (2026-08-12)
+
+The repository now contains an additive reservation seam directly on
+`BundleStore`: opaque single-bundle and atomic-batch reservations are exercised
+by `MemStore` and forwarded by `SnapshotStore`. The provider review found the
+tested arithmetic and stale-generation checks sound, but the opaque token
+fields remain private to `mmp-core`; an independent production backend cannot
+implement the capability without a future adapter or provider-issued handle.
+
+The slice-based `NodeCore::send_file` path uses the atomic batch capability when
+available and publishes symbols, indexes, SeenIndex entries, and the manifest
+only after a successful commit. The reader-backed path intentionally remains a
+bounded-memory legacy path: it re-reads one stripe at a time and may retain a
+durable accepted symbol prefix if a provider rejects a later symbol. A focused
+regression test records that this prefix is indexed only after durable writes,
+while the manifest conversation and delivery state remain unpublished.
+
+Making reader sends all-or-none with the current borrowed-entry batch API would
+require retaining every encoded symbol until commit (up to the full 8 MiB file
+limit and its Reed–Solomon expansion). That memory trade-off is not justified
+for mobile or IoT targets. Do not reserve capacity before reading the complete
+source, and do not fall back to single writes after a non-`Unsupported` batch
+failure. The next design gate is a bounded streaming/staged provider capability
+or an explicit product choice to keep reader sends resumable-prefix semantics.
 
 ## Scope and acceptance boundary
 
