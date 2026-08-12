@@ -382,6 +382,34 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("export {", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
         self.assertIn("mapNativeFileOffer", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
 
+    def test_unknown_native_event_types_fail_closed(self) -> None:
+        """A newer native event must not masquerade as a known app event."""
+        self.assertIn("export function mapNativeEventType", self.client)
+        for event_type in (
+            "messageReceived",
+            "messageGap",
+            "delivered",
+            "deliveryProgress",
+            "claimUpdated",
+            "compromiseWarning",
+            "friendshipEstablished",
+            "peerRevoked",
+            "contactSeen",
+            "established",
+            "groupInvite",
+            "groupMessage",
+            "groupEpochChanged",
+            "tierChanged",
+            "announcement",
+            "fileOffered",
+            "fileReady",
+            "fileFailed",
+        ):
+            self.assertIn(f"case '{event_type}':", self.client)
+        self.assertIn("Unknown native event type", self.client)
+        self.assertIn("mapNativeEventType(event);", self.client)
+        self.assertIn("mapNativeEventType", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
+
     def test_delivery_state_mapping_is_exhaustive_and_fail_closed(self) -> None:
         self.assertIn("export type NativeDeliveryState", self.client)
         for native in (

@@ -4,6 +4,7 @@ export {
   createMmpClient,
   mapNativeBetaSnapshot,
   mapNativeCapability,
+  mapNativeEventType,
   mapNativeFileOffer,
   mapNativeFileFailReason,
   mapNativeDeliveryState,

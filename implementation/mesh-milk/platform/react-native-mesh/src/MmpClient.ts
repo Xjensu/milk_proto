@@ -232,6 +232,43 @@ function requireNativeString(value: unknown, field: string): string {
 }
 
 /**
+ * Validate the event discriminator before exposing a native event to the app.
+ * The native bridge is a versioned boundary: forwarding an unknown event as a
+ * `MmpEvent` would make a newer adapter look valid to an older application and
+ * could silently bypass its event handling policy.  Unknown values therefore
+ * fail closed, just like unknown enum and snapshot schema values.
+ */
+export function mapNativeEventType(value: unknown): MmpEvent['type'] {
+  if (value === null || typeof value !== 'object') {
+    throw new MmpNativeModuleError('Malformed native event');
+  }
+  const type = (value as Record<string, unknown>).type;
+  switch (type) {
+    case 'messageReceived':
+    case 'messageGap':
+    case 'delivered':
+    case 'deliveryProgress':
+    case 'claimUpdated':
+    case 'compromiseWarning':
+    case 'friendshipEstablished':
+    case 'peerRevoked':
+    case 'contactSeen':
+    case 'established':
+    case 'groupInvite':
+    case 'groupMessage':
+    case 'groupEpochChanged':
+    case 'tierChanged':
+    case 'announcement':
+    case 'fileOffered':
+    case 'fileReady':
+    case 'fileFailed':
+      return type;
+    default:
+      throw new MmpNativeModuleError(`Unknown native event type: ${String(type)}`);
+  }
+}
+
+/**
  * Normalize one native file offer without changing opaque encodings.  Some
  * native bridges omit an absent UniFFI Option instead of serializing it as
  * null; the public API deliberately exposes a stable nullable field.
@@ -716,6 +753,7 @@ export class MmpClient {
   /** Subscribe only to app-level events; raw BLE frames never cross this boundary. */
   onEvent(handler: (event: MmpEvent) => void): () => void {
     const subscription = this.emitter.addListener('mmp', (event) => {
+      mapNativeEventType(event);
       if (event.type !== 'deliveryProgress') {
         if (event.type === 'fileFailed') {
           // UniFFI emits the native enum spelling (HashMismatch/Abandoned),
