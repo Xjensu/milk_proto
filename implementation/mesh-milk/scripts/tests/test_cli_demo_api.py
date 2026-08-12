@@ -72,6 +72,21 @@ class DemoJsonApiTests(unittest.TestCase):
         result = self._run("demo", "--json", "extra")
         self.assertEqual(result.returncode, 2)
 
+    def test_process_help_and_unsupported_invocations_are_fail_closed(self) -> None:
+        help_result = self._run("--help")
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        for subcommand in ("keygen", "demo", "inspect", "vectors", "connect", "send", "listen"):
+            self.assertIn(f"mmp-cli {subcommand}", help_result.stdout)
+
+        empty_result = self._run()
+        self.assertEqual(empty_result.returncode, 2)
+        self.assertIn("USAGE:", empty_result.stderr)
+
+        unknown_result = self._run("unsupported")
+        self.assertEqual(unknown_result.returncode, 2)
+        self.assertIn("unknown subcommand 'unsupported'", unknown_result.stderr)
+        self.assertIn("USAGE:", unknown_result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
