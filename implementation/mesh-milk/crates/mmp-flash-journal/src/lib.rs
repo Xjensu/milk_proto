@@ -8,6 +8,10 @@
 #![no_std]
 #![warn(missing_docs)]
 
+pub mod backend;
+
+pub use backend::{BackendError, Geometry, GeometryError, JournalBackend};
+
 use core::convert::TryFrom;
 
 /// Four-byte format marker for this implementation-local journal record.

@@ -235,17 +235,35 @@ that a real provider must write the commit marker last.
 Focused evidence:
 
 ```text
-cargo test -p mmp-flash-journal --all-targets --offline       6 passed
+cargo test -p mmp-flash-journal --all-targets --offline       10 passed
 cargo check -p mmp-flash-journal \
   --target thumbv7em-none-eabihf --no-default-features --offline  passed
 cargo clippy -p mmp-flash-journal --all-targets --offline -- -D warnings  passed
 ```
 
 The tests cover highest-generation selection, duplicate-generation tie
-breaking, truncated tails, invalid checksum/marker, impossible lengths, and
-caller-buffer bounds. The next E7 step remains a fault-injecting NOR backend
-and a provider transaction adapter; this scanner alone does not establish
-power-loss atomicity, reservation semantics, or end-to-end embedded recovery.
+breaking, truncated tails, invalid checksum/marker, impossible lengths,
+caller-buffer bounds, aligned backend geometry, one-way programming, erase,
+one-shot I/O faults, and incomplete-append recovery. The next E7 step is a
+board-specific backend and provider transaction adapter; the scanner and test
+double do not establish power-loss atomicity, reservation semantics, or
+end-to-end embedded recovery.
+
+## Provider-neutral backend slice (2026-08-12)
+
+**Task status: TEST-ONLY.** `mmp-flash-journal::backend` now defines the
+minimal aligned `JournalBackend` I/O contract (`geometry`, `read`, `write`, and
+`erase`) and a test-only fixed-array NOR double with deterministic operation
+failure injection. The double models one-way NOR programming (`1 → 0`) and
+erase-to-`0xff`; it is not a production driver and is not exported as a board
+provider.
+
+The focused tests cover zero geometry values, range and alignment rejection,
+one-way programming, erase restoration, injected read/write/erase failures,
+and scanner recovery of the previous complete generation after an incomplete
+append. This establishes an executable host seam for later board adapters but
+does not establish flash atomicity, a capacity policy, reservation semantics,
+or `BundleStore` integration.
 
 ## E7-S1 bounded-provider review closure (2026-08-12)
 
