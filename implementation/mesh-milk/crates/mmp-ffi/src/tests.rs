@@ -90,6 +90,39 @@ fn direct_message_delivery_via_ffi_surface() {
 }
 
 #[test]
+fn file_api_returns_bounded_identifiers_and_rejects_unknown_fetches() {
+    let alice = node(78);
+    let bob = node(79);
+    introduce(&alice, &bob);
+    drain(&alice);
+    drain(&bob);
+
+    alice.tick(1);
+    let sent = alice
+        .send_file(
+            bob.node_id(),
+            "beta.txt".to_string(),
+            "text/plain".to_string(),
+            b"ffi file payload".to_vec(),
+        )
+        .expect("known peer and a small file should be accepted");
+    assert_eq!(sent.message_id.len(), 16, "manifest id is a BundleID");
+    assert_eq!(sent.root.len(), 16, "file root is an Id16 content address");
+
+    let unknown_root = vec![0xa5; 16];
+    assert_eq!(
+        bob.file_progress(unknown_root.clone()).expect("valid root length"),
+        None,
+        "unknown roots must not expose an assembly through the FFI"
+    );
+    assert_eq!(
+        bob.fetch_file(unknown_root, "unused.bin".to_string()),
+        Err(FfiError::BadArg),
+        "fetch requires a previously verified FileOffered event"
+    );
+}
+
+#[test]
 fn status_and_metrics_snapshot_is_secret_free_and_tracks_host_state() {
     let node = node(73);
 
