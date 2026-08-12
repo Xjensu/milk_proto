@@ -5,6 +5,8 @@ import { NativeEventEmitter, NativeModules } from 'react-native';
 export type NodeIdHex = string;   // 32 lowercase hex chars (16 bytes)
 export type MsgIdHex = string;    // 32 lowercase hex chars (16 bytes)
 export type GroupIdHex = string;  // 32 lowercase hex chars (16 bytes)
+export type FileRootHex = string; // 32 lowercase hex chars (16-byte Merkle root)
+export type Base64Value = string; // variable-length opaque bytes
 
 export type Tier = 'leaf' | 'relay' | 'anchor';
 
@@ -28,6 +30,33 @@ export interface NodeMetrics {
 
 export type DeliveryState = 'queued' | 'inMesh' | 'delivered' | 'expired';
 
+export type BlobState = 'wanted' | 'fetching' | 'assembled' | 'abandoned';
+export type FileFailReason = 'hashMismatch' | 'abandoned';
+
+/** Result of accepting a file for sharing. IDs remain lowercase hex strings. */
+export interface FileSend {
+  messageId: MsgIdHex;
+  root: FileRootHex;
+}
+
+/** Secret-free progress snapshot for one explicitly requested file. */
+export interface FileProgress {
+  state: BlobState;
+  haveSymbols: number;
+  totalSymbols: number;
+  stripesDone: number;
+  stripes: number;
+}
+
+/** A verified file offer; name and MIME bytes retain the bridge's base64 convention. */
+export interface FileOffer {
+  nameB64: Base64Value;
+  mimeB64: Base64Value;
+  size: number;
+  root: FileRootHex;
+  thumbRoot: FileRootHex | null;
+}
+
 export type MmpEvent =
   | { type: 'messageReceived'; conv: MsgIdHex; from: NodeIdHex; id: MsgIdHex; body: string; apptype: number }
   | { type: 'messageGap'; conv: MsgIdHex; parents: MsgIdHex[] }
@@ -41,7 +70,10 @@ export type MmpEvent =
   | { type: 'groupInvite'; gid: GroupIdHex; from: NodeIdHex }
   | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; body: string }
   | { type: 'groupEpochChanged'; gid: GroupIdHex; epoch: number }
-  | { type: 'tierChanged'; tier: Tier };
+  | { type: 'tierChanged'; tier: Tier }
+  | { type: 'fileOffered'; conv: MsgIdHex; from: NodeIdHex; sharer: NodeIdHex; entries: FileOffer[] }
+  | { type: 'fileReady'; root: FileRootHex; path: string }
+  | { type: 'fileFailed'; root: FileRootHex; reason: FileFailReason };
 
 /** The native methods consumed by this package. Link bytes are intentionally absent. */
 export interface MmpMeshNative {
@@ -66,6 +98,13 @@ export interface MmpMeshNative {
   // Messaging.
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex>;
   messageState(id: MsgIdHex): Promise<DeliveryState | null>;
+
+  // File transfer. Data and variable-length manifest fields use base64;
+  // content-addressed IDs use lowercase hex. Full files are explicit-pull.
+  sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend>;
+  fetchFile(root: FileRootHex, dest: string): Promise<void>;
+  cancelFetch(root: FileRootHex): Promise<void>;
+  fileProgress(root: FileRootHex): Promise<FileProgress | null>;
 
   // Groups.
   createGroup(): Promise<GroupIdHex>;
@@ -113,6 +152,10 @@ const REQUIRED_NATIVE_METHODS = [
   'block',
   'sendText',
   'messageState',
+  'sendFile',
+  'fetchFile',
+  'cancelFetch',
+  'fileProgress',
   'createGroup',
   'groupInvite',
   'groupSend',
@@ -229,6 +272,24 @@ export class MmpClient {
 
   messageState(id: MsgIdHex): Promise<DeliveryState | null> {
     return this.native.messageState(id);
+  }
+
+  /** Share a file; `dataB64` is decoded by the native adapter, never by the core API. */
+  sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend> {
+    return this.native.sendFile(peer, name, mime, dataB64);
+  }
+
+  /** Explicitly request a verified offer and write the assembled file to `dest`. */
+  fetchFile(root: FileRootHex, dest: string): Promise<void> {
+    return this.native.fetchFile(root, dest);
+  }
+
+  cancelFetch(root: FileRootHex): Promise<void> {
+    return this.native.cancelFetch(root);
+  }
+
+  fileProgress(root: FileRootHex): Promise<FileProgress | null> {
+    return this.native.fileProgress(root);
   }
 
   createGroup(): Promise<GroupIdHex> {

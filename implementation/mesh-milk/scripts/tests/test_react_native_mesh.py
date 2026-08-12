@@ -43,6 +43,10 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "block",
             "sendText",
             "messageState",
+            "sendFile",
+            "fetchFile",
+            "cancelFetch",
+            "fileProgress",
             "createGroup",
             "groupInvite",
             "groupSend",
@@ -76,11 +80,24 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "groupMessage",
             "groupEpochChanged",
             "tierChanged",
+            "fileOffered",
+            "fileReady",
+            "fileFailed",
         ):
             self.assertIn(f"type: '{event_type}'", self.client)
         self.assertIn("claimB64: string", self.client)
         self.assertIn("successorPublicKeyB64: string", self.client)
         self.assertIn("countersigB64: string", self.client)
+        self.assertIn("export type FileRootHex = string", self.client)
+        self.assertIn("export type Base64Value = string", self.client)
+        self.assertIn("export interface FileSend", self.client)
+        self.assertIn("messageId: MsgIdHex", self.client)
+        self.assertIn("export interface FileProgress", self.client)
+        self.assertIn("haveSymbols: number", self.client)
+        self.assertIn("export interface FileOffer", self.client)
+        self.assertIn("nameB64: Base64Value", self.client)
+        self.assertIn("mimeB64: Base64Value", self.client)
+        self.assertIn("thumbRoot: FileRootHex | null", self.client)
         self.assertIn("export interface NodeStatus", self.client)
         self.assertIn("persistentStore: boolean", self.client)
         self.assertIn("diagnosticsEnabled: boolean", self.client)
@@ -128,6 +145,10 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "publicKey",
             "sendText",
             "messageState",
+            "sendFile",
+            "fetchFile",
+            "cancelFetch",
+            "fileProgress",
             "createGroup",
             "groupInvite",
             "groupSend",
@@ -157,6 +178,10 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("status(): Promise<NodeStatus>", self.turbo)
         self.assertIn("metrics(): Promise<NodeMetrics>", self.turbo)
         self.assertNotIn("from './MmpClient'", self.turbo)
+        self.assertIn("sendFile(peer: string, name: string, mime: string, dataB64: string)", self.turbo)
+        self.assertIn("fetchFile(root: string, dest: string)", self.turbo)
+        self.assertIn("cancelFetch(root: string)", self.turbo)
+        self.assertIn("fileProgress(root: string)", self.turbo)
         self.assertIn("type NodeStatus = {", self.turbo)
         self.assertIn("type NodeMetrics = {", self.turbo)
         for field in (
@@ -178,6 +203,14 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         lowered = self.client.lower()
         for forbidden in ("providerhandle", "peerid", "sessionid", "wirebytes"):
             self.assertNotIn(forbidden, lowered)
+
+    def test_file_transfer_is_explicit_pull_and_secret_free(self) -> None:
+        self.assertIn("dataB64: Base64Value", self.client)
+        self.assertIn("fileOffered", self.readme)
+        self.assertIn("explicitly pull", self.readme)
+        self.assertIn("fileReady", self.readme)
+        self.assertIn("fileFailed", self.readme)
+        self.assertNotIn("privateKey", self.client)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,19 @@ type NodeMetrics = {
   diagnosticDrops: number;
 };
 
+type FileSend = {
+  messageId: string;
+  root: string;
+};
+
+type FileProgress = {
+  state: string;
+  haveSymbols: number;
+  totalSymbols: number;
+  stripesDone: number;
+  stripes: number;
+};
+
 /** TurboModule codegen surface; native implementations validate string enums. */
 export interface Spec extends TurboModule {
   start(tier: string): Promise<string>;
@@ -31,6 +44,10 @@ export interface Spec extends TurboModule {
   publicKey(): Promise<string>;
   sendText(peer: string, text: string): Promise<string>;
   messageState(id: string): Promise<string | null>;
+  sendFile(peer: string, name: string, mime: string, dataB64: string): Promise<FileSend>;
+  fetchFile(root: string, dest: string): Promise<void>;
+  cancelFetch(root: string): Promise<void>;
+  fileProgress(root: string): Promise<FileProgress | null>;
   createGroup(): Promise<string>;
   groupInvite(gid: string, peer: string): Promise<void>;
   groupSend(gid: string, text: string): Promise<string>;

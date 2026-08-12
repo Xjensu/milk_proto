@@ -6,7 +6,14 @@ export {
   requireMmpNativeModule,
 } from './MmpClient';
 export type {
+  Base64Value,
+  BlobState,
   DeliveryState,
+  FileFailReason,
+  FileOffer,
+  FileProgress,
+  FileRootHex,
+  FileSend,
   GroupIdHex,
   MmpEvent,
   MmpEventEmitter,

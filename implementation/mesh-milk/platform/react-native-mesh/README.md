@@ -64,6 +64,30 @@ const unsubscribe = client.onEvent((event) => {
 unsubscribe();
 ```
 
+## File transfer
+
+The beta app can share a file with a known peer and explicitly pull a verified
+offer. Content-addressed IDs (`messageId`, `root`, and event IDs) are lowercase
+hex strings. File bytes and variable-length manifest bytes use base64 strings;
+the identity seed, private keys, provider handles, and BLE/session bytes never
+cross this API.
+
+```ts
+const sent = await client.sendFile(peerIdHex, 'photo.jpg', 'image/jpeg', dataB64);
+await client.fetchFile(sent.root, appCachePath);
+const progress = await client.fileProgress(sent.root);
+if (progress?.state === 'assembled') {
+  console.log(`received ${progress.haveSymbols}/${progress.totalSymbols} symbols`);
+}
+```
+
+`sendFile` is bounded by the native `FILE_MAX` policy and may require the whole
+payload in host memory. A `fileOffered` event presents verified entries; the app
+must call `fetchFile` for an entry rather than downloading a full file
+automatically. `fileReady` reports the native destination path, while
+`fileFailed` reports a typed abandonment reason. `cancelFetch` stops an active
+assembly without deleting ordinary partial symbols from the mesh store.
+
 For tests, pass a method-complete fake `MmpMeshNative` and an event emitter implementing
 `addListener`. The identity seed remains native-only; there is no JavaScript API that can
 read or write it.
