@@ -3382,6 +3382,32 @@ fn group_create_invite_and_message() {
 }
 
 #[test]
+fn group_application_body_preserves_type_tag() {
+    let mut alice = node(71);
+    let mut bob = node(72);
+    introduce(&mut alice, &mut bob);
+
+    let gid = alice.create_group();
+    alice.group_invite(&gid, &bob.node_id()).unwrap();
+    contact(&mut alice, &mut bob, 71, 710_000);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let payload = b"verified manifest bytes";
+    alice
+        .group_send_body(&gid, apptype::FILE_MANIFEST, payload)
+        .expect("custom group body is accepted");
+    contact(&mut alice, &mut bob, 72, 720_000);
+
+    let events = drain(&mut bob);
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::GroupMessage { gid: event_gid, apptype: kind, body, .. }
+            if *event_gid == gid && *kind == apptype::FILE_MANIFEST && body == payload
+    )));
+}
+
+#[test]
 fn rejected_group_invite_does_not_mutate_membership() {
     let mut alice = node(62);
     let gid = alice.create_group();

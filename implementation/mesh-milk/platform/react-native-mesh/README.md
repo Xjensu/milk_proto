@@ -67,7 +67,7 @@ acknowledge protocol events.
 
 `BetaTestSession` is also the application-facing composition facade for the
 existing client surface. Once started, the same session exposes direct text,
-group, explicit-pull file, authority/scope, friendship, identity/claim,
+group (including application-typed bodies via `groupSendBody`), explicit-pull file, authority/scope, friendship, identity/claim,
 diagnostics, persistence, and runtime tier methods (`setTier`, `sendText`,
 `createGroup`, `sendFile`,
 `fetchFile`, `subscribeScope`, `pinAuthorityRoot`, `requestFriendship`, and the
@@ -86,6 +86,11 @@ delivery states therefore fail closed rather than being coerced. `nodeId()` and
 `publicKey()` expose public identity values only; seeds, private keys, provider
 handles, raw BLE frames, and automatic uploads remain unavailable. `flush()` is
 always explicit, and `report()`/`reportJson()` are local snapshots only.
+
+Group application bodies use base64 at the bridge boundary. Decrypted
+`groupMessage` events include the numeric `apptype` supplied to
+`groupSendBody`, so a beta app can dispatch registered application payloads
+without guessing from body bytes.
 
 ## Beta status and metrics
 

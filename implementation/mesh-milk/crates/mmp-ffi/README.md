@@ -16,6 +16,11 @@ See `docs/API_REFERENCE.md` and `implementation/mesh-milk/MOBILE_INTEGRATION.md`
 
 ## Beta harness observability
 
+Groups expose both the text convenience method and `group_send_body`, which
+retains the encrypted application-type byte in the corresponding
+`FfiEvent::GroupMessage` event. This is an API extension over the existing
+group payload and does not change the frozen MMP/1 grammar.
+
 `MmpNode::status()` returns a coarse, secret-free snapshot containing the
 selected tier, persistence availability, diagnostics opt-in, and the latest
 accepted monotonic tick. `MmpNode::metrics()` returns local store, callback

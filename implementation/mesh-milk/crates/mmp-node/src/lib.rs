@@ -338,6 +338,8 @@ pub enum Event {
         from: NodeId,
         /// The message's BundleID.
         id: Id16,
+        /// Application-defined type tag carried alongside the body.
+        apptype: u8,
         /// The decrypted body (apptype tag stripped).
         body: Vec<u8>,
     },
@@ -1706,14 +1708,22 @@ impl Node {
 
     /// Send a text into the group under our sender key (doc 08 §6.2).
     pub fn group_send(&mut self, gid: &Id16, text: &str) -> Result<Id16, SendError> {
+        self.group_send_body(gid, apptype::TEXT, text.as_bytes())
+    }
+
+    /// Send an application-defined body into the group under our sender key.
+    /// The existing group wire format already carries the one-byte application
+    /// type tag inside the encrypted plaintext; this method only exposes that
+    /// tag to host applications and does not change the protocol grammar.
+    pub fn group_send_body(&mut self, gid: &Id16, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
         // This is an application/FFI boundary: reject a payload that cannot
         // fit in any v1 bundle before copying attacker-sized host input into
         // a temporary body buffer. The exact placeholder preflight below
         // still handles the fixed group-envelope overhead for smaller bodies.
-        if text.len() >= MAX_BUNDLE {
+        if payload.len() >= MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
-        self.core.preflight_group_size(gid, text.len())?;
+        self.core.preflight_group_size(gid, payload.len())?;
         let me = self.core.node_id;
         let needs_distribution = self.core.groups.get(gid).is_some_and(GroupState::needs_distribution);
         if needs_distribution {
@@ -1732,7 +1742,7 @@ impl Node {
                 gs.mark_distribution_attempted();
             }
         }
-        self.core.send_group(gid, text.as_bytes())
+        self.core.send_group(gid, app, payload)
     }
 
     /// Current membership of `gid`, or empty if we don't know that group.
@@ -3118,14 +3128,14 @@ impl NodeCore {
         Ok(())
     }
 
-    fn send_group(&mut self, gid: &Id16, text: &[u8]) -> Result<Id16, SendError> {
+    fn send_group(&mut self, gid: &Id16, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
         let me = self.node_id;
         let origin = self.public;
         let dest = *gid;
-        let mut body = Vec::with_capacity(1 + text.len());
-        body.push(apptype::TEXT);
-        body.extend_from_slice(text);
-        self.preflight_group_size(gid, text.len())?;
+        let mut body = Vec::with_capacity(1 + payload.len());
+        body.push(app);
+        body.extend_from_slice(payload);
+        self.preflight_group_size(gid, payload.len())?;
         let (epoch, gp, local_candidate) = {
             let gs = self.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
             let epoch = gs.epoch;
@@ -3351,12 +3361,13 @@ impl NodeCore {
         let Some(gs) = self.groups.get_mut(&gp.gid) else { return };
         let Some(remote) = gs.remotes.get_mut(&(gp.member, gp.epoch)) else { return };
         let Ok(body) = remote.decrypt(&gp, &bundle.canonical_aead_ad()) else { return };
-        let (_, msg) =
+        let (apptype, msg) =
             body.split_first().map(|(a, r)| (*a, r.to_vec())).unwrap_or((apptype::TEXT, Vec::new()));
         self.enqueue_event(Event::GroupMessage {
             gid: gp.gid,
             from: gp.member,
             id: bundle.id(),
+            apptype,
             body: msg,
         });
     }

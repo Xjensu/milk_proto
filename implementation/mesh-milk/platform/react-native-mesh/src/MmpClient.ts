@@ -225,7 +225,7 @@ export type MmpEvent =
   | { type: 'contactSeen'; peer: NodeIdHex }
   | { type: 'established'; peer: NodeIdHex }
   | { type: 'groupInvite'; gid: GroupIdHex; from: NodeIdHex }
-  | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; body: string }
+  | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; apptype: number; body: string }
   | { type: 'groupEpochChanged'; gid: GroupIdHex; epoch: number }
   | { type: 'tierChanged'; tier: Tier }
   | {
@@ -308,6 +308,7 @@ export interface MmpMeshNative {
   createGroup(): Promise<GroupIdHex>;
   groupInvite(gid: GroupIdHex, peer: NodeIdHex): Promise<void>;
   groupSend(gid: GroupIdHex, text: string): Promise<MsgIdHex>;
+  groupSendBody(gid: GroupIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex>;
   groupMembers(gid: GroupIdHex): Promise<NodeIdHex[]>;
   groupRemove(gid: GroupIdHex, member: NodeIdHex): Promise<number>;
 
@@ -368,6 +369,7 @@ const REQUIRED_NATIVE_METHODS = [
   'createGroup',
   'groupInvite',
   'groupSend',
+  'groupSendBody',
   'groupMembers',
   'groupRemove',
   'enableDiagnostics',
@@ -566,6 +568,10 @@ export class MmpClient {
 
   groupSend(gid: GroupIdHex, text: string): Promise<MsgIdHex> {
     return this.native.groupSend(gid, text);
+  }
+
+  groupSendBody(gid: GroupIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    return this.native.groupSendBody(gid, apptype, payloadB64);
   }
 
   groupMembers(gid: GroupIdHex): Promise<NodeIdHex[]> {

@@ -568,6 +568,8 @@ pub enum FfiEvent {
         from: Vec<u8>,
         /// This message's BundleID.
         id: Vec<u8>,
+        /// Application-defined type tag carried alongside the body.
+        apptype: u8,
         /// Decrypted message body.
         body: Vec<u8>,
     },
@@ -680,10 +682,11 @@ impl From<Event> for FfiEvent {
             Event::GroupInvite { gid, from } => {
                 FfiEvent::GroupInvite { gid: gid.0.to_vec(), from: from.0.to_vec() }
             }
-            Event::GroupMessage { gid, from, id, body } => FfiEvent::GroupMessage {
+            Event::GroupMessage { gid, from, id, apptype, body } => FfiEvent::GroupMessage {
                 gid: gid.0.to_vec(),
                 from: from.0.to_vec(),
                 id: id.0.to_vec(),
+                apptype,
                 body,
             },
             Event::GroupEpochChanged { gid, epoch } => {
@@ -1042,6 +1045,20 @@ impl MmpNode {
     pub fn group_send(&self, gid: Vec<u8>, text: String) -> Result<Vec<u8>, FfiError> {
         let gid = id16_from(&gid)?;
         self.lock().group_send(&gid, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
+    }
+
+    /// Send an application-defined body into group `gid` under our sender key.
+    /// The one-byte type tag is encrypted as part of the existing group
+    /// payload and is surfaced on `FfiEvent::GroupMessage` after decryption.
+    pub fn group_send_body(&self, gid: Vec<u8>, apptype: u8, payload: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+        if (0x02..MIN_CUSTOM_APPTYPE).contains(&apptype) {
+            return Err(FfiError::BadArg);
+        }
+        let gid = id16_from(&gid)?;
+        self.lock()
+            .group_send_body(&gid, apptype, &payload)
+            .map(|id| id.0.to_vec())
+            .map_err(map_send_error)
     }
 
     /// Current known members of group `gid`.

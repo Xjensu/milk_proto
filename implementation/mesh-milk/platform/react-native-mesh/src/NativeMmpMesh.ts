@@ -86,6 +86,7 @@ export interface Spec extends TurboModule {
   createGroup(): Promise<string>;
   groupInvite(gid: string, peer: string): Promise<void>;
   groupSend(gid: string, text: string): Promise<string>;
+  groupSendBody(gid: string, apptype: number, payloadB64: string): Promise<string>;
   groupMembers(gid: string): Promise<string[]>;
   groupRemove(gid: string, member: string): Promise<number>;
   setNickname(name: string, seq: number): Promise<void>;

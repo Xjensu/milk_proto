@@ -223,6 +223,12 @@ export class BetaTestSession {
     return this.client.groupSend(gid, text);
   }
 
+  /** Send an application-defined body into a group under the sender key. */
+  groupSendBody(gid: GroupIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    this.requireStarted();
+    return this.client.groupSendBody(gid, apptype, payloadB64);
+  }
+
   groupMembers(gid: GroupIdHex): Promise<NodeIdHex[]> {
     this.requireStarted();
     return this.client.groupMembers(gid);
