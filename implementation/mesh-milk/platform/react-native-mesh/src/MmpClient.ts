@@ -5,8 +5,13 @@ import { NativeEventEmitter, NativeModules } from 'react-native';
 export type NodeIdHex = string;   // 32 lowercase hex chars (16 bytes)
 export type MsgIdHex = string;    // 32 lowercase hex chars (16 bytes)
 export type GroupIdHex = string;  // 32 lowercase hex chars (16 bytes)
+export type ScopeIdHex = string;  // 32 lowercase hex chars (16 bytes)
 export type FileRootHex = string; // 32 lowercase hex chars (16-byte Merkle root)
 export type Base64Value = string; // variable-length opaque bytes
+/** Base64-encoded 32-byte Ed25519 public key; never a private key. */
+export type PublicKeyB64 = Base64Value;
+/** Base64-encoded 64-byte Ed25519 signature. */
+export type SignatureB64 = Base64Value;
 
 export type Tier = 'leaf' | 'relay' | 'anchor';
 
@@ -199,6 +204,28 @@ export interface MmpMeshNative {
   metrics(): Promise<NodeMetrics>;
   capabilities(): Promise<NativeCapabilities>;
 
+  // Authority, clock, and scope controls. These values are validated by the
+  // native FFI adapter; opaque key/certificate bytes use base64.
+  setWallClock(unixS: number): Promise<void>;
+  pinAuthorityRoot(scope: ScopeIdHex, issuerPublicKeyB64: PublicKeyB64): Promise<void>;
+  subscribeScope(scopeName: string): Promise<ScopeIdHex>;
+  unsubscribeScope(scope: ScopeIdHex): Promise<void>;
+  mintAuthCert(
+    suite: number,
+    subjectPublicKeyB64: PublicKeyB64,
+    scope: ScopeIdHex,
+    caps: number,
+    priorityBudget: number,
+    notAfter: number,
+  ): Promise<Base64Value>;
+  publishAnnouncement(
+    scope: ScopeIdHex,
+    annType: number,
+    priority: number,
+    text: string,
+    certB64: Base64Value | null,
+  ): Promise<MsgIdHex>;
+
   // Identity / claims.
   nodeId(): Promise<NodeIdHex>;
   publicKey(): Promise<string>;
@@ -209,6 +236,8 @@ export interface MmpMeshNative {
   tryRevokeIdentity(reason: number): Promise<string>;
   revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string>;
   block(peer: NodeIdHex): Promise<void>;
+  requestFriendship(peerPublicKeyB64: PublicKeyB64): Promise<void>;
+  allowFriendshipFrom(peerPublicKeyB64: PublicKeyB64): Promise<void>;
 
   // Messaging.
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex>;
@@ -258,6 +287,12 @@ const REQUIRED_NATIVE_METHODS = [
   'status',
   'metrics',
   'capabilities',
+  'setWallClock',
+  'pinAuthorityRoot',
+  'subscribeScope',
+  'unsubscribeScope',
+  'mintAuthCert',
+  'publishAnnouncement',
   'nodeId',
   'publicKey',
   'ownClaims',
@@ -267,6 +302,8 @@ const REQUIRED_NATIVE_METHODS = [
   'tryRevokeIdentity',
   'revokeIdentityWithSuccessor',
   'block',
+  'requestFriendship',
+  'allowFriendshipFrom',
   'sendText',
   'messageState',
   'sendFile',
@@ -382,6 +419,43 @@ export class MmpClient {
     }));
   }
 
+  setWallClock(unixS: number): Promise<void> {
+    return this.native.setWallClock(unixS);
+  }
+
+  pinAuthorityRoot(scope: ScopeIdHex, issuerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return this.native.pinAuthorityRoot(scope, issuerPublicKeyB64);
+  }
+
+  subscribeScope(scopeName: string): Promise<ScopeIdHex> {
+    return this.native.subscribeScope(scopeName);
+  }
+
+  unsubscribeScope(scope: ScopeIdHex): Promise<void> {
+    return this.native.unsubscribeScope(scope);
+  }
+
+  mintAuthCert(
+    suite: number,
+    subjectPublicKeyB64: PublicKeyB64,
+    scope: ScopeIdHex,
+    caps: number,
+    priorityBudget: number,
+    notAfter: number,
+  ): Promise<Base64Value> {
+    return this.native.mintAuthCert(suite, subjectPublicKeyB64, scope, caps, priorityBudget, notAfter);
+  }
+
+  publishAnnouncement(
+    scope: ScopeIdHex,
+    annType: number,
+    priority: number,
+    text: string,
+    certB64: Base64Value | null = null,
+  ): Promise<MsgIdHex> {
+    return this.native.publishAnnouncement(scope, annType, priority, text, certB64);
+  }
+
   nodeId(): Promise<NodeIdHex> {
     return this.native.nodeId();
   }
@@ -464,6 +538,14 @@ export class MmpClient {
 
   block(peer: NodeIdHex): Promise<void> {
     return this.native.block(peer);
+  }
+
+  requestFriendship(peerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return this.native.requestFriendship(peerPublicKeyB64);
+  }
+
+  allowFriendshipFrom(peerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return this.native.allowFriendshipFrom(peerPublicKeyB64);
   }
 
   enableDiagnostics(): Promise<void> {

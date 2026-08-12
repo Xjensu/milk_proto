@@ -8,6 +8,7 @@ PACKAGE = ROOT / "platform" / "react-native-mesh"
 CLIENT = PACKAGE / "src" / "MmpClient.ts"
 TURBO = PACKAGE / "src" / "NativeMmpMesh.ts"
 README = PACKAGE / "README.md"
+BETA_SESSION = PACKAGE / "src" / "BetaTestSession.ts"
 
 
 class ReactNativeMeshSourceTests(unittest.TestCase):
@@ -16,6 +17,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         cls.client = CLIENT.read_text(encoding="utf-8")
         cls.turbo = TURBO.read_text(encoding="utf-8")
         cls.readme = README.read_text(encoding="utf-8")
+        cls.beta_session = BETA_SESSION.read_text(encoding="utf-8")
         cls.package = json.loads((PACKAGE / "package.json").read_text(encoding="utf-8"))
 
     def test_package_metadata_has_only_react_peers(self) -> None:
@@ -33,6 +35,12 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "status",
             "metrics",
             "capabilities",
+            "setWallClock",
+            "pinAuthorityRoot",
+            "subscribeScope",
+            "unsubscribeScope",
+            "mintAuthCert",
+            "publishAnnouncement",
             "nodeId",
             "publicKey",
             "ownClaims",
@@ -42,6 +50,8 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "tryRevokeIdentity",
             "revokeIdentityWithSuccessor",
             "block",
+            "requestFriendship",
+            "allowFriendshipFrom",
             "sendText",
             "messageState",
             "sendFile",
@@ -65,8 +75,9 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("export const mmp = new MmpClient()", self.client)
 
     def test_encoding_and_event_shapes_are_explicit(self) -> None:
-        for alias in ("NodeIdHex", "MsgIdHex", "GroupIdHex"):
+        for alias in ("NodeIdHex", "MsgIdHex", "GroupIdHex", "ScopeIdHex"):
             self.assertIn(f"export type {alias} = string", self.client)
+        self.assertIn("export type PublicKeyB64 = Base64Value", self.client)
         for event_type in (
             "messageReceived",
             "messageGap",
@@ -142,6 +153,13 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "setTier",
             "status",
             "metrics",
+            "capabilities",
+            "setWallClock",
+            "pinAuthorityRoot",
+            "subscribeScope",
+            "unsubscribeScope",
+            "mintAuthCert",
+            "publishAnnouncement",
             "nodeId",
             "publicKey",
             "sendText",
@@ -162,6 +180,8 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "ownClaims",
             "ingestClaim",
             "block",
+            "requestFriendship",
+            "allowFriendshipFrom",
             "enableDiagnostics",
             "diagDump",
             "storeLen",
@@ -216,6 +236,38 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("fileReady", self.readme)
         self.assertIn("fileFailed", self.readme)
         self.assertNotIn("privateKey", self.client)
+
+    def test_authority_and_friendship_key_boundaries_are_explicit(self) -> None:
+        self.assertIn("issuerPublicKeyB64: PublicKeyB64", self.client)
+        self.assertIn("subjectPublicKeyB64: PublicKeyB64", self.client)
+        self.assertIn("peerPublicKeyB64: PublicKeyB64", self.client)
+        self.assertIn("certB64: Base64Value | null", self.client)
+        self.assertIn("setWallClock(unixS: number)", self.client)
+        self.assertIn("notAfter: number", self.client)
+
+    def test_beta_session_is_bounded_local_and_deterministic(self) -> None:
+        self.assertIn("maxEvents", self.beta_session)
+        self.assertIn("maxEvents > 4096", self.beta_session)
+        self.assertIn("this.events.shift()", self.beta_session)
+        self.assertIn("droppedEvents", self.beta_session)
+        self.assertIn("JSON.stringify(await this.report())", self.beta_session)
+        self.assertIn("this.client.flush()", self.beta_session)
+        self.assertNotIn("auto-upload", self.beta_session.lower())
+
+    def test_native_surface_excludes_raw_transport_and_clock_injection(self) -> None:
+        for forbidden in (
+            "beacon(",
+            "linkUp(",
+            "linkData(",
+            "linkDown(",
+            "onBeacon(",
+            "pollSend(",
+            "pollEvent(",
+            "pollClose(",
+            "tick(",
+        ):
+            self.assertNotIn(forbidden, self.client)
+        self.assertIn("native radio/clock owner", self.readme)
 
     def test_file_failure_enum_mapping_is_explicit(self) -> None:
         self.assertIn("export type NativeFileFailReason = 'HashMismatch' | 'Abandoned'", self.client)

@@ -46,6 +46,25 @@ export interface Spec extends TurboModule {
   status(): Promise<NodeStatus>;
   metrics(): Promise<NodeMetrics>;
   capabilities(): Promise<Capabilities>;
+  setWallClock(unixS: number): Promise<void>;
+  pinAuthorityRoot(scope: string, issuerPublicKeyB64: string): Promise<void>;
+  subscribeScope(scopeName: string): Promise<string>;
+  unsubscribeScope(scope: string): Promise<void>;
+  mintAuthCert(
+    suite: number,
+    subjectPublicKeyB64: string,
+    scope: string,
+    caps: number,
+    priorityBudget: number,
+    notAfter: number,
+  ): Promise<string>;
+  publishAnnouncement(
+    scope: string,
+    annType: number,
+    priority: number,
+    text: string,
+    certB64: string | null,
+  ): Promise<string>;
   nodeId(): Promise<string>;
   publicKey(): Promise<string>;
   sendText(peer: string, text: string): Promise<string>;
@@ -67,6 +86,8 @@ export interface Spec extends TurboModule {
   ownClaims(): Promise<string[]>;
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   block(peer: string): Promise<void>;
+  requestFriendship(peerPublicKeyB64: string): Promise<void>;
+  allowFriendshipFrom(peerPublicKeyB64: string): Promise<void>;
   enableDiagnostics(): Promise<void>;
   diagDump(): Promise<string>;
   storeLen(): Promise<number>;

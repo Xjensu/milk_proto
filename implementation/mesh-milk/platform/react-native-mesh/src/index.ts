@@ -32,6 +32,11 @@ export type {
   NodeMetrics,
   NodeIdHex,
   NodeStatus,
+  PublicKeyB64,
+  ScopeIdHex,
+  SignatureB64,
   Tier,
 } from './MmpClient';
 export type { Spec as NativeMmpMeshSpec } from './NativeMmpMesh';
+export { BetaTestSession } from './BetaTestSession';
+export type { BetaTestReport, BetaTestSessionOptions } from './BetaTestSession';

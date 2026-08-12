@@ -10,6 +10,58 @@ represented by this package and must never be sent through the React Native JS b
 Only base64-encoded opaque values documented by the bridge and ciphertext-free app
 events cross into JavaScript.
 
+## Authority, scope, and friendship API
+
+The client also mirrors the safe, app-facing authority and relationship controls
+already exported by `mmp-ffi`:
+
+```ts
+await client.setWallClock(Math.floor(Date.now() / 1000));
+const scope = await client.subscribeScope('train/nationalrail/1234');
+await client.pinAuthorityRoot(scope, issuerPublicKeyB64);
+const cert = await client.mintAuthCert(1, subjectPublicKeyB64, scope, 1, 10, expiryUnixS);
+await client.publishAnnouncement(scope, 1, 1, 'service delayed', cert);
+await client.requestFriendship(peerPublicKeyB64);
+await client.allowFriendshipFrom(peerPublicKeyB64);
+```
+
+`scope` is a content-derived 16-byte identifier represented as lowercase hex;
+public keys, signatures, claims, and certificates are base64 strings. The
+native FFI validates lengths, authority policy, and expiry. `setWallClock` is
+only a local input for certificate validation; it does not establish trusted
+network time. `requestFriendship` and `allowFriendshipFrom` take identity public
+keys, not 16-byte NodeIDs.
+
+The package intentionally does not expose the FFI constructors (`new` and
+`new_with_store_limit`), `tick`, beacon generation, link injection, raw wire or
+event polling, or transport close queues. Construction and storage limits are
+native configuration; `start`/`stop` are the single JS lifecycle seam. The
+remaining operations belong to the native radio/clock owner; exposing them to
+a JS app would permit raw BLE bytes, duplicate lifecycle ownership, or unsafe
+clock rewinds. A future beta harness can still drive lifecycle, status,
+metrics, capabilities, explicit persistence, and ciphertext-free app events.
+
+## Beta-test session helper
+
+For manual or beta builds, `BetaTestSession` provides a bounded local event
+history and a deterministic JSON-safe report. It has no uploader and never
+changes the protocol or native lifecycle policy:
+
+```ts
+import { BetaTestSession } from '@mesh-milk/react-native-mesh';
+
+const session = new BetaTestSession(client, { maxEvents: 128 });
+await session.start('leaf');
+// Exercise the app, then persist explicitly at a test checkpoint.
+await session.flush();
+const reportJson = await session.reportJson();
+await session.stop();
+```
+
+The report contains only status, local counters, capabilities, app-level event
+payloads, and an event-drop count. Event history keeps the newest entries after
+the configured cap; dropped events are counted for test diagnostics.
+
 ## Beta status and metrics
 
 `client.capabilities()` returns the stable, secret-free protocol/API capability
