@@ -1,6 +1,7 @@
 package org.meshmilk.platform
 
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -47,9 +48,124 @@ class MeshDriveConsumerTest {
         assertEquals(0, registry.size())
     }
 
+    @Test
+    fun scannerFilterAndPayloadOwnershipAreEnforced() {
+        val node = FakeNode()
+        val scanner = RecordingScanner()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = scanner,
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+        )
+
+        drive.start()
+        assertEquals(MmpBleService.SERVICE_UUID, scanner.serviceUuid)
+
+        val ignored = byteArrayOf(1, 2)
+        drive.onScanResult(ScanResult(ignored, (-40).toByte(), "00000000-0000-0000-0000-000000000000"))
+        drive.onScanResult(ScanResult(byteArrayOf(9), (-40).toByte()))
+        assertEquals(0, node.beacons.size)
+
+        val accepted = byteArrayOf(3, 4)
+        drive.onScanResult(ScanResult(accepted, (-41).toByte(), MmpBleService.SERVICE_UUID.uppercase()))
+        accepted[0] = 99
+        assertEquals(1, node.beacons.size)
+        assertContentEquals(byteArrayOf(3, 4), node.beacons.single())
+    }
+
+    @Test
+    fun driveLoopOwnerRejectsCallbacksFromAnotherThread() {
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+
+        var failure: Throwable? = null
+        val thread = Thread {
+            try {
+                drive.pumpAt(1_001L)
+            } catch (error: Throwable) {
+                failure = error
+            }
+        }
+        thread.start()
+        thread.join()
+
+        assertTrue(failure is IllegalStateException)
+    }
+
+    @Test
+    fun gattBridgeRetiresIdentityBeforeForwardingLateCallbacks() {
+        val node = FakeNode()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+        val identity = ConnectionIdentity.create()
+        val binding = bridge.onConnected(identity, initiator = true)
+
+        assertTrue(binding != null)
+        assertEquals(1, bridge.activeConnections())
+        bridge.onData(binding!!, byteArrayOf(7))
+        bridge.onDisconnected(binding)
+        bridge.onData(binding, byteArrayOf(8))
+        bridge.onDisconnected(binding)
+
+        assertEquals(0, bridge.activeConnections())
+        assertEquals(listOf(binding.link), node.linkUps)
+        assertEquals(listOf(binding.link), node.linkDowns)
+        assertEquals(listOf(binding.link), node.linkDataLinks)
+    }
+
+    @Test
+    fun gattBridgeRollsBackWhenInitialDrainFails() {
+        val node = FakeNode(send = OutboundFrame(11L, byteArrayOf(1)))
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = FailingGatt(),
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+        val identity = ConnectionIdentity.create()
+
+        var failure: Throwable? = null
+        try {
+            bridge.onConnected(identity, initiator = true)
+        } catch (error: Throwable) {
+            failure = error
+        }
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals(0, bridge.activeConnections())
+        assertEquals(listOf(11L), node.linkUps)
+        assertEquals(listOf(11L), node.linkDowns)
+    }
+
     private class FakeNode : MeshNode {
         var tier: MeshTier? = null
         var tickCount: Int = 0
+        val beacons: MutableList<ByteArray> = mutableListOf()
+        val linkUps: MutableList<Long> = mutableListOf()
+        val linkDowns: MutableList<Long> = mutableListOf()
+        val linkDataLinks: MutableList<Long> = mutableListOf()
 
         override fun setTier(tier: MeshTier) {
             this.tier = tier
@@ -71,13 +187,21 @@ class MeshDriveConsumerTest {
 
         override fun pollEvent(): Any? = null
 
-        override fun onBeacon(serviceData: ByteArray, rssi: Byte) = Unit
+        override fun onBeacon(serviceData: ByteArray, rssi: Byte) {
+            beacons += serviceData
+        }
 
-        override fun linkUp(link: Long, initiator: Boolean) = Unit
+        override fun linkUp(link: Long, initiator: Boolean) {
+            linkUps += link
+        }
 
-        override fun linkData(link: Long, bytes: ByteArray) = Unit
+        override fun linkData(link: Long, bytes: ByteArray) {
+            linkDataLinks += link
+        }
 
-        override fun linkDown(link: Long) = Unit
+        override fun linkDown(link: Long) {
+            linkDowns += link
+        }
     }
 
     private class RecordingAdvertiser : Advertiser {
@@ -92,8 +216,28 @@ class MeshDriveConsumerTest {
         override fun stop() = Unit
     }
 
+    private class RecordingScanner : Scanner {
+        var serviceUuid: String? = null
+
+        override fun start(onResult: (ScanResult) -> Unit) = Unit
+
+        override fun start(serviceUuid: String, onResult: (ScanResult) -> Unit) {
+            this.serviceUuid = serviceUuid
+        }
+
+        override fun stop() = Unit
+    }
+
     private class NoopGatt : GattAdapter {
         override fun mtu(link: Long): Int = MeshDrive.MIN_ATT_MTU
+
+        override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
+
+        override fun close(link: Long) = Unit
+    }
+
+    private class FailingGatt : GattAdapter {
+        override fun mtu(link: Long): Int = throw IllegalStateException("MTU unavailable")
 
         override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
 

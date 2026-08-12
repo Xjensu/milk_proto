@@ -49,7 +49,7 @@ Radio crates are byte shuttles — no protocol logic that isn't equally testable
 | Consumer | Surface | Transport | Status today |
 |---|---|---|---|
 | Rust desktop/server app | `mmp_node::Node` (sans-IO: `tick(now_ms)`, `on_tal_event`, `poll_send`, `poll_event`) | `mmp-tal-btleplug` (central) + `mmp-tal-peripheral` (new) | API complete; peripheral role missing (E3-S1) |
-| Android / iOS app | `mmp-ffi` UniFFI `MmpNode` object (Kotlin/Swift bindings) + platform-owned GATT shell per `MOBILE_INTEGRATION.md` | Platform BLE stack (Kotlin/Swift modules, E4-S1/S2) | FFI surface complete; bindings not built in CI; no reference radio modules |
+| Android / iOS app | `mmp-ffi` UniFFI `MmpNode` object (Kotlin/Swift bindings) + platform-owned GATT shell per `MOBILE_INTEGRATION.md` | Platform BLE stack (Kotlin/Swift modules, E4-S1/S2) | FFI surface complete; SDK-free Android/Swift radio-shell boundaries now exist; native bindings, SDK builds, and hardware remain open gates |
 | React Native app | npm package wrapping the TurboModule spec in `REACT_NATIVE_INTEGRATION.md` | same as mobile | Spec-only |
 | IoT (nRF52/ESP32) | `mmp-node-embassy` shell over the same sans-IO engines, `heapless` feature on lower crates | `mmp-tal-embedded` over nrf-softdevice / esp-hal | 7–11-line stubs (E7) |
 
@@ -194,10 +194,10 @@ Central + peripheral + `MOBILE_INTEGRATION.md` must pin the same UUID set (still
 
 > Exit gate (roadmap §3.B): 5-device field test, 24 h, receipts delivered, <5%/day battery. Note: Kotlin/Swift/TypeScript stories build in-repo reference modules under a new `platforms/` directory — they are platform-shell code per `MOBILE_INTEGRATION.md` §1 ("the platform owns the radio and the clock"), not Rust workspace members.
 
-**E4-S1 · Android reference radio module (Kotlin) · L · Deps: E2-S2, E3-S3** — GATT server+client per `MOBILE_INTEGRATION.md` §4 checklist; foreground-service pattern; Doze survival strategy per doc 14 D-7.
+**E4-S1 · Android reference radio module (Kotlin) · L · Deps: E2-S2, E3-S3 · SDK-FREE SHELL SHIPPED (2026-08-12; native gate open)** — the SDK-free `MeshDrive` boundary now provides controller-side service-UUID filtering, serialized drive-loop ownership, identity-bound GATT link tokens, stale-callback fencing, and fail-closed startup/teardown rollback. The Android foreground-service/GATT adapter, Android SDK compilation, and physical exchange remain open.
 **Acceptance:** §4 checklist items each demonstrably covered; phone ↔ PC (`mmp-cli listen`) exchange on hardware.
 
-**E4-S2 · iOS reference radio module (Swift) · L · Deps: E2-S2, E3-S3** — per `MOBILE_INTEGRATION.md` §5, designed around CoreBluetooth state restoration from day one (roadmap risk #1); document the honest iOS-worse-than-Android expectations.
+**E4-S2 · iOS reference radio module (Swift) · L · Deps: E2-S2, E3-S3 · SDK-FREE SHELL SHIPPED (2026-08-12; native gate open)** — the SDK-free `MeshRadioShell` now provides exact CoreBluetooth restoration-ID handling, central/peripheral identity-bound link tokens, stale-binding fencing, ready-to-send backpressure pumping, and honest foreground leaf/relay gating. CoreBluetooth adapter code, Xcode compilation, background restoration, and physical exchange remain open.
 **Acceptance:** §5 checklist covered; background-BLE caveats from `REACT_NATIVE_INTEGRATION.md` addressed in code comments + doc.
 
 **E4-S3 · React Native npm package · M · Deps: E4-S1 or E4-S2 · PACKAGE + FIXTURE TYPECHECK SHIPPED (2026-08-11; native validation open)** — the TurboModule wrapper described by `REACT_NATIVE_INTEGRATION.md` §2 is committed in `implementation/mesh-milk/platform/react-native-mesh/` (`8ac5708`). The focused source-contract test passes (7 checks), `npm pack --dry-run --json` confirms the six intended package files, and the CI package job (`ebddf34`) runs a reproducible typecheck fixture with pinned TypeScript 5.8.3 (`a5cd031`). The fixture validates this wrapper's TypeScript surface against minimal declarations; it does not model React Native code generation or runtime behavior. **Still open:** native React Native declarations/codegen, Kotlin/Swift adapter builds, and physical-device validation; do not mark E4-S1/E4-S2 complete from this package evidence.

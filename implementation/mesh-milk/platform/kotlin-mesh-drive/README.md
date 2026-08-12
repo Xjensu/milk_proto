@@ -7,6 +7,12 @@ generated `MmpNode` bindings.
 
 `MeshDrive` owns only deterministic drive-loop policy:
 
+- a `DriveLoopOwner` guard that binds callbacks to one serialized owner (the
+  default `ThreadConfinedDriveLoopOwner` is suitable for a Handler/Looper
+  thread; hosts with another queue identity can inject their own check);
+- scan-filter installation for the MMP service UUID, case-insensitive UUID
+  validation at the callback boundary (missing/mismatched UUIDs are rejected),
+  and defensive copying of service data;
 - monotonic `pump()`/`pumpAt()`; backwards timestamps fail before `MeshNode.tick`;
 - explicit `refreshBeacon(nowMs)` hook so long-lived hosts replace the rotating
   ephemeral advertisement instead of leaving the startup payload stale;
@@ -35,6 +41,19 @@ generated `MmpNode` bindings.
 - `stop()` releases protocol sessions and requests native GATT teardown for
   every active link before dropping coordinator ownership;
 - scanner/advertiser/GATT/clock dependencies injected through interfaces.
+
+`GattLinkBridge` is the small native callback adapter. The Android GATT layer
+creates one `ConnectionIdentity` per physical connection, passes the returned
+binding to every callback, and calls `onDisconnected` only after native
+teardown. The bridge translates that identity into the coordinator's
+non-reused link token and fences delayed callbacks from a retired connection.
+If `onConnected` returns `null`, the native adapter must reject/close that
+physical link; no protocol session was admitted.
+
+`Scanner.start(serviceUuid, callback)` is the controller-filter seam. A real
+Android adapter should override it with a `ScanFilter` for
+`MmpBleService.SERVICE_UUID`; the default implementation exists only for
+plain-JVM consumers and delegates to the legacy callback-only method.
 
 The Android foreground service should adapt these interfaces to
 `SystemClock.elapsedRealtime()`, `BluetoothLeScanner`, the advertiser, and

@@ -13,9 +13,51 @@ public enum class MeshTier {
     LEAF,
     RELAY,
 }
+
+/**
+ * Wire-level UUIDs used by the native BLE adapter.  The Android shell owns
+ * UUID registration and discovery; keeping the value here only makes the
+ * SDK-free callback contract explicit and avoids accepting unrelated service
+ * payloads by accident.
+ */
+public object MmpBleService {
+    public const val SERVICE_UUID: String = "6d6d7031-0000-4d4d-5031-6d6573686d6c"
+}
+
+/**
+ * Single-owner guard for a platform drive queue.  Android callbacks must be
+ * marshalled onto one Handler/Looper before they reach [MeshDrive].
+ *
+ * The default implementation binds the first caller and rejects callbacks
+ * from another thread.  A consuming host may inject a queue-specific guard
+ * when its event-loop identity is not represented by a JVM thread.
+ */
+public fun interface DriveLoopOwner {
+    public fun check()
+}
+
+public class ThreadConfinedDriveLoopOwner : DriveLoopOwner {
+    private var owner: Thread? = null
+
+    @Synchronized
+    override fun check() {
+        val current = Thread.currentThread()
+        val bound = owner
+        if (bound == null) {
+            owner = current
+        } else {
+            check(bound === current) {
+                "MeshDrive callbacks must use one serialized drive-loop owner"
+            }
+        }
+    }
+}
+
 public data class ScanResult(
     val serviceData: ByteArray?,
     val rssi: Byte,
+    /** Native callback must provide the service UUID it actually observed. */
+    val serviceUuid: String? = null,
 )
 
 public data class OutboundFrame(
@@ -54,6 +96,16 @@ public interface Advertiser {
 
 public interface Scanner {
     fun start(onResult: (ScanResult) -> Unit)
+
+    /**
+     * Start a scan filtered by the protocol service UUID.  The default keeps
+     * existing SDK-free consumers source-compatible; a native Android
+     * adapter should override it and install a controller-side ScanFilter.
+     */
+    public fun start(serviceUuid: String, onResult: (ScanResult) -> Unit) {
+        start(onResult)
+    }
+
     fun stop()
 }
 
@@ -82,6 +134,7 @@ public class MeshDrive(
     private val gatt: GattAdapter,
     foregroundRelayCapable: Boolean,
     private val eventSink: (Any) -> Unit = {},
+    private val driveLoopOwner: DriveLoopOwner = ThreadConfinedDriveLoopOwner(),
 ) {
     public companion object {
         /** ATT protocol overhead: negotiated MTU minus these bytes is usable. */
@@ -135,6 +188,7 @@ public class MeshDrive(
         get() = overloadLatched
 
     public fun start() {
+        driveLoopOwner.check()
         check(!running) { "MeshDrive is already running" }
         check(!overloadLatched) { "MeshDrive is latched after host overload; recreate the node" }
         running = true
@@ -161,7 +215,7 @@ public class MeshDrive(
                 throw error
             }
             try {
-                scanner.start(::onScanResult)
+                scanner.start(MmpBleService.SERVICE_UUID, ::onScanResult)
                 scannerStarted = true
             } catch (error: Throwable) {
                 runCatching { scanner.stop() }
@@ -181,6 +235,7 @@ public class MeshDrive(
     }
 
     public fun stop() {
+        driveLoopOwner.check()
         if (!running) return
         // LinkDown releases the protocol-side session.  The physical GATT
         // connection is a separate host resource and must be torn down too;
@@ -227,12 +282,14 @@ public class MeshDrive(
      * sees it.
      */
     public fun pump() {
+        driveLoopOwner.check()
         requireRunning()
         advance(clock.nowMs(), emit = true)
     }
 
     /** Deterministic equivalent of [pump] for host/JVM tests. */
     public fun pumpAt(nowMs: Long) {
+        driveLoopOwner.check()
         requireRunning()
         advance(nowMs, emit = true)
     }
@@ -254,6 +311,7 @@ public class MeshDrive(
      * ticks, while all protocol state changes remain owned by [pump].
      */
     public fun refreshBeacon(nowMs: Long) {
+        driveLoopOwner.check()
         requireRunning()
         val previous = lastTickMs
         require(nowMs >= (previous ?: Long.MIN_VALUE)) {
@@ -273,18 +331,22 @@ public class MeshDrive(
      * behavior in a background process.
      */
     public fun setForegroundRelayCapable(capable: Boolean) {
+        driveLoopOwner.check()
         relayCapable = capable
         applyTier()
     }
 
     public fun onScanResult(result: ScanResult) {
+        driveLoopOwner.check()
         if (!running) return
+        if (result.serviceUuid?.equals(MmpBleService.SERVICE_UUID, ignoreCase = true) != true) return
         val payload = result.serviceData ?: return
         if (payload.isEmpty()) return
         node.onBeacon(payload.copyOf(), result.rssi)
     }
 
     public fun onLinkUp(link: Long, initiator: Boolean) {
+        driveLoopOwner.check()
         // A callback can race with fail-closed shutdown.  It must never leave
         // a newly-created native link alive merely because the coordinator is
         // no longer accepting protocol work.
@@ -304,6 +366,7 @@ public class MeshDrive(
     }
 
     public fun onLinkData(link: Long, bytes: ByteArray) {
+        driveLoopOwner.check()
         // Late native callbacks after a fail-closed stop are stale input, not
         // a reason to resurrect protocol state or throw on the drive thread.
         if (!running || overloadLatched) return
@@ -314,6 +377,7 @@ public class MeshDrive(
     }
 
     public fun onLinkDown(link: Long) {
+        driveLoopOwner.check()
         closeRequested.remove(link)
         if (!running || !activeLinks.remove(link)) return
         pending.removeIf { it.link == link }
@@ -451,7 +515,66 @@ public class MeshDrive(
         node.setTier(if (relayCapable) MeshTier.RELAY else MeshTier.LEAF)
     }
 
+    internal fun checkDriveLoopOwner() {
+        driveLoopOwner.check()
+    }
+
     private fun requireRunning() {
         check(running) { "MeshDrive is not running" }
     }
+}
+
+/**
+ * SDK-free translation of one native GATT callback context into MeshDrive's
+ * process-local link token.  The native adapter creates a fresh
+ * [ConnectionIdentity] for every physical connection and retains the
+ * resulting binding in each callback closure.  A delayed callback from a
+ * retired Android handle is consequently ignored instead of reaching the
+ * protocol session for a replacement connection.
+ */
+public class GattLinkBridge(
+    private val drive: MeshDrive,
+    private val bindings: ConnectionBindingRegistry = ConnectionBindingRegistry(),
+) {
+    /** Admit a physical link, or return null so the adapter can close it. */
+    public fun onConnected(
+        identity: ConnectionIdentity,
+        initiator: Boolean,
+    ): ConnectionBindingRegistry.ConnectionBinding? {
+        drive.checkDriveLoopOwner()
+        val binding = bindings.open(identity) ?: return null
+        if (!drive.isRunning || drive.isOverloaded) {
+            bindings.close(binding)
+            return null
+        }
+        try {
+            drive.onLinkUp(binding.link, initiator)
+            if (!drive.isRunning || drive.isOverloaded) {
+                bindings.close(binding)
+                return null
+            }
+            return binding
+        } catch (error: Throwable) {
+            // A native adapter can fail while the first drain is negotiating
+            // MTU or publishing a notification.  Do not retain a binding for
+            // a protocol link that was only partially admitted.
+            bindings.close(binding)
+            runCatching { drive.onLinkDown(binding.link) }
+            throw error
+        }
+    }
+
+    /** Forward data only while the callback context remains current. */
+    public fun onData(binding: ConnectionBindingRegistry.ConnectionBinding, bytes: ByteArray) {
+        drive.checkDriveLoopOwner()
+        if (bindings.isCurrent(binding)) drive.onLinkData(binding.link, bytes)
+    }
+
+    /** Retire first, then forward one logical link-down to the coordinator. */
+    public fun onDisconnected(binding: ConnectionBindingRegistry.ConnectionBinding) {
+        drive.checkDriveLoopOwner()
+        if (bindings.close(binding)) drive.onLinkDown(binding.link)
+    }
+
+    public fun activeConnections(): Int = bindings.size()
 }
