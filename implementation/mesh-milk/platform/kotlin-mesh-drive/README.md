@@ -61,11 +61,15 @@ plain-JVM consumers and delegates to the legacy callback-only method.
 `DutyCycleRequest` is an immutable, transport-local request for the native
 adapter. `MeshDrive.start()` validates it and invokes the injected
 `DutyCycleSink` exactly once before advertiser or scanner startup. Defaults are
-the MMP/1 baseline (5 s advertisement, 10% jitter, 30 ms / 1.28 s scan,
-30-second burst with one permitted burst per minute, 15–30 ms connection
-interval, and 4 s supervision timeout). The shell does not start timers and
-the request is never serialized into protocol frames; native scheduling and
-hardware validation remain platform gates.
+the MMP/1 baseline (5 s advertisement, exactly 10% jitter, 30 ms / 1.28 s
+scan at no more than 2.5% duty, 30-second burst with one permitted burst per
+minute, 15–30 ms connection interval, 4 s supervision timeout, and the 60 s
+per-session airtime cap). The shell does not start timers and the request is
+never serialized into protocol frames; values are requests to the native
+adapter, not proof of controller compliance. Record observed radio counters
+and hardware timing separately when measuring a device. The shell only
+validates and forwards `perSessionAirtimeCapMs`; the native adapter/core must
+enforce the 60 s cap, and no airtime timer is implemented here.
 
 `PersistenceSink` is a separate, explicit lifecycle seam for the existing
 `mmp-ffi` snapshot store. A native Android host should wrap its node's

@@ -48,14 +48,32 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
     def test_duty_cycle_request_is_validated_and_applied_before_radio_start(self) -> None:
         for symbol in ("DutyCycleRequest", "DutyCycleSink", "applyDutyCycle", "dutyCycleRequest.validate()"):
             self.assertIn(symbol, self.source)
-        for default in ("baseAdvertisementIntervalMs: Int = 5_000", "advertisementJitterPercent: Int = 10", "scanWindowMs: Int = 30", "scanIntervalMs: Int = 1_280", "burstScanDurationMs: Int = 30_000"):
+        for default in (
+            "baseAdvertisementIntervalMs: Int = 5_000",
+            "advertisementJitterPercent: Int = 10",
+            "scanWindowMs: Int = 30",
+            "scanIntervalMs: Int = 1_280",
+            "burstScanDurationMs: Int = 30_000",
+            "perSessionAirtimeCapMs: Int = 60_000",
+        ):
             self.assertIn(default, self.source)
         start = self.source.index("public fun start()")
         body = self.source[start:self.source.index("public fun stop()", start)]
         self.assertLess(body.index("dutyCycleRequest.validate()"), body.index("advertiser.start"))
+        self.assertIn("dutyCycleSink.applyDutyCycle(dutyCycleRequest.copy())", body)
 
     def test_duty_cycle_bounds_are_explicit(self) -> None:
-        for bound in ("2000..10000", "exactly 10", "30..scanIntervalMs", "0..30000", "0..6", "15..30", "4000..32000"):
+        for bound in (
+            "2000..10000",
+            "exactly 10",
+            "30..scanIntervalMs",
+            "at most 2.5%",
+            "0..30000",
+            "0..6",
+            "15..30",
+            "exactly 4000",
+            "exactly 60000",
+        ):
             self.assertIn(bound, self.source)
 
     def test_persistence_flush_is_explicit_host_owned_and_not_tied_to_stop(self) -> None:

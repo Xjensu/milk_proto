@@ -4,6 +4,7 @@ import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotSame
 import kotlin.test.assertTrue
 
 /**
@@ -36,14 +37,36 @@ class MeshDriveConsumerTest {
     fun dutyCycleValidCandidateIsAccepted() {
         val request = DutyCycleRequest(
             baseAdvertisementIntervalMs = 2_000,
-            scanWindowMs = 100,
+            scanWindowMs = 30,
             scanIntervalMs = 2_000,
             burstScanDurationMs = 0,
             burstScanMaxPerMinute = 0,
             connectionIntervalMs = 15,
-            supervisionTimeoutMs = 8_000,
+            supervisionTimeoutMs = 4_000,
         )
         request.validate()
+    }
+
+    @Test
+    fun dutyCycleSinkReceivesAnIndependentValueSnapshot() {
+        val request = DutyCycleRequest(baseAdvertisementIntervalMs = 2_000)
+        val sink = RecordingDutyCycleSink()
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            dutyCycleRequest = request,
+            dutyCycleSink = sink,
+        )
+
+        drive.start()
+
+        assertEquals(request, sink.requests.single())
+        assertNotSame(request, sink.requests.single())
+        drive.stop()
     }
 
     @Test
@@ -51,8 +74,12 @@ class MeshDriveConsumerTest {
         val cases = listOf(
             DutyCycleRequest(advertisementJitterPercent = 9),
             DutyCycleRequest(scanWindowMs = 1_281),
+            DutyCycleRequest(scanWindowMs = 100, scanIntervalMs = 2_000),
             DutyCycleRequest(burstScanDurationMs = 30_001),
             DutyCycleRequest(burstScanMaxPerMinute = 7),
+            DutyCycleRequest(burstScanDurationMs = 0, burstScanMaxPerMinute = 1),
+            DutyCycleRequest(supervisionTimeoutMs = 8_000),
+            DutyCycleRequest(perSessionAirtimeCapMs = 59_999),
         )
         cases.forEach { request ->
             val sink = RecordingDutyCycleSink()

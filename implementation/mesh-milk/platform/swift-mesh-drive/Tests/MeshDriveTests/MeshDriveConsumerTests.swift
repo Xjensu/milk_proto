@@ -25,12 +25,12 @@ final class MeshDriveConsumerTests: XCTestCase {
     func testDutyCycleAcceptsValidCandidate() throws {
         let request = MeshDutyCycleRequest(
             baseAdvertisementIntervalMs: 2_000,
-            scanWindowMs: 100,
+            scanWindowMs: 30,
             scanIntervalMs: 2_000,
             burstScanDurationMs: 0,
             burstScanMaxPerMinute: 0,
             connectionIntervalMs: 15,
-            supervisionTimeoutMs: 8_000
+            supervisionTimeoutMs: 4_000
         )
 
         XCTAssertNoThrow(try request.validate())
@@ -40,8 +40,12 @@ final class MeshDriveConsumerTests: XCTestCase {
         let requests = [
             MeshDutyCycleRequest(advertisementJitterPercent: 9),
             MeshDutyCycleRequest(scanWindowMs: 1_281),
+            MeshDutyCycleRequest(scanWindowMs: 100, scanIntervalMs: 2_000),
             MeshDutyCycleRequest(burstScanDurationMs: 30_001),
-            MeshDutyCycleRequest(burstScanMaxPerMinute: 7)
+            MeshDutyCycleRequest(burstScanMaxPerMinute: 7),
+            MeshDutyCycleRequest(burstScanDurationMs: 0, burstScanMaxPerMinute: 1),
+            MeshDutyCycleRequest(supervisionTimeoutMs: 8_000),
+            MeshDutyCycleRequest(perSessionAirtimeCapMs: 59_999)
         ]
 
         for request in requests {

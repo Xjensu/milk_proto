@@ -88,7 +88,9 @@ public data class LinkQualityHint(
 /**
  * Host-only radio scheduling request.  These values tune the native BLE
  * adapter; they are never encoded into an MMP/1 frame and do not start a
- * timer in this SDK-free coordinator.
+ * timer in this SDK-free coordinator.  The session-airtime field is forwarded
+ * as a host conformance bound; the native adapter/core remains responsible for
+ * enforcing it.
  */
 public data class DutyCycleRequest(
     val baseAdvertisementIntervalMs: Int = 5_000,
@@ -99,6 +101,7 @@ public data class DutyCycleRequest(
     val burstScanMaxPerMinute: Int = 1,
     val connectionIntervalMs: Int = 30,
     val supervisionTimeoutMs: Int = 4_000,
+    val perSessionAirtimeCapMs: Int = 60_000,
 ) {
     public fun validate() {
         require(baseAdvertisementIntervalMs in MIN_ADVERTISEMENT_INTERVAL_MS..MAX_ADVERTISEMENT_INTERVAL_MS) {
@@ -113,17 +116,26 @@ public data class DutyCycleRequest(
         require(scanWindowMs in MIN_SCAN_WINDOW_MS..scanIntervalMs) {
             "scanWindowMs must be 30..scanIntervalMs"
         }
+        require(scanWindowMs.toLong() * MAX_SCAN_DUTY_DENOMINATOR <= scanIntervalMs.toLong()) {
+            "scanWindowMs must be at most 2.5% of scanIntervalMs"
+        }
         require(burstScanDurationMs in 0..MAX_BURST_SCAN_DURATION_MS) {
             "burstScanDurationMs must be 0..30000"
         }
         require(burstScanMaxPerMinute in 0..MAX_BURST_SCAN_PER_MINUTE) {
             "burstScanMaxPerMinute must be 0..6"
         }
+        require((burstScanDurationMs == 0) == (burstScanMaxPerMinute == 0)) {
+            "burstScanDurationMs and burstScanMaxPerMinute must both be zero or non-zero"
+        }
         require(connectionIntervalMs in MIN_CONNECTION_INTERVAL_MS..MAX_CONNECTION_INTERVAL_MS) {
             "connectionIntervalMs must be 15..30"
         }
-        require(supervisionTimeoutMs in MIN_SUPERVISION_TIMEOUT_MS..MAX_SUPERVISION_TIMEOUT_MS) {
-            "supervisionTimeoutMs must be 4000..32000"
+        require(supervisionTimeoutMs == CONFORMING_SUPERVISION_TIMEOUT_MS) {
+            "supervisionTimeoutMs must be exactly 4000"
+        }
+        require(perSessionAirtimeCapMs == CONFORMING_SESSION_AIRTIME_CAP_MS) {
+            "perSessionAirtimeCapMs must be exactly 60000"
         }
     }
 
@@ -136,10 +148,12 @@ public data class DutyCycleRequest(
         public const val MAX_SCAN_INTERVAL_MS: Int = 60_000
         public const val MAX_BURST_SCAN_DURATION_MS: Int = 30_000
         public const val MAX_BURST_SCAN_PER_MINUTE: Int = 6
+        /** 1/40 is the exact integer representation of the 2.5% baseline cap. */
+        public const val MAX_SCAN_DUTY_DENOMINATOR: Long = 40
         public const val MIN_CONNECTION_INTERVAL_MS: Int = 15
         public const val MAX_CONNECTION_INTERVAL_MS: Int = 30
-        public const val MIN_SUPERVISION_TIMEOUT_MS: Int = 4_000
-        public const val MAX_SUPERVISION_TIMEOUT_MS: Int = 32_000
+        public const val CONFORMING_SUPERVISION_TIMEOUT_MS: Int = 4_000
+        public const val CONFORMING_SESSION_AIRTIME_CAP_MS: Int = 60_000
     }
 }
 

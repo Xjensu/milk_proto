@@ -59,14 +59,32 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
     def test_duty_cycle_request_is_validated_and_applied_before_radio_start(self) -> None:
         for symbol in ("MeshDutyCycleRequest", "DutyCycleSink", "applyDutyCycle", "try dutyCycleRequest.validate()"):
             self.assertIn(symbol, self.source)
-        for default in ("baseAdvertisementIntervalMs: Int = 5_000", "advertisementJitterPercent: Int = 10", "scanWindowMs: Int = 30", "scanIntervalMs: Int = 1_280", "burstScanDurationMs: Int = 30_000"):
+        for default in (
+            "baseAdvertisementIntervalMs: Int = 5_000",
+            "advertisementJitterPercent: Int = 10",
+            "scanWindowMs: Int = 30",
+            "scanIntervalMs: Int = 1_280",
+            "burstScanDurationMs: Int = 30_000",
+            "perSessionAirtimeCapMs: Int = 60_000",
+        ):
             self.assertIn(default, self.source)
         start = self.source.index("public func start()")
         body = self.source[start:self.source.index("public func stop()", start)]
         self.assertLess(body.index("try dutyCycleRequest.validate()"), body.index("try advertiser.start"))
+        self.assertIn("Swift structs have", body)
 
     def test_duty_cycle_bounds_and_consumer_tests_are_explicit(self) -> None:
-        for bound in ("2_000...10_000", "== 10", "30...scanIntervalMs", "0...30_000", "0...6", "15...30", "4_000...32_000"):
+        for bound in (
+            "2_000...10_000",
+            "== 10",
+            "30...scanIntervalMs",
+            "scanWindowMs <= scanIntervalMs / 40",
+            "0...30_000",
+            "0...6",
+            "15...30",
+            "supervisionTimeoutMs == 4_000",
+            "perSessionAirtimeCapMs == 60_000",
+        ):
             self.assertIn(bound, self.source)
         for test in ("testDutyCycleDefaultsMatchMmpBaselineAndApplyOnceBeforeRadioStart", "testDutyCycleAcceptsValidCandidate", "testDutyCycleRejectsInvalidValuesBeforeRadioStart"):
             self.assertIn(test, self.consumer_tests)

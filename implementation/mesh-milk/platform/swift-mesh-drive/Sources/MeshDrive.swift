@@ -68,7 +68,8 @@ public struct MeshLinkQualityHint: Equatable {
 
 /// Host-only BLE scheduling configuration. This is transport-local state: it
 /// is not encoded into an MMP/1 frame and this coordinator never starts a
-/// timer from it. The native adapter owns the actual radio scheduling.
+/// timer from it. The native adapter owns the actual radio scheduling and
+/// enforces the forwarded session-airtime bound.
 public struct MeshDutyCycleRequest: Equatable {
     public let baseAdvertisementIntervalMs: Int
     public let advertisementJitterPercent: Int
@@ -78,6 +79,7 @@ public struct MeshDutyCycleRequest: Equatable {
     public let burstScanMaxPerMinute: Int
     public let connectionIntervalMs: Int
     public let supervisionTimeoutMs: Int
+    public let perSessionAirtimeCapMs: Int
 
     public init(
         baseAdvertisementIntervalMs: Int = 5_000,
@@ -87,7 +89,8 @@ public struct MeshDutyCycleRequest: Equatable {
         burstScanDurationMs: Int = 30_000,
         burstScanMaxPerMinute: Int = 1,
         connectionIntervalMs: Int = 30,
-        supervisionTimeoutMs: Int = 4_000
+        supervisionTimeoutMs: Int = 4_000,
+        perSessionAirtimeCapMs: Int = 60_000
     ) {
         self.baseAdvertisementIntervalMs = baseAdvertisementIntervalMs
         self.advertisementJitterPercent = advertisementJitterPercent
@@ -97,6 +100,7 @@ public struct MeshDutyCycleRequest: Equatable {
         self.burstScanMaxPerMinute = burstScanMaxPerMinute
         self.connectionIntervalMs = connectionIntervalMs
         self.supervisionTimeoutMs = supervisionTimeoutMs
+        self.perSessionAirtimeCapMs = perSessionAirtimeCapMs
     }
 
     public func validate() throws {
@@ -112,17 +116,26 @@ public struct MeshDutyCycleRequest: Equatable {
         guard (30...scanIntervalMs).contains(scanWindowMs) else {
             throw MeshDutyCycleError.invalidScanWindow
         }
+        guard scanWindowMs <= scanIntervalMs / 40 else {
+            throw MeshDutyCycleError.invalidScanDuty
+        }
         guard (0...30_000).contains(burstScanDurationMs) else {
             throw MeshDutyCycleError.invalidBurstDuration
         }
         guard (0...6).contains(burstScanMaxPerMinute) else {
             throw MeshDutyCycleError.invalidBurstRate
         }
+        guard (burstScanDurationMs == 0) == (burstScanMaxPerMinute == 0) else {
+            throw MeshDutyCycleError.invalidBurstConfiguration
+        }
         guard (15...30).contains(connectionIntervalMs) else {
             throw MeshDutyCycleError.invalidConnectionInterval
         }
-        guard (4_000...32_000).contains(supervisionTimeoutMs) else {
+        guard supervisionTimeoutMs == 4_000 else {
             throw MeshDutyCycleError.invalidSupervisionTimeout
+        }
+        guard perSessionAirtimeCapMs == 60_000 else {
+            throw MeshDutyCycleError.invalidSessionAirtimeCap
         }
     }
 }
@@ -131,11 +144,14 @@ public enum MeshDutyCycleError: Error, Equatable {
     case invalidAdvertisementInterval
     case invalidAdvertisementJitter
     case invalidScanWindow
+    case invalidScanDuty
     case invalidScanInterval
     case invalidBurstDuration
     case invalidBurstRate
+    case invalidBurstConfiguration
     case invalidConnectionInterval
     case invalidSupervisionTimeout
+    case invalidSessionAirtimeCap
 }
 
 /// Adapter-facing sink for transport-local scheduling configuration.
