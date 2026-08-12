@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use mmp_core::store::BundleMeta;
+use mmp_core::store::{BundleMeta, StoreBatchReservation, StoreReservation};
 use mmp_types::ids::Id16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -550,4 +550,16 @@ fn aggregate_commit_failure_keeps_old_generation_and_success_publishes_complete_
     assert_eq!(recovered.entries, store.entries, "restart after success must recover the complete generation");
     assert_eq!(recovered.entries.get(&Id16([2; 16])).unwrap().1, vec![0xcc; 5]);
     assert_eq!(recovered.entries.get(&Id16([3; 16])).unwrap().1, vec![0xdd; 3]);
+}
+
+#[test]
+fn external_provider_can_construct_runtime_reservation_handles() {
+    let id = Id16([0x5a; 16]);
+    let single = StoreReservation::from_parts(17, id, 4, 1);
+    let single_next = StoreReservation::from_parts(17, id, 4, 2);
+    assert_ne!(single.key(), single_next.key());
+
+    let batch = StoreBatchReservation::from_parts(17, 3);
+    let batch_next = StoreBatchReservation::from_parts(17, 4);
+    assert_ne!(batch.key(), batch_next.key());
 }

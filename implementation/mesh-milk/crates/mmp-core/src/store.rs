@@ -121,9 +121,11 @@ pub enum StoreBatchError {
 /// Provider-local capability returned by a successful reservation.
 ///
 /// A reservation is intentionally not serializable and carries no wire
-/// meaning.  Its fields are private so callers can only obtain one from the
-/// provider that owns it; the nonce is checked again when the reservation is
-/// committed or aborted.  Reservations are runtime-only and are not durable.
+/// meaning. Its fields remain private, but independent provider
+/// implementations may construct a token with [`StoreReservation::from_parts`].
+/// The constructor is not an authorization boundary: the owning provider must
+/// validate its namespace, nonce, ID, and declared size again on commit or
+/// abort. Reservations are runtime-only and are not durable.
 #[derive(Debug, PartialEq, Eq)]
 pub struct StoreReservation {
     provider: u64,
@@ -159,6 +161,27 @@ pub struct StoreBatchReservationKey {
 }
 
 impl StoreReservation {
+    /// Construct a provider-local reservation token.
+    ///
+    /// This is provided for `BundleStore` implementations outside `mmp-core`.
+    /// `provider` is an implementation-chosen namespace and `nonce` must be
+    /// checked against provider-owned in-memory state before any publication.
+    /// A caller that forges either value must be rejected by the provider; the
+    /// token itself does not grant storage authority.
+    pub const fn from_parts(
+        provider: u64,
+        id: Id16,
+        declared_size: u32,
+        nonce: u64,
+    ) -> StoreReservation {
+        StoreReservation {
+            provider,
+            id,
+            declared_size,
+            nonce,
+        }
+    }
+
     /// Return the provider-local opaque identity for adapter bookkeeping.
     pub fn key(&self) -> StoreReservationKey {
         StoreReservationKey {
@@ -169,6 +192,15 @@ impl StoreReservation {
 }
 
 impl StoreBatchReservation {
+    /// Construct a provider-local atomic-batch reservation token.
+    ///
+    /// This is provided for `BundleStore` implementations outside `mmp-core`.
+    /// The owning provider must validate the namespace and nonce against its
+    /// own pending-batch table before committing or aborting the batch.
+    pub const fn from_parts(provider: u64, nonce: u64) -> StoreBatchReservation {
+        StoreBatchReservation { provider, nonce }
+    }
+
     /// Return the provider-local opaque identity for adapter bookkeeping.
     pub fn key(&self) -> StoreBatchReservationKey {
         StoreBatchReservationKey {
@@ -473,12 +505,12 @@ impl MemStore {
         self.reserved_bytes = reserved_bytes;
         self.reserved_slots = reserved_slots;
         self.reservations.insert(nonce, record);
-        Ok(StoreReservation {
-            provider: self.provider_id,
-            id: record.id,
-            declared_size: record.declared_size,
+        Ok(StoreReservation::from_parts(
+            self.provider_id,
+            record.id,
+            record.declared_size,
             nonce,
-        })
+        ))
     }
 
     fn reservation_for(
@@ -825,12 +857,12 @@ impl BundleStore for MemStore {
                 .checked_add(u64::try_from(offset).map_err(|_| StoreReserveError::Capacity)?)
                 .ok_or(StoreReserveError::Capacity)?;
             self.reservations.insert(nonce, record);
-            tokens.push(StoreReservation {
-                provider: self.provider_id,
-                id: record.id,
-                declared_size: record.declared_size,
+            tokens.push(StoreReservation::from_parts(
+                self.provider_id,
+                record.id,
+                record.declared_size,
                 nonce,
-            });
+            ));
         }
         self.next_nonce = next_nonce;
         self.reserved_bytes = reserved_bytes;
@@ -869,10 +901,7 @@ impl BundleStore for MemStore {
         self.reserved_slots = reserved_slots;
         self.batch_reservations
             .insert(nonce, BatchReservationRecord { records });
-        Ok(StoreBatchReservation {
-            provider: self.provider_id,
-            nonce,
-        })
+        Ok(StoreBatchReservation::from_parts(self.provider_id, nonce))
     }
 
     fn commit_reserved(
@@ -1183,7 +1212,8 @@ mod tests {
 
     use super::{
         BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
-        StoreCommitError, StorePutOutcome, StoreReserveError,
+        StoreBatchReservation, StoreCommitError, StorePutOutcome, StoreReserveError,
+        StoreReservation,
     };
     use mmp_types::ids::Id16;
 
@@ -1513,6 +1543,34 @@ mod tests {
         );
         assert!(second.is_empty());
         assert_eq!(second.reserved_bytes(), 0);
+    }
+
+    #[test]
+    fn provider_factories_are_constructible_but_namespace_validation_remains_required() {
+        let mut store = MemStore::with_limits(4, 1);
+        let valid = store.try_reserve(meta(17, 1)).unwrap();
+
+        let wrong_provider = StoreReservation::from_parts(
+            valid.provider.wrapping_add(1),
+            valid.id,
+            valid.declared_size,
+            valid.nonce,
+        );
+        assert_eq!(
+            store.commit_reserved(&wrong_provider, meta(17, 1), &[1]),
+            Err(StoreCommitError::Invalid)
+        );
+
+        let wrong_batch = StoreBatchReservation::from_parts(valid.provider, valid.nonce);
+        assert_eq!(
+            store.commit_reserved_batch(
+                &wrong_batch,
+                &[StoreBatchEntry::new(meta(17, 1), &[1])],
+            ),
+            Err(StoreCommitError::Invalid)
+        );
+        assert_eq!(store.reserved_bytes(), 1);
+        assert!(store.is_empty());
     }
 
     #[test]

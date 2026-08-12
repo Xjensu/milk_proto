@@ -81,9 +81,11 @@ transactional.
 The repository now contains an additive reservation seam directly on
 `BundleStore`: opaque single-bundle and atomic-batch reservations are exercised
 by `MemStore` and forwarded by `SnapshotStore`. The provider review found the
-tested arithmetic and stale-generation checks sound, but the opaque token
-fields remain private to `mmp-core`; an independent production backend cannot
-implement the capability without a future adapter or provider-issued handle.
+tested arithmetic and stale-generation checks sound. Reservation fields remain
+private, while the documented `from_parts` factories now let an independent
+provider construct runtime tokens; provider-owned namespace and nonce checks
+remain mandatory, so the token is not an authorization boundary. No independent
+production backend has yet validated this seam.
 
 The slice-based `NodeCore::send_file` path uses the atomic batch capability when
 available and publishes symbols, indexes, SeenIndex entries, and the manifest
@@ -98,8 +100,9 @@ require retaining every encoded symbol until commit (up to the full 8 MiB file
 limit and its Reed–Solomon expansion). That memory trade-off is not justified
 for mobile or IoT targets. Do not reserve capacity before reading the complete
 source, and do not fall back to single writes after a non-`Unsupported` batch
-failure. The next design gate is a bounded streaming/staged provider capability
-or an explicit product choice to keep reader sends resumable-prefix semantics.
+failure. The next design gate is an independent provider implementation plus a
+bounded streaming/staged capability, or an explicit product choice to keep
+reader sends resumable-prefix semantics.
 
 ## Scope and acceptance boundary
 
