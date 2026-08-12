@@ -180,9 +180,10 @@ adapter must not silently map this condition to `Capacity` or call an ordinary
 abort. Until recovery resolves it, the provider enters a quarantine state:
 new reservations are rejected, no cryptographic counter is reused, and the
 caller performs a fresh scan. A retry is allowed only after the result is
-`NotCommitted`; a `Committed` result returns the durable ID; an unresolved
-`Indeterminate` result requires operator/reset recovery according to the board
-policy.
+`NotCommitted`; a `Committed { generation }` result identifies the durable
+complete snapshot, whose restored IDs are then enumerated from the provider;
+an unresolved `Indeterminate` result requires operator/reset recovery according
+to the board policy.
 
 If implementation chooses to keep the existing trait unchanged, it must prove
 that the provider internally performs this recovery before returning any
