@@ -39,6 +39,10 @@ class ResearchDocumentationTests(unittest.TestCase):
         self.assertIn("3f0136de53ffe6c56a0d36917d784317d764d1b2", handoff)
         self.assertIn("periodic clustered | 0.200", handoff)
         self.assertIn("social clustered | 0.100", handoff)
+        self.assertIn("Reproduce the controls with", handoff)
+        self.assertIn("clustered_mobility_measurement_is_reproducible", handoff)
+        self.assertIn("social_clustered_mobility_measurement_is_reproducible", handoff)
+        self.assertNotIn("The command was:", handoff)
         self.assertIn("do not provide trace calibration, confidence", handoff.lower())
         self.assertIn("mmp/φ improvement claim", handoff.lower())
 

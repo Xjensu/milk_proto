@@ -194,10 +194,13 @@ intervals before any OQ-4 interpretation.
 ## 2026-08-14 local paired control run
 
 The two bounded clustered controls were run locally with the same release
-binary, workload shape, and 5,000-meeting budget. The command was:
+binary, workload shape, and 5,000-meeting budget. Reproduce the controls with
+these commands:
 
 ```text
 cargo test -p mmp-sim clustered_mobility_measurement_is_reproducible \
+  --release --locked -- --ignored --nocapture --test-threads=1
+cargo test -p mmp-sim social_clustered_mobility_measurement_is_reproducible \
   --release --locked -- --ignored --nocapture --test-threads=1
 ```
 
