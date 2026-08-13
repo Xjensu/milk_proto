@@ -85,11 +85,12 @@ documented synthetic-study decision:
 
 The next safe experiment is a paired replay: hold the `mmp-node` workload,
 bundle size, TTL, gap range, seed policy, and measurement counters constant;
-run uniform-random, periodic-cluster, and social-cluster generators; then
-report the complete metric block above. Do not tune routing or copy budgets to
-make one generator pass the doc 13 latency band. The SLAW-specific claim
-remains open until the synthetic model is calibrated or a trace-backed model
-is available.
+run uniform-random, periodic-cluster, social-cluster, and bounded-heavy-tail-
+clustered generators; then report the complete metric block above. The
+heavy-tail generator is a bounded long-dwell control, not a SLAW calibration.
+Do not tune routing or copy budgets to make one generator pass the doc 13
+latency band. The SLAW-specific claim remains open until the synthetic model
+is calibrated or a trace-backed model is available.
 
 ## Adversarial review
 
@@ -173,17 +174,19 @@ new knob should be promoted without trace evidence and reproducible metrics.
 
 The research-only `ContactScenarioMetrics` seam and the active
 `contact_model_matrix_is_reproducible_and_reports_comparable_metrics` test now
-run the same small workload through three generators: uniform-random,
-periodic-clustered, and social-clustered. Each run uses an independent
-`Sim::new` with the same seed, node count, message setup, meeting count, and
-gap bounds. The matrix records the generator label, meeting count, simulated
-elapsed time, sent/received/delivered counts, delivery ratio, p50/p90 latency,
-store high-water bytes, quota status, and (for social clustering) realized
-bridge count.
+run the same small workload through four generators: uniform-random,
+periodic-clustered, social-clustered, and bounded-heavy-tail-clustered. Each
+run uses an independent `Sim::new` with the same seed, node count, message
+setup, meeting count, and gap bounds. The matrix records the generator label,
+meeting count, simulated elapsed time, sent/received/delivered counts,
+delivery ratio, p50/p90 latency, store high-water bytes, quota status, and
+realized bridge count where the generator exposes it.
 
 The test asserts exact repeatability and comparable workload/quota fields; it
 does not require one generator to deliver more than another. Short paired runs
 can legitimately report zero delivery or missing latency percentiles, so the
 printed metrics are regression evidence and input validation, not a mobility
-or performance claim. Long trace-replay runs must retain the same metric block
-and add confidence intervals before any OQ-4 interpretation.
+or performance claim. The current comparison matrix includes all four
+research-only schedule families, including the bounded-heavy-tail control;
+long trace-replay runs must retain the same metric block and add confidence
+intervals before any OQ-4 interpretation.

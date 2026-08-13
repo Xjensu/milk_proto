@@ -188,10 +188,13 @@ remaining work by the project priority queue.
 
 ### AG-P2-01 — Clustered mobility and 1k/10k simulation gate
 
-- **Source/status:** E6-S1, Phase D, `E6_S1_SOCIAL_CLUSTER_HANDOFF.md`; `OPEN`.
-- **Scope:** add the SLAW/clustered mobility model and validate latency,
-  storage, delivery, and survivability at the existing 1k/10k tiers. Uniform
-  quota/store measurements are not a substitute for clustered latency.
+- **Source/status:** E6-S1, Phase D, `E6_S1_SOCIAL_CLUSTER_HANDOFF.md`;
+  `PARTIALLY DONE / RESEARCH-ONLY`.
+- **Scope:** the bounded uniform, periodic, social-cluster, and heavy-tail
+  clustered controls are implemented for deterministic paired replays. The
+  remaining gate is trace calibration plus latency, storage, delivery, and
+  survivability validation at the existing 1k/10k tiers. Uniform quota/store
+  measurements are not a substitute for clustered latency.
 - **Acceptance:** fixed seeds, published distributions/confidence intervals,
   baseline comparison, and a reproducible CI/nightly command.
 
