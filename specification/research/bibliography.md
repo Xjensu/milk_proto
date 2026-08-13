@@ -217,4 +217,17 @@ Sources on DTN file-transfer precedents, fountain-coding swarming, and the 2024�
 | K17 | Huang, Wang, Zhao, Xu, Wang. "Seeing is (Not) Believing: Practical Phishing Attacks Targeting Social Media Sharing Cards." arXiv:2405.10758, 2024 — link-preview/content mismatch as documented attack class ("sharing card forgery") — thumbnail-mismatch analog | https://arxiv.org/abs/2405.10758 | Preprint | H |
 | K18 | JPCERT/CC. "Malware with a Fake Thumbnail Preview." 2015 — fake-thumbnail malware technique — supports mismatch threat class | https://blogs.jpcert.or.jp/en/2015/04/malware-with-a-fake-thumbnail-preview.html | Vendor blog | M |
 
-_(End of bibliography; Track G added in the 2026-06-11 post-audit revision; Tracks H–K added in the 2026-07-02 extension-phase (rev. B) research; H13/J15/J16 addendum entries added 2026-07-03 for prior art previously cited inline by name in docs 17/18.)_
+## Track L - nRF52840 embedded board profile (accessed 2026-08-13)
+
+Authoritative sources fetched for `docs/E7_NRF52840_DK_PROFILE.md`. These
+entries establish hardware and HAL facts only; they do not select an MMP flash
+layout, runtime, or production configuration.
+
+| # | Source | URL | Type | Conf |
+|---|---|---|---|---|
+| L1 | Nordic Semiconductor, nRF52840 Product Specification (latest HTML rendition): Cortex-M4F at 64 MHz, 1 MB flash, 256 kB RAM, and peripheral/security feature list | https://docs.nordicsemi.com/r/bundle/ps_nrf52840/page/keyfeatures_html5.html | Product specification | H |
+| L2 | Nordic Semiconductor, nRF52840 DK product page: PCA10056-class development board capabilities, on-board SEGGER J-Link, external QSPI memory, and current-measurement pins | https://www.nordicsemi.com/Products/Development-hardware/nrf52840-dk | Product page | H |
+| L3 | Nordic Semiconductor, nRF52840 DK Hardware - Kit content: explicit PCA10056 board identification and hardware-file scope | https://docs.nordicsemi.com/r/bundle/ug_nrf52840_dk/page/ug/dk/kit_content.html | Hardware guide | H |
+| L4 | Embassy, `embassy-nrf` 0.11.0 nRF52840 documentation: nRF52840 flavor, chip-selection feature, blocking/async HAL, and feature notes | https://docs.embassy.dev/embassy-nrf/0.11.0/nrf52840/index.html | Official Rust documentation | H |
+
+_(End of bibliography; Track G added in the 2026-06-11 post-audit revision; Tracks H–K added in the 2026-07-02 extension-phase (rev. B) research; H13/J15/J16 addendum entries added 2026-07-03 for prior art previously cited inline by name in docs 17/18; Track L added 2026-08-13 for the embedded board-profile proposal.)_
