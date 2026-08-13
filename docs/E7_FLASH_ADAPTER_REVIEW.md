@@ -73,3 +73,16 @@ journal-frame plus program-unit alignment against the region size. It does not
 select a flash map, allocator, HAL geometry, executor, radio backend, or
 durability policy. The slice is therefore **FIXED** as a configuration guard,
 while the board provider itself remains deferred.
+
+## Recovery classification slice
+
+`mmp-flash-journal` now exposes an allocation-free `classify_recovery` helper
+and `RecoveryClassification` result. Given the generation selected before an
+append, the attempted generation, and a post-write `ScanResult`, it returns
+`Committed` only for an exact attempted-generation match, `NotCommitted` only
+for the known previous generation (or an empty first journal), and
+`Indeterminate` for every other state. It also rejects reused or rolled-back
+attempt generations (`attempted <= previous`) as indeterminate, because the
+scanner's deterministic duplicate-generation rule cannot prove which append
+was visible. This is a framed-record recovery aid, not snapshot authenticity,
+generation-floor enforcement, or hardware atomicity.

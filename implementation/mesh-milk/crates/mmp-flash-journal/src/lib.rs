@@ -49,6 +49,61 @@ pub struct ScanResult<'a> {
     pub rejected: u32,
 }
 
+/// Conservative result of classifying an attempted journal generation after
+/// recovery scanning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryClassification {
+    /// The scan selected the generation that the caller attempted to append.
+    Committed {
+        /// The generation proven visible by the scan.
+        generation: u64,
+    },
+    /// The scan selected the caller's immediately previous generation, or the
+    /// journal was empty before this was the first attempted append.
+    NotCommitted,
+    /// The scan cannot distinguish whether the attempted append became
+    /// durable.
+    Indeterminate,
+}
+
+/// Classify an attempted append from a post-write journal scan.
+///
+/// The caller must provide the generation selected immediately before the
+/// append (if any) and the generation it attempted to write. The scanner only
+/// reports the highest valid record, so this helper deliberately does not infer
+/// anything from rejected candidates, lower valid generations, or the number
+/// of records. It applies these conservative rules in order:
+///
+/// 1. selected generation equal to `attempted_generation` is [`Committed`];
+/// 2. selected generation equal to `previous_generation`, or no selected
+///    generation when there was no previous generation, is [`NotCommitted`];
+/// 3. every other state is [`Indeterminate`].
+///
+/// In particular, an empty scan with a known previous generation is
+/// indeterminate: the previous record may have been lost or hidden by a
+/// provider-level failure, and this byte-level crate cannot resolve that
+/// possibility. The helper does not claim flash atomicity or enforce a
+/// generation floor.
+pub fn classify_recovery(
+    scan_result: ScanResult<'_>,
+    previous_generation: Option<u64>,
+    attempted_generation: u64,
+) -> RecoveryClassification {
+    if previous_generation.is_some_and(|previous| attempted_generation <= previous) {
+        return RecoveryClassification::Indeterminate;
+    }
+    match scan_result.selected.map(|record| record.generation) {
+        Some(generation) if generation == attempted_generation => {
+            RecoveryClassification::Committed { generation }
+        }
+        Some(generation) if previous_generation == Some(generation) => {
+            RecoveryClassification::NotCommitted
+        }
+        None if previous_generation.is_none() => RecoveryClassification::NotCommitted,
+        _ => RecoveryClassification::Indeterminate,
+    }
+}
+
 /// Errors returned when encoding a record into caller-provided storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
@@ -527,6 +582,107 @@ mod tests {
         append(&mut image, &mut used, 8, b"second");
         let result = scan(&image[..used]);
         assert_eq!(result.selected.unwrap().payload, b"first");
+    }
+
+    #[test]
+    fn recovery_classifies_attempted_generation_as_committed() {
+        let result = ScanResult {
+            selected: Some(Record {
+                generation: 8,
+                payload: b"new",
+            }),
+            candidates: 1,
+            valid: 1,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            classify_recovery(result, Some(7), 8),
+            RecoveryClassification::Committed { generation: 8 }
+        );
+    }
+
+    #[test]
+    fn recovery_classifies_previous_generation_as_not_committed() {
+        let result = ScanResult {
+            selected: Some(Record {
+                generation: 7,
+                payload: b"old",
+            }),
+            candidates: 1,
+            valid: 1,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            classify_recovery(result, Some(7), 8),
+            RecoveryClassification::NotCommitted
+        );
+    }
+
+    #[test]
+    fn recovery_classifies_empty_journal_without_previous_generation_as_not_committed() {
+        let result = ScanResult {
+            selected: None,
+            candidates: 0,
+            valid: 0,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            classify_recovery(result, None, 1),
+            RecoveryClassification::NotCommitted
+        );
+    }
+
+    #[test]
+    fn recovery_classifies_missing_or_unexpected_generations_as_indeterminate() {
+        let missing = ScanResult {
+            selected: None,
+            candidates: 1,
+            valid: 0,
+            rejected: 1,
+        };
+        assert_eq!(
+            classify_recovery(missing, Some(7), 8),
+            RecoveryClassification::Indeterminate
+        );
+
+        let unexpected = ScanResult {
+            selected: Some(Record {
+                generation: 9,
+                payload: b"future",
+            }),
+            candidates: 1,
+            valid: 1,
+            rejected: 0,
+        };
+        assert_eq!(
+            classify_recovery(unexpected, Some(7), 8),
+            RecoveryClassification::Indeterminate
+        );
+    }
+
+    #[test]
+    fn recovery_rejects_reused_or_rolled_back_attempt_generation() {
+        let result = ScanResult {
+            selected: Some(Record {
+                generation: 7,
+                payload: b"old",
+            }),
+            candidates: 2,
+            valid: 2,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            classify_recovery(result, Some(7), 7),
+            RecoveryClassification::Indeterminate
+        );
+        assert_eq!(
+            classify_recovery(result, Some(7), 6),
+            RecoveryClassification::Indeterminate
+        );
     }
 
     #[test]
