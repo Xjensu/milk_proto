@@ -42,15 +42,18 @@ bridge_meetings
 bridge_probability_per_mille
 ```
 
-The ignored measurement test additionally records the protocol observables
-needed for later comparison:
+The ignored measurement test uses the configured inter-meeting gap bounds and
+records the protocol observables needed for later comparison:
 
 ```text
 seed, node_count, community_count, requested bridge probability,
-minimum/maximum inter-meeting gap, meetings, realized bridge count/rate,
+meetings, realized bridge count/rate,
 simulated elapsed hours, delivery ratio, p50/p90 delivery latency,
 store high-water bytes, quota_ok
 ```
+
+The 1,000 ms and 5,000 ms gap bounds are configured inputs, not emitted
+observations; they must remain in the run manifest when results are compared.
 
 Run the deterministic unit checks with:
 

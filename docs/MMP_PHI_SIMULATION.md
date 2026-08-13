@@ -69,7 +69,7 @@ energy improvement.
 
 ## Verification
 
-The two simulator tests pin the fixed-hazard invariant and the idealized gain
+The EDR simulator tests pin the fixed-hazard invariant and the idealized gain
 calculation:
 
 ```text
