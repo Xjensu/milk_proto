@@ -906,7 +906,7 @@ fn cmd_inspect(args: &[String]) -> ExitCode {
         return ExitCode::from(2);
     }
     let mut metas = store.all_meta();
-    metas.sort_by_key(|m| m.stored_at);
+    sort_snapshot_metas(&mut metas);
 
     println!("{:<10} {:>5} {:>8} {:>14} {:>6}", "id", "class", "size", "expires_at_ms", "budget");
     for m in &metas {
@@ -921,6 +921,19 @@ fn cmd_inspect(args: &[String]) -> ExitCode {
     }
     println!("\n{} bundle(s), {} total byte(s)", store.len(), store.total_bytes());
     ExitCode::SUCCESS
+}
+
+/// Keep snapshot inspection stable even when several records share the same
+/// local storage timestamp. `SnapshotStore` is allowed to return records in
+/// implementation order, so sorting by timestamp alone would make a beta
+/// transcript depend on map iteration order. The bundle ID is a stable,
+/// public tie-breaker and does not expose payload or secret material.
+fn sort_snapshot_metas(metas: &mut [BundleMeta]) {
+    metas.sort_by(|left, right| {
+        left.stored_at
+            .cmp(&right.stored_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
 }
 
 // ------------------------------------------------------- connect / send --
@@ -1846,6 +1859,35 @@ mod tests {
         assert!(json.contains("\"alice_store_len\":4096"));
         assert!(!json.contains("seed"));
         assert!(!json.contains("ciphertext"));
+    }
+
+    #[test]
+    fn snapshot_inspection_tie_breaks_equal_timestamps_by_bundle_id() {
+        let meta = |id: u8, stored_at: u64| BundleMeta {
+            id: Id16([id; 16]),
+            class: class::DIRECT,
+            origin: Id16([0x41; 16]),
+            dest: Id16([0x42; 16]),
+            priority: 1,
+            effective_priority: 1,
+            size: 0,
+            stored_at,
+            expires_at: stored_at + 1_000,
+            budget: 1,
+            own_origin: false,
+            slot: SlotState::Stored,
+        };
+        let mut metas = vec![meta(0x30, 200), meta(0x10, 100), meta(0x20, 100)];
+
+        sort_snapshot_metas(&mut metas);
+
+        assert_eq!(
+            metas
+                .iter()
+                .map(|entry| (entry.stored_at, entry.id.0[0]))
+                .collect::<Vec<_>>(),
+            vec![(100, 0x10), (100, 0x20), (200, 0x30)]
+        );
     }
 
     #[test]
