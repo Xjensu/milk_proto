@@ -806,7 +806,7 @@ said `revocation(owner: &Key32)`; implemented as `&NodeId` instead, matching eve
 a fourth variant (`Rejected`) rather than overloading `Stale` for "invalid body, nothing was ever
 stored" — the one exhaustive match site (`mmp-node`'s `learn_claim`) was updated accordingly.
 
-### 4.7 Fuzzing (Phase C) — targets SHIPPED (E5-S6, 2026-07-16); test vectors still open
+### 4.7 Fuzzing (Phase C) — targets and vector suite SHIPPED (E5-S6/E5-S4; status refresh 2026-08-13)
 
 `cargo fuzz` workspace member `fuzz/` with targets, in priority order (pre-auth parsers first —
 doc 07 §8 / doc 12 §7 mandate):
@@ -829,11 +829,13 @@ defect; see `fuzz/README.md` for the exact linker errors and reasoning. A `fuzz-
 curated seed corpus (bootstrapping from empty works for formats this size, but a hand-picked seed
 set would likely find issues faster).
 
-Test vectors: `specification/test-vectors/*.json` + a generator binary (`mmp-cli vectors`) and a
-consuming test. Cover: bundle canonical bytes + BundleID + signature (fixed seed), beacon codec,
-claim signing, receipt MAC, X3DH agreement (deterministic RNG), envelope framing, RBSR
-fingerprint of a known ID set. These vectors are the anti-ossification tool — a second
-implementation must pass them byte-exact.
+Test vectors: `implementation/mesh-milk/vectors/*.json` + a generator binary (`mmp-cli vectors`)
+and consuming tests. They cover bundle canonical bytes + BundleID + signature (fixed seed),
+beacon codec, claim signing, receipt MAC, the public-only X3DH-adapted agreement artifact
+(deterministic test RNG), envelope framing, and the RBSR fingerprint of a known ID set. These
+vectors are the anti-ossification tool — a second implementation must pass the exposed wire and
+public-field bytes byte-exact; the X3DH artifact intentionally omits private inputs and its CK0
+fingerprint is independently exercised by the bilateral cryptographic property test.
 
 ### 4.8 Adversarial simulation suite (Phase C; doc 14)
 

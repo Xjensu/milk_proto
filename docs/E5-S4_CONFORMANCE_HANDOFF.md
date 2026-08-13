@@ -373,6 +373,8 @@ have artifact/API bridge checks rather than a turnkey consuming application.
 - HELLO, the 17 registered frame tags, and envelope framing;
 - outer Bundle classes 0–5 with production-generated signatures;
 - strict Ed25519 canonical-S rejection (`S + L`);
+- deterministic public-only X3DH-adapted prekey agreement (`prekey_agreement.json`), with
+  private inputs omitted and bilateral CK0 agreement covered by the crypto property test;
 - all nine registered signing domains and their full cross-verification matrix;
 - lifetime-reset and budget-clamp invariants;
 - unknown-critical, out-of-order, and duplicate TLVs;

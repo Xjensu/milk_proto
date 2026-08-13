@@ -1,10 +1,13 @@
 # vectors/ — golden test vectors (doc 10 §6.4, doc 12 §7.1, handbook §4.7)
 
 Fixed-seed, wall-clock-free, deterministic vectors that a **second** MMP/1
-implementation must reproduce byte-for-byte. They are the anti-ossification
-tool (roadmap risk #7): with only one implementation, spec ambiguities silently
-resolve to "whatever this code does", and these files pin that behavior so a
-second implementation — or a hostile fuzzer — exposes any divergence.
+implementation must reproduce byte-for-byte for every exposed wire and public
+field. They are the anti-ossification tool (roadmap risk #7): with only one
+implementation, spec ambiguities silently resolve to "whatever this code does",
+and these files pin that behavior so a second implementation — or a hostile
+fuzzer — exposes any divergence. The public-only prekey artifact deliberately
+omits private inputs; its CK0 fingerprint is therefore checked by the bilateral
+cryptographic property test rather than recomputed from the artifact alone.
 
 ## Regenerating
 
@@ -76,7 +79,9 @@ Positive:
   key is a secret and is intentionally omitted).
 - `prekey_agreement.json` — deterministic X3DH-adapted prekey agreement with
   the signed public batch, ephemeral public key, and one-way CK0 fingerprint;
-  private keys and the derived chain key are intentionally omitted.
+  private keys and the derived chain key are intentionally omitted. Public and
+  wire fields are reproducible independently; the hidden CK0 check is property-
+  tested in `mmp-crypto`.
 - `envelope.json` — link envelope framing `[len u16 LE][type u8][payload]`.
 - `frames.json` — deterministic payload and envelope bytes for all 17
   registered session frame types; the HS sample carries the same deterministic

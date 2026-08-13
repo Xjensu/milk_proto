@@ -230,7 +230,7 @@ Handbook §4.6 describes **general identity revocation + succession** (revoked k
 **Acceptance:** handbook §4.6's three unit acceptance cases pass; doc 06 §4.1 registers 0x09; handbook field number corrected; no collision with 0x07/0x08.
 
 **E5-S4 · Golden test vectors + generator · M · Deps: E1-S4 · DONE**
-Handbook §4.7: `implementation/mesh-milk/vectors/*.json`, the `mmp-cli vectors` generator, an independent conformance reader, and a machine-readable coverage manifest. The committed set includes the rev-B cross-tag negatives (`mmp1/manifest|authcert|announce` never verify under another tag) per doc 10 §3.1 / §6 rule 6, plus envelope/bundle/frame/beacon grammar and size-boundary cases.
+Handbook §4.7: `implementation/mesh-milk/vectors/*.json`, the `mmp-cli vectors` generator, an independent conformance reader, and a machine-readable coverage manifest. The committed set includes the deterministic public-only X3DH-adapted prekey agreement artifact (private inputs omitted), the rev-B cross-tag negatives (`mmp1/manifest|authcert|announce` never verify under another tag) per doc 10 §3.1 / §6 rule 6, plus envelope/bundle/frame/beacon grammar and size-boundary cases.
 **Acceptance:** vectors are in-repo; production and independent readers consume them; `vectors/README.md` and `coverage.json` map artifacts to specification sections and evidence. A real two-host BLE exchange remains a separate Phase A hardware gate.
 
 **E5-S5 · Authority announcements (doc 18): AuthCert + class 5 + priority clamp · L · Deps: E1-S1, E1-S2, E1-S5, E5-S3 · CORE MECHANISM + NON-SECRET PERSISTENCE DONE (2026-07-16/2026-08-08); RBSR/D3 wiring deferred**
