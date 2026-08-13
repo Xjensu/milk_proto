@@ -3094,6 +3094,52 @@ fn direct_message_delivery_and_receipt() {
 }
 
 #[test]
+fn restored_sender_receives_delivery_receipt_after_first_contact() {
+    let mut alice = node(61);
+    let mut bob = node(62);
+    introduce(&mut alice, &mut bob);
+    drain(&mut alice);
+    drain(&mut bob);
+
+    let msg_id = alice
+        .send_text(&bob.node_id(), "receipt survives sender restart")
+        .expect("first-contact send");
+    contact(&mut alice, &mut bob, 61, 10_000);
+    assert!(
+        drain(&mut bob).iter().any(|event| matches!(
+            event,
+            Event::MessageReceived { id, body, .. }
+                if *id == msg_id && body == b"receipt survives sender restart"
+        )),
+        "bob must receive the first-contact message"
+    );
+
+    let snapshot = alice
+        .secret_state_snapshot()
+        .expect("sender secret-state snapshot");
+    let mut restored = node(61);
+    restored
+        .restore_secret_state(&snapshot)
+        .expect("restore sender secret state");
+    introduce(&mut restored, &mut bob);
+    drain(&mut restored);
+    drain(&mut bob);
+
+    contact(&mut restored, &mut bob, 62, 20_000);
+    let restored_events = drain(&mut restored);
+    assert!(
+        restored_events
+            .iter()
+            .any(|event| matches!(event, Event::Delivered { id } if *id == msg_id)),
+        "restored sender must receive Bob's receipt: {restored_events:?}"
+    );
+    assert_eq!(
+        restored.message_state(&msg_id),
+        Some(DeliveryState::Delivered)
+    );
+}
+
+#[test]
 fn receipt_store_rejection_is_side_effect_free_and_retryable() {
     let mut alice = node(5);
     let mut bob = node(6);

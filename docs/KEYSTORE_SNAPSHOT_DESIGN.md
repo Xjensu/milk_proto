@@ -189,7 +189,7 @@ CK₀, chain keys, skipped keys, prekey secrets, plaintext snapshots, wrapping
 keys, or provider logs containing them. The host may receive only non-secret
 capability/status and ordinary protocol events.
 
-## Acceptance matrix before wiring
+## Acceptance matrix before complete platform wiring
 
 The implementation must add tests for:
 
@@ -206,9 +206,23 @@ The implementation must add tests for:
 - native provider unavailable/locked/invalidation behavior;
 - generated UniFFI/React Native surfaces containing no secret-state types.
 
-Only after this matrix passes should an opaque sealed record be added to the
-host persistence flow. This design is intentionally a gate, not a claim that
-restart continuity is already implemented.
+### Host verification update (2026-08-13)
+
+The Rust host slice now covers two restart-sensitive rows explicitly:
+
+- `mmp-node::tests::restored_sender_receives_delivery_receipt_after_first_contact`
+  performs a real first-contact transfer, restores the sender aggregate into a
+  fresh node, and verifies the subsequent authenticated receipt reaches
+  `Delivered`.
+- `mmp-crypto::tests::recv_chain_snapshot_roundtrip_preserves_skipped_keys`
+  restores a receive chain, recovers the same out-of-order skipped keys, and
+  verifies each consumed key remains one-shot after restore.
+
+These are host regression gates, not evidence for native Android/iOS keystore
+adapters, crash-point durability, or physical kill/restart behavior. The
+opaque sealed-record path may therefore be exercised by the Rust/Windows
+provider slice, but complete platform persistence remains gated on the
+unverified acceptance items above.
 
 ## Windows adapter evidence (2026-08-11)
 

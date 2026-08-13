@@ -579,6 +579,11 @@ fn recv_chain_snapshot_roundtrip_preserves_skipped_keys() {
         let (expected, epoch, index) = &keys[i];
         assert_eq!(*original.key_for(*epoch, *index).unwrap(), **expected);
         assert_eq!(*restored.key_for(*epoch, *index).unwrap(), **expected);
+        // A consumed skipped key must remain one-shot on both sides of the
+        // snapshot boundary; restoring the receive chain must not reopen a
+        // replay window.
+        assert!(original.key_for(*epoch, *index).is_err());
+        assert!(restored.key_for(*epoch, *index).is_err());
     }
 }
 
