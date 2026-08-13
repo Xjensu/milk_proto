@@ -276,6 +276,13 @@ Implementation order:
    head-record selection and validator-gated recovery.
 5. Run the host fault matrix, Cortex-M compile, then hardware gates in order.
 
+The host reference provider now includes `recover_with_durable_floor`, which
+enforces a floor supplied by a separate provider-owned crash-safe record. This
+closes the comparison seam only; it does not make the journal's in-memory
+`GenerationFloor` durable. A board implementation must still define where the
+floor is stored, how it advances with the snapshot, and how power loss is
+tested before own-origin producers are enabled.
+
 The MMP/1 specification remains frozen throughout these steps.
 
 ## 11. Design review record

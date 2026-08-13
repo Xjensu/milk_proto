@@ -449,11 +449,17 @@ provider remains unusable for own-origin durable producers until the linked
 flash reservation, durable generation-floor policy, coordinated producer
 checkpoint, and power-cycle/HIL evidence are supplied.
 
+The reference provider also exposes `recover_with_durable_floor`. A board
+adapter can pass a separately persisted floor and recovery fails closed with
+`RollbackDetected` when the selected generation is older, including an empty
+journal observed under a non-zero floor. The legacy `recover` helper passes
+zero and therefore does not provide anti-rollback by itself.
+
 Focused evidence:
 
 ```text
 cargo test -p mmp-board-nrf52840-dk --all-targets --locked --offline  # 7 passed
 cargo check -p mmp-board-nrf52840-dk \
   --target thumbv7em-none-eabihf --no-default-features --locked --offline
-cargo test -p mmp-embedded-provider --all-targets --locked --offline  # 8 passed
+cargo test -p mmp-embedded-provider --all-targets --locked --offline  # 13 passed
 ```

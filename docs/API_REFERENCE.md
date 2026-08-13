@@ -35,7 +35,8 @@ optional glue, it *is* the integration.
 
 ## 2. Secret boundary
 
-The 32-byte identity seed crosses the FFI **exactly once, inward, at `MmpNode.new()`**. Store it
+The 32-byte identity seed crosses the FFI **exactly once, inward, at an `MmpNode` constructor**
+(`new()` or `newWithStoreLimit()`). Store it
 in Android Keystore / iOS Keychain on the host side; the library never asks for it again and never
 returns it, or anything derived from it besides the public identity key, back across the boundary.
 Every other method returns public keys, NodeIDs, ciphertext-free app events, or wire bytes that

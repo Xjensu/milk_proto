@@ -38,6 +38,11 @@ class MobileDocumentationContractTests(unittest.TestCase):
         self.assertIn("tryRevokeIdentity(reason: u8)", self.mobile)
 
     def test_mobile_examples_match_ffi_constructor_and_transport_signatures(self) -> None:
+        # Both exported constructors accept the host-owned identity seed. Do
+        # not describe only the legacy constructor as the seed boundary.
+        self.assertIn("at an `MmpNode` constructor", self.api_reference)
+        self.assertIn("`new()` or `newWithStoreLimit()`", self.api_reference)
+        self.assertNotIn("exactly once, inward, at `MmpNode.new()`", self.api_reference)
         self.assertIn(
             "MmpNode(Keystore.loadOrCreateSeed(), FfiTier.RELAY, filesDir.resolve(\"mmp\").path)",
             self.mobile,

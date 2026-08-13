@@ -146,3 +146,8 @@ write, post-write read failure, and repeated recovery-read failure. All cases
 remain fail-closed and require clean recovery before a new commit is allowed.
 This is the strongest current host evidence for the composition seam; target
 power-cycle and linked-image evidence remain open.
+
+The provider's `recover_with_durable_floor` path rejects a structurally valid
+but older snapshot and an empty journal under a non-zero floor. That is an
+explicit anti-rollback comparison boundary, not a claim that the floor is
+itself persisted or crash-atomic.

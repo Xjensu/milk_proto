@@ -204,6 +204,19 @@ pub enum ProviderError<E> {
         /// Generation present in both slots.
         generation: u64,
     },
+    /// A recovered record used the reserved empty-journal generation.
+    InvalidGeneration,
+    /// The recovered generation is below a caller-provided durable floor.
+    ///
+    /// The floor must come from provider-owned crash-safe metadata. This
+    /// variant only enforces the comparison; the journal does not persist the
+    /// floor itself.
+    RollbackDetected {
+        /// Minimum generation accepted by the caller's durable policy.
+        durable_floor: u64,
+        /// Generation selected from the journal, or zero for an empty journal.
+        observed_generation: u64,
+    },
     /// A transaction state transition was rejected.
     Transaction(JournalTransactionError),
 }
@@ -255,6 +268,24 @@ where
         provider: u64,
         image: &mut [u8],
     ) -> Result<Self, ProviderError<B::Error>> {
+        Self::recover_with_durable_floor(backend, layout, provider, image, 0)
+    }
+
+    /// Recover while enforcing a caller-owned durable generation floor.
+    ///
+    /// A provider that stores its monotonic floor in a separate crash-safe
+    /// record should pass that value here on restart. A selected journal
+    /// generation below the floor is rejected instead of being treated as a
+    /// valid rollback. Passing zero means that no external floor is available;
+    /// this is suitable for a first-boot reference provider only and does not
+    /// provide anti-rollback by itself.
+    pub fn recover_with_durable_floor(
+        backend: B,
+        layout: JournalLayout,
+        provider: u64,
+        image: &mut [u8],
+        durable_floor: u64,
+    ) -> Result<Self, ProviderError<B::Error>> {
         layout
             .validate_backend(&backend)
             .map_err(ProviderError::Layout)?;
@@ -266,6 +297,12 @@ where
         }
         let recovered = read_and_restore(&backend, layout, provider, &mut image[..required])?;
         let generation = recovered.generation.unwrap_or(0);
+        if generation < durable_floor {
+            return Err(ProviderError::RollbackDetected {
+                durable_floor,
+                observed_generation: generation,
+            });
+        }
         let active_slot = recovered.slot.unwrap_or(0);
         let store = recovered.store;
         Ok(Self {
@@ -535,6 +572,9 @@ where
         });
     };
 
+    if record.generation == 0 {
+        return Err(ProviderError::InvalidGeneration);
+    }
     let slot_image = if slot == 0 {
         &image[..slot_bytes]
     } else {
@@ -588,9 +628,9 @@ const fn align_up(value: usize, alignment: usize) -> Option<usize> {
 mod tests {
     use super::*;
     use core::cell::Cell;
-    use mmp_core::{BundleMeta, EmbeddedBundleStore, SlotState};
+    use mmp_core::{BundleMeta, EmbeddedBundleStore, FixedBundleStore, SlotState};
     use mmp_crypto::Identity;
-    use mmp_flash_journal::{BackendError, Geometry};
+    use mmp_flash_journal::{encode, write_record, BackendError, Geometry};
     use mmp_types::bundle::{class, Bundle};
     use mmp_types::domain::SigDomain;
     use mmp_types::ids::{Id16, Sig64};
@@ -741,6 +781,29 @@ mod tests {
 
     fn buffers() -> ([u8; CAPACITY], [u8; MAX_PAYLOAD], [u8; JOURNAL_SLOT]) {
         ([0; CAPACITY], [0; MAX_PAYLOAD], [0; JOURNAL_SLOT])
+    }
+
+    fn snapshot_payload(seed: u8, body: &[u8]) -> alloc::vec::Vec<u8> {
+        type SnapshotStore = FixedBundleStore<2, 512, 2_048>;
+        let bundle = signed_bundle(seed, body);
+        let wire = bundle.encode();
+        let mut store = SnapshotStore::new(7).unwrap();
+        store.try_put(bundle_meta(&bundle), &wire).unwrap();
+        let mut snapshot = alloc::vec![0u8; store.snapshot_encoded_len().unwrap()];
+        store.encode_snapshot(&mut snapshot).unwrap();
+        snapshot
+    }
+
+    fn append_snapshot(backend: &mut MemoryBackend, slot: usize, generation: u64, payload: &[u8]) {
+        let mut scratch = [0u8; JOURNAL_SLOT];
+        write_record(
+            backend,
+            slot * JOURNAL_SLOT,
+            generation,
+            payload,
+            &mut scratch,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -988,5 +1051,148 @@ mod tests {
         );
         assert_eq!(provider.transaction_state(), JournalTransactionState::Ready);
         assert_eq!(provider.store().len(), 1);
+    }
+
+    #[test]
+    fn recovery_rejects_two_valid_slots_with_equal_generation() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(46, b"equal generation");
+        append_snapshot(&mut backend, 0, 7, &payload);
+        append_snapshot(&mut backend, 1, 7, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover(backend, journal_layout, 7, &mut image),
+            Err(ProviderError::AmbiguousGeneration { generation: 7 })
+        ));
+    }
+
+    #[test]
+    fn recovery_keeps_older_complete_slot_when_newer_slot_is_torn() {
+        let mut backend = MemoryBackend::new();
+        let old_payload = snapshot_payload(47, b"older complete");
+        append_snapshot(&mut backend, 0, 3, &old_payload);
+
+        // Only the head of a newer record reaches flash. Its framing is not
+        // complete, so slot one is ignored and slot zero remains recoverable.
+        let newer_payload = snapshot_payload(48, b"newer torn");
+        let mut newer_record = [0u8; JOURNAL_SLOT];
+        let newer_len = encode(4, &newer_payload, &mut newer_record).unwrap().len();
+        assert!(newer_len > 8);
+        backend
+            .write(JOURNAL_SLOT, &newer_record[..8])
+            .expect("aligned torn header write");
+
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+        let recovered = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+        assert_eq!(recovered.generation(), 3);
+        assert_eq!(recovered.store().len(), 1);
+    }
+
+    #[test]
+    fn attempted_generation_resolves_to_previous_slot_without_rollback() {
+        let backend = MemoryBackend::new();
+        let journal_layout = layout(&backend);
+        let (mut image, mut payload, mut scratch) = buffers();
+        let mut provider = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+
+        let old_bundle = signed_bundle(49, b"previous");
+        let old_wire = old_bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&old_bundle), &old_wire)
+            .unwrap();
+        assert_eq!(
+            provider
+                .commit_snapshot(&mut image, &mut payload, &mut scratch)
+                .unwrap(),
+            CommitOutcome::Committed { generation: 1 }
+        );
+
+        let newer_bundle = signed_bundle(50, b"attempted");
+        let newer_wire = newer_bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&newer_bundle), &newer_wire)
+            .unwrap();
+        provider.backend.fail_next_write = true;
+        assert!(matches!(
+            provider.commit_snapshot(&mut image, &mut payload, &mut scratch),
+            Err(ProviderError::Write { generation: 2, .. })
+        ));
+        assert_eq!(
+            provider.recover_in_place(&mut image).unwrap(),
+            CommitOutcome::NotCommitted { generation: 2 }
+        );
+        assert_eq!(provider.generation(), 1);
+        assert_eq!(provider.store().len(), 1);
+        let mut read = [0u8; 512];
+        assert_eq!(
+            provider
+                .store()
+                .read_bundle(&old_bundle.id(), &mut read)
+                .unwrap(),
+            old_wire.len()
+        );
+        assert_eq!(
+            provider.store().read_bundle(&newer_bundle.id(), &mut read),
+            Err(mmp_core::StoreReadError::NotFound)
+        );
+    }
+
+    #[test]
+    fn durable_floor_rejects_a_valid_but_older_snapshot() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(51, b"rollback");
+        append_snapshot(&mut backend, 0, 4, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover_with_durable_floor(backend, journal_layout, 7, &mut image, 5,),
+            Err(ProviderError::RollbackDetected {
+                durable_floor: 5,
+                observed_generation: 4,
+            })
+        ));
+    }
+
+    #[test]
+    fn durable_floor_accepts_equal_generation_and_rejects_empty_recovery() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(52, b"floor");
+        append_snapshot(&mut backend, 0, 5, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+        let recovered =
+            Provider::recover_with_durable_floor(backend, journal_layout, 7, &mut image, 5)
+                .unwrap();
+        assert_eq!(recovered.generation(), 5);
+
+        let empty = MemoryBackend::new();
+        let mut empty_image = [0u8; CAPACITY];
+        assert!(matches!(
+            Provider::recover_with_durable_floor(empty, journal_layout, 7, &mut empty_image, 1,),
+            Err(ProviderError::RollbackDetected {
+                durable_floor: 1,
+                observed_generation: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn recovery_rejects_reserved_zero_generation() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(53, b"zero generation");
+        append_snapshot(&mut backend, 0, 0, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover(backend, journal_layout, 7, &mut image),
+            Err(ProviderError::InvalidGeneration)
+        ));
     }
 }
