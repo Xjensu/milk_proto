@@ -77,6 +77,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -96,14 +97,20 @@ pub use mmp_tal::{
     DEV_TX_CHARACTERISTIC_UUID,
 };
 
-pub mod framing;
 mod event_queue;
+pub mod framing;
 use event_queue::{ControlEnqueueError, DataEnqueueError, EventSender};
 
 /// Conservative default per-link chunk size: 23-byte ATT MTU floor minus the
 /// 3-byte ATT header. See module docs ("Chunk size / MTU") for why this
 /// crate cannot currently raise it per-link.
 const DEFAULT_CHUNK: usize = 20;
+
+/// Maximum time a single adapter connection check or ATT write may remain
+/// pending.  A btleplug future is backed by an OS adapter task; without a
+/// transport-local deadline a stalled adapter can retain the per-link write
+/// gate forever and make teardown unable to retire the link promptly.
+const IO_OPERATION_TIMEOUT_MS: u64 = 250;
 
 /// Bounded transport-ingress sizing.
 ///
@@ -187,8 +194,12 @@ async fn acquire_write_gate(gate: &Arc<AsyncMutex<()>>) -> tokio::sync::OwnedMut
 /// Wait briefly for an in-flight ATT write to quiesce. Teardown must not hold
 /// the lifecycle gate forever behind a stalled host write; a timeout is safe
 /// because the subsequent physical disconnect fences the link.
-async fn acquire_write_gate_bounded(gate: &Arc<AsyncMutex<()>>) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-    timeout(Duration::from_millis(250), acquire_write_gate(gate)).await.ok()
+async fn acquire_write_gate_bounded(
+    gate: &Arc<AsyncMutex<()>>,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    timeout(Duration::from_millis(250), acquire_write_gate(gate))
+        .await
+        .ok()
 }
 
 /// A scanned or dial-able peer: `btleplug`'s peripheral identity plus the
@@ -218,6 +229,10 @@ pub enum BleError {
     /// The lifecycle generation counter is exhausted. Reusing a wrapped
     /// value would make delayed callbacks indistinguishable from a live link.
     GenerationExhausted,
+    /// A connection check or ATT write did not complete within the
+    /// transport-local deadline. The affected link is retired before this is
+    /// returned so a stalled adapter cannot pin the host drive loop.
+    OperationTimeout,
     /// `btleplug` itself reported an error.
     Btleplug(btleplug::Error),
 }
@@ -229,7 +244,10 @@ impl fmt::Display for BleError {
             BleError::UnknownLink => write!(f, "unknown link"),
             BleError::NotConnected => write!(f, "not connected"),
             BleError::ShuttingDown => write!(f, "BLE central is shutting down"),
-            BleError::GenerationExhausted => write!(f, "BLE lifecycle generation counter exhausted"),
+            BleError::GenerationExhausted => {
+                write!(f, "BLE lifecycle generation counter exhausted")
+            }
+            BleError::OperationTimeout => write!(f, "BLE operation timed out"),
             BleError::Btleplug(e) => write!(f, "btleplug error: {e}"),
         }
     }
@@ -243,7 +261,8 @@ impl std::error::Error for BleError {
             | BleError::UnknownLink
             | BleError::NotConnected
             | BleError::ShuttingDown
-            | BleError::GenerationExhausted => None,
+            | BleError::GenerationExhausted
+            | BleError::OperationTimeout => None,
         }
     }
 }
@@ -281,15 +300,14 @@ async fn emit_if_current(
     event: TalEvent,
 ) -> bool {
     let _event_guard = event_gate.lock().await;
-    let current = links
-        .lock()
-        .await
-        .get(&link)
-        .map(|state| state.generation);
+    let current = links.lock().await.get(&link).map(|state| state.generation);
     if !generation_is_current(current, generation) {
         return false;
     }
-    !matches!(tx.try_link_data(link, generation, event), Err(DataEnqueueError::Full | DataEnqueueError::Stale))
+    !matches!(
+        tx.try_link_data(link, generation, event),
+        Err(DataEnqueueError::Full | DataEnqueueError::Stale)
+    )
 }
 
 async fn emit_replacement(
@@ -302,11 +320,7 @@ async fn emit_replacement(
     quality: LinkQuality,
 ) -> bool {
     let _event_guard = event_gate.lock().await;
-    let current = links
-        .lock()
-        .await
-        .get(&link)
-        .map(|state| state.generation);
+    let current = links.lock().await.get(&link).map(|state| state.generation);
     if !generation_is_current(current, new_generation) {
         return false;
     }
@@ -315,8 +329,15 @@ async fn emit_replacement(
             return false;
         }
     }
-    tx.try_control(TalEvent::LinkUp { link, initiator: true, quality }, new_generation)
-        .is_ok()
+    tx.try_control(
+        TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality,
+        },
+        new_generation,
+    )
+    .is_ok()
 }
 
 async fn remove_if_current(
@@ -341,6 +362,30 @@ async fn disconnect_removed(removed: Option<(Peripheral, Arc<AsyncMutex<()>>)>) 
         wait_for_disconnected_write_gate(&write_gate).await;
         disconnect_bounded(&peripheral).await;
     }
+}
+
+/// Apply the bounded adapter deadline to one btleplug operation.  Keeping the
+/// timeout seam independent from [`BleCentral`] makes the no-hardware
+/// contract testable while all live operations still use the same limit.
+async fn bounded_io<F, T>(future: F) -> Result<T, BleError>
+where
+    F: Future<Output = Result<T, btleplug::Error>>,
+{
+    timeout(Duration::from_millis(IO_OPERATION_TIMEOUT_MS), future)
+        .await
+        .map_err(|_| BleError::OperationTimeout)?
+        .map_err(BleError::from)
+}
+
+async fn retire_after_send_failure(
+    links: &Links,
+    event_gate: &Arc<AsyncMutex<()>>,
+    tx: &EventSender,
+    link: LinkId,
+    generation: u64,
+) {
+    let removed = remove_if_current(links, event_gate, tx, link, generation).await;
+    disconnect_removed(removed).await;
 }
 
 /// Quiesce a callback that observed a disconnected peripheral without ever
@@ -463,7 +508,9 @@ impl BleCentral {
     pub async fn start_scan(&self) -> Result<(), BleError> {
         ensure_admission(&self.shutting_down)?;
         self.adapter
-            .start_scan(ScanFilter { services: vec![service_uuid()] })
+            .start_scan(ScanFilter {
+                services: vec![service_uuid()],
+            })
             .await?;
         if ensure_admission(&self.shutting_down).is_err() {
             stop_scan_bounded(&self.adapter).await;
@@ -504,7 +551,8 @@ impl BleCentral {
     pub async fn dial(&self, peer: PeerHandle) -> Result<LinkId, BleError> {
         let _dial_guard = self.dial_gate.lock().await;
         ensure_admission(&self.shutting_down)?;
-        let generation = allocate_generation(&self.next_generation).ok_or(BleError::GenerationExhausted)?;
+        let generation =
+            allocate_generation(&self.next_generation).ok_or(BleError::GenerationExhausted)?;
         let link = mint_link_id(&peer.id);
         let peripheral = self.adapter.peripheral(&peer.id).await?;
         if let Err(e) = peripheral.connect().await {
@@ -597,7 +645,10 @@ impl BleCentral {
             return Err(BleError::ShuttingDown);
         }
 
-        let quality = LinkQuality { mtu: (DEFAULT_CHUNK + 3) as u16, ..LinkQuality::default() };
+        let quality = LinkQuality {
+            mtu: (DEFAULT_CHUNK + 3) as u16,
+            ..LinkQuality::default()
+        };
         let data_tx = self.tx.clone();
         let rx_uuid = rx_characteristic.uuid;
         let links = self.links.clone();
@@ -618,14 +669,8 @@ impl BleCentral {
                 // ledger is still a fail-closed condition.  Retire the
                 // installed link so no live state remains without a
                 // corresponding lifecycle event.
-                let removed = remove_if_current(
-                    &links,
-                    &event_gate,
-                    &data_tx,
-                    link,
-                    generation,
-                )
-                .await;
+                let removed =
+                    remove_if_current(&links, &event_gate, &data_tx, link, generation).await;
                 disconnect_removed(removed).await;
                 return;
             }
@@ -637,21 +682,17 @@ impl BleCentral {
                         &data_tx,
                         link,
                         generation,
-                        TalEvent::LinkData { link, bytes: notification.value },
+                        TalEvent::LinkData {
+                            link,
+                            bytes: notification.value,
+                        },
                     )
                     .await
                 {
                     break;
                 }
             }
-            let removed = remove_if_current(
-                &links,
-                &event_gate,
-                &data_tx,
-                link,
-                generation,
-            )
-            .await;
+            let removed = remove_if_current(&links, &event_gate, &data_tx, link, generation).await;
             disconnect_removed(removed).await;
         });
 
@@ -681,7 +722,25 @@ impl BleCentral {
             .get(&link)
             .map(|state| state.generation);
         permit_chunk(current_generation, generation)?;
-        if !peripheral.is_connected().await? {
+        let connected = match bounded_io(peripheral.is_connected()).await {
+            Ok(connected) => connected,
+            Err(error) => {
+                drop(_write_guard);
+                retire_after_send_failure(
+                    &self.links,
+                    &self.event_gate,
+                    &self.tx,
+                    link,
+                    generation,
+                )
+                .await;
+                return Err(error);
+            }
+        };
+        if !connected {
+            drop(_write_guard);
+            retire_after_send_failure(&self.links, &self.event_gate, &self.tx, link, generation)
+                .await;
             return Err(BleError::NotConnected);
         }
 
@@ -693,9 +752,21 @@ impl BleCentral {
                 .get(&link)
                 .map(|state| state.generation);
             permit_chunk(current_generation, generation)?;
-            peripheral
-                .write(&tx_characteristic, chunk, WriteType::WithoutResponse)
-                .await?;
+            if let Err(error) =
+                bounded_io(peripheral.write(&tx_characteristic, chunk, WriteType::WithoutResponse))
+                    .await
+            {
+                drop(_write_guard);
+                retire_after_send_failure(
+                    &self.links,
+                    &self.event_gate,
+                    &self.tx,
+                    link,
+                    generation,
+                )
+                .await;
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -817,7 +888,9 @@ async fn watch_adapter(
         }
         match event {
             CentralEvent::ServiceDataAdvertisement { id, service_data } => {
-                let Some(payload) = service_data.get(&uuid) else { continue };
+                let Some(payload) = service_data.get(&uuid) else {
+                    continue;
+                };
                 let rssi = match adapter.peripheral(&id).await {
                     Ok(p) => p
                         .properties()
@@ -829,7 +902,10 @@ async fn watch_adapter(
                         .unwrap_or(0),
                     Err(_) => 0,
                 };
-                let _ = tx.try_data(TalEvent::Beacon { payload: payload.clone(), rssi });
+                let _ = tx.try_data(TalEvent::Beacon {
+                    payload: payload.clone(),
+                    rssi,
+                });
             }
             CentralEvent::DeviceDisconnected(id) => {
                 let link = mint_link_id(&id);
@@ -837,12 +913,7 @@ async fn watch_adapter(
                     .lock()
                     .await
                     .get(&link)
-                    .map(|state| {
-                        (
-                            state.generation,
-                            state.peripheral.clone(),
-                        )
-                    });
+                    .map(|state| (state.generation, state.peripheral.clone()));
                 let Some((generation, peripheral)) = previous else {
                     continue;
                 };
@@ -925,7 +996,9 @@ fn clamp_rssi(rssi: i16) -> i8 {
 }
 
 fn service_uuid() -> Uuid {
-    DEV_SERVICE_UUID.parse().expect("DEV_SERVICE_UUID is a valid UUID literal")
+    DEV_SERVICE_UUID
+        .parse()
+        .expect("DEV_SERVICE_UUID is a valid UUID literal")
 }
 
 fn tx_characteristic_uuid() -> Uuid {
@@ -948,15 +1021,20 @@ fn rx_characteristic_uuid() -> Uuid {
 /// crate) so it stays unit-testable without hardware.
 fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
     let digest = blake3::hash(format!("{id:?}").as_bytes());
-    u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("blake3 digest is 32 bytes"))
+    u64::from_le_bytes(
+        digest.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 digest is 32 bytes"),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
-        ensure_admission, fence_adapter_failure, mint_link_id, permit_chunk,
-        request_watch_shutdown, wait_for_disconnected_write_gate,
+        acquire_write_gate, acquire_write_gate_bounded, allocate_generation, bounded_io,
+        ensure_admission, fence_adapter_failure, generation_is_current, mint_link_id, permit_chunk,
+        request_watch_shutdown, wait_for_disconnected_write_gate, BleError,
+        IO_OPERATION_TIMEOUT_MS,
     };
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
@@ -1008,7 +1086,10 @@ mod tests {
         let shutting_down = AtomicBool::new(false);
         fence_adapter_failure(&shutting_down);
         assert!(shutting_down.load(Ordering::Acquire));
-        assert!(matches!(ensure_admission(&shutting_down), Err(super::BleError::ShuttingDown)));
+        assert!(matches!(
+            ensure_admission(&shutting_down),
+            Err(super::BleError::ShuttingDown)
+        ));
     }
 
     #[tokio::test]
@@ -1040,10 +1121,15 @@ mod tests {
         let second = tokio::spawn(async move { acquire_write_gate(&gate_for_second).await });
 
         tokio::task::yield_now().await;
-        assert!(!second.is_finished(), "a second sender must wait for the whole first write");
+        assert!(
+            !second.is_finished(),
+            "a second sender must wait for the whole first write"
+        );
 
         drop(first);
-        second.await.expect("second sender must acquire after the first releases");
+        second
+            .await
+            .expect("second sender must acquire after the first releases");
     }
 
     #[tokio::test]
@@ -1058,10 +1144,24 @@ mod tests {
     async fn disconnected_link_cleanup_wait_is_bounded() {
         let gate = Arc::new(AsyncMutex::new(()));
         let held = acquire_write_gate(&gate).await;
-        tokio::time::timeout(Duration::from_secs(1), wait_for_disconnected_write_gate(&gate))
-            .await
-            .expect("disconnected-link cleanup must not wait indefinitely");
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_disconnected_write_gate(&gate),
+        )
+        .await
+        .expect("disconnected-link cleanup must not wait indefinitely");
         drop(held);
+    }
+
+    #[tokio::test]
+    async fn adapter_operation_timeout_is_bounded_without_hardware() {
+        let result = bounded_io(async {
+            tokio::time::sleep(Duration::from_millis(IO_OPERATION_TIMEOUT_MS * 4)).await;
+            Ok::<(), btleplug::Error>(())
+        })
+        .await;
+
+        assert!(matches!(result, Err(BleError::OperationTimeout)));
     }
 
     #[test]

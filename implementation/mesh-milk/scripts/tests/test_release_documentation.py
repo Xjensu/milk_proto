@@ -79,6 +79,17 @@ class ReleaseDocumentationTests(unittest.TestCase):
             remaining,
         )
 
+    def test_backlog_react_native_status_matches_shipped_codegen_metadata(self) -> None:
+        backlog = (REPO_ROOT / "docs" / "AGILE_BACKLOG.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("PACKAGE + FIXTURE TYPECHECK + CODEGEN METADATA SHIPPED", backlog)
+        self.assertIn("Codegen metadata `96c96c1`", backlog)
+        self.assertIn("native consumer declarations/runtime", backlog)
+        self.assertNotIn("Still open: native React Native declarations/codegen", backlog)
+        self.assertNotIn("under a new `platforms/` directory", backlog)
+
 
 if __name__ == "__main__":
     unittest.main()
