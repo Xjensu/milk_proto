@@ -2048,6 +2048,20 @@ mod tests {
         assert!(parse_positional_and_store(&bad_store, 1)
             .expect_err("option-looking store paths must fail")
             .contains("looks like an option"));
+
+        for (flag, label) in [("--store", "store path"), ("--vault", "vault path")] {
+            let args = vec![
+                "seed.hex".to_string(),
+                flag.to_string(),
+                "--path".to_string(),
+            ];
+            let error = parse_positional_store_vault(&args, 1)
+                .expect_err("option-looking persistence paths must fail");
+            assert!(
+                error.contains("looks like an option"),
+                "{label} must reject option-looking values: {error}"
+            );
+        }
     }
 
     #[test]
@@ -2066,6 +2080,123 @@ mod tests {
         assert_eq!(positional, vec!["seed.hex"]);
         assert_eq!(store.as_deref(), Some("state.mmp"));
         assert_eq!(vault.as_deref(), Some("secret.mmpv"));
+    }
+
+    #[test]
+    fn radio_commands_enforce_required_positional_counts() {
+        let one_positional = |args: &[&str]| {
+            parse_positional_store_vault(
+                &args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                1,
+            )
+        };
+        let send = |args: &[&str]| {
+            parse_positional_store_vault(
+                &args.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                3,
+            )
+        };
+
+        for command in ["connect", "listen"] {
+            assert!(
+                one_positional(&[]).is_err(),
+                "{command} requires a seed file"
+            );
+            assert!(one_positional(&["seed.hex"]).is_ok());
+            assert!(one_positional(&["seed.hex", "unexpected"]).is_err());
+        }
+
+        assert!(
+            send(&[]).is_err(),
+            "send requires seed, destination, and text"
+        );
+        assert!(send(&["seed.hex", "00112233445566778899aabbccddeeff"]).is_err());
+        assert!(send(&["seed.hex", "00112233445566778899aabbccddeeff", "text"]).is_ok());
+        assert!(send(&[
+            "seed.hex",
+            "00112233445566778899aabbccddeeff",
+            "text",
+            "unexpected",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn radio_commands_reject_missing_arguments_before_io_or_radio_setup() {
+        assert_eq!(cmd_connect(&[]), ExitCode::from(2));
+        assert_eq!(cmd_send(&[]), ExitCode::from(2));
+        assert_eq!(cmd_listen(&[]), ExitCode::from(2));
+        assert_eq!(cmd_connect(&["--help".to_string()]), ExitCode::SUCCESS);
+        assert_eq!(cmd_send(&["--help".to_string()]), ExitCode::SUCCESS);
+        assert_eq!(cmd_listen(&["--help".to_string()]), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn radio_parser_rejects_unknown_and_duplicate_persistence_options() {
+        let unknown = ["seed.hex", "--bogus", "state.mmp"]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            parse_positional_store_vault(&unknown, 1),
+            Err("unrecognized option: --bogus".to_string())
+        );
+
+        for duplicate in [
+            vec!["seed.hex", "--store", "one.mmp", "--store", "two.mmp"],
+            vec!["seed.hex", "--vault", "one.vault", "--vault", "two.vault"],
+        ] {
+            let args = duplicate
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let error = parse_positional_store_vault(&args, 1)
+                .expect_err("duplicate persistence options must fail");
+            assert!(
+                error.starts_with("duplicate option:"),
+                "unexpected error: {error}"
+            );
+        }
+
+        assert!(
+            parse_positional_store_vault(&["seed.hex".to_string(), "--unknown".to_string()], 1)
+                .is_err(),
+            "an unknown option without a value must still fail closed"
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn vault_option_is_rejected_by_non_windows_host_provider() {
+        let result = open_host_vault(Some("secret.vault"));
+        assert!(
+            matches!(&result, Err(error) if error.contains("--vault is supported only by the Windows desktop provider")),
+            "non-Windows hosts must not silently ignore --vault: {result:?}"
+        );
+    }
+
+    #[test]
+    fn radio_commands_have_explicit_help_boundaries() {
+        for subcommand in ["connect", "send", "listen"] {
+            assert_eq!(
+                subcommand_help(subcommand, &["--help".to_string()]),
+                Some(ExitCode::SUCCESS),
+                "{subcommand} --help must not attempt radio setup"
+            );
+            assert_eq!(
+                subcommand_help(
+                    subcommand,
+                    &["--help".to_string(), "unexpected".to_string()]
+                ),
+                Some(ExitCode::from(2)),
+                "{subcommand} help must reject trailing arguments"
+            );
+        }
+        assert_eq!(
+            cmd_help(&["connect".to_string()]),
+            ExitCode::SUCCESS,
+            "top-level help must expose the connect command"
+        );
     }
 
     #[cfg(target_os = "windows")]
