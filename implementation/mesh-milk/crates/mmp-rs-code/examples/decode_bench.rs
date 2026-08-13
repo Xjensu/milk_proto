@@ -35,6 +35,25 @@ fn checksum(symbols: &[Vec<u8>]) -> u64 {
     })
 }
 
+/// Return a stable, non-cryptographic fingerprint of the exact symbols fed to
+/// `decode`. Including the symbol index makes a reordered sample visible in
+/// benchmark evidence even when the profile dimensions are unchanged.
+fn input_fingerprint(received: &[(u8, Vec<u8>)]) -> u64 {
+    received.iter().fold(0u64, |acc, (index, symbol)| {
+        let with_index = acc
+            .wrapping_mul(1_099_511_628_211)
+            .wrapping_add(u64::from(*index));
+        let with_length = with_index
+            .wrapping_mul(1_099_511_628_211)
+            .wrapping_add(symbol.len() as u64);
+        symbol.iter().fold(with_length, |inner, byte| {
+            inner
+                .wrapping_mul(1_099_511_628_211)
+                .wrapping_add(u64::from(*byte))
+        })
+    })
+}
+
 fn data_symbols(k: usize) -> Vec<Vec<u8>> {
     (0..k)
         .map(|index| {
@@ -66,6 +85,7 @@ fn run(profile: Profile, iterations: usize) {
         .map(|index| (index as u8, encoded[index].clone()))
         .collect();
     received.extend((parity_count..profile.k).map(|index| (index as u8, encoded[index].clone())));
+    let fingerprint = input_fingerprint(&received);
 
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {
@@ -81,7 +101,7 @@ fn run(profile: Profile, iterations: usize) {
     samples.sort_unstable();
     let median = samples[samples.len() / 2];
     println!(
-        "profile={} k={} n={} symbol_bytes={} iterations={} min_ns={} median_ns={} max_ns={}",
+        "profile={} k={} n={} symbol_bytes={} iterations={} input_fingerprint=0x{fingerprint:016x} min_ns={} median_ns={} max_ns={}",
         profile.name,
         profile.k,
         profile.n,
@@ -91,6 +111,21 @@ fn run(profile: Profile, iterations: usize) {
         median,
         samples[samples.len() - 1]
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::input_fingerprint;
+
+    #[test]
+    fn input_fingerprint_is_stable_and_order_sensitive() {
+        let first = vec![(0, vec![1, 2]), (3, vec![4, 5])];
+        let same = vec![(0, vec![1, 2]), (3, vec![4, 5])];
+        let reordered = vec![(3, vec![4, 5]), (0, vec![1, 2])];
+
+        assert_eq!(input_fingerprint(&first), input_fingerprint(&same));
+        assert_ne!(input_fingerprint(&first), input_fingerprint(&reordered));
+    }
 }
 
 fn main() {

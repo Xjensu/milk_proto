@@ -22,9 +22,14 @@ cargo run --locked -p mmp-rs-code --example decode_bench --release
 Set `MMP_RS_BENCH_ITERS` to change the sample count (the default is five).
 The workload checks the recovered bytes for every sample and reports minimum,
 median, and maximum host elapsed time for the file-stripe (`k=32`, `n=40`)
-and maximum-`k` (`k=64`, `n=72`) profiles, each with 2,048-byte symbols. It
-uses only the existing crate and standard-library timing in the example; no
-benchmark dependency is added.
+and maximum-`k` (`k=64`, `n=72`) profiles, each with 2,048-byte symbols. Each
+profile also prints `input_fingerprint`, a stable non-cryptographic 64-bit
+fingerprint of the exact `(symbol_index, symbol_bytes)` sequence passed to
+`decode`; record it with the timing so a changed workload cannot be mistaken
+for a comparable run. The fingerprint is the wrapping recurrence
+`h = h * 1_099_511_628_211 + value`, starting at zero, over each symbol's
+index, byte length, and bytes in order. It uses only the existing crate and
+standard-library timing in the example; no benchmark dependency is added.
 
 These numbers are diagnostic and cannot establish the OQ-7 acceptance gate.
 That gate still requires a linked nRF52-class image, measured flash/RAM, and a
