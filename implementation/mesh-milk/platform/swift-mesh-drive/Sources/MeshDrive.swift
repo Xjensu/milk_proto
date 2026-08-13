@@ -217,15 +217,23 @@ public enum MeshSecretStateError: Error, Equatable {
     case invalidLifecycle
 }
 
+private let meshNodeMaxPollBatch = 64
+
 public protocol MeshNode: AnyObject {
     func setTier(_ tier: MeshTier)
     func beacon(nowMs: UInt64) -> [UInt8]
     func tick(nowMs: UInt64)
     func pollClose() -> UInt64?
+    /// Drain close actions in FIFO order; existing adapters use the fallback.
+    func pollCloseBatch(_ maxItems: Int) -> [UInt64]
     func closeActionsDropped() -> UInt64
     func eventQueueDropped() -> UInt64
     func pollSend() -> OutboundFrame?
+    /// Drain outbound frames in FIFO order; existing adapters use the fallback.
+    func pollSendBatch(_ maxItems: Int) -> [OutboundFrame]
     func pollEvent() -> Any?
+    /// Drain application events in FIFO order; existing adapters use the fallback.
+    func pollEventBatch(_ maxItems: Int) -> [Any]
     func onBeacon(serviceData: [UInt8], rssi: Int8)
     func linkUp(_ link: UInt64, initiator: Bool)
     /// Optional measured transport quality.  The default delegates to the
@@ -236,6 +244,39 @@ public protocol MeshNode: AnyObject {
 }
 
 public extension MeshNode {
+    func pollCloseBatch(_ maxItems: Int) -> [UInt64] {
+        let limit = max(0, min(maxItems, meshNodeMaxPollBatch))
+        guard limit > 0 else { return [] }
+        var values: [UInt64] = []
+        values.reserveCapacity(limit)
+        while values.count < limit, let link = pollClose() {
+            values.append(link)
+        }
+        return values
+    }
+
+    func pollSendBatch(_ maxItems: Int) -> [OutboundFrame] {
+        let limit = max(0, min(maxItems, meshNodeMaxPollBatch))
+        guard limit > 0 else { return [] }
+        var values: [OutboundFrame] = []
+        values.reserveCapacity(limit)
+        while values.count < limit, let frame = pollSend() {
+            values.append(frame)
+        }
+        return values
+    }
+
+    func pollEventBatch(_ maxItems: Int) -> [Any] {
+        let limit = max(0, min(maxItems, meshNodeMaxPollBatch))
+        guard limit > 0 else { return [] }
+        var values: [Any] = []
+        values.reserveCapacity(limit)
+        while values.count < limit, let event = pollEvent() {
+            values.append(event)
+        }
+        return values
+    }
+
     func linkUp(_ link: UInt64, initiator: Bool, quality: MeshLinkQualityHint?) {
         linkUp(link, initiator: initiator)
     }
@@ -293,6 +334,11 @@ public final class MeshDrive {
     private let maxTrackedLinks = 64
     private var closeRequested = Set<UInt64>()
     private var pending: [PendingFrame] = []
+    // Batch polling consumes native queue entries before the platform sink
+    // accepts them. Keep the unprocessed suffix locally so a sink exception
+    // or back-pressure cannot reorder or discard close/event work.
+    private var pendingCloseActions: [UInt64] = []
+    private var pendingEvents: [Any] = []
     private var overloadLatched = false
     private var observedCloseDrops: UInt64 = 0
     private var observedEventDrops: UInt64 = 0
@@ -386,6 +432,8 @@ public final class MeshDrive {
         links.forEach { try? requestPhysicalClose($0) }
         closeRequested.removeAll()
         pending.removeAll()
+        pendingCloseActions.removeAll()
+        pendingEvents.removeAll()
         try? scanner.stop()
         try? advertiser.stop()
         advertisedBeacon = nil
@@ -546,7 +594,12 @@ public final class MeshDrive {
     }
 
     private func drainClose() throws {
-        while let link = node.pollClose() {
+        while true {
+            if pendingCloseActions.isEmpty {
+                pendingCloseActions.append(contentsOf: node.pollCloseBatch(meshNodeMaxPollBatch))
+            }
+            guard !pendingCloseActions.isEmpty else { return }
+            let link = pendingCloseActions.removeFirst()
             pending.removeAll { $0.link == link }
             try requestPhysicalClose(link)
         }
@@ -589,9 +642,12 @@ public final class MeshDrive {
     private func drainSend() throws {
         while true {
             if pending.isEmpty {
-                guard let next = node.pollSend() else { return }
-                guard !next.bytes.isEmpty else { continue }
-                pending.append(PendingFrame(link: next.link, bytes: next.bytes, fragmentSize: nil, offset: 0))
+                let batch = node.pollSendBatch(meshNodeMaxPollBatch)
+                if batch.isEmpty { return }
+                for next in batch where !next.bytes.isEmpty {
+                    pending.append(PendingFrame(link: next.link, bytes: next.bytes, fragmentSize: nil, offset: 0))
+                }
+                if pending.isEmpty { continue }
             }
             guard !pending.isEmpty else { return }
             var frame = pending[0]
@@ -615,7 +671,13 @@ public final class MeshDrive {
     }
 
     private func drainEvents() {
-        while let event = node.pollEvent() { eventSink(event) }
+        while true {
+            if pendingEvents.isEmpty {
+                pendingEvents.append(contentsOf: node.pollEventBatch(meshNodeMaxPollBatch))
+            }
+            guard !pendingEvents.isEmpty else { return }
+            eventSink(pendingEvents.removeFirst())
+        }
     }
 
     private func applyTier() {
@@ -629,6 +691,8 @@ public final class MeshDrive {
         links.forEach { try? requestPhysicalClose($0) }
         closeRequested.removeAll()
         pending.removeAll()
+        pendingCloseActions.removeAll()
+        pendingEvents.removeAll()
         advertisedBeacon = nil
     }
 

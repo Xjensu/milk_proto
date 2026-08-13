@@ -211,17 +211,60 @@ public class UnavailableSecretStatePersistence : SecretStatePersistence {
 
 /** Minimal node/FFI surface needed by the drive loop. */
 public interface MeshNode {
+    /** Maximum number of items a host may request from one polling batch. */
+    public companion object {
+        public const val MAX_POLL_BATCH: Int = 64
+    }
+
     fun setTier(tier: MeshTier)
     fun beacon(nowMs: Long): ByteArray
     fun tick(nowMs: Long)
     /** Drain one transport-local request to terminate a physical BLE link. */
     fun pollClose(): Long?
+    /**
+     * Drain transport-local close actions in FIFO order.  The default keeps
+     * existing adapters source-compatible; UniFFI-backed adapters can
+     * override it with the native batch binding.
+     */
+    fun pollCloseBatch(maxItems: Int): List<Long> {
+        val limit = maxItems.coerceIn(0, MAX_POLL_BATCH)
+        if (limit == 0) return emptyList()
+        val links = ArrayList<Long>(limit)
+        while (links.size < limit) {
+            val link = pollClose() ?: break
+            links += link
+        }
+        return links
+    }
     /** Sticky close-queue saturation diagnostic; non-zero is fail-closed. */
     fun closeActionsDropped(): Long
     /** Sticky application-event queue saturation diagnostic; non-zero is fail-closed. */
     fun eventQueueDropped(): Long
     fun pollSend(): OutboundFrame?
+    /** Drain outbound frames in FIFO order; defaults to the legacy API. */
+    fun pollSendBatch(maxItems: Int): List<OutboundFrame> {
+        val limit = maxItems.coerceIn(0, MAX_POLL_BATCH)
+        if (limit == 0) return emptyList()
+        val frames = ArrayList<OutboundFrame>(limit)
+        while (frames.size < limit) {
+            val frame = pollSend() ?: break
+            frames += frame
+        }
+        return frames
+    }
+
     fun pollEvent(): Any?
+    /** Drain application events in FIFO order; defaults to the legacy API. */
+    fun pollEventBatch(maxItems: Int): List<Any> {
+        val limit = maxItems.coerceIn(0, MAX_POLL_BATCH)
+        if (limit == 0) return emptyList()
+        val events = ArrayList<Any>(limit)
+        while (events.size < limit) {
+            val event = pollEvent() ?: break
+            events += event
+        }
+        return events
+    }
     fun onBeacon(serviceData: ByteArray, rssi: Byte)
     fun linkUp(link: Long, initiator: Boolean)
     /**
@@ -320,6 +363,11 @@ public class MeshDrive(
     private val maxTrackedLinks: Int = 64
     private val closeRequested = LinkedHashSet<Long>()
     private val pending = java.util.ArrayDeque<PendingFrame>()
+    // Batch polling consumes native queue entries before the platform sink
+    // accepts them. Keep the unprocessed suffix locally so a sink exception
+    // or back-pressure cannot reorder or discard close/event work.
+    private val pendingCloseActions = java.util.ArrayDeque<Long>()
+    private val pendingEvents = java.util.ArrayDeque<Any>()
     private var overloadLatched: Boolean = false
     private var observedCloseDrops: Long = 0
     private var observedEventDrops: Long = 0
@@ -410,6 +458,8 @@ public class MeshDrive(
         links.forEach { runCatching { requestPhysicalClose(it) } }
         closeRequested.clear()
         pending.clear()
+        pendingCloseActions.clear()
+        pendingEvents.clear()
         // Stop is best-effort cleanup; always finish the coordinator state
         // transition even when a platform adapter reports a teardown error.
         runCatching { scanner.stop() }
@@ -654,7 +704,10 @@ public class MeshDrive(
      */
     private fun drainClose() {
         while (true) {
-            val link = node.pollClose() ?: return
+            if (pendingCloseActions.isEmpty()) {
+                pendingCloseActions.addAll(node.pollCloseBatch(MeshNode.MAX_POLL_BATCH))
+            }
+            val link = pendingCloseActions.pollFirst() ?: return
             pending.removeIf { it.link == link }
             requestPhysicalClose(link)
         }
@@ -716,13 +769,16 @@ public class MeshDrive(
     private fun drainSend() {
         while (true) {
             if (pending.isEmpty()) {
-                val next = node.pollSend() ?: return
-                val pendingFrame = PendingFrame(
-                    link = next.link,
-                    bytes = next.bytes.copyOf(),
-                )
-                if (pendingFrame.bytes.isEmpty()) continue
-                pending.addLast(pendingFrame)
+                val batch = node.pollSendBatch(MeshNode.MAX_POLL_BATCH)
+                if (batch.isEmpty()) return
+                batch.forEach { next ->
+                    val pendingFrame = PendingFrame(
+                        link = next.link,
+                        bytes = next.bytes.copyOf(),
+                    )
+                    if (pendingFrame.bytes.isNotEmpty()) pending.addLast(pendingFrame)
+                }
+                if (pending.isEmpty()) continue
             }
             val frame = pending.peekFirst() ?: return
 
@@ -751,7 +807,10 @@ public class MeshDrive(
 
     private fun drainEvents() {
         while (true) {
-            val event = node.pollEvent() ?: return
+            if (pendingEvents.isEmpty()) {
+                pendingEvents.addAll(node.pollEventBatch(MeshNode.MAX_POLL_BATCH))
+            }
+            val event = pendingEvents.pollFirst() ?: return
             eventSink(event)
         }
     }

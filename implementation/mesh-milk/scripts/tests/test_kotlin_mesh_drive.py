@@ -192,7 +192,11 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
         self.assertIn("refreshBeacon(nowMs)", self.readme)
 
     def test_poll_send_is_pull_based_and_backpressure_is_retained(self) -> None:
-        self.assertIn("node.pollSend()", self.source)
+        self.assertIn("node.pollSendBatch(MeshNode.MAX_POLL_BATCH)", self.source)
+        self.assertIn("fun pollSend(): OutboundFrame?", self.source)
+        self.assertIn("fun pollSendBatch(maxItems: Int)", self.source)
+        self.assertIn("node.pollEventBatch(MeshNode.MAX_POLL_BATCH)", self.source)
+        self.assertIn("fun pollEventBatch(maxItems: Int)", self.source)
         self.assertIn("pending.addLast(pendingFrame)", self.source)
         self.assertIn("if (!accepted) return", self.source)
         self.assertIn("notifyFragment", self.source)
@@ -208,8 +212,9 @@ class KotlinMeshDriveSourceTests(unittest.TestCase):
 
     def test_transport_close_actions_are_drained_before_send(self) -> None:
         self.assertIn("fun pollClose(): Long?", self.source)
+        self.assertIn("node.pollCloseBatch(MeshNode.MAX_POLL_BATCH)", self.source)
+        self.assertIn("fun pollCloseBatch(maxItems: Int)", self.source)
         self.assertIn("fun close(link: Long)", self.source)
-        self.assertIn("node.pollClose()", self.source)
         self.assertIn("gatt.close(link)", self.source)
         self.assertIn("pending.removeIf { it.link == link }", self.source)
         self.assertLess(self.source.index("drainClose()"), self.source.index("drainSend()"))

@@ -16,8 +16,10 @@ generated `MmpNode` bindings.
 - monotonic `pump()`/`pumpAt()`; backwards timestamps fail before `MeshNode.tick`;
 - explicit `refreshBeacon(nowMs)` hook so long-lived hosts replace the rotating
   ephemeral advertisement instead of leaving the startup payload stale;
-- transport-local `pollClose()` actions are drained before `pollSend()`;
-- pull-only `pollSend()` and `pollEvent()` draining;
+- transport-local close actions are drained before outbound frames;
+- bounded native batch polling (`pollCloseBatch`, `pollSendBatch`, and
+  `pollEventBatch`, capped at 64) reduces bridge calls while retaining FIFO
+  order; legacy one-item methods remain the source-compatible fallback;
 - link-up/data/down forwarding with stale-link input ignored;
 - notification fragmentation at `negotiated ATT MTU - 3`, with adapter
   back-pressure retained for the next pump;
