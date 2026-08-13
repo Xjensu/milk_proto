@@ -85,3 +85,30 @@ cargo check -p mmp-flash-journal --target thumbv7em-none-eabihf \
   --no-default-features --locked --offline
 cargo fmt --package mmp-flash-journal -- --check
 ```
+
+## Host two-slot provider slice (2026-08-13)
+
+**Task status: FIXED.** `mmp-embedded-provider::JournaledFixedStore` now
+composes the fixed-store FBS1 snapshot codec with two erase-aligned journal
+slots. Recovery reads both slots, uses strict head-record selection, validates
+the selected snapshot before publication, and restores the generation floor
+and active slot. Commit writes only the inactive slot, verifies the post-write
+selection, and replaces memory with the recovered durable state when an
+attempt is proven absent. Backend write/erase failures quarantine the
+transaction; `recover_in_place` must prove `NotCommitted` or `Committed`.
+
+The provider is host-testable and `no_std` with caller-owned image, payload,
+and record-scratch buffers. It does not claim board flash atomicity, durable
+anti-rollback, coordinated producer checkpoints, or snapshot-level
+authentication for local metadata. Those remain explicit nRF52 integration
+gates.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-embedded-provider --all-targets --offline  # 4 passed
+cargo clippy -p mmp-embedded-provider --all-targets --offline -- -D warnings
+cargo check -p mmp-embedded-provider \
+  --target thumbv7em-none-eabihf --no-default-features --offline
+cargo run -p layer-check --offline                              # passed
+```

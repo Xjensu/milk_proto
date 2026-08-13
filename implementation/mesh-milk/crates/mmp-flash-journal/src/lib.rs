@@ -599,6 +599,54 @@ pub fn scan(image: &[u8]) -> ScanResult<'_> {
     result
 }
 
+/// Scan only the record beginning at byte zero of a single journal slot.
+///
+/// This boundary is for providers that reserve one complete record per slot.
+/// Unlike [`scan`], it never searches nested marker bytes inside a malformed
+/// head record, so corrupted payload data cannot be promoted to a different
+/// snapshot generation.
+pub fn scan_first(image: &[u8]) -> ScanResult<'_> {
+    let mut result = ScanResult {
+        selected: None,
+        candidates: 0,
+        valid: 0,
+        rejected: 0,
+    };
+    if image.len() < MAGIC.len() || image[..MAGIC.len()] != MAGIC {
+        return result;
+    }
+    result.candidates = 1;
+    if image.len() < MIN_RECORD_LEN {
+        return result;
+    }
+    let generation = u64::from_le_bytes(image[4..12].try_into().expect("fixed journal width"));
+    let payload_len =
+        u32::from_le_bytes(image[12..16].try_into().expect("fixed journal width")) as usize;
+    let Some(record_len) = encoded_len(payload_len) else {
+        result.rejected = 1;
+        return result;
+    };
+    if record_len > image.len() {
+        return result;
+    }
+    let payload_start = HEADER_LEN;
+    let payload_end = payload_start + payload_len;
+    let checksum_end = payload_end + CHECKSUM_LEN;
+    let expected = checksum(&image[..payload_end]);
+    if image[payload_end..checksum_end] != expected
+        || image[checksum_end..checksum_end + COMMIT_MARKER.len()] != COMMIT_MARKER
+    {
+        result.rejected = 1;
+        return result;
+    }
+    result.valid = 1;
+    result.selected = Some(Record {
+        generation,
+        payload: &image[payload_start..payload_end],
+    });
+    result
+}
+
 /// Scan a journal and validate the selected highest-generation payload before
 /// returning it to a provider.
 ///
@@ -615,6 +663,18 @@ where
     F: FnOnce(Record<'a>) -> Result<(), E>,
 {
     let result = scan(image);
+    if let Some(record) = result.selected {
+        validator(record)?;
+    }
+    Ok(result)
+}
+
+/// Validate the record at byte zero of a single journal slot.
+pub fn scan_first_validated<'a, F, E>(image: &'a [u8], validator: F) -> Result<ScanResult<'a>, E>
+where
+    F: FnOnce(Record<'a>) -> Result<(), E>,
+{
+    let result = scan_first(image);
     if let Some(record) = result.selected {
         validator(record)?;
     }
@@ -771,6 +831,47 @@ mod tests {
         })
         .unwrap();
         assert_eq!(result.selected.unwrap().generation, 9);
+    }
+
+    #[test]
+    fn first_scan_does_not_promote_nested_marker_from_head_payload() {
+        let mut image = [0u8; 512];
+        let mut head = [0u8; 256];
+        let head_payload_len = 64;
+        let head_len = encoded_len(head_payload_len).unwrap();
+        let mut payload = [0u8; 64];
+        let nested = 8;
+        payload[nested..nested + MAGIC.len()].copy_from_slice(&MAGIC);
+        payload[nested + 4..nested + 12].copy_from_slice(&99u64.to_le_bytes());
+        payload[nested + 12..nested + 16].copy_from_slice(&(b"nested".len() as u32).to_le_bytes());
+        encode(4, &payload, &mut head).unwrap();
+        image[..head_len].copy_from_slice(&head[..head_len]);
+
+        let result = scan_first(&image[..head_len]);
+        assert_eq!(result.selected.unwrap().generation, 4);
+        assert_eq!(result.valid, 1);
+    }
+
+    #[test]
+    fn first_scan_rejects_a_bad_head_even_when_nested_bytes_are_valid() {
+        let mut image = [0u8; 512];
+        let mut head = [0u8; 256];
+        let head_len = encoded_len(64).unwrap();
+        encode(4, &[0u8; 64], &mut head).unwrap();
+        let nested_start = HEADER_LEN + 4;
+        let nested_len = encoded_len(b"nested".len()).unwrap();
+        encode(
+            99,
+            b"nested",
+            &mut head[nested_start..nested_start + nested_len],
+        )
+        .unwrap();
+        head[head_len - 1] ^= 1;
+        image[..head_len].copy_from_slice(&head[..head_len]);
+
+        let result = scan_first(&image[..head_len]);
+        assert_eq!(result.selected, None);
+        assert_eq!(result.valid, 0);
     }
 
     #[test]

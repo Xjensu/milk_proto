@@ -134,9 +134,12 @@ proves that a complete symbol transfer fits the named target budget.
 ## 5. Journal and commit state machine
 
 The provider reuses `mmp-flash-journal` framing and scanning. The scanner is a
-corruption/recovery primitive, not an authenticity mechanism. Every recovered
-bundle is revalidated with the existing canonical decode, BundleID, signature,
-metadata binding, and class-specific checks before it enters the index.
+corruption/recovery primitive, not an authenticity mechanism. The provider
+should use `scan_validated` to gate the selected highest-generation payload;
+its validator must revalidate the complete snapshot with the existing
+canonical decode, BundleID, signature, metadata binding, and class-specific
+checks before any state enters the index. A validator failure is fail-closed;
+the provider must not silently fall back to an older generation.
 
 For the first implementation, **one journal payload is one complete bounded
 provider snapshot**, not one bundle record. It contains the slot table, ID
@@ -263,10 +266,14 @@ Implementation order:
 1. Select and record one exact board/HAL/toolchain and fill the profile
    geometry from its authoritative datasheet and linker map.
 2. Implement the no-alloc trait and a host fixed-capacity reference provider.
+   The current `mmp-embedded-provider::JournaledFixedStore` is the first
+   two-slot reference slice and uses caller-owned buffers.
 3. Add the indeterminate-outcome, bounded quarantine, and coordinated-
    checkpoint decisions to the provider API before connecting producers.
 4. Reuse `mmp-flash-journal`, existing bundle verification, and existing
-   eviction logic; avoid a second serializer or cryptographic primitive.
+   eviction logic; avoid a second serializer or cryptographic primitive. The
+   reference provider now exercises this composition, including strict
+   head-record selection and validator-gated recovery.
 5. Run the host fault matrix, Cortex-M compile, then hardware gates in order.
 
 The MMP/1 specification remains frozen throughout these steps.

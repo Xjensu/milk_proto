@@ -1487,6 +1487,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mmp-embedded-provider"
+version = "0.0.0"
+dependencies = [
+ "mmp-core",
+ "mmp-crypto",
+ "mmp-flash-journal",
+ "mmp-types",
+]
+
+[[package]]
 name = "mmp-ffi"
 version = "0.0.0"
 dependencies = [

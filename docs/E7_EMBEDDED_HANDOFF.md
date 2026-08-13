@@ -413,3 +413,22 @@ and format-neutral; it does not provide snapshot authentication, durable
 generation floors, or flash atomicity. The future board provider must compose
 it with `FixedBundleStore::restore_snapshot`, a profile integrity mechanism,
 and the existing quarantine/indeterminate-write state machine.
+
+## Host journal-backed provider slice (2026-08-13)
+
+`mmp-embedded-provider` now supplies a host-testable `no_std` two-slot
+`JournaledFixedStore`. It uses the existing journal writer, strict head-record
+scan, `scan_first_validated`, and `FixedBundleStore::restore_snapshot` to
+recover only a complete, signature-validated FBS1 snapshot. Commits erase and
+write the inactive slot, verify the post-write selection, alternate
+generations, and replace in-memory state with the recovered durable state when
+an attempted generation is proven absent. Backend write/erase failures
+quarantine the transaction; `recover_in_place` must prove `NotCommitted` or
+`Committed` before new commits are allowed.
+
+The crate uses caller-owned image, payload, and record-scratch buffers and
+does not claim flash-controller atomicity, durable anti-rollback, snapshot
+MAC/authentication for local metadata, or a linked nRF52 image. Its four host
+tests cover signed-bundle restart recovery, inactive-slot write failure and
+quarantine, retry fencing, and layout bounds. This is the reference provider
+boundary; board geometry and hardware fault evidence remain open.

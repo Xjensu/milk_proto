@@ -27,10 +27,12 @@ integration seam until native Android/iOS consuming radio shells exist. See
 
 ## Layout (normative: doc 12 §1)
 
-15 crates under `crates/` (plus `mmp-tal-peripheral`, added for Phase A's
-peripheral-role BLE) + `vectors/` (committed golden wire/conformance vectors
-and `coverage.json`, see `vectors/README.md`) + `tools/layer-check` (the CI
-layer-dependency test).
+Protocol, host, transport, and embedded-provider crates live under `crates/`;
+the `mmp-embedded-provider` crate is the host-testable two-slot journal
+reference boundary. This is alongside `mmp-tal-peripheral` (the Phase A
+peripheral-role BLE implementation), `vectors/` (committed golden
+wire/conformance vectors and `coverage.json`, see `vectors/README.md`), and
+`tools/layer-check` (the CI layer-dependency test).
 
 Layering rule: `mmp-types ← mmp-crypto ← mmp-core ← mmp-router` are `#![no_std]`
 (alloc-optional via the `alloc` feature); nothing below `mmp-node` may depend on
