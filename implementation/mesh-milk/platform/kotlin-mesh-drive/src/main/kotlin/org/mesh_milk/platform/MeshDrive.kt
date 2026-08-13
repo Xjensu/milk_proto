@@ -498,6 +498,9 @@ public class MeshDrive(
         check(!running) {
             "restoreSecretState must run before MeshDrive.start"
         }
+        check(!hasCompletedStart) {
+            "restoreSecretState must run before the first successful MeshDrive.start"
+        }
         val generation = secretStatePersistence.restoreSecretState()
         require(generation == null || generation > 0L) {
             "secret-state provider returned an invalid generation"

@@ -183,6 +183,19 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(secret.persistCalls, 0)
     }
 
+    func testSecretStateRestoreIsRejectedAfterSuccessfulRadioCycle() throws {
+        let secret = TestSecretStatePersistence(restoreGeneration: 9, persistGeneration: 10)
+        let drive = makeDrive(node: TestNode(), secretStatePersistence: secret)
+
+        try drive.start()
+        drive.stop()
+
+        XCTAssertThrowsError(try drive.restoreSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidLifecycle)
+        }
+        XCTAssertEqual(secret.restoreCalls, 0)
+    }
+
     func testRadioShellBindsEachPhysicalIdentityToOneMonotonicLink() throws {
         let node = TestNode()
         let drive = makeDrive(node: node)
@@ -436,6 +449,7 @@ final class MeshDriveConsumerTests: XCTestCase {
 
     func testEventSinkFailureRetainsCurrentEventForNextLifecycleAttempt() throws {
         let node = TestNode(initialEvents: ["event"])
+        let secret = TestSecretStatePersistence(restoreGeneration: 11, persistGeneration: 12)
         var delivered: [Any] = []
         var failOnce = true
         let drive = MeshDrive(
@@ -445,6 +459,7 @@ final class MeshDriveConsumerTests: XCTestCase {
             scanner: TestScanner(),
             gatt: TestGatt(),
             foregroundRelayCapable: false,
+            secretStatePersistence: secret,
             eventSink: { event in
                 if failOnce {
                     failOnce = false
@@ -458,6 +473,9 @@ final class MeshDriveConsumerTests: XCTestCase {
             XCTAssertEqual(error as? TestError, .eventSinkUnavailable)
         }
         XCTAssertFalse(drive.isRunning)
+        // A failed startup never crosses the first-successful-start fence;
+        // provider recovery remains possible before the next attempt.
+        XCTAssertEqual(try drive.restoreSecretState(), 11)
 
         try drive.start()
         XCTAssertEqual(delivered.compactMap { $0 as? String }, ["event"])

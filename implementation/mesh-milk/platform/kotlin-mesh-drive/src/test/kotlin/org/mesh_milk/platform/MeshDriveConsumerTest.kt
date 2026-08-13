@@ -254,6 +254,26 @@ class MeshDriveConsumerTest {
     }
 
     @Test
+    fun secretStateRestoreIsRejectedAfterSuccessfulRadioCycle() {
+        val secret = RecordingSecretStatePersistence(restoreGeneration = 9L, persistGeneration = 10L)
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            secretStatePersistence = secret,
+        )
+
+        drive.start()
+        drive.stop()
+
+        assertFailsWith<IllegalStateException> { drive.restoreSecretState() }
+        assertEquals(0, secret.restoreCalls)
+    }
+
+    @Test
     fun publicCoordinatorCanBeStartedAndStoppedByAConsumer() {
         val node = FakeNode()
         val drive = MeshDrive(
@@ -598,6 +618,7 @@ class MeshDriveConsumerTest {
     @Test
     fun eventSinkFailureRetainsCurrentEventForTheNextLifecycleAttempt() {
         val node = FakeNode(initialEvents = listOf("event"))
+        val secret = RecordingSecretStatePersistence(restoreGeneration = 11L, persistGeneration = 12L)
         val delivered = mutableListOf<Any>()
         var failOnce = true
         val drive = MeshDrive(
@@ -607,6 +628,7 @@ class MeshDriveConsumerTest {
             scanner = NoopScanner(),
             gatt = NoopGatt(),
             foregroundRelayCapable = false,
+            secretStatePersistence = secret,
             eventSink = { event ->
                 if (failOnce) {
                     failOnce = false
@@ -618,6 +640,9 @@ class MeshDriveConsumerTest {
 
         assertFailsWith<IllegalStateException> { drive.start() }
         assertTrue(!drive.isRunning)
+        // A failed startup never crosses the first-successful-start fence;
+        // a locked/unavailable provider may therefore be retried here.
+        assertEquals(11L, drive.restoreSecretState())
 
         drive.start()
         assertEquals(listOf("event"), delivered)

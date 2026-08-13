@@ -465,6 +465,9 @@ public final class MeshDrive {
         guard !running else {
             throw MeshSecretStateError.invalidLifecycle
         }
+        guard !hasCompletedStart else {
+            throw MeshSecretStateError.invalidLifecycle
+        }
         let generation = try secretStatePersistence.restoreSecretState()
         if let generation, generation == 0 {
             throw MeshSecretStateError.invalidGeneration
