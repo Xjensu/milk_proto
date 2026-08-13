@@ -127,7 +127,8 @@ unaligned/empty regions, checked-arithmetic overflow, and ranges outside the
 documented board flash capacity. The adapter uses no unsafe code and reports
 re-entrant access as a bounded error instead of panicking.
 
-This does not choose a linker map or journal offset, serialize a complete
-provider snapshot, prove power-loss atomicity, persist the generation floor, or
-validate recovered bundle authenticity. The complete provider remains
-deferred until those board and recovery inputs exist.
+This board adapter does not choose a linker map or journal offset, connect the
+`mmp-core` fixed-store snapshot codec to flash, prove power-loss atomicity,
+persist the generation floor, or validate recovered bundle authenticity. The
+complete board provider remains deferred until those board and recovery inputs
+exist.

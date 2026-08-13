@@ -12,7 +12,7 @@ The two E7 crates have different readiness levels:
 | --- | --- | --- | --- |
 | `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; bounded generic `EmbeddedEventQueue<const CAPACITY>` over the shared `TalEvent` vocabulary | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
 | `mmp-node-embassy` | host check and the same target check pass; focused pump tests pass | `#![no_std]`; bounded `EmbeddedEventPump<INGRESS_CAPACITY, EGRESS_CAPACITY>` reusing the embedded TAL ingress queue and adding fixed-capacity egress | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
-| `mmp-flash-journal` | host tests, Clippy, and the same Cortex-M target check pass | allocation-free, provider-neutral record encoder/scanner plus aligned `JournalBackend` contract and test-only NOR double | no complete board flash provider, snapshot integration, board policy, or `BundleStore` integration |
+| `mmp-flash-journal` | host tests, Clippy, and the same Cortex-M target check pass | allocation-free, provider-neutral record encoder/scanner plus aligned `JournalBackend` contract and test-only NOR double | no complete board flash provider, board snapshot integration, board policy, or `BundleStore` integration |
 
 The following failure is retained as historical evidence from before
 `750c807`; it is not the current result:
@@ -368,4 +368,37 @@ cargo clippy -p mmp-board-nrf52840-dk --target thumbv7em-none-eabihf \
 cargo check -p mmp-board-nrf52840-dk --target thumbv7em-none-eabihf \
   --no-default-features --locked --offline
 cargo fmt --package mmp-board-nrf52840-dk -- --check
+```
+
+## Fixed-store snapshot codec slice (2026-08-13)
+
+`mmp-core::FixedBundleStore` now exposes a deterministic, caller-buffer
+snapshot envelope (`FBS1`, version 1). The image binds the compile-time slot,
+per-slot byte, and aggregate-byte limits, records occupied slots in ascending
+index order, and carries complete `BundleMeta` plus the exact bundle wire
+bytes. Encoding preflights every live record and leaves a short output buffer
+untouched. Restore stages a fresh provider and rejects truncation, trailing
+bytes, duplicate IDs, invalid local metadata, capacity/accounting overflow,
+non-canonical bundle bytes, metadata mismatches, and invalid Ed25519 bundle
+signatures before publishing any slot.
+
+The codec deliberately serializes no reservations, process-local tokens,
+instance IDs, journal generations, or flash state. It uses the existing
+bounded canonical bundle decoder (therefore snapshot validation is allocator-
+dependent even though the provider's admission/read path is allocation-free),
+and provides bundle-signature authenticity only; it does not provide a
+snapshot-level MAC, crash atomicity, or power-loss durability. Local fields
+such as expiry, budget, lifecycle state, and effective priority are bounded
+but are not covered by the bundle signature; a production flash provider must
+authenticate the complete snapshot or fail closed on recovery. Those claims
+remain deferred to the board provider and journal integration.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-core --all-targets --locked --offline                 # 134 passed
+cargo clippy -p mmp-core --all-targets --locked --offline -- -D warnings
+cargo check -p mmp-core --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline
+cargo fmt --package mmp-core -- --check
 ```

@@ -324,5 +324,8 @@ geometry, crash atomicity, or node integration.
 
 The same slice now includes `mmp-core::FixedBundleStore<SLOTS, B, TOTAL>` as a
 host-testable fixed-array reference provider with bounded reservations and
-commit/abort tests. It remains a capacity model only; board geometry, flash
-recovery, and embedded node integration are still open.
+commit/abort tests. Its implementation-local `FBS1` snapshot codec now
+round-trips complete live slots through caller-owned buffers and revalidates
+canonical bundle bytes, metadata bindings, and signatures before restore.
+Reservations, board geometry, flash recovery, snapshot-level authentication,
+and embedded node integration remain open.

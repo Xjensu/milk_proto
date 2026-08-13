@@ -1,10 +1,14 @@
-//! Fixed-capacity, allocation-free reference provider for the embedded seam.
+//! Fixed-capacity reference provider for the embedded seam.
 //!
-//! This is a host-testable capacity model, not a flash driver. It deliberately
-//! makes no durability or power-loss claim and does not implement the legacy
-//! allocating [`crate::BundleStore`] compatibility trait.
+//! Store admission and reads are allocation-free. Snapshot validation reuses
+//! the bounded canonical bundle decoder, so callers should provide an allocator
+//! when taking or restoring snapshots. This is a host-testable capacity model,
+//! not a flash driver: it makes no durability or power-loss claim and does not
+//! implement the legacy allocating [`crate::BundleStore`] compatibility trait.
 
-use mmp_types::consts::MAX_BUNDLE;
+use mmp_types::bundle::Bundle;
+use mmp_types::consts::{L_MAX, MAX_BUNDLE};
+use mmp_types::domain::SigDomain;
 use mmp_types::ids::Id16;
 
 use crate::embedded_store::EmbeddedBundleStore;
@@ -13,6 +17,11 @@ use crate::store::{BundleMeta, StorePutOutcome, StoreReadError};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_INSTANCE_ID: AtomicUsize = AtomicUsize::new(1);
+
+const SNAPSHOT_MAGIC: [u8; 4] = *b"FBS1";
+const SNAPSHOT_VERSION: u8 = 1;
+const SNAPSHOT_HEADER_LEN: usize = 26;
+const SNAPSHOT_META_LEN: usize = 74;
 
 fn allocate_instance_id() -> Option<u64> {
     NEXT_INSTANCE_ID
@@ -38,6 +47,54 @@ pub enum FixedStoreError {
     Conflict,
     /// The token is stale, forged, or belongs to another provider instance.
     InvalidToken,
+}
+
+/// Errors returned by the bounded fixed-store snapshot codec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FixedSnapshotError {
+    /// The caller-provided output buffer is too small.
+    OutputTooSmall {
+        /// The exact buffer length required by the snapshot.
+        required: usize,
+    },
+    /// A checked size calculation overflowed.
+    ArithmeticOverflow,
+    /// The snapshot magic is not supported.
+    InvalidMagic,
+    /// The image version is newer or otherwise unsupported.
+    UnsupportedVersion,
+    /// Reserved header bits are not zero.
+    NonZeroReserved,
+    /// The image ended before a required field or record.
+    Truncated,
+    /// The image contains bytes after the declared records.
+    Trailing,
+    /// The image does not match this compile-time store configuration.
+    CapacityMismatch,
+    /// The record count exceeds the fixed slot bound.
+    CountOutOfRange,
+    /// Occupied slot indices are not strictly increasing or are out of range.
+    SlotOrder,
+    /// More than one record claims the same BundleID.
+    DuplicateId,
+    /// Local metadata is outside the bounded provider policy.
+    InvalidMetadata,
+    /// The embedded bundle is not an exact canonical MMP wire encoding.
+    InvalidBundle,
+    /// The bundle signature does not verify under its origin key.
+    BadSignature,
+    /// The metadata BundleID differs from the canonical bundle-derived ID.
+    BundleIdMismatch,
+    /// The metadata origin differs from the bundle-derived origin NodeID.
+    OriginMismatch,
+    /// Signed bundle routing metadata or encoded length differs from metadata.
+    MetadataMismatch,
+    /// Recomputed committed-byte accounting overflowed.
+    AccountingOverflow,
+    /// Recomputed committed bytes exceed the configured aggregate budget.
+    Capacity,
+    /// The compile-time provider configuration cannot be constructed.
+    InvalidConfiguration,
 }
 
 /// Process-local token returned by [`FixedBundleStore::try_reserve`].
@@ -84,7 +141,13 @@ pub struct FixedBundleStore<const SLOTS: usize, const B: usize, const TOTAL: u64
 impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOTS, B, TOTAL> {
     /// Construct an empty provider after validating static capacity inputs.
     pub fn new(provider: u64) -> Result<Self, FixedStoreError> {
-        if SLOTS == 0 || B == 0 || TOTAL == 0 || B > MAX_BUNDLE {
+        if SLOTS == 0
+            || B == 0
+            || TOTAL == 0
+            || B > MAX_BUNDLE
+            || SLOTS > u32::MAX as usize
+            || B > u32::MAX as usize
+        {
             return Err(FixedStoreError::InvalidConfiguration);
         }
         let instance = allocate_instance_id().ok_or(FixedStoreError::InvalidConfiguration)?;
@@ -347,6 +410,303 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOT
             len: bytes.len(),
         });
     }
+
+    /// Return the exact byte length of the deterministic caller-owned snapshot.
+    ///
+    /// The preflight validates every live record, including its canonical wire
+    /// encoding and signature, before an encoder is allowed to mutate output.
+    pub fn snapshot_encoded_len(&self) -> Result<usize, FixedSnapshotError> {
+        let _ = Self::snapshot_dimensions()?;
+        let mut count = 0usize;
+        let mut required = SNAPSHOT_HEADER_LEN;
+        for (index, slot) in self.slots.iter().enumerate() {
+            let Some(slot) = slot else { continue };
+            self.validate_snapshot_slot(index, slot)?;
+            count = count
+                .checked_add(1)
+                .ok_or(FixedSnapshotError::ArithmeticOverflow)?;
+            required = required
+                .checked_add(4)
+                .and_then(|value| value.checked_add(SNAPSHOT_META_LEN))
+                .and_then(|value| value.checked_add(slot.len))
+                .ok_or(FixedSnapshotError::ArithmeticOverflow)?;
+        }
+        let _ = u32::try_from(count).map_err(|_| FixedSnapshotError::ArithmeticOverflow)?;
+        Ok(required)
+    }
+
+    /// Encode a complete provider snapshot into a caller-owned buffer.
+    pub fn encode_snapshot(&self, out: &mut [u8]) -> Result<usize, FixedSnapshotError> {
+        let required = self.snapshot_encoded_len()?;
+        if out.len() < required {
+            return Err(FixedSnapshotError::OutputTooSmall { required });
+        }
+        let count = self.len();
+        let (slots, slot_bytes) = Self::snapshot_dimensions()?;
+        let mut writer = SnapshotWriter::new(out);
+        writer.bytes(&SNAPSHOT_MAGIC)?;
+        writer.u8(SNAPSHOT_VERSION)?;
+        writer.u8(0)?;
+        writer.u32(slots)?;
+        writer.u32(slot_bytes)?;
+        writer.u64(TOTAL)?;
+        writer.u32(count as u32)?;
+        for (index, slot) in self.slots.iter().enumerate() {
+            let Some(slot) = slot else { continue };
+            writer.u32(index as u32)?;
+            writer.bytes(&slot.meta.id.0)?;
+            writer.u8(slot.meta.class)?;
+            writer.bytes(&slot.meta.origin.0)?;
+            writer.bytes(&slot.meta.dest.0)?;
+            writer.u8(slot.meta.priority)?;
+            writer.u8(slot.meta.effective_priority)?;
+            writer.u32(slot.meta.size)?;
+            writer.u64(slot.meta.stored_at)?;
+            writer.u64(slot.meta.expires_at)?;
+            writer.u8(slot.meta.budget)?;
+            writer.u8(u8::from(slot.meta.own_origin))?;
+            writer.u8(match slot.meta.slot {
+                crate::store::SlotState::Stored => 0,
+                crate::store::SlotState::HandoffPending => 1,
+            })?;
+            writer.bytes(&slot.bytes[..slot.len])?;
+        }
+        Ok(required)
+    }
+
+    /// Restore a complete snapshot into a fresh provider instance.
+    ///
+    /// The provider namespace is supplied by the caller and runtime-only
+    /// reservations/nonces are intentionally not serialized. Any validation
+    /// failure drops the staged store without mutating an externally visible
+    /// provider.
+    pub fn restore_snapshot(provider: u64, input: &[u8]) -> Result<Self, FixedSnapshotError> {
+        let (slots, slot_bytes) = Self::snapshot_dimensions()?;
+        let mut reader = SnapshotReader::new(input);
+        if reader.bytes(4)? != SNAPSHOT_MAGIC {
+            return Err(FixedSnapshotError::InvalidMagic);
+        }
+        if reader.u8()? != SNAPSHOT_VERSION {
+            return Err(FixedSnapshotError::UnsupportedVersion);
+        }
+        if reader.u8()? != 0 {
+            return Err(FixedSnapshotError::NonZeroReserved);
+        }
+        if reader.u32()? != slots || reader.u32()? != slot_bytes || reader.u64()? != TOTAL {
+            return Err(FixedSnapshotError::CapacityMismatch);
+        }
+        let count = reader.u32()? as usize;
+        if count > SLOTS {
+            return Err(FixedSnapshotError::CountOutOfRange);
+        }
+        let mut staged =
+            Self::new(provider).map_err(|_| FixedSnapshotError::InvalidConfiguration)?;
+        let mut previous = None;
+        for _ in 0..count {
+            let index = reader.u32()? as usize;
+            if index >= SLOTS || previous.is_some_and(|last| index <= last) {
+                return Err(FixedSnapshotError::SlotOrder);
+            }
+            previous = Some(index);
+            let meta = SnapshotReader::read_meta(&mut reader)?;
+            let size =
+                usize::try_from(meta.size).map_err(|_| FixedSnapshotError::InvalidMetadata)?;
+            if size > B || size > MAX_BUNDLE {
+                return Err(FixedSnapshotError::InvalidMetadata);
+            }
+            let bytes = reader.bytes(size)?;
+            staged.validate_snapshot_meta(meta)?;
+            staged.validate_bundle(meta, bytes)?;
+            if staged.find_slot(&meta.id).is_some() {
+                return Err(FixedSnapshotError::DuplicateId);
+            }
+            let next_used = staged
+                .used_bytes
+                .checked_add(size as u64)
+                .ok_or(FixedSnapshotError::AccountingOverflow)?;
+            if next_used > TOTAL {
+                return Err(FixedSnapshotError::Capacity);
+            }
+            staged.write_slot(index, meta, bytes);
+            staged.used_bytes = next_used;
+        }
+        if reader.remaining() != 0 {
+            return Err(FixedSnapshotError::Trailing);
+        }
+        Ok(staged)
+    }
+
+    fn validate_snapshot_slot(
+        &self,
+        _index: usize,
+        slot: &FixedSlot<B>,
+    ) -> Result<(), FixedSnapshotError> {
+        self.validate_snapshot_meta(slot.meta)?;
+        self.validate_bundle(slot.meta, &slot.bytes[..slot.len])
+    }
+
+    fn snapshot_dimensions() -> Result<(u32, u32), FixedSnapshotError> {
+        Ok((
+            u32::try_from(SLOTS).map_err(|_| FixedSnapshotError::CapacityMismatch)?,
+            u32::try_from(B).map_err(|_| FixedSnapshotError::CapacityMismatch)?,
+        ))
+    }
+
+    fn validate_snapshot_meta(&self, meta: BundleMeta) -> Result<(), FixedSnapshotError> {
+        let size = usize::try_from(meta.size).map_err(|_| FixedSnapshotError::InvalidMetadata)?;
+        if size > B
+            || size > MAX_BUNDLE
+            || meta.priority > 3
+            || meta.effective_priority > 3
+            || meta.budget > L_MAX
+            || meta.expires_at < meta.stored_at
+        {
+            return Err(FixedSnapshotError::InvalidMetadata);
+        }
+        Ok(())
+    }
+
+    fn validate_bundle(&self, meta: BundleMeta, bytes: &[u8]) -> Result<(), FixedSnapshotError> {
+        let bundle =
+            Bundle::decode_canonical(bytes).map_err(|_| FixedSnapshotError::InvalidBundle)?;
+        if bundle.encode() != bytes {
+            return Err(FixedSnapshotError::InvalidBundle);
+        }
+        if bundle.id() != meta.id {
+            return Err(FixedSnapshotError::BundleIdMismatch);
+        }
+        if bundle.origin_node() != meta.origin {
+            return Err(FixedSnapshotError::OriginMismatch);
+        }
+        if bundle.class != meta.class
+            || bundle.dest != meta.dest
+            || bundle.priority != meta.priority
+            || bytes.len() != meta.size as usize
+        {
+            return Err(FixedSnapshotError::MetadataMismatch);
+        }
+        mmp_crypto::verify(
+            SigDomain::Bundle,
+            &bundle.origin,
+            &bundle.canonical_zeroed(),
+            &bundle.signature,
+        )
+        .map_err(|_| FixedSnapshotError::BadSignature)
+    }
+}
+
+struct SnapshotWriter<'a> {
+    out: &'a mut [u8],
+    pos: usize,
+}
+
+impl<'a> SnapshotWriter<'a> {
+    fn new(out: &'a mut [u8]) -> Self {
+        Self { out, pos: 0 }
+    }
+
+    fn bytes(&mut self, bytes: &[u8]) -> Result<(), FixedSnapshotError> {
+        let end = self
+            .pos
+            .checked_add(bytes.len())
+            .ok_or(FixedSnapshotError::ArithmeticOverflow)?;
+        if end > self.out.len() {
+            return Err(FixedSnapshotError::OutputTooSmall { required: end });
+        }
+        self.out[self.pos..end].copy_from_slice(bytes);
+        self.pos = end;
+        Ok(())
+    }
+
+    fn u8(&mut self, value: u8) -> Result<(), FixedSnapshotError> {
+        self.bytes(&[value])
+    }
+    fn u32(&mut self, value: u32) -> Result<(), FixedSnapshotError> {
+        self.bytes(&value.to_le_bytes())
+    }
+    fn u64(&mut self, value: u64) -> Result<(), FixedSnapshotError> {
+        self.bytes(&value.to_le_bytes())
+    }
+}
+
+struct SnapshotReader<'a> {
+    input: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> SnapshotReader<'a> {
+    fn new(input: &'a [u8]) -> Self {
+        Self { input, pos: 0 }
+    }
+    fn remaining(&self) -> usize {
+        self.input.len().saturating_sub(self.pos)
+    }
+
+    fn bytes(&mut self, len: usize) -> Result<&'a [u8], FixedSnapshotError> {
+        let end = self
+            .pos
+            .checked_add(len)
+            .ok_or(FixedSnapshotError::Truncated)?;
+        if end > self.input.len() {
+            return Err(FixedSnapshotError::Truncated);
+        }
+        let bytes = &self.input[self.pos..end];
+        self.pos = end;
+        Ok(bytes)
+    }
+
+    fn u8(&mut self) -> Result<u8, FixedSnapshotError> {
+        Ok(self.bytes(1)?[0])
+    }
+    fn u32(&mut self) -> Result<u32, FixedSnapshotError> {
+        let bytes = self.bytes(4)?;
+        Ok(u32::from_le_bytes(
+            bytes.try_into().expect("fixed reader width"),
+        ))
+    }
+    fn u64(&mut self) -> Result<u64, FixedSnapshotError> {
+        let bytes = self.bytes(8)?;
+        Ok(u64::from_le_bytes(
+            bytes.try_into().expect("fixed reader width"),
+        ))
+    }
+
+    fn read_meta(&mut self) -> Result<BundleMeta, FixedSnapshotError> {
+        let id = Id16(self.bytes(16)?.try_into().expect("fixed reader width"));
+        let class = self.u8()?;
+        let origin = Id16(self.bytes(16)?.try_into().expect("fixed reader width"));
+        let dest = Id16(self.bytes(16)?.try_into().expect("fixed reader width"));
+        let priority = self.u8()?;
+        let effective_priority = self.u8()?;
+        let size = self.u32()?;
+        let stored_at = self.u64()?;
+        let expires_at = self.u64()?;
+        let budget = self.u8()?;
+        let own_origin = match self.u8()? {
+            0 => false,
+            1 => true,
+            _ => return Err(FixedSnapshotError::InvalidMetadata),
+        };
+        let slot = match self.u8()? {
+            0 => crate::store::SlotState::Stored,
+            1 => crate::store::SlotState::HandoffPending,
+            _ => return Err(FixedSnapshotError::InvalidMetadata),
+        };
+        Ok(BundleMeta {
+            id,
+            class,
+            origin,
+            dest,
+            priority,
+            effective_priority,
+            size,
+            stored_at,
+            expires_at,
+            budget,
+            own_origin,
+            slot,
+        })
+    }
 }
 
 impl<const SLOTS: usize, const B: usize, const TOTAL: u64> EmbeddedBundleStore
@@ -425,10 +785,14 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> EmbeddedBundleStore
 
 #[cfg(test)]
 mod tests {
-    use super::{FixedBundleStore, FixedStoreError};
+    use super::{FixedBundleStore, FixedSnapshotError, FixedStoreError};
     use crate::embedded_store::EmbeddedBundleStore;
     use crate::store::{BundleMeta, SlotState, StorePutOutcome, StoreReadError};
+    use mmp_crypto::Identity;
+    use mmp_types::bundle::{class, Bundle};
+    use mmp_types::domain::SigDomain;
     use mmp_types::ids::Id16;
+    use mmp_types::ids::Sig64;
 
     type Store = FixedBundleStore<2, 8, 12>;
 
@@ -596,5 +960,126 @@ mod tests {
         assert!(FixedBundleStore::<0, 8, 12>::new(1).is_err());
         assert!(FixedBundleStore::<1, 0, 12>::new(1).is_err());
         assert!(FixedBundleStore::<1, 8, 0>::new(1).is_err());
+    }
+
+    fn signed_bundle(seed: u8, payload: &[u8]) -> Bundle {
+        let identity = Identity::from_seed(&[seed; 32]);
+        let mut bundle = Bundle {
+            class: class::DIRECT,
+            flags: 0,
+            origin: identity.public(),
+            dest: Id16([3; 16]),
+            lifetime_ms: 60_000,
+            priority: 1,
+            exts: alloc::vec::Vec::new(),
+            payload: payload.to_vec(),
+            signature: Sig64::ZERO,
+        };
+        bundle.signature = identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle
+    }
+
+    fn bundle_meta(bundle: &Bundle, now: u64) -> BundleMeta {
+        BundleMeta {
+            id: bundle.id(),
+            class: bundle.class,
+            origin: bundle.origin_node(),
+            dest: bundle.dest,
+            priority: bundle.priority,
+            effective_priority: bundle.priority,
+            size: bundle.encode().len() as u32,
+            stored_at: now,
+            expires_at: now + bundle.lifetime_ms,
+            budget: 4,
+            own_origin: true,
+            slot: SlotState::Stored,
+        }
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_live_records_and_drops_reservations() {
+        type SnapshotStore = FixedBundleStore<3, 512, 1_024>;
+        let bundle = signed_bundle(17, b"snapshot payload");
+        let wire = bundle.encode();
+        let bundle_metadata = bundle_meta(&bundle, 123);
+        let mut store = SnapshotStore::new(9).unwrap();
+        store.try_put(bundle_metadata, &wire).unwrap();
+        let reservation = store.try_reserve(meta(2, 4, 900)).unwrap();
+
+        let required = store.snapshot_encoded_len().unwrap();
+        let mut image = alloc::vec![0u8; required];
+        assert_eq!(store.encode_snapshot(&mut image).unwrap(), required);
+
+        let restored = SnapshotStore::restore_snapshot(11, &image).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored.used_bytes(), wire.len() as u64);
+        let mut read = [0u8; 512];
+        assert_eq!(
+            restored.read_bundle(&bundle.id(), &mut read).unwrap(),
+            wire.len()
+        );
+        assert_eq!(&read[..wire.len()], wire.as_slice());
+        assert_eq!(
+            restored.read_meta(
+                &bundle.id(),
+                &mut BundleMeta {
+                    id: Id16::MIN,
+                    class: 0,
+                    origin: Id16::MIN,
+                    dest: Id16::MIN,
+                    priority: 0,
+                    effective_priority: 0,
+                    size: 0,
+                    stored_at: 0,
+                    expires_at: 0,
+                    budget: 0,
+                    own_origin: false,
+                    slot: SlotState::Stored,
+                }
+            ),
+            Ok(())
+        );
+        assert_eq!(store.abort_reservation(&reservation), Ok(()));
+    }
+
+    #[test]
+    fn snapshot_encode_preflights_output_without_mutation() {
+        type SnapshotStore = FixedBundleStore<1, 512, 1_024>;
+        let bundle = signed_bundle(18, b"preflight");
+        let wire = bundle.encode();
+        let mut store = SnapshotStore::new(1).unwrap();
+        store.try_put(bundle_meta(&bundle, 1), &wire).unwrap();
+        let required = store.snapshot_encoded_len().unwrap();
+        let mut too_small = alloc::vec![0xA5; required - 1];
+        assert_eq!(
+            store.encode_snapshot(&mut too_small),
+            Err(FixedSnapshotError::OutputTooSmall { required })
+        );
+        assert!(too_small.iter().all(|byte| *byte == 0xA5));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_trailing_bytes_and_forged_wire() {
+        type SnapshotStore = FixedBundleStore<1, 512, 1_024>;
+        let bundle = signed_bundle(19, b"reject");
+        let wire = bundle.encode();
+        let mut store = SnapshotStore::new(1).unwrap();
+        store.try_put(bundle_meta(&bundle, 1), &wire).unwrap();
+        let mut image = alloc::vec![0u8; store.snapshot_encoded_len().unwrap()];
+        store.encode_snapshot(&mut image).unwrap();
+
+        let mut trailing = image.clone();
+        trailing.push(0);
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &trailing),
+            Err(FixedSnapshotError::Trailing)
+        ));
+
+        let last = image.len() - 1;
+        image[last] ^= 1;
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &image),
+            Err(FixedSnapshotError::BadSignature)
+        ));
     }
 }

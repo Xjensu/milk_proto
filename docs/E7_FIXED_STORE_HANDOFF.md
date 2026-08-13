@@ -329,3 +329,34 @@ cargo clippy -p mmp-flash-journal --all-targets --locked -- -D warnings  passed
 cargo check -p mmp-flash-journal \
   --target thumbv7em-none-eabihf --no-default-features --locked  passed
 ```
+
+## Complete fixed-store snapshot codec (2026-08-13)
+
+**Task status: FIXED.** `mmp-core::FixedBundleStore<SLOTS, B, TOTAL>` now has
+`snapshot_encoded_len`, `encode_snapshot`, and `restore_snapshot`. The
+implementation-local `FBS1` image is deterministic and caller-buffered: it
+binds the provider dimensions, serializes occupied slots in index order, and
+stores complete metadata plus exact bundle wire bytes. Restore is staged into
+a fresh store, so malformed input cannot publish a prefix. It validates strict
+canonical bundle re-encoding, BundleID/origin/class/destination/priority/size
+bindings, local bounds, duplicate IDs, checked accounting, and the strict
+Ed25519 bundle signature. Reservations and process-local token state are
+intentionally not persisted.
+
+This is not a wire-protocol or specification change. The codec uses the
+existing bounded `Bundle::decode_canonical` path, so snapshot validation may
+allocate under the crate's existing bounded decoder even though fixed-store
+admission and reads are allocation-free. The image has no snapshot-level MAC
+and makes no journal, flash atomicity, or power-loss durability claim. Local
+fields such as expiry, budget, lifecycle state, and effective priority are
+bounded but are not covered by the bundle signature; a production flash
+provider must authenticate the complete snapshot or fail closed on recovery.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-core --all-targets --locked --offline                 # 134 passed
+cargo clippy -p mmp-core --all-targets --locked --offline -- -D warnings
+cargo check -p mmp-core --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline
+```

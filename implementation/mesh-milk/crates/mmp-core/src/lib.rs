@@ -29,7 +29,7 @@ pub use authority::{effective_class5_priority, AuthorityStore, CertReject, RootT
 pub use claims::{ClaimMerge, ClaimStore};
 pub use dag::{ConversationDag, DagSnapshotError};
 pub use embedded_store::EmbeddedBundleStore;
-pub use fixed_store::{FixedBundleStore, FixedReservation, FixedStoreError};
+pub use fixed_store::{FixedBundleStore, FixedReservation, FixedSnapshotError, FixedStoreError};
 pub use ingest::{ingest, Disposition, DropReason};
 pub use orset::{MembershipOp, OrSet};
 pub use rbsr::{fingerprint, IdSource, Reconciler};
