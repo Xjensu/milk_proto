@@ -2144,6 +2144,9 @@ mod tests {
             source.conv_epoch(&peer_id).is_some(),
             "conversation state must be live before vault save"
         );
+        let saved_epoch = source
+            .conv_epoch(&peer_id)
+            .expect("established conversation epoch before vault save");
 
         let mut vault = open_host_vault(Some(&path_string)).unwrap();
         assert!(
@@ -2161,6 +2164,11 @@ mod tests {
         for claim in peer.own_claims() {
             restored.ingest_claim(claim, true);
         }
+        assert_eq!(
+            restored.conv_epoch(&peer_id),
+            Some(saved_epoch),
+            "save-on-exit vault restore must recover the existing ratchet epoch, not create a fresh first-contact state"
+        );
         let mut clock = SequenceClock::new([2_000]);
         prime_node_clock(&mut restored, &mut clock);
         assert!(

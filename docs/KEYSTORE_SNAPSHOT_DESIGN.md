@@ -224,6 +224,24 @@ opaque sealed-record path may therefore be exercised by the Rust/Windows
 provider slice, but complete platform persistence remains gated on the
 unverified acceptance items above.
 
+### PC restart verification update (2026-08-13)
+
+The Windows-gated CLI test
+`cli_vault_save_on_exit_round_trips_non_empty_secret_state` now compares the
+conversation epoch before save with the epoch after vault reopen and restore,
+then sends again. This prevents a false positive in which the post-restart
+send would silently create a new first-contact conversation. The provider
+test `restart_recovers_latest_record_and_floor_across_torn_tail` separately
+closes and reopens the journal, unwraps the latest encrypted generation, and
+proves that an incomplete later append cannot lower the durable floor.
+
+The tests establish the Rust/Windows restart invariant only. They do not close
+the Android/iOS keystore adapters or physical kill/restart gates. `mmp-cli`
+also has pre-existing repository-wide rustfmt drift outside this test change;
+the focused test code itself is formatted, while a formatter-wide cleanup is
+deferred to a separate hygiene task to avoid mixing unrelated rewrites into
+the persistence commit.
+
 ## Windows adapter evidence (2026-08-11)
 
 `mmp-node/src/vault_windows.rs` is a target-gated implementation of the

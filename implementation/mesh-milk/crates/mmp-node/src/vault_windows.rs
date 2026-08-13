@@ -743,4 +743,76 @@ mod tests {
         lock.push(".lock");
         let _ = fs::remove_file(lock);
     }
+
+    #[test]
+    fn restart_recovers_latest_record_and_floor_across_torn_tail() {
+        let path = temp_path("restart-tail");
+        let context = b"MMPCTX01-restart-tail-context".to_vec();
+        let dek = [0x66; 32];
+        let first = SealedCandidate {
+            generation: 1,
+            context: context.clone(),
+            envelope: vec![1, 2, 3],
+        };
+        let second = SealedCandidate {
+            generation: 2,
+            context: context.clone(),
+            envelope: vec![4, 5, 6],
+        };
+
+        {
+            let mut vault = WindowsDpapiVault::open(&path).unwrap();
+            vault.commit(0, first, &dek).unwrap();
+        }
+
+        {
+            let mut reopened = WindowsDpapiVault::open(&path).unwrap();
+            assert_eq!(reopened.generation_floor().unwrap(), 1);
+            let record = reopened.load().unwrap().unwrap();
+            assert_eq!(record.generation, 1);
+            assert_eq!(
+                *reopened
+                    .unwrap_dek(&record.context, &record.wrapped_dek)
+                    .unwrap(),
+                dek
+            );
+            reopened.commit(1, second, &dek).unwrap();
+        }
+
+        // Model a crash while the next complete entry is being appended.  A
+        // prefix past the header exercises the parser's incomplete-payload
+        // branch, not only the short-header branch covered above.
+        let torn = encode_entry(
+            &SealedRecord {
+                generation: 3,
+                context: context.clone(),
+                envelope: vec![7, 8, 9],
+                wrapped_dek: vec![0xaa; 32],
+            },
+            0,
+        )
+        .unwrap();
+        let torn_len = JOURNAL_HEADER_LEN + 3;
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(&torn[..torn_len]).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let mut reopened = WindowsDpapiVault::open(&path).unwrap();
+        assert_eq!(reopened.generation_floor().unwrap(), 2);
+        let record = reopened.load().unwrap().unwrap();
+        assert_eq!(record.generation, 2);
+        assert_eq!(record.envelope, vec![4, 5, 6]);
+        assert_eq!(
+            *reopened
+                .unwrap_dek(&record.context, &record.wrapped_dek)
+                .unwrap(),
+            dek
+        );
+
+        let _ = fs::remove_file(&path);
+        let mut lock = path.as_os_str().to_os_string();
+        lock.push(".lock");
+        let _ = fs::remove_file(lock);
+    }
 }
