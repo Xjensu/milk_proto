@@ -402,3 +402,14 @@ cargo check -p mmp-core --target thumbv7em-none-eabihf \
   --no-default-features --locked --offline
 cargo fmt --package mmp-core -- --check
 ```
+
+## Validator-gated journal recovery slice (2026-08-13)
+
+`mmp-flash-journal::scan_validated` now requires a caller-supplied validator
+to accept the selected highest-generation payload before recovery returns it.
+A checksum-valid but semantically invalid snapshot is returned as an error and
+cannot silently downgrade to an older generation. The API is allocation-free
+and format-neutral; it does not provide snapshot authentication, durable
+generation floors, or flash atomicity. The future board provider must compose
+it with `FixedBundleStore::restore_snapshot`, a profile integrity mechanism,
+and the existing quarantine/indeterminate-write state machine.

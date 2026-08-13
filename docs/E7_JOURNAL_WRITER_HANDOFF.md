@@ -58,3 +58,30 @@ Choose one named board geometry and implement its `JournalBackend` adapter.
 That adapter must document erase/program ordering, partial-write behavior,
 power-loss tests, and the `Committed`/`NotCommitted`/`Indeterminate` recovery
 mapping before it is connected to the finite provider or producer state.
+
+## Validator-gated recovery scan (2026-08-13)
+
+**Task status: FIXED.** `mmp-flash-journal::scan_validated` now wraps the
+existing allocation-free framing scan with a caller-supplied bounded validator
+for the selected highest-generation record. The validator runs before the
+`ScanResult` is returned to a provider; if it rejects the payload, recovery
+returns the caller's error and never silently falls back to an older
+generation. This prevents a checksum-valid but semantically corrupt snapshot
+from being published as provider state. Empty journals remain successful and
+do not invoke the validator.
+
+The function does not authenticate snapshots itself, persist a generation
+floor, or establish flash atomicity. A board provider must pass a validator
+that performs canonical snapshot decoding, bundle signature/metadata checks,
+and any profile-specific integrity check, then apply its durable rollback and
+indeterminate-write policy.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-flash-journal --all-targets --locked --offline
+cargo clippy -p mmp-flash-journal --all-targets --locked --offline -- -D warnings
+cargo check -p mmp-flash-journal --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline
+cargo fmt --package mmp-flash-journal -- --check
+```

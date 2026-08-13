@@ -785,7 +785,10 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> EmbeddedBundleStore
 
 #[cfg(test)]
 mod tests {
-    use super::{FixedBundleStore, FixedSnapshotError, FixedStoreError};
+    use super::{
+        FixedBundleStore, FixedSnapshotError, FixedStoreError, SNAPSHOT_HEADER_LEN,
+        SNAPSHOT_META_LEN,
+    };
     use crate::embedded_store::EmbeddedBundleStore;
     use crate::store::{BundleMeta, SlotState, StorePutOutcome, StoreReadError};
     use mmp_crypto::Identity;
@@ -996,6 +999,25 @@ mod tests {
         }
     }
 
+    fn two_bundle_snapshot() -> (alloc::vec::Vec<u8>, usize) {
+        type SnapshotStore = FixedBundleStore<2, 512, 2_048>;
+        let first = signed_bundle(30, b"same-size");
+        let second = signed_bundle(31, b"same-size");
+        let first_wire = first.encode();
+        let second_wire = second.encode();
+        assert_eq!(first_wire.len(), second_wire.len());
+
+        let mut store = SnapshotStore::new(1).unwrap();
+        store.try_put(bundle_meta(&first, 1), &first_wire).unwrap();
+        store
+            .try_put(bundle_meta(&second, 1), &second_wire)
+            .unwrap();
+        let required = store.snapshot_encoded_len().unwrap();
+        let mut image = alloc::vec![0u8; required];
+        store.encode_snapshot(&mut image).unwrap();
+        (image, first_wire.len())
+    }
+
     #[test]
     fn snapshot_round_trip_preserves_live_records_and_drops_reservations() {
         type SnapshotStore = FixedBundleStore<3, 512, 1_024>;
@@ -1081,5 +1103,102 @@ mod tests {
             SnapshotStore::restore_snapshot(1, &image),
             Err(FixedSnapshotError::BadSignature)
         ));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_capacity_header_mismatch() {
+        type SnapshotStore = FixedBundleStore<1, 512, 1_024>;
+        let bundle = signed_bundle(22, b"capacity");
+        let wire = bundle.encode();
+        let mut store = SnapshotStore::new(1).unwrap();
+        store.try_put(bundle_meta(&bundle, 1), &wire).unwrap();
+        let required = store.snapshot_encoded_len().unwrap();
+        let mut image = alloc::vec![0u8; required];
+        store.encode_snapshot(&mut image).unwrap();
+
+        // Header layout: magic[4], version, reserved, slots[4].
+        image[6..10].copy_from_slice(&2u32.to_le_bytes());
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &image),
+            Err(FixedSnapshotError::CapacityMismatch)
+        ));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_malformed_local_metadata() {
+        type SnapshotStore = FixedBundleStore<1, 512, 1_024>;
+        let bundle = signed_bundle(23, b"metadata");
+        let wire = bundle.encode();
+        let mut store = SnapshotStore::new(1).unwrap();
+        store.try_put(bundle_meta(&bundle, 1), &wire).unwrap();
+        let mut image = alloc::vec![0u8; store.snapshot_encoded_len().unwrap()];
+        store.encode_snapshot(&mut image).unwrap();
+
+        // Record layout starts with slot_index[4], then id[16], class[1],
+        // origin[16], dest[16], priority[1]. Priority values above 3 are
+        // outside the local provider policy.
+        let priority_offset = SNAPSHOT_HEADER_LEN + 4 + 16 + 1 + 16 + 16;
+        image[priority_offset] = 4;
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &image),
+            Err(FixedSnapshotError::InvalidMetadata)
+        ));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_duplicate_occupied_slot() {
+        let (mut image, wire_len) = two_bundle_snapshot();
+        let second_record_start = SNAPSHOT_HEADER_LEN + 4 + SNAPSHOT_META_LEN + wire_len;
+        // Reuse the first occupied slot index. The decoder requires strictly
+        // increasing indices, so this is rejected before any staged mutation
+        // can become visible.
+        image[second_record_start..second_record_start + 4].copy_from_slice(&0u32.to_le_bytes());
+        type SnapshotStore = FixedBundleStore<2, 512, 2_048>;
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &image),
+            Err(FixedSnapshotError::SlotOrder)
+        ));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_duplicate_bundle_id() {
+        let (mut image, wire_len) = two_bundle_snapshot();
+        let first_data_start = SNAPSHOT_HEADER_LEN + 4;
+        let second_record_start = SNAPSHOT_HEADER_LEN + 4 + SNAPSHOT_META_LEN + wire_len;
+        let second_data_start = second_record_start + 4;
+        let record_data_len = SNAPSHOT_META_LEN + wire_len;
+        // Keep the second slot index (1), but make its metadata and payload
+        // an exact copy of slot 0. Both records then validate individually,
+        // and the duplicate BundleID invariant is exercised directly.
+        image.copy_within(
+            first_data_start..first_data_start + record_data_len,
+            second_data_start,
+        );
+        type SnapshotStore = FixedBundleStore<2, 512, 2_048>;
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &image),
+            Err(FixedSnapshotError::DuplicateId)
+        ));
+    }
+
+    #[test]
+    fn snapshot_restore_rejects_late_record_without_partial_state() {
+        let (image, wire_len) = two_bundle_snapshot();
+        let mut malformed = image.clone();
+        let second_record_start = SNAPSHOT_HEADER_LEN + 4 + SNAPSHOT_META_LEN + wire_len;
+        // The final metadata byte is the encoded SlotState; 2 is undefined.
+        let slot_state_offset = second_record_start + 4 + SNAPSHOT_META_LEN - 1;
+        malformed[slot_state_offset] = 2;
+        type SnapshotStore = FixedBundleStore<2, 512, 2_048>;
+        assert!(matches!(
+            SnapshotStore::restore_snapshot(1, &malformed),
+            Err(FixedSnapshotError::InvalidMetadata)
+        ));
+
+        // A rejected image must not poison subsequent restores or leak the
+        // first staged record. Restoring the original image remains complete.
+        let restored = SnapshotStore::restore_snapshot(1, &image).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored.used_bytes(), (2 * wire_len) as u64);
     }
 }

@@ -599,6 +599,28 @@ pub fn scan(image: &[u8]) -> ScanResult<'_> {
     result
 }
 
+/// Scan a journal and validate the selected highest-generation payload before
+/// returning it to a provider.
+///
+/// Framing, checksum, and commit-marker validity are not authenticity. The
+/// caller supplies the bounded validator used for the complete provider
+/// snapshot (for example, canonical decoding plus bundle-signature and
+/// metadata checks). If the selected record fails validation, this function
+/// returns the caller's error instead of falling back to an older generation;
+/// silently falling back could turn corruption into an undetected rollback.
+/// An empty structurally valid journal returns `Ok` with no selected record and
+/// does not invoke the validator.
+pub fn scan_validated<'a, F, E>(image: &'a [u8], validator: F) -> Result<ScanResult<'a>, E>
+where
+    F: FnOnce(Record<'a>) -> Result<(), E>,
+{
+    let result = scan(image);
+    if let Some(record) = result.selected {
+        validator(record)?;
+    }
+    Ok(result)
+}
+
 fn checksum(body: &[u8]) -> [u8; CHECKSUM_LEN] {
     let mut hasher = blake3::Hasher::new_derive_key("mmp flash journal v1");
     hasher.update(body);
@@ -714,6 +736,41 @@ mod tests {
         assert_eq!(result.selected.unwrap().generation, 3);
         assert_eq!(result.selected.unwrap().payload, b"latest");
         assert_eq!(result.valid, 3);
+    }
+
+    #[test]
+    fn validated_scan_rejects_selected_snapshot_before_publication() {
+        let mut image = [0u8; 256];
+        let mut used = 0;
+        append(&mut image, &mut used, 4, b"trusted");
+        append(&mut image, &mut used, 9, b"corrupt-snapshot");
+
+        let result = scan_validated(&image[..used], |record| {
+            if record.payload == b"trusted" {
+                Ok(())
+            } else {
+                Err(())
+            }
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validated_scan_returns_only_a_validated_highest_generation() {
+        let mut image = [0u8; 256];
+        let mut used = 0;
+        append(&mut image, &mut used, 4, b"old");
+        append(&mut image, &mut used, 9, b"new");
+
+        let result = scan_validated(&image[..used], |record| {
+            if record.payload == b"new" {
+                Ok(())
+            } else {
+                Err(())
+            }
+        })
+        .unwrap();
+        assert_eq!(result.selected.unwrap().generation, 9);
     }
 
     #[test]
