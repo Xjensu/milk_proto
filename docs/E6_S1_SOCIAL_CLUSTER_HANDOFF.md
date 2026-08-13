@@ -190,3 +190,29 @@ or performance claim. The current comparison matrix includes all four
 research-only schedule families, including the bounded-heavy-tail control;
 long trace-replay runs must retain the same metric block and add confidence
 intervals before any OQ-4 interpretation.
+
+## 2026-08-14 local paired control run
+
+The two bounded clustered controls were run locally with the same release
+binary, workload shape, and 5,000-meeting budget. The command was:
+
+```text
+cargo test -p mmp-sim clustered_mobility_measurement_is_reproducible \
+  --release --locked -- --ignored --nocapture --test-threads=1
+```
+
+Environment: `rustc 1.96.1`, `cargo 1.96.1`, commit
+`3f0136de53ffe6c56a0d36917d784317d764d1b2`. The run used the existing N=100
+control constants, not the 1,000-node scale scenario:
+
+| control | delivery ratio | p50 latency (ms) | p90 latency (ms) | meetings | simulated hours |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| periodic clustered | 0.200 | 6,146,595 | 8,569,084 | 5,000 | 4.21 |
+| social clustered | 0.100 | 5,109,118 | 5,109,118 | 5,000 | 4.19 |
+
+The social run realized 583 bridge meetings (116 per mille) and a maximum
+intra-community streak of 43. These observations are a reproducible toy-model
+control result only. They do not provide trace calibration, confidence
+intervals, a 1,000/10,000-node validation, a BLE-energy measurement, or an
+MMP/Φ improvement claim. The next evidence step is repeated fixed-seed runs
+and trace-backed calibration with the full metric block.

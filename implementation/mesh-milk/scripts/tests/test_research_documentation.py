@@ -29,6 +29,19 @@ class ResearchDocumentationTests(unittest.TestCase):
         self.assertIn("uniform-random, periodic-clustered, social-clustered, and", simulation)
         self.assertIn("bounded-heavy-tail-clustered", simulation)
 
+    def test_clustered_control_run_records_provenance_and_limits_claims(self) -> None:
+        handoff = (REPO_ROOT / "docs" / "E6_S1_SOCIAL_CLUSTER_HANDOFF.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("2026-08-14 local paired control run", handoff)
+        self.assertIn("rustc 1.96.1", handoff)
+        self.assertIn("3f0136de53ffe6c56a0d36917d784317d764d1b2", handoff)
+        self.assertIn("periodic clustered | 0.200", handoff)
+        self.assertIn("social clustered | 0.100", handoff)
+        self.assertIn("do not provide trace calibration, confidence", handoff.lower())
+        self.assertIn("mmp/φ improvement claim", handoff.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
