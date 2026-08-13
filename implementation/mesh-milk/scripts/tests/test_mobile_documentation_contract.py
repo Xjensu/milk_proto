@@ -171,6 +171,33 @@ class MobileDocumentationContractTests(unittest.TestCase):
             self.react_native,
         )
 
+    def test_source_comments_use_current_mobile_contract_references(self) -> None:
+        """Historical HANDOFF_MOBILE references must not reappear in source docs."""
+        node_source = (
+            REPO_ROOT
+            / "implementation"
+            / "mesh-milk"
+            / "crates"
+            / "mmp-node"
+            / "src"
+            / "lib.rs"
+        ).read_text(encoding="utf-8")
+        mobile_source = (
+            REPO_ROOT
+            / "implementation"
+            / "mesh-milk"
+            / "crates"
+            / "mmp-tal-mobile"
+            / "src"
+            / "lib.rs"
+        ).read_text(encoding="utf-8")
+
+        for source in (node_source, mobile_source):
+            self.assertNotIn("HANDOFF_MOBILE", source)
+        self.assertIn("MOBILE_INTEGRATION.md", node_source)
+        self.assertIn("API_REFERENCE.md", node_source)
+        self.assertIn("MOBILE_INTEGRATION.md", mobile_source)
+
 
 if __name__ == "__main__":
     unittest.main()

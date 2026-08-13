@@ -4,7 +4,8 @@
 //! identity + claims gossip, direct messaging with delivery receipts, group
 //! messaging (sender keys + epochs), spray routing, session management over
 //! any TAL, a tier ladder, and the event stream every app is a projection of
-//! (HANDOFF_MOBILE §2).
+//! (see `implementation/mesh-milk/MOBILE_INTEGRATION.md`, "The event stream is
+//! the app").
 //!
 //! Drive model (Doze-honest, doc 12 §6): the node never sleeps on its own
 //! timers. The host feeds [`TalEvent`]s and calls [`Node::tick`] with a
@@ -224,7 +225,7 @@ pub enum Tier {
     Anchor = 3,
 }
 
-/// Delivery status, mapped 1:1 to protocol facts (HANDOFF_MOBILE §3).
+/// Delivery status, mapped 1:1 to protocol facts (`docs/API_REFERENCE.md` §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryState {
     /// Sent locally, not yet handed off to any peer.

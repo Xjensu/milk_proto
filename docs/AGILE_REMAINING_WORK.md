@@ -90,7 +90,8 @@ remaining work by the project priority queue.
 
 ### AG-P1-01 — Linux/BlueZ peripheral build and runtime
 
-- **Source/status:** E3-S1; `OPEN`.
+- **Source/status:** E3-S1 host-testable implementation shipped; Linux/BlueZ
+  build and runtime evidence remains `OPEN / HARDWARE-GATED`.
 - **Scope:** build and run the peripheral role with BlueZ/libdbus on Linux.
 - **Acceptance:** documented build, adapter discovery, listen/connect lifecycle,
   and focused tests pass on a real Linux host.
@@ -133,7 +134,8 @@ remaining work by the project priority queue.
 
 ### AG-P1-06 — React Native native declarations and consumer validation
 
-- **Source/status:** E4-S3 and `REACT_NATIVE_INTEGRATION.md`; `OPEN`.
+- **Source/status:** E4-S3 and
+  `implementation/mesh-milk/REACT_NATIVE_INTEGRATION.md`; `OPEN`.
 - **Scope:** add the native TurboModule declarations/codegen and validate a
   consumer build/runtime against the existing FFI surface.
 - **Acceptance:** generated declarations match Kotlin/Swift/Rust surfaces;

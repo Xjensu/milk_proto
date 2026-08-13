@@ -61,6 +61,24 @@ class ReleaseDocumentationTests(unittest.TestCase):
         self.assertIn("E8-S3 · Store-compliance dossier", backlog)
         self.assertIn("DOSSIER DONE (2026-08-09; app-store gates remain open)", backlog)
 
+    def test_backlog_peripheral_status_does_not_reopen_shipped_role(self) -> None:
+        backlog = (REPO_ROOT / "docs" / "AGILE_BACKLOG.md").read_text(
+            encoding="utf-8"
+        )
+        remaining = (REPO_ROOT / "docs" / "AGILE_REMAINING_WORK.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "host-testable peripheral role shipped; Linux/BlueZ runtime and real exchange remain open",
+            backlog,
+        )
+        self.assertNotIn("API complete; peripheral role missing (E3-S1)", backlog)
+        self.assertIn(
+            "E3-S1 host-testable implementation shipped; Linux/BlueZ",
+            remaining,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

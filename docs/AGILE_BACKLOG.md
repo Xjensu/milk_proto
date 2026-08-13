@@ -55,7 +55,7 @@ Radio crates are byte shuttles — no protocol logic that isn't equally testable
 
 | Consumer | Surface | Transport | Status today |
 |---|---|---|---|
-| Rust desktop/server app | `mmp_node::Node` (sans-IO: `tick(now_ms)`, `on_tal_event`, `poll_send`, `poll_event`) | `mmp-tal-btleplug` (central) + `mmp-tal-peripheral` (new) | API complete; peripheral role missing (E3-S1) |
+| Rust desktop/server app | `mmp_node::Node` (sans-IO: `tick(now_ms)`, `on_tal_event`, `poll_send`, `poll_event`) | `mmp-tal-btleplug` (central) + `mmp-tal-peripheral` (peripheral) | API and host-testable peripheral role shipped; Linux/BlueZ runtime and real exchange remain open (E3-S1/E3-S2) |
 | Android / iOS app | `mmp-ffi` UniFFI `MmpNode` object (Kotlin/Swift bindings) + platform-owned GATT shell per `MOBILE_INTEGRATION.md` | Platform BLE stack (Kotlin/Swift modules, E4-S1/S2) | FFI surface complete; SDK-free Android/Swift radio-shell boundaries now exist; native bindings, SDK builds, and hardware remain open gates |
 | React Native app | npm package wrapping the TurboModule spec in `REACT_NATIVE_INTEGRATION.md` | same as mobile | Spec-only |
 | IoT (nRF52/ESP32) | `mmp-node-embassy` bounded `EmbeddedEventPump` over the same sans-IO engines; fixed-capacity ingress/egress seam shipped, executor and flash policy remain open | `mmp-tal-embedded` over nrf-softdevice / esp-hal | bounded host/cross-checkable shell; hardware backend and target binary remain open (E7) |
