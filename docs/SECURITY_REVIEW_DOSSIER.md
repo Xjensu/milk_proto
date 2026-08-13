@@ -146,7 +146,8 @@ parsers first — attacker input costs the attacker nothing before any identity 
 - **Windows toolchain gap, not a code defect:** all four harnesses compile cleanly under plain
   `rustc` on Windows; the sanitizer-instrumented `cargo fuzz build` link step fails on Windows for
   toolchain reasons (`clang_rt.asan_dynamic_runtime_thunk` / unresolved `__sancov_pcs`), documented
-  in `fuzz/README.md`. CI's `ubuntu-latest` jobs are the actual verification.
+  in `fuzz/README.md`. CI's `ubuntu-latest` jobs are the authoritative verification environment;
+  this dossier does not claim a successful remote run until its retained evidence is available.
 
 **Reviewer note:** if the review scope includes running the fuzzers for real (rather than reading
 the harnesses), this is the point where a genuine CPU-hour budget should get set — the project has

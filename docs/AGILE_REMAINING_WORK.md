@@ -67,12 +67,14 @@ remaining work by the project priority queue.
 
 - **Source/status:** E5-S6, `docs/SECURITY_REVIEW_DOSSIER.md`;
   `OPEN / CI-GATED`.
-- **Scope:** run the cargo-fuzz targets for the planned CPU-hour budget on a
-  Linux CI runner, retain the discovered corpus, and triage every crash or
-  timeout. Deterministic seed generation and smoke coverage already exist;
-  Windows' sanitizer/toolchain limitation is known.
-- **Acceptance:** reproducible CI command, persisted corpus, zero unexplained
-  crashes/timeouts, and regression tests for every fixed finding.
+- **Scope:** measure a baseline, then set a CPU-hour budget derived from that
+  throughput before running the cargo-fuzz targets on a Linux CI runner;
+  retain the campaign corpus artifact and triage every crash or timeout.
+  Deterministic seed generation and smoke coverage already exist; Windows'
+  sanitizer/toolchain limitation is known.
+- **Acceptance:** reproducible CI command, retained corpus artifact from the
+  completed campaign, zero unexplained crashes/timeouts, and regression tests
+  for every fixed finding.
 
 ### AG-P0-05 — Embedded durability and crash recovery
 

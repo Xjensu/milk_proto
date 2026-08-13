@@ -65,6 +65,34 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         )
         self.assertNotIn("- `fuzz-run` (manual `workflow_dispatch` only", readme)
 
+    def test_active_backlog_and_roadmap_match_fuzz_schedule(self) -> None:
+        repository = Path(__file__).parents[4]
+        backlog = (repository / "docs" / "AGILE_BACKLOG.md").read_text(
+            encoding="utf-8"
+        )
+        roadmap = (repository / "docs" / "ROADMAP_TO_PRODUCTION.md").read_text(
+            encoding="utf-8"
+        )
+        remaining = (repository / "docs" / "AGILE_REMAINING_WORK.md").read_text(
+            encoding="utf-8"
+        )
+        requirements = (repository / "docs" / "DEVELOPMENT_REQUIREMENTS.md").read_text(
+            encoding="utf-8"
+        )
+        dossier = (repository / "docs" / "SECURITY_REVIEW_DOSSIER.md").read_text(
+            encoding="utf-8"
+        )
+        expected = "weekly scheduled or manual `workflow_dispatch`"
+        self.assertIn(expected, backlog)
+        self.assertIn(expected, roadmap)
+        self.assertNotIn("fuzz-run` (manual, 2 min/target smoke run)", roadmap)
+        self.assertNotIn("fuzz-run` (manual `workflow_dispatch`, 2 min/target smoke run)", backlog)
+        self.assertIn("CPU-hour budget derived", remaining)
+        self.assertIn("throughput before running", remaining)
+        self.assertIn("retained fuzz corpus artifact from the completed campaign", requirements)
+        self.assertIn("authoritative verification environment", dossier)
+        self.assertIn("does not claim a successful remote run", dossier)
+
     def test_cargo_target_inventory_matches_seed_mapping(self) -> None:
         inventory = CORPUS.validate_target_inventory()
         self.assertEqual(tuple(inventory), CORPUS.TARGETS)
