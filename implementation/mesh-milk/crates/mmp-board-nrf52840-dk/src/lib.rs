@@ -197,6 +197,17 @@ pub struct StorageConfig {
     pub auxiliary_bytes: usize,
 }
 
+/// Address-parametric region reserved for a separate durable generation-floor
+/// journal. The board supplies the address from its linker/storage map; this
+/// type does not select a board address or claim flash atomicity/authentication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableFloorConfig {
+    /// Absolute start of the floor journal region in flash.
+    pub region_offset_bytes: usize,
+    /// Total bytes reserved for the floor journal region.
+    pub region_bytes: usize,
+}
+
 /// Deterministic validation failures for [`StorageConfig`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageConfigError {
@@ -218,6 +229,24 @@ pub enum StorageConfigError {
     SnapshotExceedsPayload,
     /// The complete snapshot exceeds the configured journal region.
     SnapshotExceedsRegion,
+    /// The durable-floor region has a zero offset or size.
+    FloorRegionZero,
+    /// The durable-floor region offset is not aligned to program/erase units.
+    FloorRegionOffsetUnaligned,
+    /// The durable-floor region size is not aligned to program/erase units.
+    FloorRegionSizeUnaligned,
+    /// The durable-floor region arithmetic overflowed or exceeds flash.
+    FloorRegionOutOfBounds,
+    /// The durable-floor region overlaps the snapshot journal region.
+    FloorRegionOverlapsStore,
+    /// The durable-floor region is too small for two complete floor records.
+    FloorRegionTooSmall,
+    /// The erase unit is not compatible with the program unit.
+    FloorRegionGeometryIncompatible,
+    /// The durable-floor region cannot be divided into two aligned slots.
+    FloorRegionSlotUnaligned,
+    /// Checked arithmetic overflowed while sizing the durable-floor region.
+    FloorRegionArithmeticOverflow,
 }
 
 impl StorageConfig {
@@ -334,12 +363,113 @@ impl StorageConfig {
         }
         Ok(())
     }
+
+    /// Validate this storage profile together with a separate durable-floor
+    /// journal region against caller-supplied flash capacity.
+    ///
+    /// The floor region is required to be non-empty, program/erase aligned,
+    /// disjoint from the snapshot journal, and large enough for two complete
+    /// aligned `GFL1` journal records. This is only geometry/accounting
+    /// validation; it does not authenticate the floor or couple two regions
+    /// atomically across power loss.
+    pub const fn validate_with_floor_region(
+        self,
+        flash_capacity_bytes: usize,
+        floor: DurableFloorConfig,
+    ) -> Result<(), StorageConfigError> {
+        if self.program_unit_bytes == 0 || self.erase_page_bytes == 0 {
+            return Err(StorageConfigError::ZeroValue);
+        }
+        if !self
+            .erase_page_bytes
+            .is_multiple_of(self.program_unit_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionGeometryIncompatible);
+        }
+        if let Err(error) = self.validate_against_flash(flash_capacity_bytes) {
+            return Err(error);
+        }
+
+        if floor.region_offset_bytes == 0 || floor.region_bytes == 0 {
+            return Err(StorageConfigError::FloorRegionZero);
+        }
+        if !floor
+            .region_offset_bytes
+            .is_multiple_of(self.program_unit_bytes)
+            || !floor
+                .region_offset_bytes
+                .is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionOffsetUnaligned);
+        }
+        if !floor.region_bytes.is_multiple_of(self.program_unit_bytes)
+            || !floor.region_bytes.is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionSizeUnaligned);
+        }
+        if !floor.region_bytes.is_multiple_of(2) {
+            return Err(StorageConfigError::FloorRegionSlotUnaligned);
+        }
+        let floor_slot_bytes = floor.region_bytes / 2;
+        if !floor_slot_bytes.is_multiple_of(self.program_unit_bytes)
+            || !floor_slot_bytes.is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionSlotUnaligned);
+        }
+        let Some(floor_end) = floor.region_offset_bytes.checked_add(floor.region_bytes) else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        if floor_end > flash_capacity_bytes {
+            return Err(StorageConfigError::FloorRegionOutOfBounds);
+        }
+        let Some(store_end) = self
+            .store_region_offset_bytes
+            .checked_add(self.store_region_bytes)
+        else {
+            return Err(StorageConfigError::RegionOutOfBounds);
+        };
+        if floor.region_offset_bytes < store_end && self.store_region_offset_bytes < floor_end {
+            return Err(StorageConfigError::FloorRegionOverlapsStore);
+        }
+
+        let Some(floor_record) =
+            mmp_flash_journal::encoded_len(mmp_flash_journal::GENERATION_FLOOR_PAYLOAD_LEN)
+        else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        let remainder = floor_record % self.program_unit_bytes;
+        let aligned_floor_record = if remainder == 0 {
+            floor_record
+        } else {
+            let Some(aligned) = floor_record.checked_add(self.program_unit_bytes - remainder)
+            else {
+                return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+            };
+            aligned
+        };
+        let Some(required_floor_bytes) = aligned_floor_record.checked_mul(2) else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        if floor_slot_bytes < aligned_floor_record || floor.region_bytes < required_floor_bytes {
+            return Err(StorageConfigError::FloorRegionTooSmall);
+        }
+        Ok(())
+    }
 }
 
 impl BoardConfig {
     /// Validate a storage profile against this board's documented capacity.
     pub const fn validate_storage(self, storage: StorageConfig) -> Result<(), StorageConfigError> {
         storage.validate_against_flash(self.flash_capacity_bytes)
+    }
+
+    /// Validate storage and a caller-selected durable-floor region.
+    pub const fn validate_storage_with_floor_region(
+        self,
+        storage: StorageConfig,
+        floor: DurableFloorConfig,
+    ) -> Result<(), StorageConfigError> {
+        storage.validate_with_floor_region(self.flash_capacity_bytes, floor)
     }
 }
 
@@ -392,6 +522,22 @@ mod tests {
     fn valid_storage_configuration_is_accepted() {
         assert_eq!(VALID_STORAGE.validate(), Ok(()));
         assert_eq!(board_config().validate_storage(VALID_STORAGE), Ok(()));
+    }
+
+    #[test]
+    fn valid_disjoint_durable_floor_region_is_accepted() {
+        let floor = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, floor),
+            Ok(())
+        );
+        assert_eq!(
+            board_config().validate_storage_with_floor_region(VALID_STORAGE, floor),
+            Ok(())
+        );
     }
 
     #[test]
@@ -464,5 +610,159 @@ mod tests {
             one_slot_only.validate(),
             Err(StorageConfigError::SnapshotExceedsRegion)
         );
+    }
+
+    #[test]
+    fn durable_floor_region_rejects_zero_alignment_bounds_overlap_and_size() {
+        let valid = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+
+        let mut zero = valid;
+        zero.region_bytes = 0;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, zero),
+            Err(StorageConfigError::FloorRegionZero)
+        );
+
+        let mut unaligned_offset = valid;
+        unaligned_offset.region_offset_bytes += 4;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, unaligned_offset),
+            Err(StorageConfigError::FloorRegionOffsetUnaligned)
+        );
+
+        let mut unaligned_size = valid;
+        unaligned_size.region_bytes += 4;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, unaligned_size),
+            Err(StorageConfigError::FloorRegionSizeUnaligned)
+        );
+
+        let mut overlap = valid;
+        overlap.region_offset_bytes = VALID_STORAGE.store_region_offset_bytes;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, overlap),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let partial_before = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes - 4096,
+            region_bytes: 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, partial_before),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let contained = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes + 4096,
+            region_bytes: 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, contained),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let contains_store = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes - 4096,
+            region_bytes: VALID_STORAGE.store_region_bytes + 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, contains_store),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let mut small_geometry = VALID_STORAGE;
+        small_geometry.erase_page_bytes = 4;
+        let too_small = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 64,
+        };
+        assert_eq!(
+            small_geometry.validate_with_floor_region(FLASH_CAPACITY_BYTES, too_small),
+            Err(StorageConfigError::FloorRegionTooSmall)
+        );
+
+        let odd = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 8191,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, odd),
+            Err(StorageConfigError::FloorRegionSizeUnaligned)
+        );
+
+        let slot_unaligned = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 12_288,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, slot_unaligned),
+            Err(StorageConfigError::FloorRegionSlotUnaligned)
+        );
+
+        let mut incompatible = VALID_STORAGE;
+        incompatible.program_unit_bytes = 8;
+        incompatible.erase_page_bytes = 12;
+        assert_eq!(
+            incompatible.validate_with_floor_region(FLASH_CAPACITY_BYTES, valid),
+            Err(StorageConfigError::FloorRegionGeometryIncompatible)
+        );
+    }
+
+    #[test]
+    fn durable_floor_region_rejects_out_of_bounds_and_arithmetic_overflow() {
+        let mut out_of_bounds = DurableFloorConfig {
+            region_offset_bytes: 0xF_FF000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, out_of_bounds),
+            Err(StorageConfigError::FloorRegionOutOfBounds)
+        );
+
+        let at_flash_end = DurableFloorConfig {
+            region_offset_bytes: FLASH_CAPACITY_BYTES - 0x2_000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, at_flash_end),
+            Ok(())
+        );
+
+        let custom_flash = FLASH_CAPACITY_BYTES - 0x1000;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(custom_flash, at_flash_end),
+            Err(StorageConfigError::FloorRegionOutOfBounds)
+        );
+
+        out_of_bounds.region_offset_bytes = usize::MAX - 4095;
+        out_of_bounds.region_bytes = 8192;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, out_of_bounds),
+            Err(StorageConfigError::FloorRegionArithmeticOverflow)
+        );
+    }
+
+    #[test]
+    fn existing_storage_validation_does_not_require_floor_region() {
+        assert_eq!(VALID_STORAGE.validate(), Ok(()));
+        assert_eq!(
+            VALID_STORAGE.validate_against_flash(FLASH_CAPACITY_BYTES),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn durable_floor_validation_is_const_evaluable() {
+        const FLOOR: DurableFloorConfig = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+        const RESULT: Result<(), StorageConfigError> =
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, FLOOR);
+        assert_eq!(RESULT, Ok(()));
     }
 }

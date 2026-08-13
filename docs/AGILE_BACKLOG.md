@@ -342,3 +342,8 @@ matrix: all four cross-region ordering states, missing/corrupt/duplicate and
 malformed-highest records, and inner/outer generation mismatch. It is a
 TEST-ONLY fail-closed gate and does not claim cross-region atomicity or
 anti-rollback.
+
+The board profile now adds an address-parametric `DurableFloorConfig` geometry
+gate: two independently erasable GFL1 slots, checked bounds/arithmetic,
+program/erase compatibility, and snapshot-region overlap rejection. It selects
+no linker address and does not claim hardware durability.

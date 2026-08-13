@@ -61,3 +61,10 @@ producers. That gate must prove exact-generation selection, fail-closed
 mismatch handling, torn-write recovery, duplicate-generation handling, and no
 counter reuse after an indeterminate write. Keep the MMP/1 specification and
 wire format unchanged.
+
+The nRF52840 profile now supplies an address-parametric
+`DurableFloorConfig`/`validate_with_floor_region` geometry gate. It requires two
+independently erase-aligned floor slots, checks their padded GFL1 capacity and
+disjointness from the snapshot region, and remains explicit that linker
+reservation, authentication, and power-loss atomicity are still external
+hardware gates.

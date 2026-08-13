@@ -46,6 +46,14 @@ MAX_BATCH_ENTRIES
 MAX_SNAPSHOT_PAYLOAD <= mmp_flash_journal::MAX_PAYLOAD_LEN
 ```
 
+When a separate floor journal is selected, the additive
+`StorageConfig::validate_with_floor_region` gate validates a caller-supplied
+`DurableFloorConfig`. It requires a disjoint region with two independently
+erase-aligned slots, each large enough for a padded GFL1 record, and checks
+program/erase compatibility, half-open overlap, flash bounds, and checked
+arithmetic. The gate does not choose a linker address, reserve bootloader or
+SoftDevice space, authenticate the record, or make the two journals atomic.
+
 Compile-time validation must reject zero values, non-aligned region boundaries,
 `MAX_BUNDLE_BYTES` larger than the provider slot, and any configuration whose
 metadata/index/journal overhead exceeds `STORE_REGION_BYTES`. Because the

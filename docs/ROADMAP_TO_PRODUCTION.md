@@ -216,6 +216,9 @@ mismatch. This is still a comparison seam; durable floor authentication,
 two-region atomicity, and producer checkpoint continuity remain open.
 The host TEST-ONLY matrix covers all four cross-region ordering states and
 invalid floor-authority cases; it does not establish hardware atomicity.
+The nRF52840 profile also validates a caller-supplied, disjoint two-slot floor
+region with independent erase boundaries and padded GFL1 capacity; linker and
+power-loss evidence remain open.
 
 No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodology). Sizes are relative: S = days, M = one to a few weeks of focused work, L = a substantial multi-week effort, all in single-engineer-equivalent terms.
 

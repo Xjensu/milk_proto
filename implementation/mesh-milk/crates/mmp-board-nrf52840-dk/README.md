@@ -22,6 +22,13 @@ already-pinned Embassy nRF52840 internal-NVMC driver to the provider-neutral
 page-aligned subregion; it does not choose a flash map or provide durability,
 power-loss atomicity, or snapshot authenticity.
 
+`StorageConfig::validate_with_floor_region` additionally checks a caller-selected
+`DurableFloorConfig`: the floor region is disjoint from the snapshot journal,
+fits two independently erase-aligned GFL1 record slots, and passes checked
+program/erase alignment, bounds, and arithmetic validation. This remains a
+geometry gate only; it selects no linker address and provides no authentication
+or cross-region atomicity.
+
 On ARM, `recover_nvmc_fixed_store` composes that adapter with the generic
 `mmp-embedded-provider::JournaledFixedStore`. It derives a two-slot layout
 relative to the supplied region and reuses FBS1 snapshot validation and
