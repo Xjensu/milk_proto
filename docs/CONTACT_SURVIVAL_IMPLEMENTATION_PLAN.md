@@ -51,16 +51,18 @@
 - [x] Test deterministic tie-breaking and the 256-candidate/8 MiB bounds.
 - [x] Keep the public API independent of `mmp-core`, `mmp-node`, wire frames, and production router state.
 
-### Task 5: Verify and commit
+### Task 5: Verify and record status
 
 **Files:**
-- Only the two implementation files above and this plan document.
+- The two implementation files above were committed before this documentation
+  closeout (`3be3330` and `b12d377`). This task updates this plan only.
 
-- [x] Run focused module tests with `cargo test -p mmp-sim --lib contact_survival --locked`; all 4 tests pass.
-- [x] Run `cargo clippy -p mmp-sim --all-targets --locked -- -D warnings`; no findings.
-- [x] Run `git diff --check` and verify `git diff --name-only -- specification` is empty.
-- [x] Inspect `git diff --name-only`; stage only the plan and simulator files.
-- [ ] Run the full simulator target set in CI/nightly; the local `--all-targets` attempt exceeded the local time budget in an existing long-running simulator test.
-- [ ] Commit with a normal message such as `feat(sim): add contact survival research model`.
+- [x] Run focused module tests with `cargo test -p mmp-sim --lib contact_survival --locked`; 5 tests pass.
+- [x] Run `cargo clippy -p mmp-sim --all-targets --locked -- -D warnings`; the local run completed with no findings.
+- [x] Run `git diff --check`; no whitespace errors were reported.
+- [x] Confirm the implementation commits in history (`3be3330` adds the model and `b12d377` hardens its invariants).
+- [ ] Run the full simulator target set in CI/nightly; long-running simulator and platform/hardware checks remain outside this local pass.
 
-**Evidence boundary:** Passing tests validate arithmetic, bounds, and deterministic behavior only. They do not validate RSSI, Channel Sounding, human mobility, battery use, delivery improvement, or the claim that MMP/Phi is 2x better.
+**Final status — FIXED:** The bounded simulator model and its focused arithmetic tests are implemented and committed; this plan now records the verified local evidence without claiming unrun CI or nightly checks.
+
+**Evidence boundary:** Passing tests validate arithmetic, bounds, and deterministic behavior only. They do not validate RSSI, Channel Sounding, human mobility, battery use, delivery improvement, or the claim that MMP/Phi is 2x better. Those claims remain untested until reproducible simulator, CI, and physical measurements are available.
