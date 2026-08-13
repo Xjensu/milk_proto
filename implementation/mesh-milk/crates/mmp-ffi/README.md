@@ -38,3 +38,12 @@ conservative BLE default. Hosts with a measured transport can call
 `link_up_with_quality(link, initiator, FfiLinkQuality { mtu, goodput_bps })`;
 the values are validated locally and are scheduling hints only. Native adapter
 bindings must regenerate from the UniFFI definition before using this method.
+
+## Minimal beta-app workflow
+
+1. Load the 32-byte identity seed from the platform keystore/keychain and construct `MmpNode` (optionally with a snapshot path).
+2. Call `tick` once with the host's monotonic millisecond value before producing bundles; exchange `own_claims`/`ingest_claim` during the application's pairing flow.
+3. Drive each authenticated contact with `link_up`, `poll_send_batch`/`link_data`, and `link_down`; drain `poll_event_batch` for UI and test assertions. Continue polling until an empty batch, and surface non-zero drop counters from `metrics`.
+4. Use `status`, `metrics`, or `beta_snapshot` for a secret-free status screen. On pause/background transition, call `flush`; after restart, reconstruct with the same seed and snapshot path, then call `tick` again.
+
+The batch methods are additive bridge helpers with a hard cap of 64 items. The one-item polling methods remain source-compatible for hosts that cannot batch callbacks. Native applications must regenerate UniFFI bindings from this crate before shipping an adapter.
