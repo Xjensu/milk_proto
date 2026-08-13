@@ -43,6 +43,25 @@ normalizes capability spellings explicitly; the existing bounded
 `BetaTestSession.report()` remains useful when a local event-history window is
 also required.
 
+## Bounded bridge polling
+
+Mobile and React Native hosts that need to reduce bridge round trips may drain
+the three host-owned queues in bounded batches:
+
+```text
+pollSendBatch(maxItems)  -> OutFrame[]
+pollEventBatch(maxItems) -> FfiEvent[]
+pollCloseBatch(maxItems) -> u64[]
+```
+
+Each call preserves the same FIFO order as its one-item counterpart and
+consumes from the same queue. `maxItems = 0` is a no-op. Larger values are
+clamped to the implementation's fixed batch bound of 64, so a host can safely
+pass a user-configured value without creating an unbounded FFI allocation.
+These helpers affect only local API polling; they do not change MMP/1 frames,
+session state, or transport ordering. The existing `pollSend`, `pollEvent`,
+and `pollClose` methods remain available for single-item consumers.
+
 For deterministic delivery assertions, a beta harness can call
 `BetaTestSession.waitForDelivery(messageId, timeoutMs)`. The helper samples the
 current native state, closes the listener-registration race with a second

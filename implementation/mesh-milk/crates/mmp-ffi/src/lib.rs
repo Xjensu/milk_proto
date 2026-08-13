@@ -59,6 +59,18 @@ const MAX_GOODPUT_BPS: u32 = 10_000_000;
 /// control and built-in payloads exposed through dedicated methods.
 const MIN_CUSTOM_APPTYPE: u8 = 0x10;
 
+/// Maximum number of items returned by one host polling batch.
+///
+/// The bound keeps a mobile bridge call predictable even when a host has
+/// allowed a queue to accumulate.  It is deliberately smaller than the
+/// protocol queues themselves; callers can continue polling until an empty
+/// batch is returned.  A requested limit of zero is a no-op.
+const FFI_POLL_BATCH_MAX: usize = 64;
+
+fn poll_batch_limit(requested: u32) -> usize {
+    requested.min(FFI_POLL_BATCH_MAX as u32) as usize
+}
+
 // --------------------------------------------------------------- errors ----
 
 /// FFI-facing error surface. Deliberately coarse: the host app cannot act
@@ -1347,11 +1359,51 @@ impl MmpNode {
         self.lock().poll_send().map(|(link, bytes)| OutFrame { link, bytes })
     }
 
+    /// Drain up to `max_items` outbound wire frames in FIFO order.
+    ///
+    /// The effective limit is capped at 64 items. A zero limit is a no-op and
+    /// returns an empty vector. This is an additive bridge-efficiency helper;
+    /// [`Self::poll_send`] remains the one-item compatibility API and both
+    /// methods consume exactly the same queue in exactly the same order.
+    pub fn poll_send_batch(&self, max_items: u32) -> Vec<OutFrame> {
+        let limit = poll_batch_limit(max_items);
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut node = self.lock();
+        let mut frames = Vec::with_capacity(limit);
+        while frames.len() < limit {
+            let Some((link, bytes)) = node.poll_send() else { break };
+            frames.push(OutFrame { link, bytes });
+        }
+        frames
+    }
+
     /// Drain one transport-local close action. The mobile host must terminate
     /// the physical BLE link and then call [`MmpNode::link_down`]; this is not
     /// a wire-protocol frame.
     pub fn poll_close(&self) -> Option<u64> {
         self.lock().poll_close()
+    }
+
+    /// Drain up to `max_items` transport-local close actions in FIFO order.
+    ///
+    /// The effective limit is capped at 64 items. A zero limit is a no-op and
+    /// returns an empty vector. The same graceful-close ordering rules as
+    /// [`Self::poll_close`] apply: a pending terminal wire frame can make the
+    /// batch stop before a later close action is eligible.
+    pub fn poll_close_batch(&self, max_items: u32) -> Vec<u64> {
+        let limit = poll_batch_limit(max_items);
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut node = self.lock();
+        let mut links = Vec::with_capacity(limit);
+        while links.len() < limit {
+            let Some(link) = node.poll_close() else { break };
+            links.push(link);
+        }
+        links
     }
 
     /// Return the sticky count of close actions dropped because the bounded
@@ -1375,6 +1427,26 @@ impl MmpNode {
     /// Drain one app event; call in a loop until `None`.
     pub fn poll_event(&self) -> Option<FfiEvent> {
         self.lock().poll_event().map(FfiEvent::from)
+    }
+
+    /// Drain up to `max_items` application events in FIFO order.
+    ///
+    /// The effective limit is capped at 64 items. A zero limit is a no-op and
+    /// returns an empty vector. [`Self::poll_event`] remains available for
+    /// hosts that prefer one callback at a time; both methods consume the
+    /// same bounded callback FIFO without reordering it.
+    pub fn poll_event_batch(&self, max_items: u32) -> Vec<FfiEvent> {
+        let limit = poll_batch_limit(max_items);
+        if limit == 0 {
+            return Vec::new();
+        }
+        let mut node = self.lock();
+        let mut events = Vec::with_capacity(limit);
+        while events.len() < limit {
+            let Some(event) = node.poll_event() else { break };
+            events.push(FfiEvent::from(event));
+        }
+        events
     }
 
     /// Advance the monotonic clock: expiry, filter rotation, session timers,

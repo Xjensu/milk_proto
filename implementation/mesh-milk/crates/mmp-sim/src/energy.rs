@@ -605,6 +605,75 @@ pub struct RendezvousExperimentPoint {
 /// model values, not BLE timing recommendations.
 pub const DEFAULT_EDR_TX_SCALES: [f64; 7] = [0.25, 0.5, 0.75, 1.0, 2.0, 4.0, 8.0];
 
+/// Maximum contact opportunities accepted by the bounded EDR replay seam.
+///
+/// This is a harness bound, not a protocol limit. It prevents an accidental
+/// fixture from being presented as a small, reproducible experiment while
+/// retaining enough headroom for a host-side trace.
+pub const MAX_EDR_REPLAY_CONTACTS: u64 = 100_000;
+/// Maximum offered bundles accepted by the bounded EDR replay seam.
+pub const MAX_EDR_REPLAY_BUNDLES: u64 = 100_000;
+
+/// Workload identity and aggregate counts shared by a paired EDR replay.
+///
+/// The seed and trace identifier are replay metadata only; they are not
+/// protocol credentials. The workload is deliberately separate from
+/// [`RendezvousMeasurement`] because this model predicts activity energy and
+/// must not fabricate radio, host, or delivery observations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EdrReplayWorkload {
+    /// Full trace identity retained by both baseline and candidate results.
+    pub trace_id: [u8; 16],
+    /// Seed used to generate the contact trace.
+    pub seed: u64,
+    /// Number of contact opportunities in the replayed trace.
+    pub contact_attempts: u64,
+    /// Number of bundles offered to the workload.
+    pub offered_bundles: u64,
+}
+
+impl EdrReplayWorkload {
+    /// Validate the bounded host-side replay input.
+    pub fn validate(self) -> bool {
+        self.contact_attempts <= MAX_EDR_REPLAY_CONTACTS
+            && self.offered_bundles <= MAX_EDR_REPLAY_BUNDLES
+    }
+}
+
+/// One deterministic, paired baseline/candidate EDR model result.
+///
+/// Both sides retain the same [`EdrReplayWorkload`]. This is an analytic
+/// activity comparison: it does not run the reference router and does not
+/// claim that discovery or delivery outcomes remain unchanged on real BLE.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PairedEdrEnergyRun {
+    /// Shared seed, trace, and workload counts.
+    pub workload: EdrReplayWorkload,
+    /// MMP/1 activity point used as the baseline.
+    pub baseline: RendezvousExperimentPoint,
+    /// EDR activity point evaluated against the same workload.
+    pub candidate: RendezvousExperimentPoint,
+}
+
+impl PairedEdrEnergyRun {
+    /// Candidate energy divided by baseline energy. `None` is impossible for
+    /// a valid model today, but keeps callers from treating a zero baseline as
+    /// a useful multiplier if the representation changes later.
+    pub fn energy_ratio(self) -> Option<f64> {
+        if self.baseline.activity.energy == 0.0 {
+            None
+        } else {
+            let ratio = self.candidate.activity.energy / self.baseline.activity.energy;
+            ratio.is_finite().then_some(ratio)
+        }
+    }
+
+    /// Candidate minus baseline modeled energy in the model's activity unit.
+    pub fn energy_delta(self) -> f64 {
+        self.candidate.activity.energy - self.baseline.activity.energy
+    }
+}
+
 /// Controlled square-root optimum for the energy-dual rendezvous hypothesis.
 ///
 /// Activity values are normalized rates rather than BLE timings. The model is
@@ -723,6 +792,62 @@ impl RendezvousEnergyModel {
             self.experiment_point(DEFAULT_EDR_TX_SCALES[4])?,
             self.experiment_point(DEFAULT_EDR_TX_SCALES[5])?,
             self.experiment_point(DEFAULT_EDR_TX_SCALES[6])?,
+        ])
+    }
+
+    /// Pair every bounded EDR matrix point with the MMP/1 baseline using one
+    /// identical seed, trace, and workload.
+    ///
+    /// The returned array is a deterministic research report input. It only
+    /// compares the fixed-hazard activity model; it does not alter routing,
+    /// copy budgets, wire fields, or simulator behavior. A caller must pair
+    /// these modeled energies with independently observed BLE metrics before
+    /// making any performance claim.
+    pub fn paired_experiment_matrix(
+        &self,
+        workload: EdrReplayWorkload,
+    ) -> Option<[PairedEdrEnergyRun; 7]> {
+        if !workload.validate() {
+            return None;
+        }
+        let baseline = self.experiment_point(1.0)?;
+        let matrix = self.default_experiment_matrix()?;
+        Some([
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[0],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[1],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[2],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[3],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[4],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[5],
+            },
+            PairedEdrEnergyRun {
+                workload,
+                baseline,
+                candidate: matrix[6],
+            },
         ])
     }
 
@@ -1067,5 +1192,48 @@ mod tests {
             .find(|point| point.profile == RendezvousExperimentProfile::BinarySprayBaseline)
             .expect("matrix must contain one baseline point");
         assert!((baseline.activity.energy - model.baseline_energy()).abs() <= tolerance);
+    }
+
+    #[test]
+    fn paired_edr_matrix_reuses_trace_seed_and_workload_without_claiming_delivery() {
+        let model = RendezvousEnergyModel::from_baseline(1.0, 1.0, 0.12, 4.5).unwrap();
+        let workload = EdrReplayWorkload {
+            trace_id: [0x5a; 16],
+            seed: 0xED00_2026,
+            contact_attempts: 128,
+            offered_bundles: 32,
+        };
+        let first = model.paired_experiment_matrix(workload).unwrap();
+        let second = model.paired_experiment_matrix(workload).unwrap();
+
+        assert_eq!(first, second, "paired replay must be deterministic");
+        for run in first {
+            assert_eq!(run.workload, workload);
+            assert_eq!(
+                run.baseline.profile,
+                RendezvousExperimentProfile::BinarySprayBaseline
+            );
+            assert!(run.energy_ratio().is_some());
+            // The model result is activity-only; no delivery observation is
+            // fabricated by this research seam.
+            assert!(run.workload.offered_bundles <= MAX_EDR_REPLAY_BUNDLES);
+        }
+        assert!(first[4].energy_delta() < 0.0);
+        assert_eq!(
+            first[3].candidate.profile,
+            RendezvousExperimentProfile::BinarySprayBaseline
+        );
+    }
+
+    #[test]
+    fn paired_edr_matrix_rejects_unbounded_workload_before_model_evaluation() {
+        let model = RendezvousEnergyModel::from_baseline(1.0, 1.0, 0.12, 4.5).unwrap();
+        let workload = EdrReplayWorkload {
+            trace_id: [0; 16],
+            seed: 1,
+            contact_attempts: MAX_EDR_REPLAY_CONTACTS + 1,
+            offered_bundles: 0,
+        };
+        assert!(model.paired_experiment_matrix(workload).is_none());
     }
 }
