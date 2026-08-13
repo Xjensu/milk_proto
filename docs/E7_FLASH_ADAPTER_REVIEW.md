@@ -92,3 +92,27 @@ generation zero, equal/older candidates, and `u64` overflow while leaving its
 state unchanged on rejection. The guard is only a local monotonic precondition:
 the provider must persist and recover the floor with its own crash-safe policy;
 the helper does not provide durable anti-rollback or hardware atomicity.
+
+## Transaction lifecycle slice
+
+`JournalTransaction` now composes the classifier and floor into a bounded
+in-memory lifecycle: `Ready → InFlight → Ready` for proven commit or
+not-committed recovery, and `InFlight → Quarantined` after an unknown write.
+Reservations are blocked while a transaction is quarantined; only an explicit
+scan resolution can release it. The state machine does not serialize the
+snapshot, persist the floor, validate bundle authenticity, or prove board
+flash atomicity. After proven `NotCommitted` recovery the floor is unchanged,
+so a provider may retry the same generation only after safely erasing or
+reusing the failed slot. Those remain requirements of the eventual named
+provider, as do durable floor persistence, complete-snapshot validation, and
+reboot rollback resistance.
+
+Focused verification for this slice:
+
+```text
+cargo test -p mmp-flash-journal --all-targets --locked --offline  # 33 passed
+cargo clippy -p mmp-flash-journal --all-targets --locked --offline -- -D warnings
+cargo check -p mmp-flash-journal --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline
+cargo fmt --package mmp-flash-journal -- --check
+```

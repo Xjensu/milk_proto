@@ -140,6 +140,165 @@ impl GenerationFloor {
     }
 }
 
+/// In-memory lifecycle for one provider journal transaction.
+///
+/// The state machine reserves a generation without publishing it, quarantines
+/// the transaction after an unknown write result, and leaves quarantine only
+/// after a conservative recovery classification. It does not persist the
+/// floor, validate snapshot contents, or establish flash atomicity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalTransaction {
+    floor: GenerationFloor,
+    state: JournalTransactionState,
+}
+
+/// Observable lifecycle state of [`JournalTransaction`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalTransactionState {
+    /// No generation is currently being written.
+    Ready,
+    /// A generation has been reserved and is awaiting write/recovery.
+    InFlight {
+        /// Reserved generation.
+        generation: u64,
+    },
+    /// A write outcome is unknown and no new reservation is permitted.
+    Quarantined {
+        /// Generation whose outcome requires recovery.
+        generation: u64,
+    },
+}
+
+/// Errors returned by [`JournalTransaction`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalTransactionError {
+    /// A generation is already reserved or quarantined.
+    AlreadyInFlight {
+        /// Generation currently awaiting resolution.
+        generation: u64,
+    },
+    /// The transaction is quarantined until recovery resolves its outcome.
+    Quarantined {
+        /// Generation requiring recovery.
+        generation: u64,
+    },
+    /// No generation is awaiting recovery.
+    NoAttempt,
+    /// The caller supplied a generation other than the active attempt.
+    MismatchedAttempt {
+        /// Active generation.
+        expected: u64,
+        /// Caller-supplied generation.
+        supplied: u64,
+    },
+    /// The local monotonic floor cannot produce or accept the transition.
+    Generation(GenerationFloorError),
+}
+
+impl JournalTransaction {
+    /// Create a ready transaction from a caller-validated in-memory floor.
+    pub const fn new(floor: GenerationFloor) -> Self {
+        Self {
+            floor,
+            state: JournalTransactionState::Ready,
+        }
+    }
+
+    /// Return the currently accepted local floor.
+    pub const fn known_floor(self) -> u64 {
+        self.floor.known_floor()
+    }
+
+    /// Return the lifecycle state without exposing mutable internals.
+    pub const fn state(self) -> JournalTransactionState {
+        self.state
+    }
+
+    /// Reserve the next generation while leaving the floor unchanged until a
+    /// committed recovery result is proven.
+    pub fn reserve_generation(&mut self) -> Result<u64, JournalTransactionError> {
+        match self.state {
+            JournalTransactionState::Ready => {
+                let mut candidate = self.floor;
+                let generation = candidate
+                    .reserve_next()
+                    .map_err(JournalTransactionError::Generation)?;
+                self.state = JournalTransactionState::InFlight { generation };
+                Ok(generation)
+            }
+            JournalTransactionState::InFlight { generation } => {
+                Err(JournalTransactionError::AlreadyInFlight { generation })
+            }
+            JournalTransactionState::Quarantined { generation } => {
+                Err(JournalTransactionError::Quarantined { generation })
+            }
+        }
+    }
+
+    /// Mark the active write outcome as unknown and quarantine the provider.
+    pub fn mark_indeterminate(&mut self, supplied: u64) -> Result<(), JournalTransactionError> {
+        let expected = match self.state {
+            JournalTransactionState::InFlight { generation }
+            | JournalTransactionState::Quarantined { generation } => generation,
+            JournalTransactionState::Ready => return Err(JournalTransactionError::NoAttempt),
+        };
+        if expected != supplied {
+            return Err(JournalTransactionError::MismatchedAttempt { expected, supplied });
+        }
+        self.state = JournalTransactionState::Quarantined {
+            generation: expected,
+        };
+        Ok(())
+    }
+
+    /// Resolve the active write from a post-write scan.
+    ///
+    /// A `NotCommitted` result releases the attempt without advancing the
+    /// floor. A `Committed` result advances it after the frame is proven
+    /// visible. An `Indeterminate` result keeps the transaction quarantined.
+    /// The caller must separately validate the recovered snapshot before
+    /// treating a committed frame as usable state.
+    pub fn resolve_scan(
+        &mut self,
+        supplied: u64,
+        scan_result: ScanResult<'_>,
+    ) -> Result<RecoveryClassification, JournalTransactionError> {
+        let expected = match self.state {
+            JournalTransactionState::InFlight { generation }
+            | JournalTransactionState::Quarantined { generation } => generation,
+            JournalTransactionState::Ready => return Err(JournalTransactionError::NoAttempt),
+        };
+        if expected != supplied {
+            return Err(JournalTransactionError::MismatchedAttempt { expected, supplied });
+        }
+        let previous = (self.floor.known_floor() != 0).then_some(self.floor.known_floor());
+        let classification = classify_recovery(scan_result, previous, supplied);
+        match classification {
+            RecoveryClassification::Committed { generation } => {
+                self.floor
+                    .advance(generation)
+                    .map_err(JournalTransactionError::Generation)?;
+                self.state = JournalTransactionState::Ready;
+            }
+            RecoveryClassification::NotCommitted => {
+                self.state = JournalTransactionState::Ready;
+            }
+            RecoveryClassification::Indeterminate => {
+                self.state = JournalTransactionState::Quarantined {
+                    generation: expected,
+                };
+            }
+        }
+        Ok(classification)
+    }
+}
+
+/// Provider-facing name for [`JournalTransaction`].
+///
+/// This alias names the same in-memory state machine; it does not add durable
+/// persistence, board policy, or flash-I/O semantics.
+pub type ProviderTransaction = JournalTransaction;
+
 /// Classify an attempted append from a post-write journal scan.
 ///
 /// The caller must provide the generation selected immediately before the
@@ -804,6 +963,170 @@ mod tests {
         let mut floor = GenerationFloor::new(u64::MAX);
         assert_eq!(floor.reserve_next(), Err(GenerationFloorError::Overflow));
         assert_eq!(floor.known_floor(), u64::MAX);
+    }
+
+    #[test]
+    fn journal_transaction_reserves_without_advancing_until_commit() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(7));
+
+        assert_eq!(transaction.reserve_generation().unwrap(), 8);
+        assert_eq!(transaction.known_floor(), 7);
+        assert_eq!(
+            transaction.state(),
+            JournalTransactionState::InFlight { generation: 8 }
+        );
+        assert_eq!(
+            transaction.reserve_generation(),
+            Err(JournalTransactionError::AlreadyInFlight { generation: 8 })
+        );
+    }
+
+    #[test]
+    fn journal_transaction_committed_recovery_advances_floor_and_returns_ready() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(7));
+        let attempted = transaction.reserve_generation().unwrap();
+        let scan_result = ScanResult {
+            selected: Some(Record {
+                generation: attempted,
+                payload: b"snapshot",
+            }),
+            candidates: 1,
+            valid: 1,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            transaction.resolve_scan(attempted, scan_result),
+            Ok(RecoveryClassification::Committed { generation: 8 })
+        );
+        assert_eq!(transaction.known_floor(), 8);
+        assert_eq!(transaction.state(), JournalTransactionState::Ready);
+        assert_eq!(transaction.reserve_generation().unwrap(), 9);
+    }
+
+    #[test]
+    fn journal_transaction_not_committed_clears_attempt_without_advancing_floor() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(7));
+        let attempted = transaction.reserve_generation().unwrap();
+        let scan_result = ScanResult {
+            selected: Some(Record {
+                generation: 7,
+                payload: b"previous",
+            }),
+            candidates: 1,
+            valid: 1,
+            rejected: 0,
+        };
+
+        assert_eq!(
+            transaction.resolve_scan(attempted, scan_result),
+            Ok(RecoveryClassification::NotCommitted)
+        );
+        assert_eq!(transaction.known_floor(), 7);
+        assert_eq!(transaction.state(), JournalTransactionState::Ready);
+        assert_eq!(transaction.reserve_generation().unwrap(), 8);
+    }
+
+    #[test]
+    fn journal_transaction_indeterminate_write_quarantines_and_blocks_reservation() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(7));
+        let attempted = transaction.reserve_generation().unwrap();
+
+        transaction.mark_indeterminate(attempted).unwrap();
+        assert_eq!(
+            transaction.state(),
+            JournalTransactionState::Quarantined { generation: 8 }
+        );
+        assert_eq!(
+            transaction.reserve_generation(),
+            Err(JournalTransactionError::Quarantined { generation: 8 })
+        );
+
+        let unresolved = ScanResult {
+            selected: None,
+            candidates: 1,
+            valid: 0,
+            rejected: 1,
+        };
+        assert_eq!(
+            transaction.resolve_scan(attempted, unresolved),
+            Ok(RecoveryClassification::Indeterminate)
+        );
+        assert_eq!(
+            transaction.state(),
+            JournalTransactionState::Quarantined { generation: 8 }
+        );
+    }
+
+    #[test]
+    fn journal_transaction_recovery_can_release_quarantine_only_when_proven() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(0));
+        let attempted = transaction.reserve_generation().unwrap();
+        transaction.mark_indeterminate(attempted).unwrap();
+
+        let not_committed = ScanResult {
+            selected: None,
+            candidates: 0,
+            valid: 0,
+            rejected: 0,
+        };
+        assert_eq!(
+            transaction.resolve_scan(attempted, not_committed),
+            Ok(RecoveryClassification::NotCommitted)
+        );
+        assert_eq!(transaction.state(), JournalTransactionState::Ready);
+        assert_eq!(transaction.known_floor(), 0);
+    }
+
+    #[test]
+    fn journal_transaction_rejects_mismatched_attempts_without_mutating_state() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(7));
+        let attempted = transaction.reserve_generation().unwrap();
+        assert_eq!(
+            transaction.mark_indeterminate(attempted + 1),
+            Err(JournalTransactionError::MismatchedAttempt {
+                expected: attempted,
+                supplied: attempted + 1,
+            })
+        );
+        assert_eq!(
+            transaction.resolve_scan(
+                attempted + 1,
+                ScanResult {
+                    selected: None,
+                    candidates: 0,
+                    valid: 0,
+                    rejected: 0,
+                }
+            ),
+            Err(JournalTransactionError::MismatchedAttempt {
+                expected: attempted,
+                supplied: attempted + 1,
+            })
+        );
+        assert_eq!(
+            transaction.state(),
+            JournalTransactionState::InFlight {
+                generation: attempted
+            }
+        );
+    }
+
+    #[test]
+    fn journal_transaction_rejects_resolution_without_attempt() {
+        let mut transaction = JournalTransaction::new(GenerationFloor::new(0));
+        assert_eq!(
+            transaction.resolve_scan(
+                1,
+                ScanResult {
+                    selected: None,
+                    candidates: 0,
+                    valid: 0,
+                    rejected: 0,
+                }
+            ),
+            Err(JournalTransactionError::NoAttempt)
+        );
     }
 
     #[test]
