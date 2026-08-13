@@ -325,7 +325,7 @@ public final class MeshDrive {
     private let dutyCycleSink: DutyCycleSink
     private let persistenceSink: PersistenceSink
     private let secretStatePersistence: SecretStatePersistence
-    private let eventSink: (Any) -> Void
+    private let eventSink: (Any) throws -> Void
     private var running = false
     private var relayCapable: Bool
     private var lastTickMs: UInt64?
@@ -350,7 +350,7 @@ public final class MeshDrive {
         scanner: Scanner,
         gatt: GattAdapter,
         foregroundRelayCapable: Bool,
-        eventSink: @escaping (Any) -> Void = { _ in },
+        eventSink: @escaping (Any) throws -> Void = { _ in },
         dutyCycleRequest: MeshDutyCycleRequest = MeshDutyCycleRequest(),
         dutyCycleSink: DutyCycleSink = NoopDutyCycleSink(),
         persistenceSink: PersistenceSink = NoopPersistenceSink(),
@@ -567,6 +567,7 @@ public final class MeshDrive {
 
     public func onLinkDown(_ link: UInt64) throws {
         closeRequested.remove(link)
+        pendingCloseActions.removeAll { $0 == link }
         guard running, activeLinks.remove(link) != nil else { return }
         pending.removeAll { $0.link == link }
         node.linkDown(link)
@@ -590,7 +591,7 @@ public final class MeshDrive {
         try drainClose()
         observeHostDiagnostics()
         if !overloadLatched { try drainSend() }
-        drainEvents()
+        try drainEvents()
     }
 
     private func drainClose() throws {
@@ -601,7 +602,17 @@ public final class MeshDrive {
             guard !pendingCloseActions.isEmpty else { return }
             let link = pendingCloseActions.removeFirst()
             pending.removeAll { $0.link == link }
-            try requestPhysicalClose(link)
+            do {
+                try requestPhysicalClose(link)
+            } catch {
+                // The native queue entry has already been consumed. Retain
+                // it only while this coordinator still owns the logical
+                // link; rollback/onLinkDown paths retire stale retries.
+                if activeLinks.contains(link) {
+                    pendingCloseActions.insert(link, at: 0)
+                }
+                throw error
+            }
         }
     }
 
@@ -632,6 +643,7 @@ public final class MeshDrive {
         links.forEach { node.linkDown($0) }
         activeLinks.removeAll()
         pending.removeAll()
+        pendingCloseActions.removeAll()
         links.forEach { try? requestPhysicalClose($0) }
         try? scanner.stop()
         try? advertiser.stop()
@@ -670,13 +682,22 @@ public final class MeshDrive {
         }
     }
 
-    private func drainEvents() {
+    private func drainEvents() throws {
         while true {
             if pendingEvents.isEmpty {
                 pendingEvents.append(contentsOf: node.pollEventBatch(meshNodeMaxPollBatch))
             }
             guard !pendingEvents.isEmpty else { return }
-            eventSink(pendingEvents.removeFirst())
+            let event = pendingEvents.removeFirst()
+            do {
+                try eventSink(event)
+            } catch {
+                // Keep the event at the head when the host bridge rejects it.
+                // This preserves FIFO and lets a later lifecycle/pump retry
+                // without re-reading or duplicating the native queue entry.
+                pendingEvents.insert(event, at: 0)
+                throw error
+            }
         }
     }
 
@@ -692,11 +713,11 @@ public final class MeshDrive {
         closeRequested.removeAll()
         pending.removeAll()
         pendingCloseActions.removeAll()
-        pendingEvents.removeAll()
         advertisedBeacon = nil
     }
 
     private func rollbackLinkAdmission(_ link: UInt64) {
+        pendingCloseActions.removeAll { $0 == link }
         pending.removeAll { $0.link == link }
         if activeLinks.remove(link) != nil {
             node.linkDown(link)

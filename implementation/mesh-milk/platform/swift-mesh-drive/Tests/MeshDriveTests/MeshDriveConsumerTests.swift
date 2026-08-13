@@ -344,6 +344,116 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(gatt.gattNotifications.map { $0.payload.count }, [20, 5])
     }
 
+    func testCloseBatchRetainsActionWhenNativeTeardownFails() throws {
+        let node = TestNode()
+        let gatt = TestGatt(closeFailuresRemaining: 1)
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: gatt,
+            foregroundRelayCapable: false
+        )
+
+        try drive.start()
+        try drive.onLinkUp(7, initiator: true)
+        node.closeActions.append(7)
+
+        XCTAssertThrowsError(try drive.pumpAt(1)) { error in
+            XCTAssertEqual(error as? TestError, .closeUnavailable)
+        }
+        XCTAssertEqual(gatt.closeAttempts, [7])
+
+        try drive.pumpAt(1)
+        XCTAssertEqual(gatt.closeAttempts, [7, 7])
+        XCTAssertEqual(node.closeBatchSizes, [64, 64, 64, 64])
+
+        try drive.onLinkDown(7)
+        drive.stop()
+    }
+
+    func testStartupRollbackRetiresRequeuedCloseBeforeNextLifecycle() throws {
+        let node = TestNode()
+        node.queueCloseOnLinkUp = true
+        let gatt = TestGatt(closeFailuresRemaining: 1)
+        let scanner = TestScanner()
+        var drive: MeshDrive!
+        drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: scanner,
+            gatt: gatt,
+            foregroundRelayCapable: false
+        )
+        scanner.startAction = {
+            try drive.onLinkUp(17, initiator: true)
+        }
+
+        XCTAssertThrowsError(try drive.start()) { error in
+            XCTAssertEqual(error as? TestError, .closeUnavailable)
+        }
+        XCTAssertFalse(drive.isRunning)
+        XCTAssertEqual(gatt.closeAttempts, [17, 17])
+        XCTAssertEqual(node.linkDowns, [17])
+
+        try drive.start()
+        XCTAssertEqual(gatt.closeAttempts, [17, 17])
+        drive.stop()
+    }
+
+    func testEventBatchPathPreservesFifoWithProviderCap() throws {
+        let node = TestNode(initialEvents: ["one", "two", "three"])
+        var delivered: [Any] = []
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: TestGatt(),
+            foregroundRelayCapable: false,
+            eventSink: { delivered.append($0) }
+        )
+
+        try drive.start()
+
+        XCTAssertEqual(delivered.compactMap { $0 as? String }, ["one", "two", "three"])
+        XCTAssertEqual(node.eventBatchSizes, [2, 1, 0])
+        XCTAssertTrue(node.eventBatchSizes.allSatisfy { $0 <= 64 })
+        drive.stop()
+    }
+
+    func testEventSinkFailureRetainsCurrentEventForNextLifecycleAttempt() throws {
+        let node = TestNode(initialEvents: ["event"])
+        var delivered: [Any] = []
+        var failOnce = true
+        let drive = MeshDrive(
+            node: node,
+            clock: TestClock(now: 1),
+            advertiser: TestAdvertiser(),
+            scanner: TestScanner(),
+            gatt: TestGatt(),
+            foregroundRelayCapable: false,
+            eventSink: { event in
+                if failOnce {
+                    failOnce = false
+                    throw TestError.eventSinkUnavailable
+                }
+                delivered.append(event)
+            }
+        )
+
+        XCTAssertThrowsError(try drive.start()) { error in
+            XCTAssertEqual(error as? TestError, .eventSinkUnavailable)
+        }
+        XCTAssertFalse(drive.isRunning)
+
+        try drive.start()
+        XCTAssertEqual(delivered.compactMap { $0 as? String }, ["event"])
+        drive.stop()
+    }
+
     func testRadioShellRejectsBindingWhenDriveFailsClosedDuringAdmission() throws {
         let node = TestNode()
         node.tripOverloadOnLinkUp = true
@@ -568,6 +678,8 @@ private enum TestError: Error, Equatable {
     case failed
     case persistenceFailed
     case mtuUnavailable
+    case closeUnavailable
+    case eventSinkUnavailable
 }
 
 private final class TestClock: MonotonicClock {
@@ -631,8 +743,14 @@ private final class TestPersistenceSink: PersistenceSink {
 
 private final class TestScanner: Scanner {
     var stopCount = 0
+    var startAction: (() throws -> Void)?
 
-    func start(onResult: @escaping (ScanResult) -> Void) throws {}
+    func start(onResult: @escaping (ScanResult) -> Void) throws {
+        if let startAction {
+            self.startAction = nil
+            try startAction()
+        }
+    }
 
     func stop() throws {
         stopCount += 1
@@ -649,10 +767,17 @@ private final class TestGatt: GattAdapter {
     var closedLinks: [UInt64] = []
     private var acceptedNotifications: [Bool]
     private let mtuError: Error?
+    private var closeFailuresRemaining: Int
+    var closeAttempts: [UInt64] = []
 
-    init(acceptedNotifications: [Bool] = [], mtuError: Error? = nil) {
+    init(
+        acceptedNotifications: [Bool] = [],
+        mtuError: Error? = nil,
+        closeFailuresRemaining: Int = 0
+    ) {
         self.acceptedNotifications = acceptedNotifications
         self.mtuError = mtuError
+        self.closeFailuresRemaining = closeFailuresRemaining
     }
 
     func mtu(link: UInt64) throws -> Int {
@@ -671,6 +796,11 @@ private final class TestGatt: GattAdapter {
     }
 
     func close(link: UInt64) throws {
+        closeAttempts.append(link)
+        if closeFailuresRemaining > 0 {
+            closeFailuresRemaining -= 1
+            throw TestError.closeUnavailable
+        }
         closedLinks.append(link)
     }
 }
@@ -703,14 +833,21 @@ private final class TestNode: MeshNode {
     var linkUpQualityHints: [MeshLinkQualityHint?] = []
     var receivedBeacons: [[UInt8]] = []
     var receivedDataCount = 0
+    var linkDowns: [UInt64] = []
     var tripOverloadOnLinkUp = false
     var tripOverloadOnStart = false
+    var queueCloseOnLinkUp = false
+    var closeActions: [UInt64] = []
+    var closeBatchSizes: [Int] = []
+    var eventBatchSizes: [Int] = []
     private var eventDrops: UInt64 = 0
     private var nextSend: OutboundFrame?
     private var linkIsUp = false
+    private var events: [Any]
 
-    init(send: OutboundFrame? = nil) {
+    init(send: OutboundFrame? = nil, initialEvents: [Any] = []) {
         nextSend = send
+        events = initialEvents
     }
 
     func setTier(_ tier: MeshTier) {
@@ -727,6 +864,14 @@ private final class TestNode: MeshNode {
         }
     }
     func pollClose() -> UInt64? { nil }
+    func pollCloseBatch(_ maxItems: Int) -> [UInt64] {
+        closeBatchSizes.append(maxItems)
+        let count = min(maxItems, closeActions.count)
+        guard count > 0 else { return [] }
+        let batch = Array(closeActions.prefix(count))
+        closeActions.removeFirst(count)
+        return batch
+    }
     func closeActionsDropped() -> UInt64 { 0 }
     func eventQueueDropped() -> UInt64 { eventDrops }
 
@@ -736,7 +881,18 @@ private final class TestNode: MeshNode {
         return nextSend
     }
 
-    func pollEvent() -> Any? { nil }
+    func pollEvent() -> Any? {
+        guard !events.isEmpty else { return nil }
+        return events.removeFirst()
+    }
+    func pollEventBatch(_ maxItems: Int) -> [Any] {
+        let count = min(maxItems, 2, events.count)
+        eventBatchSizes.append(count)
+        guard count > 0 else { return [] }
+        let batch = Array(events.prefix(count))
+        events.removeFirst(count)
+        return batch
+    }
     func onBeacon(serviceData: [UInt8], rssi: Int8) {
         receivedBeacons.append(serviceData)
     }
@@ -744,6 +900,10 @@ private final class TestNode: MeshNode {
     func linkUp(_ link: UInt64, initiator: Bool) {
         linkIsUp = true
         linkUpInitiators.append(initiator)
+        if queueCloseOnLinkUp {
+            queueCloseOnLinkUp = false
+            closeActions.append(link)
+        }
         if tripOverloadOnLinkUp { eventDrops = 1 }
     }
     func linkUp(_ link: UInt64, initiator: Bool, quality: MeshLinkQualityHint?) {
@@ -755,5 +915,6 @@ private final class TestNode: MeshNode {
     }
     func linkDown(_ link: UInt64) {
         linkIsUp = false
+        linkDowns.append(link)
     }
 }

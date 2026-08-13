@@ -11,7 +11,8 @@ The coordinator owns only deterministic host policy:
 - monotonic `pump`/`pumpAt` and rotating-beacon refresh;
 - bounded native batch polling for close actions, outbound frames, and events
   (capped at 64 items, with legacy one-item fallbacks) while preserving FIFO
-  order and pull-based ownership;
+  order and pull-based ownership; close retries and throwing event sinks retain
+  the current item until the host accepts it;
 - ATT MTU minus three fragmentation with adapter backpressure;
 - optional `MeshLinkQualityHint` values (MTU `23...4096`, goodput
   `1...10,000,000` bit/s) validated before admission and forwarded to
