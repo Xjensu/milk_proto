@@ -88,6 +88,21 @@ class MobileDocumentationContractTests(unittest.TestCase):
         # the checked additive method is part of the FFI contract.
         self.assertNotIn("is not yet exposed at the FFI boundary", self.api_reference)
 
+    def test_binding_generation_commands_enable_uniffi_cli(self) -> None:
+        """The documented UniFFI binary must be enabled by its Cargo feature."""
+        for language in ("kotlin", "swift"):
+            match = re.search(
+                rf"(?ms)^cargo run -p mmp-ffi(?P<command>.*?--language\s+{language}\s+--out-dir[^\n]*)",
+                self.mobile,
+            )
+            self.assertIsNotNone(match, language)
+            command = " ".join(match.group(0).split())
+            self.assertIn("--features cli", command, language)
+            self.assertIn("--release", command, language)
+            self.assertIn("--locked", command, language)
+            self.assertIn("--bin uniffi-bindgen", command, language)
+            self.assertIn(f"--language {language}", command, language)
+
 
 if __name__ == "__main__":
     unittest.main()
