@@ -16,8 +16,11 @@ board-specific profile. The caller supplies the linker-derived region,
 program/erase units, fixed-capacity accounting, and snapshot limits. The gate
 rejects zero capacities, unaligned regions, checked-arithmetic overflow,
 out-of-range regions, slot/index mismatches, and snapshots that do not fit the
-journal payload or aligned region. It deliberately does not select any of
-those values and does not provide a flash driver or durability guarantee.
+journal payload or aligned region. On ARM, `NvmcJournalBackend` adapts the
+already-pinned Embassy nRF52840 internal-NVMC driver to the provider-neutral
+`mmp-flash-journal::JournalBackend` contract. It accepts only a caller-validated
+page-aligned subregion; it does not choose a flash map or provide durability,
+power-loss atomicity, or snapshot authenticity.
 
 After a board linker map and provider contract are approved, a board-specific
 crate can place `StorageConfig::validate()` in a `const` assertion. No such
@@ -27,6 +30,14 @@ flash region or provider geometry.
 ## Verification
 
 From `implementation/mesh-milk`:
+
+```text
+cargo test -p mmp-board-nrf52840-dk --all-targets --locked
+```
+
+The host tests cover the caller-region validator and fixed geometry. The
+ARM-only adapter is compile-checked below because the host cannot construct an
+Embassy peripheral:
 
 ```text
 cargo check -p mmp-board-nrf52840-dk \
@@ -45,7 +56,7 @@ radio behavior, flash geometry, or production readiness.
 ## Deliberate non-goals
 
 This profile does not choose an executor, clock setup, SoftDevice/bootloader
-reservation, linker script, allocator, NVMC/QSPI provider, journal offset,
-radio/TAL implementation, or power-measurement result.  Those require named
-board revisions, provider geometry, fault-injection tests, and hardware
-transcripts before they can be added to the implementation workspace.
+reservation, linker script, allocator, journal offset, radio/TAL
+implementation, or power-measurement result. The NVMC adapter is only an
+I/O translation boundary; provider geometry, journal policy, fault-injection
+tests, and hardware transcripts are still required before production use.

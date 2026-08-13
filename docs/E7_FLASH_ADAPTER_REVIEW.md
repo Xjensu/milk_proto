@@ -116,3 +116,18 @@ cargo check -p mmp-flash-journal --target thumbv7em-none-eabihf \
   --no-default-features --locked --offline
 cargo fmt --package mmp-flash-journal -- --check
 ```
+
+## nRF52840 NVMC boundary slice
+
+The board profile now exposes an ARM-only `NvmcJournalBackend` that reuses
+Embassy's pinned `embedded-storage` implementation and translates a
+caller-selected, page-aligned internal-flash subregion into the existing
+`JournalBackend` interface. The region validator rejects zero bases,
+unaligned/empty regions, checked-arithmetic overflow, and ranges outside the
+documented board flash capacity. The adapter uses no unsafe code and reports
+re-entrant access as a bounded error instead of panicking.
+
+This does not choose a linker map or journal offset, serialize a complete
+provider snapshot, prove power-loss atomicity, persist the generation floor, or
+validate recovered bundle authenticity. The complete provider remains
+deferred until those board and recovery inputs exist.

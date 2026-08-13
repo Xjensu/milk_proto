@@ -26,3 +26,4 @@ mmp-flash-journal = { path = "../mmp-flash-journal" }
 # relying on embassy-nrf defaults (which include `rt`).
 [target.'cfg(target_arch = "arm")'.dependencies]
 embassy-nrf = { version = "=0.11.0", default-features = false, features = ["nrf52840"] }
+embedded-storage = { version = "0.3.1", default-features = false }

@@ -12,7 +12,7 @@ The two E7 crates have different readiness levels:
 | --- | --- | --- | --- |
 | `mmp-tal-embedded` | `cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features` passes | `#![no_std]`; bounded generic `EmbeddedEventQueue<const CAPACITY>` over the shared `TalEvent` vocabulary | no nRF52/ESP32 radio backend, GATT lifecycle, IRQ/event bridge, or target binary |
 | `mmp-node-embassy` | host check and the same target check pass; focused pump tests pass | `#![no_std]`; bounded `EmbeddedEventPump<INGRESS_CAPACITY, EGRESS_CAPACITY>` reusing the embedded TAL ingress queue and adding fixed-capacity egress | no fixed-capacity flash store, Embassy executor, TAL backend, or target binary |
-| `mmp-flash-journal` | host tests, Clippy, and the same Cortex-M target check pass | allocation-free, provider-neutral record encoder/scanner plus aligned `JournalBackend` contract and test-only NOR double | no board flash backend, transaction adapter, board policy, or `BundleStore` integration |
+| `mmp-flash-journal` | host tests, Clippy, and the same Cortex-M target check pass | allocation-free, provider-neutral record encoder/scanner plus aligned `JournalBackend` contract and test-only NOR double | no complete board flash provider, snapshot integration, board policy, or `BundleStore` integration |
 
 The following failure is retained as historical evidence from before
 `750c807`; it is not the current result:
@@ -346,3 +346,26 @@ reads, expiry preflight, and ordered ID visitation.
 This is an executable capacity model, not a flash backend: it has no journal,
 power-loss recovery, allocator policy, board geometry, or `BundleStore`
 compatibility implementation. Those remain required before E7 hardware work.
+
+## nRF52840 NVMC adapter slice (2026-08-13)
+
+The `mmp-board-nrf52840-dk` profile now exposes an ARM-only
+`NvmcJournalBackend` that translates a caller-validated, page-aligned internal
+flash subregion to the existing `mmp-flash-journal::JournalBackend` contract.
+It reuses the pinned Embassy `embedded-storage` implementation, rejects zero,
+unaligned, overflowing, and out-of-range regions, and keeps the host build
+free of the HAL dependency. This is an I/O boundary only: it does not select a
+linker reservation, serialize provider snapshots, establish power-loss
+atomicity, or integrate `BundleStore`/node state.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-board-nrf52840-dk --all-targets --locked --offline  # 7 passed
+cargo clippy -p mmp-board-nrf52840-dk --all-targets --locked --offline -- -D warnings
+cargo clippy -p mmp-board-nrf52840-dk --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline -- -D warnings
+cargo check -p mmp-board-nrf52840-dk --target thumbv7em-none-eabihf \
+  --no-default-features --locked --offline
+cargo fmt --package mmp-board-nrf52840-dk -- --check
+```

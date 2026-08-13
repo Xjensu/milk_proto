@@ -7,6 +7,12 @@
 //! radio peripherals, provide a linker script, or assign a flash journal
 //! region.  Those decisions require board and power-loss evidence.
 
+mod nvmc_backend;
+
+#[cfg(target_arch = "arm")]
+pub use nvmc_backend::{NvmcJournalBackend, NvmcJournalError};
+pub use nvmc_backend::{NvmcRegion, NvmcRegionError};
+
 /// Stable implementation identifier for the Nordic PCA10056 development kit.
 pub const BOARD_ID: &str = "nrf52840-dk-pca10056";
 
