@@ -2053,6 +2053,84 @@ mod tests {
         let _ = std::fs::remove_file(path.with_extension("tmp"));
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn cli_vault_save_on_exit_round_trips_non_empty_secret_state() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = env::temp_dir().join(format!(
+            "mmp-cli-vault-secret-{}-{nonce}.bin",
+            std::process::id()
+        ));
+        let path_string = path.to_string_lossy().into_owned();
+        let seed = [0x72; 32];
+        let peer_seed = [0x73; 32];
+
+        let mut peer = Node::new(peer_seed, Box::new(MemStore::new()), Tier::Anchor);
+        let (mut source, _) = build_node(seed, None).expect("in-memory node construction");
+        for claim in peer.own_claims() {
+            source.ingest_claim(claim, true);
+        }
+        for claim in source.own_claims() {
+            peer.ingest_claim(claim, true);
+        }
+
+        // Complete the first-contact exchange so the next direct send uses
+        // the established conversation ratchet rather than a pending root.
+        let bootstrap = source
+            .send_text(&peer.node_id(), "bootstrap")
+            .expect("peer claims are known");
+        contact(&mut source, &mut peer, 41, 0);
+        contact(&mut source, &mut peer, 42, 1_000);
+        assert_eq!(
+            source.message_state(&bootstrap),
+            Some(DeliveryState::Delivered),
+            "the bootstrap direct message must complete before persistence"
+        );
+
+        let peer_id = peer.node_id();
+        source
+            .send_text(&peer_id, "persisted ratchet")
+            .expect("established peer send");
+        assert!(
+            source.store_len() > 0,
+            "a direct bundle must be queued before vault save"
+        );
+        assert!(
+            source.conv_epoch(&peer_id).is_some(),
+            "conversation state must be live before vault save"
+        );
+
+        let mut vault = open_host_vault(Some(&path_string)).unwrap();
+        assert!(
+            finish(None, &mut source, &mut vault, 0, 0),
+            "CLI exit must persist non-empty Windows secret state"
+        );
+        drop(vault);
+        drop(source);
+
+        let (mut restored, _) = build_node(seed, None).expect("reopen in-memory node");
+        let mut reopened = open_host_vault(Some(&path_string)).unwrap();
+        // Match the production ordering: restore provider-owned state before
+        // priming the host clock or accepting any live traffic.
+        restore_host_vault(&mut restored, &mut reopened).expect("restore Windows vault");
+        for claim in peer.own_claims() {
+            restored.ingest_claim(claim, true);
+        }
+        let mut clock = SequenceClock::new([2_000]);
+        prime_node_clock(&mut restored, &mut clock);
+        assert!(
+            restored.send_text(&peer_id, "after restart").is_ok(),
+            "restored conversation and ratchet state must support a subsequent send"
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("bin.lock"));
+        let _ = std::fs::remove_file(path.with_extension("tmp"));
+    }
+
     #[test]
     fn shared_snapshot_preserves_bounded_try_put_rejection() {
         let path = temp_snapshot_path();

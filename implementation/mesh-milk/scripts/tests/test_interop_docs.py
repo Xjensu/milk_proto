@@ -59,6 +59,18 @@ class InteropGuideTests(unittest.TestCase):
         self.assertIn("requires it to equal the checkout's current `HEAD`", guide)
         self.assertIn("requires it to equal the checkout's current `HEAD`", manual)
 
+    def test_manual_inspect_examples_follow_host_store_paths(self) -> None:
+        manual = (REPO_ROOT / "docs" / "MANUAL_INTEROP_TESTING.md").read_text(
+            encoding="utf-8"
+        )
+
+        # The central may run on Windows while the peripheral remains Linux.
+        # Keep the manual procedure from reusing the Linux /tmp path on the
+        # Windows host, which would inspect a different or missing snapshot.
+        self.assertIn("On Windows PowerShell (when machine B is the Windows central)", manual)
+        self.assertIn("inspect .\\mmp-bob.store", manual)
+        self.assertIn("exact path supplied to that host's `--store` option", manual)
+
 
 if __name__ == "__main__":
     unittest.main()

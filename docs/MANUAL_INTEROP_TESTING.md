@@ -206,12 +206,27 @@ needs all of the following:
    before a reconnect attempt; the current CLI makes one dial attempt per
    peripheral per process and does not retry in-process.
 
-Stop both processes with `Ctrl-C`, then inspect the stores if needed:
+Stop both processes with `Ctrl-C`, then inspect each store on the host that
+owns it. Use the exact path supplied to that host's `--store` option; the
+following examples avoid accidentally asking a Windows host to read the
+Linux `/tmp` path:
+
+On Linux or macOS:
 
 ```bash
 cargo run -p mmp-cli -- inspect /tmp/mmp-alice.store
 cargo run -p mmp-cli -- inspect /tmp/mmp-bob.store
 ```
+
+On Windows PowerShell (when machine B is the Windows central):
+
+```powershell
+cargo run -p mmp-cli -- inspect .\mmp-bob.store
+```
+
+If the peripheral store is on another host, run `inspect` there rather than
+copying or renaming the snapshot before collecting evidence. The evidence
+manifest requires distinct, existing inspection files for both roles.
 
 Capture the exact CLI output, OS version, adapter model, and elapsed delivery
 time. The reference CLI does not print negotiated MTU or RSSI; obtain those
