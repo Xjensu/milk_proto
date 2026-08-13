@@ -1029,6 +1029,150 @@ fn send_file_atomic_success_commits_symbols_and_manifest_together() {
     );
 }
 
+fn group_distribution_batch_fixture() -> (Node, Id16, NodeId, NodeId) {
+    let mut alice = node(78);
+    let mut bob = node(79);
+    let mut carol = node(80);
+    introduce(&mut alice, &mut bob);
+    introduce(&mut alice, &mut carol);
+
+    let gid = alice.create_group();
+    let bob_id = bob.node_id();
+    let carol_id = carol.node_id();
+    let group = alice.core.groups.get_mut(&gid).expect("group");
+    group.add_member(bob_id).expect("bob membership tag");
+    group.add_member(carol_id).expect("carol membership tag");
+    (alice, gid, bob_id, carol_id)
+}
+
+#[test]
+fn group_distribution_atomic_success_commits_all_candidates_together() {
+    let (mut alice, gid, bob, carol) = group_distribution_batch_fixture();
+    let (probe, reserve_calls, commit_calls, abort_calls, single_write_calls, _, direct_entries) =
+        AtomicBatchProbeStore::new(BatchReservationMode::Accept);
+    alice.core.store = Box::new(probe);
+    alice
+        .core
+        .groups
+        .get_mut(&gid)
+        .expect("group")
+        .mark_distribution_needed();
+
+    alice
+        .core
+        .send_own_dists(&gid, &[bob, carol])
+        .expect("atomic group distribution succeeds");
+
+    assert!(reserve_calls.load(Ordering::Relaxed));
+    assert!(commit_calls.load(Ordering::Relaxed));
+    assert!(!abort_calls.load(Ordering::Relaxed));
+    assert!(!single_write_calls.load(Ordering::Relaxed));
+    assert_eq!(direct_entries.load(Ordering::Relaxed), 2);
+    assert_eq!(alice.store_len(), 2, "both distributions are durable");
+    assert_eq!(
+        alice.core.convs.len(),
+        2,
+        "both conversation candidates applied"
+    );
+    assert_eq!(alice.core.pending_first_contact.len(), 2);
+    assert!(alice.core.sent_dists.contains(&(gid, bob, 1)));
+    assert!(alice.core.sent_dists.contains(&(gid, carol, 1)));
+    assert!(alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .all(|meta| meta.class == class::DIRECT));
+}
+
+fn assert_group_distribution_batch_failure(mode: BatchReservationMode, expect_commit: bool) {
+    let (mut alice, gid, bob, carol) = group_distribution_batch_fixture();
+    let (probe, reserve_calls, commit_calls, abort_calls, single_write_calls, _, _) =
+        AtomicBatchProbeStore::new(mode);
+    alice.core.store = Box::new(probe);
+    alice
+        .core
+        .groups
+        .get_mut(&gid)
+        .expect("group")
+        .mark_distribution_needed();
+
+    let convs_before: BTreeMap<Id16, (Key32, u16, u32, Vec<Id16>)> = alice
+        .core
+        .convs
+        .iter()
+        .map(|(id, conv)| {
+            (
+                *id,
+                (
+                    conv.peer,
+                    conv.send.epoch,
+                    conv.send.next_index,
+                    conv.dag.heads(),
+                ),
+            )
+        })
+        .collect();
+    let pending_before = alice.core.pending_first_contact.clone();
+    let sent_dists_before = alice.core.sent_dists.clone();
+    let seen_before = alice.core.seen.encode();
+    let events_before = alice.core.events.clone();
+    let diagnostics_before = alice.diagnostics().dump();
+
+    assert_eq!(
+        alice.core.send_own_dists(&gid, &[bob, carol]),
+        Err(SendError::ResourceLimit)
+    );
+
+    assert!(reserve_calls.load(Ordering::Relaxed));
+    assert_eq!(commit_calls.load(Ordering::Relaxed), expect_commit);
+    assert_eq!(abort_calls.load(Ordering::Relaxed), expect_commit);
+    assert!(!single_write_calls.load(Ordering::Relaxed));
+    assert_eq!(
+        alice.store_len(),
+        0,
+        "failed batch publishes no distribution"
+    );
+    let convs_after: BTreeMap<Id16, (Key32, u16, u32, Vec<Id16>)> = alice
+        .core
+        .convs
+        .iter()
+        .map(|(id, conv)| {
+            (
+                *id,
+                (
+                    conv.peer,
+                    conv.send.epoch,
+                    conv.send.next_index,
+                    conv.dag.heads(),
+                ),
+            )
+        })
+        .collect();
+    assert_eq!(convs_after, convs_before);
+    assert_eq!(alice.core.pending_first_contact, pending_before);
+    assert_eq!(alice.core.sent_dists, sent_dists_before);
+    assert_eq!(alice.core.seen.encode(), seen_before);
+    assert_eq!(alice.core.events, events_before);
+    assert_eq!(alice.diagnostics().dump(), diagnostics_before);
+    assert!(alice
+        .core
+        .groups
+        .get(&gid)
+        .expect("group")
+        .needs_distribution());
+}
+
+#[test]
+fn group_distribution_atomic_reservation_rejection_is_side_effect_free() {
+    assert_group_distribution_batch_failure(BatchReservationMode::Reject, false);
+}
+
+#[test]
+fn group_distribution_atomic_commit_failure_is_side_effect_free() {
+    assert_group_distribution_batch_failure(BatchReservationMode::CommitFails, true);
+}
+
 #[test]
 fn send_file_success_does_not_orphan_records_on_malformed_batch_outcomes() {
     let mut alice = node(78);

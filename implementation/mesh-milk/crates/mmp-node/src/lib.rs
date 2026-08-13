@@ -1764,24 +1764,19 @@ impl Node {
             .sent_dists
             .retain(|(sent_gid, _, sent_epoch)| *sent_gid != *gid || *sent_epoch == epoch);
         let me = self.core.node_id;
-        let mut first_error = None;
-        for m in members {
-            if m != me && m != *member {
-                if let Err(err) = self.core.send_own_dist(gid, &m) {
-                    if first_error.is_none() {
-                        first_error = Some(err);
-                    }
-                }
-            }
-        }
-        if first_error.is_none() {
+        let remaining: Vec<NodeId> = members
+            .into_iter()
+            .filter(|m| *m != me && *m != *member)
+            .collect();
+        let result = self.core.send_own_dists(gid, &remaining);
+        if result.is_ok() {
             if let Some(gs) = self.core.groups.get_mut(gid) {
                 gs.mark_distribution_attempted();
             }
         }
         self.core
             .enqueue_event(Event::GroupEpochChanged { gid: *gid, epoch });
-        first_error.map_or(Ok(epoch), Err)
+        result.map(|()| epoch)
     }
 
     /// Send a text into the group under our sender key (doc 08 §6.2).
@@ -1820,15 +1815,13 @@ impl Node {
                 .get(gid)
                 .map(|gs| gs.members.members())
                 .unwrap_or_default();
-            for member in members {
-                if member != me {
-                    if let Err(err) = self.core.send_own_dist(gid, &member) {
-                        if let Some(gs) = self.core.groups.get_mut(gid) {
-                            gs.mark_distribution_needed();
-                        }
-                        return Err(err);
-                    }
+            let remaining: Vec<NodeId> =
+                members.into_iter().filter(|member| *member != me).collect();
+            if let Err(err) = self.core.send_own_dists_stop_on_error(gid, &remaining) {
+                if let Some(gs) = self.core.groups.get_mut(gid) {
+                    gs.mark_distribution_needed();
                 }
+                return Err(err);
             }
             if let Some(gs) = self.core.groups.get_mut(gid) {
                 gs.mark_distribution_attempted();
@@ -3084,6 +3077,22 @@ impl NodeCore {
         app: u8,
         payload: &[u8],
     ) -> Result<PreparedAppCandidate, SendError> {
+        let rng = self.rng.clone();
+        self.prepare_app_with_rng(peer, app, payload, rng)
+    }
+
+    /// Variant of [`Self::prepare_app`] that starts from an explicitly staged
+    /// RNG state. Group distribution batches use this to prepare several
+    /// first-contact candidates without mutating live node state; after a
+    /// successful provider commit the candidate RNG states are applied in the
+    /// same order as the prepared bundles.
+    fn prepare_app_with_rng(
+        &mut self,
+        peer: &NodeId,
+        app: u8,
+        payload: &[u8],
+        rng: StdRng,
+    ) -> Result<PreparedAppCandidate, SendError> {
         if self.claims.revocation(peer).is_some() {
             // Handbook §4.6: never open a new conversation, nor use a
             // prekey batch already on file, for a revoked identity — checked
@@ -3134,7 +3143,7 @@ impl NodeCore {
             // Prefer X3DH against the peer's prekey batch (doc 08 §4.2), but
             // retain the always-available sealed-box baseline when a valid
             // batch is absent, malformed, or suppressed (§4.1).
-            let mut candidate_rng = self.rng.clone();
+            let mut candidate_rng = rng;
             let agreement = self
                 .claims
                 .get(peer, field::PREKEY_BATCH)
@@ -3276,7 +3285,7 @@ impl NodeCore {
                 parents: parents_copy,
                 pending_async: pending.is_some(),
             },
-            rng: self.rng.clone(),
+            rng,
         })
     }
 
@@ -3381,19 +3390,152 @@ impl NodeCore {
     }
 
     fn send_own_dist(&mut self, gid: &Id16, peer: &NodeId) -> Result<(), SendError> {
+        let rng = self.rng.clone();
+        let Some((epoch, candidate)) = self.prepare_own_dist_candidate(gid, peer, rng)? else {
+            return Ok(()); // already shipped for this epoch
+        };
+        self.commit_app_candidate(candidate)?;
+        self.sent_dists.insert((*gid, *peer, epoch));
+        Ok(())
+    }
+
+    /// Prepare one local sender-key distribution without mutating live
+    /// conversation, RNG, or sent-marker state. `None` means that this exact
+    /// `(group, peer, epoch)` distribution was already admitted locally.
+    fn prepare_own_dist_candidate(
+        &mut self,
+        gid: &Id16,
+        peer: &NodeId,
+        rng: StdRng,
+    ) -> Result<Option<(u16, PreparedAppCandidate)>, SendError> {
         let (dist_bytes, epoch) = {
             let gs = self.groups.get(gid).ok_or(SendError::UnknownPeer)?;
             (gs.local.dist().encode(), gs.epoch)
         };
         if self.sent_dists.contains(&(*gid, *peer, epoch)) {
-            return Ok(()); // already shipped for this epoch
+            return Ok(None);
         }
         let mut body = Vec::with_capacity(16 + dist_bytes.len());
         body.extend_from_slice(&self.node_id.0);
         body.extend_from_slice(&dist_bytes);
-        self.send_app(peer, apptype::SENDER_KEY, &body).map(|_| {
-            self.sent_dists.insert((*gid, *peer, epoch));
-        })
+        let candidate = self.prepare_app_with_rng(peer, apptype::SENDER_KEY, &body, rng)?;
+        Ok(Some((epoch, candidate)))
+    }
+
+    /// Distribute the current local sender key to several peers. Candidate
+    /// preparation is fail-closed for the entire fan-out; providers that
+    /// advertise atomic batch reservations then receive one all-or-nothing
+    /// publication. Only providers explicitly returning `Unsupported` retain
+    /// per-write accepted-prefix behavior, with the caller-selected
+    /// stop/continue policy. Candidate conversation and RNG state is applied
+    /// only after the corresponding provider write succeeds.
+    fn send_own_dists(&mut self, gid: &Id16, peers: &[NodeId]) -> Result<(), SendError> {
+        self.send_own_dists_with_policy(gid, peers, false)
+    }
+
+    /// Retry helper for the group-send path. The historical single-bundle
+    /// loop stopped on the first provider error; retain that behavior for the
+    /// legacy fallback while the atomic-capable path remains all-or-none.
+    fn send_own_dists_stop_on_error(
+        &mut self,
+        gid: &Id16,
+        peers: &[NodeId],
+    ) -> Result<(), SendError> {
+        self.send_own_dists_with_policy(gid, peers, true)
+    }
+
+    fn send_own_dists_with_policy(
+        &mut self,
+        gid: &Id16,
+        peers: &[NodeId],
+        stop_on_error: bool,
+    ) -> Result<(), SendError> {
+        let mut distinct = Vec::with_capacity(peers.len());
+        let mut seen_peers = HashSet::with_capacity(peers.len());
+        for peer in peers {
+            if seen_peers.insert(*peer) {
+                distinct.push(*peer);
+            }
+        }
+
+        let mut staged_rng = self.rng.clone();
+        let mut prepared = Vec::with_capacity(distinct.len());
+        for peer in distinct {
+            let Some((epoch, candidate)) =
+                self.prepare_own_dist_candidate(gid, &peer, staged_rng.clone())?
+            else {
+                continue;
+            };
+            staged_rng = candidate.rng.clone();
+            prepared.push((peer, epoch, candidate));
+        }
+        if prepared.is_empty() {
+            return Ok(());
+        }
+
+        let budget = origin_budget(self.utility.n_hat(self.now));
+        let mut encoded = Vec::with_capacity(prepared.len());
+        let mut metas = Vec::with_capacity(prepared.len());
+        for (_, _, candidate) in &prepared {
+            let bytes = candidate.bundle.encode();
+            let meta = self.own_bundle_meta(&candidate.bundle, budget, &bytes)?;
+            encoded.push(bytes);
+            metas.push(meta);
+        }
+
+        match self.store.try_reserve_batch_atomic(&metas) {
+            Ok(batch) => {
+                let entries: Vec<StoreBatchEntry<'_>> = prepared
+                    .iter()
+                    .zip(encoded.iter())
+                    .zip(metas.iter())
+                    .map(|((_, bytes), meta)| StoreBatchEntry::new(*meta, bytes))
+                    .collect();
+                if self.store.commit_reserved_batch(&batch, &entries).is_err() {
+                    let _ = self.store.abort_reserved_batch(&batch);
+                    return Err(SendError::ResourceLimit);
+                }
+
+                // A successful atomic provider call is the publication
+                // boundary. Apply every candidate only after all bytes are
+                // durable/visible; no partial conversation or marker state is
+                // exposed if reservation or commit rejects the batch.
+                for ((peer, epoch, candidate), meta) in prepared.into_iter().zip(metas) {
+                    let PreparedAppCandidate { state, rng, .. } = candidate;
+                    self.seen.insert(&meta.id, meta.class, self.now);
+                    self.diag.log(meta.id, JourneyEvent::Created, self.now);
+                    self.apply_app_candidate(state, rng, meta.id);
+                    self.sent_dists.insert((*gid, peer, epoch));
+                }
+                Ok(())
+            }
+            Err(StoreReserveError::Unsupported) => {
+                // Candidate preparation above was complete before probing the
+                // provider. With no atomic capability, preserve the legacy
+                // per-write accepted-prefix behavior selected by the caller;
+                // never downgrade a capacity/commit rejection to singles.
+                let mut first_error = None;
+                for (peer, epoch, candidate) in prepared {
+                    match self.commit_app_candidate(candidate) {
+                        Ok(_) => {
+                            self.sent_dists.insert((*gid, peer, epoch));
+                        }
+                        Err(err) => {
+                            if first_error.is_none() {
+                                first_error = Some(err);
+                            }
+                            if stop_on_error {
+                                break;
+                            }
+                        }
+                    }
+                }
+                first_error.map_or(Ok(()), Err)
+            }
+            Err(StoreReserveError::Invalid | StoreReserveError::Capacity) => {
+                Err(SendError::ResourceLimit)
+            }
+        }
     }
 
     fn preflight_group_size(&self, gid: &Id16, text_len: usize) -> Result<(), SendError> {

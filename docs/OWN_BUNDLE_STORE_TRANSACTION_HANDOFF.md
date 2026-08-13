@@ -4,6 +4,24 @@ Status: bounded security audit, 2026-08-09. This is an implementation
 handoff only. No file under `specification/` was changed and no wire behavior
 was altered.
 
+## Current-cycle update (2026-08-13)
+
+The group sender-key fan-out path now stages every per-peer application
+candidate before touching live conversation, RNG, `SeenIndex`, diagnostics, or
+the sent-distribution markers. When the provider implements
+`try_reserve_batch_atomic` and `commit_reserved_batch`, the candidates are
+published as one provider-call-atomic batch. Reservation rejection and commit
+failure leave the node's producer state unchanged; focused regressions cover
+both boundaries and the successful all-members case.
+
+Providers that explicitly return `StoreReserveError::Unsupported` retain the
+legacy per-bundle fallback. `group_remove` continues the remaining members and
+returns the first error, while `group_send_body` stops at the first error, as
+their pre-existing caller contracts require. Capacity, invalid-request, and
+commit failures are not silently downgraded to single writes. This is
+provider-call atomicity only: it does not claim crash durability or recovery
+after an unknown process- or power-failure point.
+
 ## Finding
 
 The original `NodeCore::store_own` implementation called the legacy
@@ -22,9 +40,10 @@ The caller may believe that a message exists even though there is no durable
 copy to forward. This is a local storage-integrity issue, not a wire
 authentication issue. The bounded follow-up now closes synchronous provider
 rejection for announcements, sealed/prekey/established pairwise sends,
-self-originated group ciphertext, file symbols, and best-effort receipts;
-aggregate group distributions/rekeys and file-symbol/manifest batches remain
-open.
+self-originated group ciphertext, file symbols, and best-effort receipts.
+Group distribution fan-out now additionally uses the provider's atomic batch
+capability when available; membership rekeys and file-symbol/manifest
+transactions still lack a crash-atomic multi-object contract.
 
 ## Why an immediate `try_put` replacement is unsafe
 
@@ -36,8 +55,8 @@ The own-origin producers do not all have the same rollback surface:
 | `emit_receipt` | Builds the receipt, then calls `try_store_own` without mutating delivery state | A rejected receipt is fail-closed with no false store/index/event state, but best-effort publication can still leave the origin waiting until a bounded retry/reserved-control policy exists. |
 | `publish_announcement` | No ratchet; stores through `try_store_own` before `Created`/SeenIndex state | Capacity rejection is already fail-closed and propagated as `ResourceLimit`. |
 | `send_sealed` | Stores first through `try_store_own`, then creates `Conv` and `pending_first_contact` | First-contact capacity rejection is already fail-closed; no ratchet or conversation state is consumed before the write. |
-| `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Group distributions/rekeys and aggregate file/manifest transactions still require coordinated semantics. |
-| `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Group distributions now have a bounded group-wide retry marker; per-member transaction/crash semantics remain open. |
+| `send_app` | Valid-prekey first-contact and established-conversation direct branches stage candidate `Conv`/sender-chain state and use `try_store_own` before committing live state | Pairwise direct capacity rejection is fail-closed and retryable within the process. Membership rekeys and aggregate file/manifest transactions still require coordinated semantics; group distribution fan-out has a separate atomic batch path when supported. |
+| `send_group` | Stages an opaque `LocalSendCandidate`, calls `try_store_own`, then commits the local sender chain | Synchronous capacity rejection is fail-closed and retryable at group chain index zero. Distribution fan-out stages all candidates and uses an atomic provider batch when supported; fallback and crash/rekey semantics remain bounded limitations. |
 | `send_file` symbols | Each symbol is now admitted with `try_store_own` before `blob_index`/`symbol_of` mutation; sent-history capacity is preflighted before minting, and the manifest is recorded as `Queued` after acceptance | A rejecting provider cannot leave false local inventory or an untracked manifest. Accepted symbols may remain as valid resumable partial inventory after a later symbol/manifest failure; aggregate all-or-none semantics still require a batch transaction. |
 
 A blanket conversion to a fallible result without solving these transitions
@@ -72,8 +91,10 @@ promise that capacity remains stable between a check and the write.
   opaque `LocalSendCandidate` before `try_store_own`; an oversized or capacity
   rejection therefore does not consume a group sender index. Candidate commits
   are bound to the group/signing key and pre-send epoch/index, rejecting stale
-  or cross-key tokens. Group distributions and membership rekeys remain
-  separate multi-object work.
+  or cross-key tokens. Group distribution fan-out now stages all direct
+  candidates and uses the provider's all-or-nothing batch reservation/commit
+  path when available. Membership rekeys and crash recovery after an accepted
+  provider commit remain separate multi-object work.
 - File sends now preflight a revoked destination before minting class-4 symbols,
   preventing durable symbol/index residue on that deterministic rejection. Each
   symbol is then stored through `try_store_own` before local holder indexing, so
@@ -131,18 +152,21 @@ that a pairwise `SendChain` can be checkpointed before `next()` and restored
 after a simulated rejected write without skipping a key. The current
 candidate seam extends that result without mutating the live chain, and the
 node's prekey first-contact, established direct, and group-ciphertext
-producers commit candidates only after `try_store_own` succeeds. This is still
-not a complete storage transaction: group distributions/rekey membership
-state, receipts, and file-symbol indexes need coordinated commit/rollback, and
-all paths remain crash-non-atomic after a provider accepts bytes but before
-process bookkeeping is persisted.
+producers commit candidates only after `try_store_own` succeeds. Group
+distribution fan-out now adds a provider-call-atomic reservation/commit path
+with a legacy fallback for providers that explicitly report unsupported
+capability. This is still not a complete storage transaction: membership
+rekey state, receipts, file-symbol indexes, and all crash recovery after a
+provider accepts bytes but before process bookkeeping is persisted need
+coordinated commit/rollback semantics.
 
-No additional `BundleStore` preflight method was added. A read-only
-`total_bytes`/`meta` check cannot reserve the final ciphertext/BundleID and
-would be advisory for providers with different capacity or eviction rules;
-adding it would create a false fail-closed claim. The smallest safe next API is
-therefore an explicitly transactional provider reservation/commit seam, with
-producer-specific staged state, rather than an unreviewed preflight boolean.
+No read-only `BundleStore` preflight method was added. A `total_bytes`/`meta`
+check cannot reserve the final ciphertext/BundleID and would be advisory for
+providers with different capacity or eviction rules. The additive
+reservation/commit seam is now used for group fan-out where the provider
+supports it, with producer-specific staged state. The next storage step is
+crash-recovery evidence for accepted batches, not an unreviewed preflight
+boolean.
 
 ## Verification performed
 
@@ -156,3 +180,17 @@ cargo check -p mmp-store --no-default-features  # passed
 ```
 
 The audit made no protocol, specification, routing, or FFI wire changes.
+
+Current-cycle verification (2026-08-13):
+
+```text
+cargo test -p mmp-node --lib --locked --offline -- --test-threads=1  # 195 passed
+cargo test -p mmp-node --lib group_distribution_atomic --locked --offline -- --test-threads=1  # 3 passed
+cargo clippy -p mmp-node --lib --locked --offline --all-features -- -D warnings  # passed
+cargo fmt --package mmp-node -- --check  # passed
+cargo test -p mmp-store --all-targets --locked --offline  # passed (NO-CHANGE-JUSTIFIED audit)
+git diff --check  # passed
+```
+
+The current-cycle change remains implementation-only: no specification or
+wire-format file was modified.
