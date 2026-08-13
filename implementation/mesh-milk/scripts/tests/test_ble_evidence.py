@@ -346,6 +346,27 @@ class BleEvidenceTests(unittest.TestCase):
                 [f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes"],
             )
 
+    def test_duplicate_json_member_is_rejected(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._manifest(Path(directory))
+            text = path.read_text(encoding="utf-8")
+            text = text.replace(
+                '"worktree_clean": true,',
+                '"worktree_clean": false, "worktree_clean": true,',
+                1,
+            )
+            path.write_text(text, encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertEqual(
+                errors,
+                ["manifest cannot be read as UTF-8 JSON: duplicate JSON member: worktree_clean"],
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

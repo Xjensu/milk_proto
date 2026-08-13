@@ -102,6 +102,27 @@ CLI_BINARIES = {"mmp-cli", "mmp-cli.exe"}
 CARGO_BINARIES = {"cargo", "cargo.exe"}
 
 
+class _DuplicateKey(ValueError):
+    """Raised when an evidence JSON object repeats a member name."""
+
+
+def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build a JSON object without allowing last-member-wins ambiguity."""
+
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKey(f"duplicate JSON member: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    """Keep evidence JSON finite and portable across validators."""
+
+    raise ValueError(f"non-finite JSON value is not allowed: {value}")
+
+
 def _is_mapping(value: object) -> bool:
     return isinstance(value, dict)
 
@@ -274,8 +295,12 @@ def validate_manifest(path: Path) -> list[str]:
         return [f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes"]
     try:
         raw = path.read_text(encoding="utf-8")
-        document = json.loads(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = json.loads(
+            raw,
+            object_pairs_hook=_object_without_duplicates,
+            parse_constant=_reject_constant,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         return [f"manifest cannot be read as UTF-8 JSON: {exc}"]
     if not _is_mapping(document):
         return ["manifest root must be an object"]
