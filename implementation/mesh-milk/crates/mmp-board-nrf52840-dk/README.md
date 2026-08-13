@@ -15,8 +15,8 @@ It also exposes `StorageConfig::validate`, a `const fn` gate for a future
 board-specific profile. The caller supplies the linker-derived region,
 program/erase units, fixed-capacity accounting, and snapshot limits. The gate
 rejects zero capacities, unaligned regions, checked-arithmetic overflow,
-out-of-range regions, slot/index mismatches, and snapshots that do not fit the
-journal payload or aligned region. On ARM, `NvmcJournalBackend` adapts the
+out-of-range regions, slot/index mismatches, and two-slot snapshots that do
+not fit the journal payload or aligned region. On ARM, `NvmcJournalBackend` adapts the
 already-pinned Embassy nRF52840 internal-NVMC driver to the provider-neutral
 `mmp-flash-journal::JournalBackend` contract. It accepts only a caller-validated
 page-aligned subregion; it does not choose a flash map or provide durability,

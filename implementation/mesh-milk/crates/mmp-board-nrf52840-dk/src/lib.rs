@@ -286,7 +286,14 @@ impl StorageConfig {
             };
             aligned
         };
-        if aligned_snapshot_bytes > self.store_region_bytes {
+        // `JournalLayout` reserves two complete record slots so recovery can
+        // retain the previous committed image while appending the next one.
+        // Validate the whole region against both slots, not just the one
+        // record that a single snapshot would occupy.
+        let Some(required_region_bytes) = aligned_snapshot_bytes.checked_mul(2) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        if required_region_bytes > self.store_region_bytes {
             return Err(StorageConfigError::SnapshotExceedsRegion);
         }
         Ok(())
@@ -410,6 +417,15 @@ mod tests {
         region.store_region_bytes = 4096;
         assert_eq!(
             region.validate(),
+            Err(StorageConfigError::SnapshotExceedsRegion)
+        );
+
+        // One encoded snapshot is below 8192 bytes for this profile, but the
+        // journal layout needs two complete slots for crash-safe recovery.
+        let mut one_slot_only = VALID_STORAGE;
+        one_slot_only.store_region_bytes = 8192;
+        assert_eq!(
+            one_slot_only.validate(),
             Err(StorageConfigError::SnapshotExceedsRegion)
         );
     }

@@ -47,10 +47,12 @@ MAX_SNAPSHOT_PAYLOAD <= mmp_flash_journal::MAX_PAYLOAD_LEN
 
 Compile-time validation must reject zero values, non-aligned region boundaries,
 `MAX_BUNDLE_BYTES` larger than the provider slot, and any configuration whose
-metadata/index/journal overhead exceeds `STORE_REGION_BYTES`. It must also
-prove that the worst-case complete snapshot (all live slots, index, generation
-metadata, framing, alignment, and assigned auxiliary state) fits both
-`MAX_SNAPSHOT_PAYLOAD` and the configured journal region.
+metadata/index/journal overhead exceeds `STORE_REGION_BYTES`. Because the
+reference provider keeps two complete journal slots for crash-safe recovery,
+validation must prove that **two** worst-case complete snapshots (all live
+slots, index, generation metadata, framing, alignment, and assigned auxiliary
+state) fit in the configured region. Each individual snapshot must also fit
+`MAX_SNAPSHOT_PAYLOAD`.
 
 The existing handbook budget remains the acceptance target: approximately
 12 KiB protocol RAM plus a 32 KiB store, within 48 KiB static RAM. The 32 KiB
