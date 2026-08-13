@@ -180,6 +180,23 @@ class MeshDriveConsumerTest {
     }
 
     @Test
+    fun secretStatePersistIsRejectedBeforeFirstSuccessfulRadioCycle() {
+        val secret = RecordingSecretStatePersistence(restoreGeneration = null, persistGeneration = 7L)
+        val drive = MeshDrive(
+            node = FakeNode(),
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            secretStatePersistence = secret,
+        )
+
+        assertFailsWith<IllegalStateException> { drive.persistSecretState() }
+        assertEquals(0, secret.persistCalls)
+    }
+
+    @Test
     fun unavailableSecretStateCapabilityFailsClosedAndIsNeverImplicit() {
         val drive = MeshDrive(
             node = FakeNode(),

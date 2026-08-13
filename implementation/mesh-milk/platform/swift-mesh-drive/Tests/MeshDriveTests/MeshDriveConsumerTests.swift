@@ -129,6 +129,16 @@ final class MeshDriveConsumerTests: XCTestCase {
         XCTAssertEqual(secret.persistCalls, 1)
     }
 
+    func testSecretStatePersistIsRejectedBeforeFirstSuccessfulRadioCycle() throws {
+        let secret = TestSecretStatePersistence(restoreGeneration: nil, persistGeneration: 7)
+        let drive = makeDrive(node: TestNode(), secretStatePersistence: secret)
+
+        XCTAssertThrowsError(try drive.persistSecretState()) { error in
+            XCTAssertEqual(error as? MeshSecretStateError, .invalidLifecycle)
+        }
+        XCTAssertEqual(secret.persistCalls, 0)
+    }
+
     func testUnavailableSecretStateCapabilityFailsClosedAndIsNeverImplicit() throws {
         let drive = makeDrive(node: TestNode())
 

@@ -352,6 +352,9 @@ public class MeshDrive(
     )
 
     private var running: Boolean = false
+    // Persisting before a successful radio lifecycle would let a host commit
+    // an uninitialized secret snapshot over an existing durable record.
+    private var hasCompletedStart: Boolean = false
     private var relayCapable: Boolean = foregroundRelayCapable
     private var lastTickMs: Long? = null
     private var advertisedBeacon: ByteArray? = null
@@ -433,6 +436,7 @@ public class MeshDrive(
             // Startup remains pull-based: only this drain calls pollSend/pollEvent.
             drain()
             check(running) { "MeshDrive failed closed during startup" }
+            hasCompletedStart = true
         } catch (error: Throwable) {
             if (scannerStarted) runCatching { scanner.stop() }
             if (advertiserStarted) runCatching { advertiser.stop() }
@@ -511,6 +515,9 @@ public class MeshDrive(
         driveLoopOwner.check()
         check(!running) {
             "persistSecretState must run after MeshDrive.stop"
+        }
+        check(hasCompletedStart) {
+            "persistSecretState requires a successful MeshDrive.start/stop cycle"
         }
         val generation = secretStatePersistence.persistSecretState()
         require(generation > 0L) {

@@ -327,6 +327,9 @@ public final class MeshDrive {
     private let secretStatePersistence: SecretStatePersistence
     private let eventSink: (Any) throws -> Void
     private var running = false
+    // Persisting before a successful radio lifecycle could overwrite a
+    // durable record with an uninitialized secret snapshot.
+    private var hasCompletedStart = false
     private var relayCapable: Bool
     private var lastTickMs: UInt64?
     private var advertisedBeacon: [UInt8]?
@@ -415,6 +418,7 @@ public final class MeshDrive {
             guard running else {
                 throw MeshDriveError.hostOverload
             }
+            hasCompletedStart = true
         } catch {
             if scannerStarted { try? scanner.stop() }
             if advertiserStarted { try? advertiser.stop() }
@@ -474,6 +478,9 @@ public final class MeshDrive {
     /// matching the Rust vault's no-live-session restore invariant.
     public func persistSecretState() throws -> UInt64 {
         guard !running else {
+            throw MeshSecretStateError.invalidLifecycle
+        }
+        guard hasCompletedStart else {
             throw MeshSecretStateError.invalidLifecycle
         }
         let generation = try secretStatePersistence.persistSecretState()
