@@ -86,7 +86,7 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral};
 use futures::StreamExt;
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::{mpsc, watch, Mutex as AsyncMutex};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -159,6 +159,17 @@ fn allocate_generation(counter: &AtomicU64) -> Option<u64> {
 /// be observed, leaving protocol links without reliable teardown feedback.
 fn fence_adapter_failure(shutting_down: &AtomicBool) {
     shutting_down.store(true, Ordering::Release);
+}
+
+/// Request termination of the detached adapter watcher.
+///
+/// `BleCentral` cannot await a task from `Drop`, so the watcher owns the
+/// asynchronous cleanup path.  The watch channel retains the terminal value;
+/// therefore a drop that races task startup still wakes the watcher instead
+/// of leaving it blocked forever in `events.next()`.
+fn request_watch_shutdown(shutting_down: &AtomicBool, stop: &watch::Sender<bool>) {
+    fence_adapter_failure(shutting_down);
+    stop.send_replace(true);
 }
 
 fn ensure_admission(shutting_down: &AtomicBool) -> Result<(), BleError> {
@@ -370,6 +381,10 @@ pub struct BleCentral {
     /// insertion check under `event_gate` closes the race with an in-flight
     /// dial that has not yet installed its physical link.
     shutting_down: Arc<AtomicBool>,
+    /// Terminal signal consumed by the detached adapter watcher.  Keeping the
+    /// sender in the owner lets both explicit shutdown and `Drop` cancel the
+    /// task without requiring an async destructor.
+    watch_stop: watch::Sender<bool>,
     next_generation: AtomicU64,
 }
 
@@ -390,15 +405,17 @@ impl BleCentral {
         let event_gate = Arc::new(AsyncMutex::new(()));
         let dial_gate = Arc::new(AsyncMutex::new(()));
         let shutting_down = Arc::new(AtomicBool::new(false));
+        let (watch_stop, watch_receiver) = watch::channel(false);
 
         let close_links = links.clone();
         let close_event_gate = event_gate.clone();
         let close_shutting_down = shutting_down.clone();
+        let close_watch_stop = watch_stop.clone();
         let (tx, rx) = event_channel(move |tx| {
             // A dropped public receiver is terminal: no host is left to
             // consume lifecycle events, so fence admission and retire every
             // physical link through the same bounded shutdown path.
-            fence_adapter_failure(&close_shutting_down);
+            request_watch_shutdown(&close_shutting_down, &close_watch_stop);
             tokio::spawn(async move {
                 shutdown_links(&close_links, &close_event_gate, &tx).await;
             });
@@ -410,6 +427,7 @@ impl BleCentral {
             links.clone(),
             event_gate.clone(),
             shutting_down.clone(),
+            watch_receiver,
         ));
 
         Ok(BleCentral {
@@ -420,6 +438,7 @@ impl BleCentral {
             event_gate,
             dial_gate,
             shutting_down,
+            watch_stop,
             next_generation: AtomicU64::new(0),
         })
     }
@@ -447,7 +466,7 @@ impl BleCentral {
             .start_scan(ScanFilter { services: vec![service_uuid()] })
             .await?;
         if ensure_admission(&self.shutting_down).is_err() {
-            let _ = self.adapter.stop_scan().await;
+            stop_scan_bounded(&self.adapter).await;
             return Err(BleError::ShuttingDown);
         }
         Ok(())
@@ -708,8 +727,8 @@ impl BleCentral {
     /// this on shutdown and after observing [`Self::control_events_dropped`]
     /// so a saturated lifecycle queue cannot leave a radio link alive.
     pub async fn shutdown_all(&self) {
-        self.shutting_down.store(true, Ordering::Release);
-        let _ = self.adapter.stop_scan().await;
+        request_watch_shutdown(&self.shutting_down, &self.watch_stop);
+        stop_scan_bounded(&self.adapter).await;
         shutdown_links(&self.links, &self.event_gate, &self.tx).await;
     }
 
@@ -719,6 +738,15 @@ impl BleCentral {
     /// attempting further admission.
     pub fn control_events_dropped(&self) -> u64 {
         self.tx.control_events_dropped()
+    }
+}
+
+impl Drop for BleCentral {
+    fn drop(&mut self) {
+        // The adapter watcher is intentionally detached because btleplug's
+        // stream is async.  Signal it before owner fields disappear; it will
+        // perform bounded link cleanup on the caller's Tokio runtime.
+        request_watch_shutdown(&self.shutting_down, &self.watch_stop);
     }
 }
 
@@ -732,18 +760,61 @@ async fn watch_adapter(
     links: Links,
     event_gate: Arc<AsyncMutex<()>>,
     shutting_down: Arc<AtomicBool>,
+    mut stop: watch::Receiver<bool>,
 ) {
     let uuid = service_uuid();
-    let mut events = match adapter.events().await {
-        Ok(stream) => stream,
-        Err(_) => {
-            fence_adapter_failure(&shutting_down);
-            shutdown_links(&links, &event_gate, &tx).await;
-            return;
+    if *stop.borrow() {
+        fence_adapter_failure(&shutting_down);
+        stop_scan_bounded(&adapter).await;
+        shutdown_links(&links, &event_gate, &tx).await;
+        return;
+    }
+    let mut events = loop {
+        let events_result = tokio::select! {
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    fence_adapter_failure(&shutting_down);
+                    stop_scan_bounded(&adapter).await;
+                    shutdown_links(&links, &event_gate, &tx).await;
+                    return;
+                }
+                continue;
+            }
+            result = adapter.events() => result,
+        };
+        match events_result {
+            Ok(stream) => break stream,
+            Err(_) => {
+                fence_adapter_failure(&shutting_down);
+                stop_scan_bounded(&adapter).await;
+                shutdown_links(&links, &event_gate, &tx).await;
+                return;
+            }
         }
     };
 
-    while let Some(event) = events.next().await {
+    loop {
+        let event = tokio::select! {
+            changed = stop.changed() => {
+                if changed.is_err() || *stop.borrow() {
+                    fence_adapter_failure(&shutting_down);
+                    stop_scan_bounded(&adapter).await;
+                    shutdown_links(&links, &event_gate, &tx).await;
+                    return;
+                }
+                continue;
+            }
+            event = events.next() => event,
+        };
+        let Some(event) = event else {
+            break;
+        };
+        if *stop.borrow() {
+            fence_adapter_failure(&shutting_down);
+            stop_scan_bounded(&adapter).await;
+            shutdown_links(&links, &event_gate, &tx).await;
+            return;
+        }
         match event {
             CentralEvent::ServiceDataAdvertisement { id, service_data } => {
                 let Some(payload) = service_data.get(&uuid) else { continue };
@@ -802,6 +873,7 @@ async fn watch_adapter(
     // admission before retiring the links so a racing dial cannot install a
     // new link after lifecycle observation has already failed.
     fence_adapter_failure(&shutting_down);
+    stop_scan_bounded(&adapter).await;
     shutdown_links(&links, &event_gate, &tx).await;
 }
 
@@ -827,6 +899,13 @@ async fn shutdown_links(links: &Links, event_gate: &Arc<AsyncMutex<()>>, tx: &Ev
         let _ = acquire_write_gate_bounded(&write_gate).await;
         disconnect_bounded(&peripheral).await;
     }
+}
+
+/// Stop adapter scanning without allowing a backend call to hold lifecycle
+/// teardown indefinitely.  The watcher owns the adapter clone after `Drop`,
+/// so this is the final opportunity to release a scan session cleanly.
+async fn stop_scan_bounded(adapter: &Adapter) {
+    let _ = timeout(Duration::from_secs(2), adapter.stop_scan()).await;
 }
 
 async fn disconnect_bounded(peripheral: &Peripheral) {
@@ -877,11 +956,11 @@ mod tests {
     use super::{
         acquire_write_gate, acquire_write_gate_bounded, allocate_generation, generation_is_current,
         ensure_admission, fence_adapter_failure, mint_link_id, permit_chunk,
-        wait_for_disconnected_write_gate,
+        request_watch_shutdown, wait_for_disconnected_write_gate,
     };
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Arc;
-    use tokio::sync::Mutex as AsyncMutex;
+    use tokio::sync::{watch, Mutex as AsyncMutex};
     use tokio::time::Duration;
 
     #[test]
@@ -930,6 +1009,27 @@ mod tests {
         fence_adapter_failure(&shutting_down);
         assert!(shutting_down.load(Ordering::Acquire));
         assert!(matches!(ensure_admission(&shutting_down), Err(super::BleError::ShuttingDown)));
+    }
+
+    #[tokio::test]
+    async fn watcher_shutdown_signal_wakes_and_remains_terminal() {
+        let shutting_down = AtomicBool::new(false);
+        let (stop, mut receiver) = watch::channel(false);
+        let waiter = tokio::spawn(async move {
+            receiver
+                .changed()
+                .await
+                .expect("owner shutdown must reach the watcher");
+            *receiver.borrow()
+        });
+
+        request_watch_shutdown(&shutting_down, &stop);
+        assert!(tokio::time::timeout(Duration::from_millis(100), waiter)
+            .await
+            .expect("watcher cancellation must not remain detached")
+            .expect("watcher wait task must finish"));
+        assert!(shutting_down.load(Ordering::Acquire));
+        assert!(*stop.borrow());
     }
 
     #[tokio::test]
