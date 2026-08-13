@@ -22,11 +22,66 @@ pub const BOARD_ID: &str = "nrf52840-dk-pca10056";
 /// Rust target used by the repository's embedded checks for this profile.
 pub const TARGET: &str = "thumbv7em-none-eabihf";
 
+/// SoC/Embassy chip-selection name used by this board profile.
+pub const MCU: &str = "nrf52840";
+
+/// HAL crate selected by the target-only dependency below.
+pub const HAL_NAME: &str = "embassy-nrf";
+
+/// Exact HAL version locked by this crate's target dependency.
+pub const HAL_VERSION: &str = "0.11.0";
+
+/// Exact Embassy chip feature selected by this crate's target dependency.
+pub const HAL_CHIP_FEATURE: &str = "nrf52840";
+
 /// Documented nRF52840 on-chip flash capacity in bytes (1 MiB).
 pub const FLASH_CAPACITY_BYTES: usize = 1_048_576;
 
 /// Documented nRF52840 on-chip RAM capacity in bytes (256 KiB).
 pub const RAM_CAPACITY_BYTES: usize = 262_144;
+
+/// Named, evidence-backed configuration record for the first embedded target.
+///
+/// This record intentionally contains only repository-selected identity and
+/// capacity facts. It does not select a linker map, bootloader/SoftDevice
+/// reservation, runtime, radio backend, or flash-storage geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Nrf52840DkConfig {
+    /// Stable board identifier for the Nordic PCA10056 development kit.
+    pub board_id: &'static str,
+    /// SoC/chip name selected by the Embassy target dependency.
+    pub mcu: &'static str,
+    /// Rust target triple used by the embedded compile check.
+    pub target: &'static str,
+    /// Total documented on-chip flash capacity, not application space.
+    pub flash_capacity_bytes: usize,
+    /// Total documented on-chip RAM capacity, not free runtime RAM.
+    pub ram_capacity_bytes: usize,
+    /// HAL crate selected by the target dependency.
+    pub hal_name: &'static str,
+    /// Exact HAL version selected by the locked target dependency.
+    pub hal_version: &'static str,
+    /// Exact chip feature selected on the HAL dependency.
+    pub hal_chip_feature: &'static str,
+}
+
+/// The complete named nRF52840 DK compile-probe record.
+pub const NRF52840_DK_CONFIG: Nrf52840DkConfig = Nrf52840DkConfig {
+    board_id: BOARD_ID,
+    mcu: MCU,
+    target: TARGET,
+    flash_capacity_bytes: FLASH_CAPACITY_BYTES,
+    ram_capacity_bytes: RAM_CAPACITY_BYTES,
+    hal_name: HAL_NAME,
+    hal_version: HAL_VERSION,
+    hal_chip_feature: HAL_CHIP_FEATURE,
+};
+
+/// Return the named nRF52840 DK configuration without allocating or touching
+/// hardware.
+pub const fn nrf52840_dk_config() -> Nrf52840DkConfig {
+    NRF52840_DK_CONFIG
+}
 
 /// Target provider composed from the board's NVMC adapter and the generic
 /// two-slot fixed-store journal provider.
@@ -509,6 +564,8 @@ mod tests {
         auxiliary_bytes: 256,
     };
 
+    const CONST_NRF52840_DK_CONFIG: Nrf52840DkConfig = nrf52840_dk_config();
+
     #[test]
     fn profile_constants_are_explicit() {
         let config = board_config();
@@ -516,6 +573,21 @@ mod tests {
         assert_eq!(config.target, "thumbv7em-none-eabihf");
         assert_eq!(config.flash_capacity_bytes, 1_048_576);
         assert_eq!(config.ram_capacity_bytes, 262_144);
+    }
+
+    #[test]
+    fn named_nrf52840_dk_record_contains_every_selected_field() {
+        let config = nrf52840_dk_config();
+        assert_eq!(config, NRF52840_DK_CONFIG);
+        assert_eq!(CONST_NRF52840_DK_CONFIG, NRF52840_DK_CONFIG);
+        assert_eq!(config.board_id, "nrf52840-dk-pca10056");
+        assert_eq!(config.mcu, "nrf52840");
+        assert_eq!(config.target, "thumbv7em-none-eabihf");
+        assert_eq!(config.flash_capacity_bytes, 1_048_576);
+        assert_eq!(config.ram_capacity_bytes, 262_144);
+        assert_eq!(config.hal_name, "embassy-nrf");
+        assert_eq!(config.hal_version, "0.11.0");
+        assert_eq!(config.hal_chip_feature, "nrf52840");
     }
 
     #[test]

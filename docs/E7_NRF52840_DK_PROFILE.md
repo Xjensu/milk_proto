@@ -236,7 +236,14 @@ exists.
 **State:** `FIXED` as an implementation profile with a verified compile probe;
 the hardware path is not implemented or production-ready.
 
-**Next owner action:** produce the exact board configuration record and linked
-image before adding executor, radio, or storage providers. Any further manifest
-change must be reviewed for MSRV, `no_std`, license, allocation behavior, and
-frozen-wire compatibility.
+The implementation now contains a const-evaluable `Nrf52840DkConfig` record
+covering only the repository-backed board identifier, SoC name, target triple,
+total SoC capacities, and the pinned target-only `embassy-nrf` package/version/
+chip feature. No board revision is asserted because an authoritative fitted-
+hardware inventory is still absent. This record does not select linker or
+runtime policy.
+
+**Next owner action:** produce the linked image and exact board inventory before
+adding executor, radio, or storage providers. Any further manifest change must
+be reviewed for MSRV, `no_std`, license, allocation behavior, and frozen-wire
+compatibility.

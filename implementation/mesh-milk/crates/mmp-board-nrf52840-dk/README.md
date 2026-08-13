@@ -7,9 +7,14 @@ target compile probe for `embassy-nrf` 0.11.0 with its `nrf52840` chip feature.
 The dependency is target-only and uses `default-features = false`.  Therefore
 the probe does not silently enable Embassy's `rt` feature, an executor, a
 radio backend, or a host runtime.  The crate exposes only the board identifier,
-target triple, and documented total SoC capacities.  Total capacity is not
-application space: boot/vector reservations, linker sections, radio firmware,
-journal geometry, and wear policy remain unselected.
+target triple, documented total SoC capacities, and the exact target-only HAL
+selection. `nrf52840_dk_config()` returns the named
+`Nrf52840DkConfig` record (`nrf52840-dk-pca10056`, `nrf52840`,
+`thumbv7em-none-eabihf`, `embassy-nrf` 0.11.0, and the `nrf52840` chip
+feature). Total capacity is not application space: boot/vector reservations,
+linker sections, radio firmware, journal geometry, and wear policy remain
+unselected. No board-revision or fitted-component value is asserted because
+the repository does not yet contain an authoritative hardware inventory.
 
 It also exposes `StorageConfig::validate`, a `const fn` gate for a future
 board-specific profile. The caller supplies the linker-derived region,
