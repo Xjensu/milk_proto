@@ -12,6 +12,13 @@ story counts as current evidence without a fresh workspace run.
 2. `docs/ROADMAP_TO_PRODUCTION.md` — phase structure (A–E) and exit gates. This backlog refines it into stories; phases here mirror phases there.
 3. `specification/01–18` — normative truth. When this backlog and a spec disagree, the spec wins (after Epic 1 lands; see below for why).
 
+**Current-cycle pointers (2026-08-14):** `docs/HANDOFF_INDEX.md` is the
+document-status index; `docs/AGILE_REMAINING_WORK.md` is the de-duplicated list
+of still-open or externally gated stories; and
+`docs/DEVELOPMENT_REQUIREMENTS.md` records the hardware and software needed to
+close those gates. The historical story text below is retained for traceability;
+use those three files for current execution order and environment readiness.
+
 **Verification discipline (from the handbook §6, restated because it is the acceptance floor for every story):**
 
 ```
@@ -75,20 +82,25 @@ Sizes and phase labels align with `docs/ROADMAP_TO_PRODUCTION.md` §3.
 
 ### EPIC 0 — Repo integrity & governance (do first; everything else builds on a committed, truthful repo)
 
-> Evidence: implementation audit §5 + note on uncommitted state; spec audit finding B1.
+> Evidence: historical implementation audit §5 + note on uncommitted state; spec audit finding B1. Current file status is maintained in `docs/HANDOFF_INDEX.md` and `docs/AGILE_REMAINING_WORK.md`.
 
-**E0-S1 · Commit the working tree · S · Deps: none · HISTORICAL BASELINE**
+**E0-S1 · Commit the working tree · S · Deps: none · HISTORICAL BASELINE / CURRENT PUSH GATE**
 The original audit found the implementation only in uncommitted modifications.
 That state has since been superseded by logically separated implementation and
-documentation commits. The fresh-checkout/push gate remains a repository
-governance task because the current branch still contains deliberate unrelated
-dirty/user and quarantined candidate files; no blanket staging is permitted.
-**Acceptance:** a separately prepared clean checkout passes the current
-workspace matrix and the scoped commits are pushed for remote CI evidence.
+documentation commits. The current working tree is clean on
+`codex/working-integration`; the remaining gate is a separately prepared clean
+checkout plus pushed-branch/remote-CI evidence. No blanket staging is permitted.
+**Acceptance:** a clean checkout passes the current workspace matrix and the
+scoped commits are pushed for remote CI evidence.
 
-**E0-S2 · Resolve the phantom governance files (spec BLOCKER B1) · M · Deps: none**
-`CHANGELOG.md`, `COUNCIL-REVIEW.md`, `ROADMAP.md` are cited as normative in nearly every spec doc (audit-history banners in docs 01–18; council disposition IDs CR-A1…A7, N1–N6, CR2-* quoted in docs 16–18; "ROADMAP Stage 1/4/9" gates in docs 12/17/18 and `implementation/mesh-milk/vectors/README.md`) but do not exist in the repo. **Do (orchestrator decision):** create the three files as first-class documents: `CHANGELOG.md` reconstructing rev-A (2026-06-11 audit fixes, from `other/AUDIT.md`) and rev-B (docs 16–18 additions) entries; `ROADMAP.md` as a thin pointer mapping the legacy "Stage 0–9" vocabulary onto `docs/ROADMAP_TO_PRODUCTION.md` phases A–E; `COUNCIL-REVIEW.md` reconstructing the disposition lists **only from IDs actually quoted in docs 16–18** (no invented content — where a disposition's full text is unrecoverable, record the ID with "text not preserved; see citing doc §").
-**Acceptance:** every `CHANGELOG.md` / `COUNCIL-REVIEW.md` / `ROADMAP.md` reference in `specification/` and `implementation/` resolves to a real file section; grep proof attached to the PR/commit message.
+**E0-S2 · Resolve the phantom governance files (spec BLOCKER B1) · M · Deps: none · DONE (2026-07-16; provenance caveat refreshed 2026-08-14)**
+`CHANGELOG.md`, `COUNCIL-REVIEW.md`, and `ROADMAP.md` now exist as first-class
+files and their repository references resolve. Their historical source reports
+(`other/AUDIT.md`, `spec_gaps.md`, and `impl_audit.md`) are not present and have
+no recoverable Git history; the reconstructed files explicitly preserve that
+limitation instead of fabricating originals.
+**Acceptance:** every governance-file reference in `specification/` and
+`implementation/` resolves to a real file section; current link checks pass.
 
 **E0-S3 · Fix the stale workspace README · S · Deps: E0-S2 · DONE (2026-07-16; refreshed 2026-08-08)**
 `implementation/mesh-milk/README.md` now states the current crate inventory,
@@ -308,7 +320,11 @@ Handbook §4.8's five scenarios (replay / flood / quota abuse / eclipse / bloom 
 | E5-S5 | Spec audit H2/H4 + impl audit §3 (doc 18 = schema-stub only: `mmp-types/src/bundle.rs` `class::ANNOUNCEMENT = 5`, `mmp-types/src/claim.rs:17-18` AUTHCERT/REVOCATION_LIST consts) |
 | A3.4 ratchet decision | Handbook §4.3(4); roadmap risk #4 |
 
-Both source reports (with full command logs and file:line citations) are preserved in the session scratchpad: `spec_gaps.md`, `impl_audit.md`.
+The original source reports (`spec_gaps.md`, `impl_audit.md`) were session
+scratchpads and are not present in the repository or Git history. Current
+traceability is carried by `docs/ROADMAP_TO_PRODUCTION.md`,
+`docs/IMPLEMENTATION_HANDBOOK.md`, the handoff index, and the cited commits;
+the scratchpad contents cannot be restored without an owner-supplied archive.
 
 Status correction (2026-08-11): the Windows provider is now wired to the PC
 CLI through the opaque `--vault <path>` path; restore runs before clock priming

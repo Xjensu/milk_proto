@@ -1,6 +1,14 @@
 # E5-S4 Conformance Vectors Implementation Plan
 
-> **For implementation:** execute this plan task-by-task with test-first checkpoints. Do not edit `specification/` and do not commit this planning document automatically.
+> **Historical planning artifact (2026-08-14):** the implementation described
+> here has since landed and is tracked as E5-S4 `DONE` in
+> `docs/AGILE_BACKLOG.md`. Do not restart these steps from this document.
+> Current unfinished work is limited to the measured fuzz campaign/corpus and
+> other gates listed in `docs/AGILE_REMAINING_WORK.md`.
+
+> **Legacy execution instructions:** the original task-by-task instructions are
+> retained below for auditability. They are not a new implementation request;
+> do not edit `specification/` or restart this plan from the historical file.
 
 **Goal:** Complete the Rust reference implementation's E5-S4 golden-vector deliverable with exhaustive frame/class coverage, independent specification-derived decoding, and mandatory cryptographic negative cases.
 

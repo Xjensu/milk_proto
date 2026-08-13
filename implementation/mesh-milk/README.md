@@ -1,7 +1,7 @@
 # mesh-milk — MMP/1 reference implementation
 
 Rust workspace for the **mesh_milk (MMP/1)** peer-to-peer BLE mesh protocol.
-The specification suite lives in `../../specification/` (docs 01–15); this
+The specification suite lives in `../../specification/` (docs 01–18); this
 workspace implements it per `../../specification/12-rust-blueprint.md`.
 
 **Where the project actually is:** the roadmap and backlog are the
@@ -12,13 +12,14 @@ execution plan). `../../ROADMAP.md` is a thin pointer mapping the legacy
 "Stage N" vocabulary some spec docs still cite onto that phase structure.
 `../../docs/IMPLEMENTATION_HANDBOOK.md` has the golden rules (§0) binding on
 every change and the buildable specs for remaining work (§4).
+The current de-duplicated queue is `../../docs/AGILE_REMAINING_WORK.md`; the
+handoff/design status index is `../../docs/HANDOFF_INDEX.md`.
 
-As of 2026-08-09 the workspace is well past the original "Stage 0 scaffold"
-point: all 15 crates plus `mmp-tal-peripheral` have working implementations.
-The current workspace contains 491 listed test items (485 active, 6
-intentionally ignored simulation deployment/scale cases). The latest focused
-Rust gates and Python validation are green; clippy and `layer-check` are clean.
-Phase A
+The workspace is well past the original "Stage 0 scaffold" point. Cargo
+currently reports 19 implementation crates plus the `layer-check` tool; use
+`cargo metadata` rather than a dated crate or test-count claim as the inventory
+source of truth. The latest focused Rust gates and Python validation are green;
+clippy and `layer-check` are clean. Phase A
 is implementation-complete but its exit gate — a real two-machine BLE exchange
 — still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact
 integration seam until native Android/iOS consuming radio shells exist. See

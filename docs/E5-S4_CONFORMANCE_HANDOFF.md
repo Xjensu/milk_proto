@@ -1001,13 +1001,13 @@ or physical-device evidence. On this Windows host the CLI exits gracefully
 when no usable adapter/backend is present (`connect` and `listen` both return
 status 2); this is not a successful radio test.
 
-The existing dirty mobile documents contain known examples that should be
-corrected in a separately approved documentation pass: missing `--features
-cli` in the binding command, an obsolete iOS `.dylib` path instead of the
-script-produced static library, stale constructor and `linkData` signatures,
-and event/API tables that omit newer friendship, announcement, and file
-events. They also link to the absent `other/HANDOFF_MOBILE.md`. Treat those
-guides as user-owned edits for now; do not stage them in a conformance commit.
+**Historical snapshot (2026-08-08):** the paragraph below records the state
+observed at that checkpoint, not a current dirty-worktree assertion. The
+binding command, iOS archive path, and mobile companion references are now
+reconciled in `implementation/mesh-milk/MOBILE_INTEGRATION.md`; the former
+`other/HANDOFF_MOBILE.md` artifact was never present in this repository and is
+not recreated. The remaining native compiler, keystore, background-radio, and
+physical-device gaps remain open as stated below.
 
 ## 2026-08-08 current verification snapshot
 

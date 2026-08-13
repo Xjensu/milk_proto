@@ -7,8 +7,10 @@ cites it for golden-vector requirements added after rev. A.
 
 **Provenance note (reconstructed 2026-07-16, backlog item E0-S2):** this file did not
 exist in the repository even though every spec document from 01 onward referenced it
-normatively. It has been reconstructed from `other/AUDIT.md` (rev-A) and from the
-self-description of docs 16–18 and their cross-references (rev-B), per the acceptance
+normatively. The original `other/AUDIT.md` artifact is not present and has no
+recoverable Git history; the rev-A section below is therefore reconstructed from
+the in-repository audit-history banners and cited findings, while rev-B is based on the
+self-description of docs 16–18 and their cross-references, per the acceptance
 criteria in `docs/AGILE_BACKLOG.md` §E0-S2. No entry below states anything the cited
 source document does not itself say; where a detail could not be recovered, it is
 omitted rather than invented.
@@ -710,12 +712,13 @@ resulting wire/spec changes.
 ## [rev-A] 2026-06-11 — post-audit hardening
 
 Formal adversarial audit of the complete v1 specification suite (docs 01–15),
-conducted 2026-06-11 as a meta-document (`other/AUDIT.md`); no spec document was
-modified by the audit itself. The patches below are the audit's proposed changes as
-subsequently applied to docs 03–14 (each of which now carries the banner "revised
-2026-06-11 post-audit (`AUDIT.md`, `CHANGELOG.md`)"). Severity and finding IDs are
-`other/AUDIT.md`'s own (F1–F14); two (F6, F12) were resolved as "verdict: keep, no
-change" and have no entry here.
+conducted 2026-06-11 as a meta-document whose original file is not preserved;
+no spec document was modified by the audit itself. The patches below are the
+audit's proposed changes as subsequently applied to docs 03–14 (each of which
+now carries the banner "revised 2026-06-11 post-audit (`CHANGELOG.md`)").
+Severity and finding IDs are retained only where the in-repository banners quote
+them (F1–F14); two (F6, F12) were resolved as "verdict: keep, no change" and
+have no entry here.
 
 ### Fixed
 - **F1 (MED–HIGH) — Lifetime-resurrection replay.** doc 03 §4.3/§11, doc 07 #17.
