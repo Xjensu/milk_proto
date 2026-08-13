@@ -27,10 +27,13 @@ On ARM, `recover_nvmc_fixed_store` composes that adapter with the generic
 relative to the supplied region and reuses FBS1 snapshot validation and
 quarantine. The additive `recover_nvmc_fixed_store_with_durable_floor`
 variant also passes a caller-owned persisted generation floor into recovery,
-rejecting an older checksum-valid image. Neither helper persists the floor or
-selects a linker geometry; the caller still supplies the region, slot size,
-payload bound, recovery image, and (for the guarded variant) the independently
-durable floor.
+rejecting an older checksum-valid image. The
+`recover_nvmc_fixed_store_with_exact_durable_floor` variant requires exact
+generation equality and rejects both cross-region ordering mismatches. Neither
+helper persists or authenticates the floor or selects a linker geometry; the
+caller still supplies the region, slot size, payload bound, recovery image,
+and the independently durable floor. The exact `0/0` match is only an explicit
+first-install or uninitialized case.
 
 After a board linker map and provider contract are approved, a board-specific
 crate can place `StorageConfig::validate()` in a `const` assertion. No such

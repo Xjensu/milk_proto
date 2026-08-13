@@ -329,3 +329,10 @@ round-trips complete live slots through caller-owned buffers and revalidates
 canonical bundle bytes, metadata bindings, and signatures before restore.
 Reservations, board geometry, flash recovery, snapshot-level authentication,
 and embedded node integration remain open.
+
+The 2026-08-13 continuation adds `JournaledFixedStore::recover_with_exact_durable_floor`
+and the target-only nRF52840 wrapper. Exact recovery accepts only equal
+generation pairs (or explicit first-install `0/0`) and fails closed on either
+cross-region ordering mismatch. It remains a comparison seam: floor
+authentication, two-region atomicity, and producer checkpoint continuity are
+not implemented.

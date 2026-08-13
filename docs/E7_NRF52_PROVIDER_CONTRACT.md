@@ -280,10 +280,12 @@ Implementation order:
 5. Run the host fault matrix, Cortex-M compile, then hardware gates in order.
 
 The host reference provider now includes `recover_with_durable_floor`, which
-enforces a floor supplied by a separate provider-owned crash-safe record. The
-nRF52840 board composition also exposes
-`recover_nvmc_fixed_store_with_durable_floor`, so a board adapter cannot
-accidentally use the legacy floor-zero helper when it has a persisted floor.
+enforces a floor supplied by a separate provider-owned crash-safe record, and
+`recover_with_exact_durable_floor`, which requires exact generation equality
+after complete snapshot validation. The nRF52840 board composition also
+exposes `recover_nvmc_fixed_store_with_durable_floor` and the exact variant, so
+a board adapter cannot accidentally use the legacy floor-zero helper when it
+has a persisted floor.
 The journal also exposes `GenerationFloorRecord`, a canonical, no-alloc
 `GFL1 || generation_le_u64` payload validator that binds the inner generation
 to the outer journal header. This closes the structural comparison seam only;
@@ -292,6 +294,8 @@ checksum remains unauthenticated and the separate floor and snapshot regions
 remain non-atomic. A board implementation must still define where the floor is
 stored, how it advances with the snapshot, how cross-region mismatches fail
 closed, and how power loss is tested before own-origin producers are enabled.
+The exact helper accepts `0/0` only for explicit first-install or
+uninitialized authority; it cannot distinguish a deleted or reset authority.
 
 The MMP/1 specification remains frozen throughout these steps.
 

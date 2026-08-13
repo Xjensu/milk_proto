@@ -96,6 +96,42 @@ pub fn recover_nvmc_fixed_store_with_durable_floor<
     JournaledFixedStore::recover_with_durable_floor(backend, layout, provider, image, durable_floor)
 }
 
+/// Recover a fixed-capacity provider only when the selected snapshot exactly
+/// matches a caller-owned durable generation floor.
+///
+/// This is a comparison seam, not an authenticated or cross-region atomic
+/// checkpoint. The board provider must obtain the floor from a separately
+/// crash-safe authority and must treat any mismatch as a fail-closed result.
+/// The zero/empty match is reserved for explicit first-install or
+/// uninitialized state; this helper cannot distinguish authority reset or
+/// deletion.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store_with_exact_durable_floor<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+    durable_floor: u64,
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    let backend = NvmcJournalBackend::new(flash, region);
+    let layout = JournalLayout::new(&backend, 0, slot_bytes, max_payload_bytes)
+        .map_err(ProviderError::Layout)?;
+    JournaledFixedStore::recover_with_exact_durable_floor(
+        backend,
+        layout,
+        provider,
+        image,
+        durable_floor,
+    )
+}
+
 /// The small, evidence-backed portion of the board profile that is safe to
 /// expose before linker and storage geometry are selected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

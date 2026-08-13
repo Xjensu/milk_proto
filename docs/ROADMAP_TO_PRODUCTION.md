@@ -208,6 +208,13 @@ Status correction (`359076e`, 2026-08-12): the SDK-free Kotlin/Swift shells now 
 
 ## 3. Phased plan to production
 
+Embedded recovery checkpoint update (2026-08-13): the host provider now
+exposes `recover_with_exact_durable_floor`, and the nRF52840 profile exposes
+the target-only NVMC wrapper. It accepts only exact snapshot/floor generation
+equality (or explicit first-install `0/0`) and fails closed on either ordering
+mismatch. This is still a comparison seam; durable floor authentication,
+two-region atomicity, and producer checkpoint continuity remain open.
+
 No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodology). Sizes are relative: S = days, M = one to a few weeks of focused work, L = a substantial multi-week effort, all in single-engineer-equivalent terms.
 
 ### Phase A — "First radio contact"

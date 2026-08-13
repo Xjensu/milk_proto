@@ -15,7 +15,8 @@ The current production-safe boundary remains:
 - `mmp-embedded-provider::JournaledFixedStore::commit_snapshot` for verified
   FBS1 bundle snapshots;
 - `recover_with_durable_floor` for comparison against a separately persisted
-  floor; and
+  floor, or `recover_with_exact_durable_floor` when the caller requires exact
+  checkpoint equality; and
 - receive-only operation until auxiliary replay/cryptographic state shares the
   same durable commit boundary.
 
@@ -30,9 +31,11 @@ validation seam only. The journal checksum is unkeyed corruption detection,
 not authentication, and the codec does not couple a floor write atomically to
 the snapshot journal. A board adapter must therefore keep the floor in a
 separately specified crash-safe region, select only fully validated records,
-and fail closed on cross-region generation mismatches. Until those policies
-are implemented and fault-tested, this primitive must not be used to claim
-durable anti-rollback or producer checkpoint continuity.
+and fail closed on cross-region generation mismatches. The exact provider
+helper enforces that equality after snapshot validation, but it does not write
+or authenticate the floor. Until those policies are implemented and
+fault-tested, this primitive must not be used to claim durable anti-rollback or
+producer checkpoint continuity.
 
 ## Evidence and threat model
 

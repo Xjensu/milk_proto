@@ -18,13 +18,19 @@ outer journal generation == inner payload generation
 
 The API provides `encode`, `decode`, and `validate_record`. It is suitable for
 passing to `scan_first_validated` and for a board adapter that owns a separate
-floor region. Tests cover canonical bytes, every-prefix truncation, trailing
-data, invalid magic, reserved generations, output bounds, generation mismatch,
-and a journal write/validated-scan round trip.
+floor region. The embedded provider now adds
+`recover_with_exact_durable_floor`, and the nRF52840 profile exposes the
+corresponding target-only wrapper. Exact recovery accepts only an equal,
+non-zero generation, or the explicit first-install `0/0` case; both floor-ahead
+and snapshot-ahead mismatches fail closed. Tests cover canonical bytes,
+every-prefix truncation, trailing data, invalid magic, reserved generations,
+output bounds, generation mismatch, journal integration, and exact-floor
+recovery cases.
 
 ## Security and crash-recovery boundary
 
-This is not a durable anti-rollback implementation. The flash-journal checksum
+This is not a durable anti-rollback implementation. Exact recovery is a
+comparison gate, not a transaction across two regions. The flash-journal checksum
 is unkeyed corruption detection, not authentication. The codec does not couple
 the floor journal atomically to the snapshot journal. A board adapter must
 therefore select only fully validated records, fail closed on `M != F`, reject
@@ -32,11 +38,12 @@ rollback attempts, and specify the independent rollback domain that protects
 the floor region. It must not enable own-origin producer counters or claim
 crash-atomic ratchet/SeenIndex continuity from this primitive alone.
 
-The adversarial review found no defect in the bounded codec itself. It did find
+The adversarial review found no defect in the bounded codec or exact comparison
+seam. It did find
 that separate floor and snapshot regions have old/old, new-floor/old-snapshot,
-old-floor/new-snapshot, and new/new power-loss states. Cross-region recovery
-and exact-generation equality remain an implementation task, not a property
-of the codec.
+old-floor/new-snapshot, and new/new power-loss states. The provider comparison
+seam now rejects cross-region generation mismatch, but it does not resolve
+those power-loss states or make equality a property of the codec.
 
 ## Next implementation gate
 

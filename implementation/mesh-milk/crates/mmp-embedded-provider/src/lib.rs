@@ -217,6 +217,18 @@ pub enum ProviderError<E> {
         /// Generation selected from the journal, or zero for an empty journal.
         observed_generation: u64,
     },
+    /// The recovered journal does not exactly match a caller-owned durable
+    /// checkpoint floor.
+    ///
+    /// This is an equality/comparison seam only. It does not authenticate an
+    /// unkeyed floor record or make a separate floor region atomic with this
+    /// snapshot journal.
+    ExactDurableFloorMismatch {
+        /// Generation required by the caller-owned exact checkpoint.
+        durable_floor: u64,
+        /// Generation selected from the journal, or zero for an empty journal.
+        observed_generation: u64,
+    },
     /// A transaction state transition was rejected.
     Transaction(JournalTransactionError),
 }
@@ -311,6 +323,57 @@ where
             provider,
             store,
             transaction: JournalTransaction::new(GenerationFloor::new(generation)),
+            active_slot,
+        })
+    }
+
+    /// Recover only when the selected snapshot exactly matches a durable floor.
+    ///
+    /// An empty journal is accepted only with a zero floor. A non-empty
+    /// journal is accepted only when its selected generation equals a non-zero
+    /// floor. The comparison is performed after complete snapshot validation;
+    /// a mismatch returns [`ProviderError::ExactDurableFloorMismatch`] and no
+    /// provider is returned. The zero/empty match is only an
+    /// first-install/uninitialized authority; this helper cannot distinguish
+    /// an intentional reset or deletion. This seam does not authenticate an
+    /// unkeyed floor record or make a separate floor region atomic with this
+    /// journal.
+    pub fn recover_with_exact_durable_floor(
+        backend: B,
+        layout: JournalLayout,
+        provider: u64,
+        image: &mut [u8],
+        durable_floor: u64,
+    ) -> Result<Self, ProviderError<B::Error>> {
+        layout
+            .validate_backend(&backend)
+            .map_err(ProviderError::Layout)?;
+        let required = layout
+            .image_bytes()
+            .ok_or(ProviderError::Layout(LayoutError::OutOfBounds))?;
+        if image.len() < required {
+            return Err(ProviderError::ImageBufferTooSmall { required });
+        }
+        let recovered = read_and_restore(&backend, layout, provider, &mut image[..required])?;
+        let observed_generation = recovered.generation.unwrap_or(0);
+        let exact_match = match recovered.generation {
+            Some(generation) => durable_floor != 0 && generation == durable_floor,
+            None => durable_floor == 0,
+        };
+        if !exact_match {
+            return Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor,
+                observed_generation,
+            });
+        }
+        let active_slot = recovered.slot.unwrap_or(0);
+        let store = recovered.store;
+        Ok(Self {
+            backend,
+            layout,
+            provider,
+            store,
+            transaction: JournalTransaction::new(GenerationFloor::new(observed_generation)),
             active_slot,
         })
     }
@@ -1176,6 +1239,98 @@ mod tests {
         assert!(matches!(
             Provider::recover_with_durable_floor(empty, journal_layout, 7, &mut empty_image, 1,),
             Err(ProviderError::RollbackDetected {
+                durable_floor: 1,
+                observed_generation: 0,
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_durable_floor_accepts_only_an_equal_nonzero_generation() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(54, b"exact floor");
+        append_snapshot(&mut backend, 0, 7, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        let recovered =
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 7)
+                .unwrap();
+        assert_eq!(recovered.generation(), 7);
+    }
+
+    #[test]
+    fn exact_durable_floor_rejects_a_floor_ahead_of_snapshot() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(55, b"floor ahead");
+        append_snapshot(&mut backend, 0, 7, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 8),
+            Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor: 8,
+                observed_generation: 7,
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_durable_floor_rejects_a_snapshot_ahead_of_floor() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(56, b"snapshot ahead");
+        append_snapshot(&mut backend, 0, 8, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 7),
+            Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor: 7,
+                observed_generation: 8,
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_durable_floor_rejects_a_nonempty_snapshot_against_zero_floor() {
+        let mut backend = MemoryBackend::new();
+        let payload = snapshot_payload(57, b"zero floor");
+        append_snapshot(&mut backend, 0, 1, &payload);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 0),
+            Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor: 0,
+                observed_generation: 1,
+            })
+        ));
+    }
+
+    #[test]
+    fn exact_durable_floor_accepts_empty_journal_only_with_zero_floor() {
+        let backend = MemoryBackend::new();
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+        let recovered =
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 0)
+                .unwrap();
+        assert_eq!(recovered.generation(), 0);
+        assert!(recovered.store().is_empty());
+    }
+
+    #[test]
+    fn exact_durable_floor_rejects_empty_journal_with_nonzero_floor() {
+        let backend = MemoryBackend::new();
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover_with_exact_durable_floor(backend, journal_layout, 7, &mut image, 1),
+            Err(ProviderError::ExactDurableFloorMismatch {
                 durable_floor: 1,
                 observed_generation: 0,
             })
