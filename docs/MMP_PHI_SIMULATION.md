@@ -58,6 +58,15 @@ comparable without fabricating physical measurements. A valid experiment must
 still use identical seeds, schedules, workloads, and explicit physical
 instrumentation for radio or energy claims.
 
+The shared `ContactGeneratorKind` comparison surface covers four research-only
+schedule families: uniform-random, periodic-clustered, social-clustered, and
+bounded-heavy-tail-clustered. The last model exposes a truncated harmonic
+dwell distribution with an explicit finite cap; retain its
+`BoundedHeavyTailRunMetrics` alongside the common metric block when dwell
+episodes or realized bridge rates matter. It is a controlled long-tail probe,
+not a calibrated SLAW implementation and not evidence of an MMP/Φ delivery or
+energy improvement.
+
 ## Verification
 
 The two simulator tests pin the fixed-hazard invariant and the idealized gain

@@ -212,7 +212,7 @@ fn bounded_heavy_tail_run_rejects_invalid_inputs_without_mutation() {
     assert_eq!(sim.counters().meetings_run, 0);
 }
 
-fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {
+fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 4] {
     const MEETINGS: usize = 12;
 
     fn setup(seed: u64) -> Sim {
@@ -244,7 +244,21 @@ fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {
         Some(social_run.bridge_meetings),
     );
 
-    [random_metrics, periodic_metrics, social_metrics]
+    let mut heavy_tail = setup(seed);
+    let heavy_tail_run = heavy_tail
+        .run_bounded_heavy_tail_clustered_meetings(MEETINGS, 1_000, 2_000, 3, 1, 4)
+        .expect("valid bounded heavy-tail profile");
+    let heavy_tail_metrics = heavy_tail.research_metrics(
+        crate::ContactGeneratorKind::BoundedHeavyTailClustered,
+        Some(heavy_tail_run.bridge_meetings),
+    );
+
+    [
+        random_metrics,
+        periodic_metrics,
+        social_metrics,
+        heavy_tail_metrics,
+    ]
 }
 
 #[test]
@@ -264,11 +278,16 @@ fn contact_model_matrix_is_reproducible_and_reports_comparable_metrics() {
         first[2].generator,
         crate::ContactGeneratorKind::SocialClustered
     );
+    assert_eq!(
+        first[3].generator,
+        crate::ContactGeneratorKind::BoundedHeavyTailClustered
+    );
     assert_eq!(first[0].meetings, first[1].meetings);
     assert_eq!(first[1].meetings, first[2].meetings);
     assert_eq!(first[0].bridge_meetings, None);
     assert_eq!(first[1].bridge_meetings, None);
     assert!(first[2].bridge_meetings.is_some());
+    assert!(first[3].bridge_meetings.is_some());
     for metrics in first {
         assert!(
             metrics.quota_ok,

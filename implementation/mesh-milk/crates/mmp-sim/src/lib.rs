@@ -429,6 +429,11 @@ pub enum ContactGeneratorKind {
     UniformRandom,
     PeriodicClustered,
     SocialClustered,
+    /// Bounded heavy-tail clustered contacts used to probe long dwell tails.
+    ///
+    /// This label identifies a research generator only. It does not imply
+    /// SLAW calibration or any production routing behavior.
+    BoundedHeavyTailClustered,
 }
 
 /// Comparable simulator metrics captured after one contact-generator run.
