@@ -27,6 +27,17 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertEqual(self.package["types"], "dist/index.d.ts")
         self.assertIn("build", self.package["scripts"])
 
+    def test_package_registers_the_turbomodule_codegen_spec(self) -> None:
+        self.assertEqual(
+            self.package["codegenConfig"],
+            {
+                "name": "NativeMmpMeshSpec",
+                "type": "modules",
+                "jsSrcsDir": "src",
+            },
+        )
+        self.assertTrue((PACKAGE / "src" / "NativeMmpMesh.ts").is_file())
+
     def test_client_matches_documented_method_inventory(self) -> None:
         methods = (
             "start",

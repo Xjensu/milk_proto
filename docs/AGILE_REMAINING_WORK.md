@@ -135,9 +135,12 @@ remaining work by the project priority queue.
 ### AG-P1-06 — React Native native declarations and consumer validation
 
 - **Source/status:** E4-S3 and
-  `implementation/mesh-milk/REACT_NATIVE_INTEGRATION.md`; `OPEN`.
-- **Scope:** add the native TurboModule declarations/codegen and validate a
-  consumer build/runtime against the existing FFI surface.
+  `implementation/mesh-milk/REACT_NATIVE_INTEGRATION.md`; package Codegen
+  metadata and the SDK-free TypeScript declaration are shipped; native consumer
+  validation remains `OPEN / PLATFORM-GATED`.
+- **Scope:** validate a consumer build/runtime against the existing FFI
+  surface, including generated native declarations, Kotlin/Swift adapters, and
+  a device or emulator smoke path.
 - **Acceptance:** generated declarations match Kotlin/Swift/Rust surfaces;
   the fixture app builds and exercises the bounded event/error contract.
 

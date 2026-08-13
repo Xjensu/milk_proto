@@ -178,7 +178,10 @@ npm install @mesh-milk/react-native-mesh
 
 The package's `build` script uses the consuming project's TypeScript toolchain. Pin and
 verify the React Native version and TurboModule codegen support in that project before
-using the optional `NativeMmpMesh` codegen surface.
+using the `NativeMmpMesh` codegen surface. The package declares
+`codegenConfig` (`NativeMmpMeshSpec`, `modules`, `src`) so a New Architecture
+consumer can discover the spec during its normal React Native Codegen pass; this
+metadata does not compile or register the Kotlin/Swift implementation by itself.
 
 ## Inject the native module
 

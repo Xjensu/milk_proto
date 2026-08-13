@@ -23,6 +23,11 @@
     "README.md",
     "tsconfig.json"
   ],
+  "codegenConfig": {
+    "name": "NativeMmpMeshSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
