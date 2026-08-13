@@ -66,6 +66,80 @@ pub enum RecoveryClassification {
     Indeterminate,
 }
 
+/// In-memory guard for strictly increasing journal generations.
+///
+/// A floor of zero represents an empty journal; the first accepted generation
+/// is therefore one. The guard is provider-neutral and allocation-free. It
+/// does not persist the floor, provide hardware anti-rollback, or establish
+/// that a snapshot is durable. A caller must validate the recovered snapshot
+/// first, persist the floor using its provider's crash-safe policy, and recover
+/// again after any indeterminate write before advancing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenerationFloor {
+    known_floor: u64,
+}
+
+/// Errors returned when advancing a [`GenerationFloor`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationFloorError {
+    /// Generation zero is reserved for the empty/uninitialized state.
+    Zero,
+    /// The attempted generation is not strictly greater than the known floor.
+    NotMonotonic {
+        /// Highest generation accepted by this in-memory guard.
+        known_floor: u64,
+        /// Generation supplied by the caller.
+        attempted: u64,
+    },
+    /// The known floor is already [`u64::MAX`], so no next generation exists.
+    Overflow,
+}
+
+impl GenerationFloor {
+    /// Create a guard from a validated recovered generation.
+    ///
+    /// Pass zero for an empty journal. This constructor does not validate or
+    /// persist the supplied value; the provider must establish those facts.
+    pub const fn new(known_floor: u64) -> Self {
+        Self { known_floor }
+    }
+
+    /// Return the highest generation accepted by this guard.
+    pub const fn known_floor(self) -> u64 {
+        self.known_floor
+    }
+
+    /// Accept a caller-supplied generation if it is strictly increasing.
+    ///
+    /// The guard is updated only after all validation succeeds. A rejected
+    /// attempt leaves the known floor unchanged.
+    pub fn advance(&mut self, attempted: u64) -> Result<(), GenerationFloorError> {
+        if attempted == 0 {
+            return Err(GenerationFloorError::Zero);
+        }
+        if attempted <= self.known_floor {
+            return Err(GenerationFloorError::NotMonotonic {
+                known_floor: self.known_floor,
+                attempted,
+            });
+        }
+        self.known_floor = attempted;
+        Ok(())
+    }
+
+    /// Reserve and return the next generation.
+    ///
+    /// On overflow the guard remains at [`u64::MAX`].
+    pub fn reserve_next(&mut self) -> Result<u64, GenerationFloorError> {
+        let next = self
+            .known_floor
+            .checked_add(1)
+            .ok_or(GenerationFloorError::Overflow)?;
+        self.advance(next)?;
+        Ok(next)
+    }
+}
+
 /// Classify an attempted append from a post-write journal scan.
 ///
 /// The caller must provide the generation selected immediately before the
@@ -74,16 +148,20 @@ pub enum RecoveryClassification {
 /// anything from rejected candidates, lower valid generations, or the number
 /// of records. It applies these conservative rules in order:
 ///
-/// 1. selected generation equal to `attempted_generation` is [`Committed`];
-/// 2. selected generation equal to `previous_generation`, or no selected
+/// 1. an attempted generation must be strictly greater than the supplied
+///    `previous_generation` (when present), otherwise the result is
+///    [`Indeterminate`];
+/// 2. selected generation equal to `attempted_generation` is [`Committed`];
+/// 3. selected generation equal to `previous_generation`, or no selected
 ///    generation when there was no previous generation, is [`NotCommitted`];
-/// 3. every other state is [`Indeterminate`].
+/// 4. every other state is [`Indeterminate`].
 ///
 /// In particular, an empty scan with a known previous generation is
 /// indeterminate: the previous record may have been lost or hidden by a
 /// provider-level failure, and this byte-level crate cannot resolve that
-/// possibility. The helper does not claim flash atomicity or enforce a
-/// generation floor.
+/// possibility. The helper applies only the caller-supplied in-memory
+/// monotonic precondition; it does not persist or authenticate a generation
+/// floor and does not claim flash atomicity.
 pub fn classify_recovery(
     scan_result: ScanResult<'_>,
     previous_generation: Option<u64>,
@@ -683,6 +761,49 @@ mod tests {
             classify_recovery(result, Some(7), 6),
             RecoveryClassification::Indeterminate
         );
+    }
+
+    #[test]
+    fn generation_floor_accepts_first_generation() {
+        let mut floor = GenerationFloor::new(0);
+        assert_eq!(floor.reserve_next().unwrap(), 1);
+        assert_eq!(floor.known_floor(), 1);
+    }
+
+    #[test]
+    fn generation_floor_accepts_strict_increment() {
+        let mut floor = GenerationFloor::new(7);
+        floor.advance(8).unwrap();
+        assert_eq!(floor.known_floor(), 8);
+        assert_eq!(floor.reserve_next().unwrap(), 9);
+        assert_eq!(floor.known_floor(), 9);
+    }
+
+    #[test]
+    fn generation_floor_rejects_zero_equal_and_rollback_without_mutating() {
+        let mut floor = GenerationFloor::new(4);
+        for attempted in [0, 4, 3] {
+            let before = floor.known_floor();
+            let error = floor.advance(attempted).unwrap_err();
+            assert_eq!(floor.known_floor(), before);
+            match attempted {
+                0 => assert_eq!(error, GenerationFloorError::Zero),
+                _ => assert_eq!(
+                    error,
+                    GenerationFloorError::NotMonotonic {
+                        known_floor: 4,
+                        attempted,
+                    }
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn generation_floor_reports_next_overflow_without_mutating() {
+        let mut floor = GenerationFloor::new(u64::MAX);
+        assert_eq!(floor.reserve_next(), Err(GenerationFloorError::Overflow));
+        assert_eq!(floor.known_floor(), u64::MAX);
     }
 
     #[test]

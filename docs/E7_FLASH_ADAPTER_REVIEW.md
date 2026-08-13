@@ -86,3 +86,9 @@ attempt generations (`attempted <= previous`) as indeterminate, because the
 scanner's deterministic duplicate-generation rule cannot prove which append
 was visible. This is a framed-record recovery aid, not snapshot authenticity,
 generation-floor enforcement, or hardware atomicity.
+
+The journal crate also exposes an in-memory `GenerationFloor` guard. It rejects
+generation zero, equal/older candidates, and `u64` overflow while leaving its
+state unchanged on rejection. The guard is only a local monotonic precondition:
+the provider must persist and recover the floor with its own crash-safe policy;
+the helper does not provide durable anti-rollback or hardware atomicity.
