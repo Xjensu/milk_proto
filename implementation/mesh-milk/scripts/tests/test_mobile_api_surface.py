@@ -48,6 +48,19 @@ class MobileApiSurfaceTests(unittest.TestCase):
         self.assertEqual(len(CHECK.EXPECTED_MMP_NODE_METHODS), len(manifest_methods))
         self.assertEqual(manifest_methods, rust_methods)
 
+    def test_type_manifest_matches_public_rust_records_and_enums(self) -> None:
+        rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
+        source = rust_source.read_text(encoding="utf-8")
+        rust_types = {
+            (name, "enum" if kind == "enum" else "record")
+            for kind, name in re.findall(r"^pub\s+(enum|struct)\s+([A-Za-z_]\w*)", source, re.MULTILINE)
+            if name != "MmpNode"
+        }
+        self.assertEqual(
+            set(CHECK.EXPECTED_FFI_TYPE_DECLARATIONS),
+            rust_types,
+        )
+
     def test_throwing_manifest_matches_rust_result_exports(self) -> None:
         rust_source = Path(__file__).parents[2] / "crates" / "mmp-ffi" / "src" / "lib.rs"
         source = rust_source.read_text(encoding="utf-8")
@@ -89,11 +102,19 @@ class MobileApiSurfaceTests(unittest.TestCase):
             kotlin.mkdir()
             swift.mkdir()
             (kotlin / "mmp_ffi.kt").write_text(
-                kotlin_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                kotlin_surface(
+                    methods,
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                    CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+                ),
                 encoding="utf-8",
             )
             (swift / "mmp_ffi.swift").write_text(
-                swift_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                swift_surface(
+                    methods,
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                    CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+                ),
                 encoding="utf-8",
             )
             self.assertEqual(CHECK.scan_bindings(kotlin, swift), [])
@@ -107,11 +128,19 @@ class MobileApiSurfaceTests(unittest.TestCase):
             kotlin.mkdir()
             swift.mkdir()
             (kotlin / "mmp_ffi.kt").write_text(
-                kotlin_surface(methods[:-1], CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                kotlin_surface(
+                    methods[:-1],
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                    CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+                ),
                 encoding="utf-8",
             )
             (swift / "mmp_ffi.swift").write_text(
-                swift_surface(methods[:-1], CHECK.EXPECTED_MMP_NODE_THROWING_METHODS),
+                swift_surface(
+                    methods[:-1],
+                    CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                    CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+                ),
                 encoding="utf-8",
             )
             violations = CHECK.scan_bindings(kotlin, swift)
@@ -127,11 +156,19 @@ class MobileApiSurfaceTests(unittest.TestCase):
             swift = root_path / "swift"
             kotlin.mkdir()
             swift.mkdir()
-            kotlin_source = kotlin_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
+            kotlin_source = kotlin_surface(
+                methods,
+                CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+            ).replace(
                 "    @Throws(FfiException::class)\n    override fun `setNickname`",
                 "    override fun `setNickname`",
             )
-            swift_source = swift_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS).replace(
+            swift_source = swift_surface(
+                methods,
+                CHECK.EXPECTED_MMP_NODE_THROWING_METHODS,
+                CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+            ).replace(
                 "    func setNickname() throws",
                 "    func setNickname()",
             )
@@ -151,11 +188,19 @@ class MobileApiSurfaceTests(unittest.TestCase):
             swift = root_path / "swift"
             kotlin.mkdir()
             swift.mkdir()
-            kotlin_source = kotlin_surface(methods, throwing_methods).replace(
+            kotlin_source = kotlin_surface(
+                methods,
+                throwing_methods,
+                CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+            ).replace(
                 "    @Throws(FfiException::class)\n    override fun `nicknameOf`",
                 "    override fun `nicknameOf`",
             )
-            swift_source = swift_surface(methods, throwing_methods).replace(
+            swift_source = swift_surface(
+                methods,
+                throwing_methods,
+                CHECK.EXPECTED_FFI_TYPE_DECLARATIONS,
+            ).replace(
                 "    func nicknameOf() throws",
                 "    func nicknameOf()",
             )
@@ -178,6 +223,30 @@ class MobileApiSurfaceTests(unittest.TestCase):
             self.assertEqual(len(violations), 2)
             self.assertIn("no .kt source", violations[0])
             self.assertIn("no .swift source", violations[1])
+
+    def test_reports_missing_ffi_type_per_language(self) -> None:
+        methods = CHECK.EXPECTED_MMP_NODE_METHODS
+        declarations = CHECK.EXPECTED_FFI_TYPE_DECLARATIONS
+        missing_name = "FfiBetaSnapshot"
+        reduced = tuple(item for item in declarations if item[0] != missing_name)
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            kotlin = root_path / "kotlin"
+            swift = root_path / "swift"
+            kotlin.mkdir()
+            swift.mkdir()
+            (kotlin / "mmp_ffi.kt").write_text(
+                kotlin_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS, reduced),
+                encoding="utf-8",
+            )
+            (swift / "mmp_ffi.swift").write_text(
+                swift_surface(methods, CHECK.EXPECTED_MMP_NODE_THROWING_METHODS, reduced),
+                encoding="utf-8",
+            )
+            violations = CHECK.scan_bindings(kotlin, swift)
+            self.assertEqual(len(violations), 2)
+            self.assertIn("generated kotlin output is missing FFI type FfiBetaSnapshot", violations[0])
+            self.assertIn("generated swift output is missing FFI type FfiBetaSnapshot", violations[1])
 
 
 if __name__ == "__main__":

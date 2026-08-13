@@ -7,9 +7,10 @@ Usage (from ``implementation/mesh-milk``)::
 
 This is a source-level smoke check, not a native compiler or hardware test. It
 protects the mobile integration boundary from silent UniFFI surface drift: the
-generated language bindings must contain every public ``MmpNode`` method that
-the Rust FFI exports. Update ``EXPECTED_MMP_NODE_METHODS`` deliberately when a
-method is added or removed from ``mmp-ffi``.
+generated language bindings must contain every public ``MmpNode`` method and
+every public record/enum that the Rust FFI exports. Update the explicit method
+and type manifests deliberately when ``mmp-ffi`` changes. This is a structural
+source check, not a substitute for compiling a downstream Kotlin/Swift app.
 """
 
 from __future__ import annotations
@@ -118,7 +119,65 @@ EXPECTED_MMP_NODE_THROWING_METHODS = (
     "tryRevokeIdentity",
 )
 
+# Public UniFFI records and enums are part of the host-facing ABI just as much
+# as the MmpNode methods are. Keep the declaration kind in this one explicit
+# manifest so the combined and one-language packaging gates cannot silently
+# accept a stale generated model surface. ``FfiEvent`` is represented as a
+# sealed class by some UniFFI Kotlin versions, therefore the scanner accepts
+# both enum and sealed-class output for entries marked ``enum``.
+EXPECTED_FFI_TYPE_DECLARATIONS = (
+    ("FfiError", "enum"),
+    ("FfiTier", "enum"),
+    ("FfiCapability", "enum"),
+    ("FfiCapabilities", "record"),
+    ("FfiNodeStatus", "record"),
+    ("FfiMetrics", "record"),
+    ("FfiBetaSnapshot", "record"),
+    ("FfiLinkQuality", "record"),
+    ("FfiDeliveryState", "enum"),
+    ("FfiBlobState", "enum"),
+    ("FfiFileFailReason", "enum"),
+    ("FfiFileOffer", "record"),
+    ("FfiFileSend", "record"),
+    ("FfiFileProgress", "record"),
+    ("OutFrame", "record"),
+    ("FfiEvent", "enum"),
+)
+
+# UniFFI names the generated Kotlin exception wrapper ``FfiException`` even
+# though the Rust exported error type is ``FfiError``. Keep this ABI spelling
+# difference explicit rather than weakening the type check or pretending the
+# generated source uses the Rust identifier verbatim.
+KOTLIN_FFI_TYPE_ALIASES = {"FfiError": "FfiException"}
+
 SOURCE_SUFFIXES = {".kt", ".kts", ".swift"}
+
+
+def type_declaration_pattern(language: str, name: str, kind: str) -> str:
+    """Return a conservative source-level pattern for one generated type."""
+
+    if language == "kotlin":
+        keyword = r"(?:enum|sealed)\s+class" if kind == "enum" else r"data\s+class"
+        return rf"\b{keyword}\s+{re.escape(name)}\b"
+    if language == "swift":
+        keyword = "enum" if kind == "enum" else "struct"
+        return rf"\b(?:public\s+)?{keyword}\s+{re.escape(name)}\b"
+    raise ValueError(f"unsupported binding language: {language}")
+
+
+def type_surface_violations(language: str, text: str) -> list[str]:
+    """Return missing-record/enum violations for one generated source tree."""
+
+    violations: list[str] = []
+    for name, kind in EXPECTED_FFI_TYPE_DECLARATIONS:
+        generated_name = (
+            KOTLIN_FFI_TYPE_ALIASES.get(name, name)
+            if language == "kotlin"
+            else name
+        )
+        if not re.search(type_declaration_pattern(language, generated_name, kind), text):
+            violations.append(f"generated {language} output is missing FFI type {name}")
+    return violations
 
 
 def _read_sources(directory: Path, suffix: str) -> tuple[list[Path], list[str]]:
@@ -163,6 +222,9 @@ def scan_bindings(kotlin_dir: Path, swift_dir: Path) -> list[str]:
         violations.append("generated Kotlin output has no MmpNodeInterface")
     if not re.search(r"\bprotocol\s+MmpNodeProtocol\b", swift_text):
         violations.append("generated Swift output has no MmpNodeProtocol")
+
+    violations.extend(type_surface_violations("kotlin", kotlin_text))
+    violations.extend(type_surface_violations("swift", swift_text))
 
     for method in EXPECTED_MMP_NODE_METHODS:
         kotlin_pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("

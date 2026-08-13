@@ -120,6 +120,21 @@ cargo run -p mmp-ffi --bin uniffi-bindgen -- generate --library target/release/l
     --language swift --out-dir bindings/swift
 ```
 
+Before packaging, the source-level binding gates must pass for both generated
+trees:
+
+```sh
+python scripts/check_mobile_api_surface.py bindings/kotlin bindings/swift
+python scripts/check_mobile_binding.py kotlin bindings/kotlin
+python scripts/check_mobile_binding.py swift bindings/swift
+```
+
+These checks cover the complete exported `MmpNode` method/throws surface and
+all public FFI records/enums (including the Kotlin `FfiException` spelling for
+the Rust `FfiError`), plus the secret-state denylist. They deliberately do not
+claim Kotlin/Swift compilation, native radio behavior, or hardware
+interoperability; those remain CI, platform-toolchain, and device gates.
+
 The exported surface (stable across languages):
 
 ```

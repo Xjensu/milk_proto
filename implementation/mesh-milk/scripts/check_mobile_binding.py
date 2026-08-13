@@ -7,6 +7,8 @@ time, so they need this one-language variant as a packaging gate. It checks
 both properties that matter at this boundary:
 
 * the generated ``MmpNode`` protocol/interface exposes every Rust FFI method;
+* generated source declares every public Rust FFI record/enum used by that
+  interface (including UniFFI's Kotlin ``FfiException`` spelling);
 * methods returning ``Result<_, FfiError>`` retain their host-language
   throwing contract;
 * Rust-internal secret-state identifiers do not enter the generated source.
@@ -34,8 +36,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 from check_mobile_api_surface import (  # type: ignore[import-not-found]
+    EXPECTED_FFI_TYPE_DECLARATIONS,
     EXPECTED_MMP_NODE_METHODS,
     EXPECTED_MMP_NODE_THROWING_METHODS,
+    type_surface_violations,
 )
 from check_mobile_secret_surface import scan_directory as scan_secret_directory  # type: ignore[import-not-found]
 
@@ -68,6 +72,7 @@ def _surface_violations(language: str, directory: Path) -> list[str]:
     if language == "kotlin":
         if not re.search(r"\binterface\s+MmpNodeInterface\b", text):
             violations.append("generated Kotlin output has no MmpNodeInterface")
+        violations.extend(type_surface_violations("kotlin", text))
         for method in EXPECTED_MMP_NODE_METHODS:
             pattern = rf"\boverride\s+fun\s+`{re.escape(method)}`\s*\("
             if not re.search(pattern, text):
@@ -86,6 +91,7 @@ def _surface_violations(language: str, directory: Path) -> list[str]:
     else:
         if not re.search(r"\bprotocol\s+MmpNodeProtocol\b", text):
             violations.append("generated Swift output has no MmpNodeProtocol")
+        violations.extend(type_surface_violations("swift", text))
         for method in EXPECTED_MMP_NODE_METHODS:
             pattern = rf"\bfunc\s+{re.escape(method)}\s*\("
             if not re.search(pattern, text):

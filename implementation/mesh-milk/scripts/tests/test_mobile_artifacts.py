@@ -6,12 +6,18 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 try:
-    from scripts.tests.check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+    from scripts.tests.check_mobile_api_surface import (
+        EXPECTED_FFI_TYPE_DECLARATIONS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
+    )
 except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
     import sys
 
     sys.path.insert(0, str(Path(__file__).parents[1]))
-    from check_mobile_api_surface import EXPECTED_MMP_NODE_THROWING_METHODS
+    from check_mobile_api_surface import (
+        EXPECTED_FFI_TYPE_DECLARATIONS,
+        EXPECTED_MMP_NODE_THROWING_METHODS,
+    )
 try:
     from scripts.tests.mobile_fixtures import kotlin_surface
 except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
@@ -29,6 +35,7 @@ def _kotlin() -> str:
     return kotlin_surface(
         VERIFY.EXPECTED_MMP_NODE_METHODS,
         EXPECTED_MMP_NODE_THROWING_METHODS,
+        EXPECTED_FFI_TYPE_DECLARATIONS,
     )
 
 
