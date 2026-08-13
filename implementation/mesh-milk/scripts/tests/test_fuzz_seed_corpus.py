@@ -24,6 +24,18 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         self.assertEqual(workflow.count(command), 2)
         self.assertNotIn("cargo install cargo-fuzz --locked", workflow)
 
+    def test_fuzz_run_fails_if_corpus_artifact_is_not_found(self) -> None:
+        workflow = (Path(__file__).parents[4] / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        start = workflow.index("  fuzz-run:")
+        end = workflow.index("\n  simulator-extended:", start)
+        job = workflow[start:end]
+        self.assertIn("uses: actions/upload-artifact@v4", job)
+        self.assertIn("if: always()", job)
+        self.assertIn("if-no-files-found: error", job)
+        self.assertIn("path: implementation/mesh-milk/fuzz/corpus", job)
+
     def test_cargo_target_inventory_matches_seed_mapping(self) -> None:
         inventory = CORPUS.validate_target_inventory()
         self.assertEqual(tuple(inventory), CORPUS.TARGETS)

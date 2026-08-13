@@ -26,6 +26,10 @@ except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
         EXPECTED_MMP_NODE_THROWING_METHODS,
     )
 try:
+    from scripts.check_mobile_binding import EXPECTED_FFI_TYPE_DECLARATIONS
+except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
+    from check_mobile_binding import EXPECTED_FFI_TYPE_DECLARATIONS
+try:
     from scripts.tests.mobile_fixtures import swift_surface
 except ModuleNotFoundError:  # direct execution: python scripts/tests/test_*.py
     from mobile_fixtures import swift_surface
@@ -71,6 +75,7 @@ def _write_fixture(root: Path, *, include_simulator: bool = True) -> tuple[Path,
     methods = swift_surface(
         EXPECTED_MMP_NODE_METHODS,
         EXPECTED_MMP_NODE_THROWING_METHODS,
+        EXPECTED_FFI_TYPE_DECLARATIONS,
     )
     (bindings / "mmp_ffi.swift").write_text(
         "public " + methods,

@@ -403,6 +403,10 @@ jobs:
         if: always()
         with:
           name: mmp-fuzz-corpus
+          # AG-P0-04: a campaign must fail visibly if the discovered corpus
+          # cannot be retained; a warning-only upload would hide a broken
+          # path or missing output while leaving no evidence to triage.
+          if-no-files-found: error
           path: implementation/mesh-milk/fuzz/corpus
 
   # Extended simulation tier: ignored deployment/scale drills are deliberately
