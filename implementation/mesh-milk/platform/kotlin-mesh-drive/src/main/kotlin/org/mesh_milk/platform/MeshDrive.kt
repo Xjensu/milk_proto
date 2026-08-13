@@ -531,6 +531,10 @@ public class MeshDrive(
         val links = activeLinks.toList()
         links.forEach { runCatching { node.linkDown(it) } }
         activeLinks.clear()
+        // Startup rollback retires every logical link.  Do not carry a close
+        // action requeued after a transient adapter failure into a later
+        // lifecycle; the direct rollback close below is the final attempt.
+        pendingCloseActions.clear()
         links.forEach { runCatching { requestPhysicalClose(it) } }
         closeRequested.clear()
         pending.clear()
@@ -538,6 +542,10 @@ public class MeshDrive(
     }
 
     private fun rollbackLinkAdmission(link: Long) {
+        // Admission rollback retires the link before requesting best-effort
+        // physical cleanup.  Any close action retained by drainClose() must
+        // not outlive that ownership transition.
+        pendingCloseActions.removeIf { it == link }
         pending.removeIf { it.link == link }
         if (activeLinks.remove(link)) {
             runCatching { node.linkDown(link) }
@@ -674,6 +682,9 @@ public class MeshDrive(
     public fun onLinkDown(link: Long) {
         driveLoopOwner.check()
         closeRequested.remove(link)
+        // A delayed disconnect callback may arrive after a failed close was
+        // requeued.  Retiring the logical link also retires that local retry.
+        pendingCloseActions.removeIf { it == link }
         if (!running || !activeLinks.remove(link)) return
         pending.removeIf { it.link == link }
         node.linkDown(link)
@@ -709,7 +720,16 @@ public class MeshDrive(
             }
             val link = pendingCloseActions.pollFirst() ?: return
             pending.removeIf { it.link == link }
-            requestPhysicalClose(link)
+            try {
+                requestPhysicalClose(link)
+            } catch (error: Throwable) {
+                // The Rust queue entry has already been consumed, so retain
+                // it locally when a transient native close failure leaves
+                // the logical link active.  Otherwise one adapter exception
+                // would silently turn a required teardown into a leak.
+                if (activeLinks.contains(link)) pendingCloseActions.addFirst(link)
+                throw error
+            }
         }
     }
 
@@ -759,6 +779,9 @@ public class MeshDrive(
         links.forEach { runCatching { node.linkDown(it) } }
         activeLinks.clear()
         pending.clear()
+        // No link remains owned after fail-closed teardown, so no queued close
+        // action may survive into any host recovery/recreation path.
+        pendingCloseActions.clear()
         links.forEach { runCatching { requestPhysicalClose(it) } }
         runCatching { scanner.stop() }
         runCatching { advertiser.stop() }
@@ -811,7 +834,15 @@ public class MeshDrive(
                 pendingEvents.addAll(node.pollEventBatch(MeshNode.MAX_POLL_BATCH))
             }
             val event = pendingEvents.pollFirst() ?: return
-            eventSink(event)
+            try {
+                eventSink(event)
+            } catch (error: Throwable) {
+                // A host event sink is outside the Rust queue.  Put the
+                // current event back when dispatch fails so a transient UI
+                // or bridge error cannot silently lose it on the next pump.
+                pendingEvents.addFirst(event)
+                throw error
+            }
         }
     }
 

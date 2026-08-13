@@ -20,6 +20,9 @@ generated `MmpNode` bindings.
 - bounded native batch polling (`pollCloseBatch`, `pollSendBatch`, and
   `pollEventBatch`, capped at 64) reduces bridge calls while retaining FIFO
   order; legacy one-item methods remain the source-compatible fallback;
+- native close failures retain the consumed close action for a later pump while
+  the logical link is still active, and an event-sink exception retains the
+  current event for retry instead of silently dropping host-visible work;
 - link-up/data/down forwarding with stale-link input ignored;
 - notification fragmentation at `negotiated ATT MTU - 3`, with adapter
   back-pressure retained for the next pump;

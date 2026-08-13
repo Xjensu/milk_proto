@@ -469,7 +469,145 @@ class MeshDriveConsumerTest {
         assertTrue(gatt.closedLinks.size == 1)
     }
 
-    private class FakeNode : MeshNode {
+    @Test
+    fun closeActionIsRetainedWhenNativeTeardownFails() {
+        val node = FakeNode()
+        val gatt = FailingOnceGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+        val binding = bridge.onConnected(ConnectionIdentity.create(), initiator = true)
+        assertTrue(binding != null)
+        node.closeActions.addLast(binding!!.link)
+
+        assertFailsWith<IllegalStateException> { drive.pumpAt(1_000L) }
+        assertEquals(listOf(binding.link), gatt.closeAttempts)
+
+        drive.pumpAt(1_000L)
+        assertEquals(listOf(binding.link, binding.link), gatt.closeAttempts)
+        bridge.onDisconnected(binding)
+        drive.stop()
+    }
+
+    @Test
+    fun admissionRollbackRemovesARequeuedCloseAction() {
+        val node = FakeNode().also { it.queueCloseOnLinkUp = true }
+        val gatt = FailingOnceGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        drive.start()
+        val bridge = GattLinkBridge(drive)
+
+        assertFailsWith<IllegalStateException> {
+            bridge.onConnected(ConnectionIdentity.create(), initiator = true)
+        }
+        // The first close fails during drain; rollback makes one final direct
+        // close attempt.  The requeued action must not issue a third attempt.
+        assertEquals(2, gatt.closeAttempts.size)
+        drive.pumpAt(1_000L)
+        assertEquals(2, gatt.closeAttempts.size)
+        assertEquals(0, bridge.activeConnections())
+        drive.stop()
+    }
+
+    @Test
+    fun startupRollbackRemovesARequeuedCloseActionBeforeTheNextLifecycle() {
+        val node = FakeNode().also { it.queueCloseOnBeaconOnce = true }
+        val gatt = FailingOnceGatt()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = gatt,
+            foregroundRelayCapable = false,
+        )
+        var admitted = false
+        node.tickAction = {
+            if (!admitted) {
+                admitted = true
+                drive.onLinkUp(17L, initiator = true)
+            }
+        }
+
+        assertFailsWith<IllegalStateException> { drive.start() }
+        // The initial drain fails once, then rollbackStartLinks makes one
+        // direct cleanup attempt and retires the logical link.
+        assertEquals(2, gatt.closeAttempts.size)
+        assertEquals(listOf(17L), node.linkDowns)
+
+        // A new lifecycle must not retry the stale action left by the failed
+        // initial drain; the one-shot beacon action is already consumed.
+        drive.start()
+        assertEquals(2, gatt.closeAttempts.size)
+        drive.stop()
+    }
+
+    @Test
+    fun eventBatchPathPreservesFifoWithAProviderCap() {
+        val node = FakeNode(initialEvents = listOf("one", "two", "three"))
+        val delivered = mutableListOf<Any>()
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            eventSink = { delivered += it },
+        )
+
+        drive.start()
+
+        assertEquals(listOf("one", "two", "three"), delivered)
+        assertEquals(listOf(2, 1, 0), node.eventBatchSizes)
+        assertTrue(node.eventBatchSizes.all { it <= 2 })
+        drive.stop()
+    }
+
+    @Test
+    fun eventSinkFailureRetainsCurrentEventForTheNextLifecycleAttempt() {
+        val node = FakeNode(initialEvents = listOf("event"))
+        val delivered = mutableListOf<Any>()
+        var failOnce = true
+        val drive = MeshDrive(
+            node = node,
+            clock = MonotonicClock { 1_000L },
+            advertiser = RecordingAdvertiser(),
+            scanner = NoopScanner(),
+            gatt = NoopGatt(),
+            foregroundRelayCapable = false,
+            eventSink = { event ->
+                if (failOnce) {
+                    failOnce = false
+                    throw IllegalStateException("event bridge unavailable")
+                }
+                delivered += event
+            },
+        )
+
+        assertFailsWith<IllegalStateException> { drive.start() }
+        assertTrue(!drive.isRunning)
+
+        drive.start()
+        assertEquals(listOf("event"), delivered)
+        drive.stop()
+    }
+
+    private class FakeNode(initialEvents: List<Any> = emptyList()) : MeshNode {
         var tier: MeshTier? = null
         var tickCount: Int = 0
         val beacons: MutableList<ByteArray> = mutableListOf()
@@ -477,19 +615,33 @@ class MeshDriveConsumerTest {
         val linkUpQualities: MutableList<LinkQualityHint?> = mutableListOf()
         val linkDowns: MutableList<Long> = mutableListOf()
         val linkDataLinks: MutableList<Long> = mutableListOf()
+        val closeActions: java.util.ArrayDeque<Long> = java.util.ArrayDeque()
+        private val events: java.util.ArrayDeque<Any> = java.util.ArrayDeque<Any>().also { it.addAll(initialEvents) }
+        val eventBatchSizes: MutableList<Int> = mutableListOf()
+        var tickAction: (() -> Unit)? = null
+        var queueCloseOnBeaconOnce: Boolean = false
+        var queueCloseOnLinkUp: Boolean = false
         var throwOnLinkUp: Boolean = false
 
         override fun setTier(tier: MeshTier) {
             this.tier = tier
         }
 
-        override fun beacon(nowMs: Long): ByteArray = byteArrayOf(nowMs.toByte())
+        override fun beacon(nowMs: Long): ByteArray {
+            if (queueCloseOnBeaconOnce && linkUps.isNotEmpty()) {
+                queueCloseOnBeaconOnce = false
+                closeActions.addLast(linkUps.last())
+            }
+            return byteArrayOf(nowMs.toByte())
+        }
 
         override fun tick(nowMs: Long) {
             tickCount += 1
+            tickAction?.invoke()
+            tickAction = null
         }
 
-        override fun pollClose(): Long? = null
+        override fun pollClose(): Long? = if (closeActions.isEmpty()) null else closeActions.removeFirst()
 
         override fun closeActionsDropped(): Long = 0L
 
@@ -497,7 +649,16 @@ class MeshDriveConsumerTest {
 
         override fun pollSend(): OutboundFrame? = null
 
-        override fun pollEvent(): Any? = null
+        override fun pollEvent(): Any? = if (events.isEmpty()) null else events.removeFirst()
+
+        override fun pollEventBatch(maxItems: Int): List<Any> {
+            val batch = ArrayList<Any>(2)
+            while (batch.size < minOf(maxItems, 2) && events.isNotEmpty()) {
+                batch += events.removeFirst()
+            }
+            eventBatchSizes += batch.size
+            return batch
+        }
 
         override fun onBeacon(serviceData: ByteArray, rssi: Byte) {
             beacons += serviceData
@@ -505,6 +666,7 @@ class MeshDriveConsumerTest {
 
         override fun linkUp(link: Long, initiator: Boolean) {
             linkUps += link
+            if (queueCloseOnLinkUp) closeActions.addLast(link)
             if (throwOnLinkUp) throw IllegalStateException("link admission failed")
         }
 
@@ -614,6 +776,23 @@ class MeshDriveConsumerTest {
 
         override fun close(link: Long) {
             closedLinks += link
+        }
+    }
+
+    private class FailingOnceGatt : GattAdapter {
+        val closeAttempts: MutableList<Long> = mutableListOf()
+        private var failuresRemaining: Int = 1
+
+        override fun mtu(link: Long): Int = MeshDrive.MIN_ATT_MTU
+
+        override fun notifyFragment(link: Long, payload: ByteArray): Boolean = true
+
+        override fun close(link: Long) {
+            closeAttempts += link
+            if (failuresRemaining > 0) {
+                failuresRemaining -= 1
+                throw IllegalStateException("native close temporarily unavailable")
+            }
         }
     }
 }
