@@ -92,6 +92,14 @@ pub enum MeasurementError {
     InconsistentCounts,
     /// Baseline and candidate observations do not describe one trace.
     MismatchedTrace,
+    /// Baseline and candidate observations do not describe one workload.
+    ///
+    /// A paired comparison may differ in observed outcomes, latency samples,
+    /// and energy counters, but the number of contact opportunities and
+    /// offered bundles must be identical. Otherwise a rate delta can be
+    /// attributed to the candidate strategy even though its denominator or
+    /// workload changed.
+    MismatchedWorkload,
     /// A derived summary value cannot be represented as a finite number.
     SummaryOverflow,
 }
@@ -348,6 +356,11 @@ impl PairedRendezvousMeasurement {
         candidate.validate()?;
         if baseline.trace_id != candidate.trace_id {
             return Err(MeasurementError::MismatchedTrace);
+        }
+        if baseline.contact_attempts != candidate.contact_attempts
+            || baseline.offered_bundles != candidate.offered_bundles
+        {
+            return Err(MeasurementError::MismatchedWorkload);
         }
         Ok(Self {
             baseline,
@@ -1035,6 +1048,24 @@ mod tests {
         assert_eq!(
             PairedRendezvousMeasurement::new(invalid, measurement([7; 16], 3, 3, 75.0)),
             Err(MeasurementError::InconsistentCounts)
+        );
+    }
+
+    #[test]
+    fn paired_edr_measurement_rejects_mismatched_workload_denominators() {
+        let baseline = measurement([7; 16], 2, 2, 100.0);
+        let mut candidate = measurement([7; 16], 3, 3, 75.0);
+        candidate.offered_bundles += 1;
+        assert_eq!(
+            PairedRendezvousMeasurement::new(baseline, candidate),
+            Err(MeasurementError::MismatchedWorkload)
+        );
+
+        let mut candidate = measurement([7; 16], 3, 3, 75.0);
+        candidate.contact_attempts += 1;
+        assert_eq!(
+            PairedRendezvousMeasurement::new(baseline, candidate),
+            Err(MeasurementError::MismatchedWorkload)
         );
     }
 
