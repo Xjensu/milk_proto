@@ -26,11 +26,18 @@ fn valid_encoded_bundle_id_matches_structural_id() {
 #[test]
 fn truncated_encoded_bundle_is_rejected_without_panicking() {
     for length in [0usize, 1, 63, 64, 118, 119, 123] {
-        assert_eq!(id_of_encoded(&vec![0u8; length]), Err(WireError::Truncated), "length {length}");
+        assert_eq!(
+            id_of_encoded(&vec![0u8; length]),
+            Err(WireError::Truncated),
+            "length {length}"
+        );
     }
 }
 
 #[test]
 fn oversized_encoded_bundle_is_rejected_before_copying() {
-    assert_eq!(id_of_encoded(&vec![0u8; MAX_BUNDLE + 1]), Err(WireError::Oversize));
+    assert_eq!(
+        id_of_encoded(&vec![0u8; MAX_BUNDLE + 1]),
+        Err(WireError::Oversize)
+    );
 }

@@ -165,7 +165,11 @@ impl AuthorityStore {
             if r.u8().ok()? != 0 {
                 return None;
             }
-            if store.roots.insert(scope, (issuer, RootTrust::Pinned)).is_some() {
+            if store
+                .roots
+                .insert(scope, (issuer, RootTrust::Pinned))
+                .is_some()
+            {
                 return None;
             }
         }
@@ -179,11 +183,21 @@ impl AuthorityStore {
             let cert = AuthCert::decode(r.take(len).ok()?).ok()?;
             if cert.suite != 0x01
                 || store.roots.get(&cert.scope).map(|(issuer, _)| issuer) != Some(&cert.issuer)
-                || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+                || mmp_crypto::verify(
+                    SigDomain::AuthCert,
+                    &cert.issuer,
+                    &cert.signed_object(),
+                    &cert.sig,
+                )
+                .is_err()
             {
                 return None;
             }
-            if store.certs.insert((cert.subject, cert.scope), cert).is_some() {
+            if store
+                .certs
+                .insert((cert.subject, cert.scope), cert)
+                .is_some()
+            {
                 return None;
             }
         }
@@ -261,7 +275,14 @@ impl AuthorityStore {
         if issuer != cert.issuer {
             return Err(CertReject::UntrustedIssuer);
         }
-        if mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err() {
+        if mmp_crypto::verify(
+            SigDomain::AuthCert,
+            &cert.issuer,
+            &cert.signed_object(),
+            &cert.sig,
+        )
+        .is_err()
+        {
             return Err(CertReject::BadSignature);
         }
         if now_unix_s > cert.not_after.saturating_add(NOT_AFTER_SKEW_S) {
@@ -270,7 +291,9 @@ impl AuthorityStore {
         if self.revoked_at(&cert.subject, &cert.scope, now_unix_s) {
             return Err(CertReject::Revoked);
         }
-        if !self.certs.contains_key(&(cert.subject, cert.scope)) && self.certs.len() >= MAX_AUTH_CERTS {
+        if !self.certs.contains_key(&(cert.subject, cert.scope))
+            && self.certs.len() >= MAX_AUTH_CERTS
+        {
             return Err(CertReject::Capacity);
         }
         self.certs.insert((cert.subject, cert.scope), *cert);
@@ -336,7 +359,8 @@ impl AuthorityStore {
             .checked_add(pending.len())
             .is_none_or(|total| total > MAX_AUTH_REVOKED)
         {
-            let affected_scopes: BTreeSet<Id16> = pending.into_iter().map(|(_, scope)| scope).collect();
+            let affected_scopes: BTreeSet<Id16> =
+                pending.into_iter().map(|(_, scope)| scope).collect();
             for scope in &affected_scopes {
                 self.quarantine_scope(scope);
             }
@@ -362,7 +386,13 @@ impl AuthorityStore {
     /// Doc 18 §2's caps comment is explicit: EMERGENCY (0) needs BOTH
     /// `CAP_ANNOUNCE` and `CAP_PRIORITY_EMERGENCY`; OPERATIONAL (1) needs only
     /// `CAP_ANNOUNCE`.
-    pub fn grant_for(&self, subject: &Key32, scope: &Id16, declared: u8, now_unix_s: u32) -> Option<&AuthCert> {
+    pub fn grant_for(
+        &self,
+        subject: &Key32,
+        scope: &Id16,
+        declared: u8,
+        now_unix_s: u32,
+    ) -> Option<&AuthCert> {
         let cert = self.certs.get(&(*subject, *scope))?;
         // Re-pinning a scope is the recovery mechanism for a compromised
         // operator root. Cached certificates signed by the former issuer must
@@ -376,7 +406,11 @@ impl AuthorityStore {
         if self.revoked_at(subject, scope, now_unix_s) {
             return None;
         }
-        let needed = if declared == prio::EMERGENCY { CAP_ANNOUNCE | CAP_PRIORITY_EMERGENCY } else { CAP_ANNOUNCE };
+        let needed = if declared == prio::EMERGENCY {
+            CAP_ANNOUNCE | CAP_PRIORITY_EMERGENCY
+        } else {
+            CAP_ANNOUNCE
+        };
         if cert.caps & needed != needed {
             return None;
         }
@@ -398,8 +432,10 @@ impl AuthorityStore {
     /// Prune certs past their own `not_after` + skew (issuer-prune mirror of
     /// doc 18 §6's REVLIST_MAX discipline — bounded state).
     pub fn expire(&mut self, now_unix_s: u32) {
-        self.certs.retain(|_, c| now_unix_s <= c.not_after.saturating_add(NOT_AFTER_SKEW_S));
-        self.revoked.retain(|_, not_after| now_unix_s <= not_after.saturating_add(NOT_AFTER_SKEW_S));
+        self.certs
+            .retain(|_, c| now_unix_s <= c.not_after.saturating_add(NOT_AFTER_SKEW_S));
+        self.revoked
+            .retain(|_, not_after| now_unix_s <= not_after.saturating_add(NOT_AFTER_SKEW_S));
     }
 }
 
@@ -432,7 +468,13 @@ mod tests {
 
     use super::*;
 
-    fn signed_cert(issuer: &Identity, subject: Key32, scope: Id16, caps: u8, not_after: u32) -> AuthCert {
+    fn signed_cert(
+        issuer: &Identity,
+        subject: Key32,
+        scope: Id16,
+        caps: u8,
+        not_after: u32,
+    ) -> AuthCert {
         let mut cert = AuthCert {
             suite: 1,
             subject,
@@ -455,7 +497,10 @@ mod tests {
         let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
         let mut store = AuthorityStore::new();
         // No pin_root call for `scope` — cert must not verify.
-        assert_eq!(store.consider_cert(&cert, 0), Err(CertReject::UntrustedIssuer));
+        assert_eq!(
+            store.consider_cert(&cert, 0),
+            Err(CertReject::UntrustedIssuer)
+        );
     }
 
     #[test]
@@ -468,9 +513,13 @@ mod tests {
         let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
         assert_eq!(store.consider_cert(&cert, 0), Ok(()));
         // OPERATIONAL (1) needs only CAP_ANNOUNCE.
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
         // EMERGENCY (0) additionally needs CAP_PRIORITY_EMERGENCY, absent here.
-        assert!(store.grant_for(&subject, &scope, prio::EMERGENCY, 0).is_none());
+        assert!(store
+            .grant_for(&subject, &scope, prio::EMERGENCY, 0)
+            .is_none());
         assert!(store.official(&subject, &scope, 0));
     }
 
@@ -484,17 +533,23 @@ mod tests {
         store.pin_root(scope, old_issuer.public());
         let old_cert = signed_cert(&old_issuer, subject, scope, CAP_ANNOUNCE, 1000);
         store.consider_cert(&old_cert, 0).unwrap();
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
         assert!(store.official(&subject, &scope, 0));
 
         store.pin_root(scope, new_issuer.public());
 
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_none());
         assert!(!store.official(&subject, &scope, 0));
 
         let new_cert = signed_cert(&new_issuer, subject, scope, CAP_ANNOUNCE, 1000);
         store.consider_cert(&new_cert, 0).unwrap();
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
         assert!(store.official(&subject, &scope, 0));
     }
 
@@ -508,7 +563,9 @@ mod tests {
         store.pin_root(scope_x, issuer.public());
         let cert = signed_cert(&issuer, subject, scope_x, CAP_ANNOUNCE, 1000);
         store.consider_cert(&cert, 0).unwrap();
-        assert!(store.grant_for(&subject, &scope_y, prio::OPERATIONAL, 0).is_none());
+        assert!(store
+            .grant_for(&subject, &scope_y, prio::OPERATIONAL, 0)
+            .is_none());
     }
 
     #[test]
@@ -520,7 +577,10 @@ mod tests {
         store.pin_root(scope, issuer.public());
         let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
         assert_eq!(store.consider_cert(&cert, 1000 + NOT_AFTER_SKEW_S), Ok(()));
-        assert_eq!(store.consider_cert(&cert, 1000 + NOT_AFTER_SKEW_S + 1), Err(CertReject::Expired));
+        assert_eq!(
+            store.consider_cert(&cert, 1000 + NOT_AFTER_SKEW_S + 1),
+            Err(CertReject::Expired)
+        );
     }
 
     #[test]
@@ -532,19 +592,35 @@ mod tests {
         store.pin_root(scope, issuer.public());
         let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
         store.consider_cert(&cert, 0).unwrap();
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
 
         let revoke = RevocationList {
             suite: 1,
-            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 999 }],
+            entries: vec![mmp_types::authcert::RevEntry {
+                subject,
+                scope,
+                not_after: 999,
+            }],
         };
         store.merge_revocation_list(&issuer.public(), &revoke);
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_none());
 
         // A later list that simply omits the entry must NOT un-revoke it.
-        let later_empty = RevocationList { suite: 1, entries: vec![] };
+        let later_empty = RevocationList {
+            suite: 1,
+            entries: vec![],
+        };
         store.merge_revocation_list(&issuer.public(), &later_empty);
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none(), "sticky: omission must not restore");
+        assert!(
+            store
+                .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+                .is_none(),
+            "sticky: omission must not restore"
+        );
     }
 
     #[test]
@@ -561,10 +637,16 @@ mod tests {
         // not interpret their entries as v1 revocations.
         let future = RevocationList {
             suite: 0x02,
-            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 999 }],
+            entries: vec![mmp_types::authcert::RevEntry {
+                subject,
+                scope,
+                not_after: 999,
+            }],
         };
         store.merge_revocation_list(&issuer.public(), &future);
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
     }
 
     #[test]
@@ -574,12 +656,27 @@ mod tests {
         let scope = Id16([3; 16]);
         let cert = signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 1000);
 
-        assert_eq!(effective_class5_priority(prio::OPERATIONAL, true, None, |_| true), prio::NORMAL);
-        assert_eq!(effective_class5_priority(prio::OPERATIONAL, false, Some(&cert), |_| true), prio::NORMAL);
-        assert_eq!(effective_class5_priority(prio::OPERATIONAL, true, Some(&cert), |_| false), prio::NORMAL);
-        assert_eq!(effective_class5_priority(prio::OPERATIONAL, true, Some(&cert), |_| true), prio::OPERATIONAL);
+        assert_eq!(
+            effective_class5_priority(prio::OPERATIONAL, true, None, |_| true),
+            prio::NORMAL
+        );
+        assert_eq!(
+            effective_class5_priority(prio::OPERATIONAL, false, Some(&cert), |_| true),
+            prio::NORMAL
+        );
+        assert_eq!(
+            effective_class5_priority(prio::OPERATIONAL, true, Some(&cert), |_| false),
+            prio::NORMAL
+        );
+        assert_eq!(
+            effective_class5_priority(prio::OPERATIONAL, true, Some(&cert), |_| true),
+            prio::OPERATIONAL
+        );
         // BULK (3) is already ≥ NORMAL: passes through regardless.
-        assert_eq!(effective_class5_priority(prio::BULK, false, None, |_| true), prio::BULK);
+        assert_eq!(
+            effective_class5_priority(prio::BULK, false, None, |_| true),
+            prio::BULK
+        );
     }
 
     #[test]
@@ -610,13 +707,19 @@ mod tests {
         store.consider_cert(&cert, 0).unwrap();
         let revoke = RevocationList {
             suite: 1,
-            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 9_999 }],
+            entries: vec![mmp_types::authcert::RevEntry {
+                subject,
+                scope,
+                not_after: 9_999,
+            }],
         };
         store.merge_revocation_list(&issuer.public(), &revoke);
 
         let restored = AuthorityStore::decode(&store.encode()).expect("valid authority snapshot");
         assert!(restored.is_subscribed(&scope));
-        assert!(restored.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_none());
+        assert!(restored
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_none());
         assert!(!restored.official(&subject, &scope, 0));
     }
 
@@ -627,7 +730,12 @@ mod tests {
         let scope = Id16([12; 16]);
         let mut store = AuthorityStore::new();
         store.pin_root(scope, issuer.public());
-        store.consider_cert(&signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 10_000), 0).unwrap();
+        store
+            .consider_cert(
+                &signed_cert(&issuer, subject, scope, CAP_ANNOUNCE, 10_000),
+                0,
+            )
+            .unwrap();
         let encoded = store.encode();
 
         let mut trailing = encoded.clone();
@@ -673,9 +781,18 @@ mod tests {
             root_store.pin_root(Id16(scope), Key32(issuer));
         }
         let extra_issuer = Identity::from_seed(&[0xabu8; 32]);
-        let extra_cert = signed_cert(&extra_issuer, Key32([0xacu8; 32]), extra_scope, CAP_ANNOUNCE, 1000);
+        let extra_cert = signed_cert(
+            &extra_issuer,
+            Key32([0xacu8; 32]),
+            extra_scope,
+            CAP_ANNOUNCE,
+            1000,
+        );
         root_store.pin_root(extra_scope, extra_issuer.public());
-        assert_eq!(root_store.consider_cert(&extra_cert, 0), Err(CertReject::UntrustedIssuer));
+        assert_eq!(
+            root_store.consider_cert(&extra_cert, 0),
+            Err(CertReject::UntrustedIssuer)
+        );
     }
 
     #[test]
@@ -711,13 +828,23 @@ mod tests {
         store.pin_root(target_scope, issuer.public());
 
         let target_cert = signed_cert(&issuer, target_subject, target_scope, CAP_ANNOUNCE, 10_000);
-        let retained_revoked_cert = signed_cert(&issuer, retained_revoked_subject, target_scope, CAP_ANNOUNCE, 10_000);
+        let retained_revoked_cert = signed_cert(
+            &issuer,
+            retained_revoked_subject,
+            target_scope,
+            CAP_ANNOUNCE,
+            10_000,
+        );
         let filler_cert = signed_cert(&issuer, filler_subject, filler_scope, CAP_ANNOUNCE, 10_000);
         store.consider_cert(&target_cert, 0).unwrap();
         store.consider_cert(&retained_revoked_cert, 0).unwrap();
         store.consider_cert(&filler_cert, 0).unwrap();
-        assert!(store.grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0).is_some());
-        assert!(store.grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0)
+            .is_some());
+        assert!(store
+            .grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0)
+            .is_some());
 
         store.merge_revocation_list(
             &issuer.public(),
@@ -763,18 +890,35 @@ mod tests {
             Err(RevocationMergeError::Capacity)
         );
 
-        assert!(store.grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0).is_none());
-        assert_eq!(store.consider_cert(&target_cert, 0), Err(CertReject::UntrustedIssuer));
-        assert!(store.grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0).is_some());
+        assert!(store
+            .grant_for(&target_subject, &target_scope, prio::OPERATIONAL, 0)
+            .is_none());
+        assert_eq!(
+            store.consider_cert(&target_cert, 0),
+            Err(CertReject::UntrustedIssuer)
+        );
+        assert!(store
+            .grant_for(&filler_subject, &filler_scope, prio::OPERATIONAL, 0)
+            .is_some());
         assert_eq!(store.revoked.len(), MAX_AUTH_REVOKED);
 
-        let mut restored = AuthorityStore::decode(&store.encode()).expect("quarantined snapshot remains valid");
-        assert_eq!(restored.consider_cert(&target_cert, 0), Err(CertReject::UntrustedIssuer));
-        assert_eq!(restored.consider_cert(&retained_revoked_cert, 0), Err(CertReject::UntrustedIssuer));
+        let mut restored =
+            AuthorityStore::decode(&store.encode()).expect("quarantined snapshot remains valid");
+        assert_eq!(
+            restored.consider_cert(&target_cert, 0),
+            Err(CertReject::UntrustedIssuer)
+        );
+        assert_eq!(
+            restored.consider_cert(&retained_revoked_cert, 0),
+            Err(CertReject::UntrustedIssuer)
+        );
 
         let mut recovered = restored;
         recovered.pin_root(target_scope, issuer.public());
-        assert_eq!(recovered.consider_cert(&retained_revoked_cert, 0), Err(CertReject::Revoked));
+        assert_eq!(
+            recovered.consider_cert(&retained_revoked_cert, 0),
+            Err(CertReject::Revoked)
+        );
     }
 
     #[test]
@@ -788,12 +932,25 @@ mod tests {
         store.consider_cert(&cert, 0).unwrap();
         let revoke = RevocationList {
             suite: 1,
-            entries: vec![mmp_types::authcert::RevEntry { subject, scope, not_after: 1000 }],
+            entries: vec![mmp_types::authcert::RevEntry {
+                subject,
+                scope,
+                not_after: 1000,
+            }],
         };
         store.merge_revocation_list(&issuer.public(), &revoke);
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 1000).is_none());
+        assert!(store
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 1000)
+            .is_none());
 
         store.expire(1000 + NOT_AFTER_SKEW_S + 1);
-        assert!(store.grant_for(&subject, &scope, prio::OPERATIONAL, 1000 + NOT_AFTER_SKEW_S + 1).is_some());
+        assert!(store
+            .grant_for(
+                &subject,
+                &scope,
+                prio::OPERATIONAL,
+                1000 + NOT_AFTER_SKEW_S + 1
+            )
+            .is_some());
     }
 }

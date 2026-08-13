@@ -104,11 +104,19 @@ impl FixedStore {
         }
     }
 
-    fn reserve(&mut self, meta: BundleMeta, byte_len: u32) -> Result<ReservationToken, ReserveError> {
+    fn reserve(
+        &mut self,
+        meta: BundleMeta,
+        byte_len: u32,
+    ) -> Result<ReservationToken, ReserveError> {
         if meta.size != byte_len {
             return Err(ReserveError::Invalid);
         }
-        if self.reservations.values().any(|reservation| reservation.id == meta.id) {
+        if self
+            .reservations
+            .values()
+            .any(|reservation| reservation.id == meta.id)
+        {
             return Err(ReserveError::Busy);
         }
 
@@ -137,8 +145,13 @@ impl FixedStore {
             return Err(ReserveError::Capacity);
         }
 
-        let token = ReservationToken { nonce: self.next_token };
-        self.next_token = self.next_token.checked_add(1).ok_or(ReserveError::Capacity)?;
+        let token = ReservationToken {
+            nonce: self.next_token,
+        };
+        self.next_token = self
+            .next_token
+            .checked_add(1)
+            .ok_or(ReserveError::Capacity)?;
         let reservation = Reservation {
             id: meta.id,
             byte_len,
@@ -150,31 +163,50 @@ impl FixedStore {
             .checked_add(reservation.reserved_bytes)
             .ok_or(ReserveError::Capacity)?;
         if reservation.reserved_slot {
-            self.reserved_slots = self.reserved_slots.checked_add(1).ok_or(ReserveError::Capacity)?;
+            self.reserved_slots = self
+                .reserved_slots
+                .checked_add(1)
+                .ok_or(ReserveError::Capacity)?;
         }
         self.reservations.insert(token, reservation);
         Ok(token)
     }
 
     fn total_reserved_bytes(&self) -> u64 {
-        self.reserved_bytes
-            .saturating_add(self.batches.values().map(|batch| batch.reserved_bytes).sum())
+        self.reserved_bytes.saturating_add(
+            self.batches
+                .values()
+                .map(|batch| batch.reserved_bytes)
+                .sum(),
+        )
     }
 
     fn total_reserved_slots(&self) -> usize {
-        self.reserved_slots
-            .saturating_add(self.batches.values().map(|batch| batch.reserved_slots).sum())
+        self.reserved_slots.saturating_add(
+            self.batches
+                .values()
+                .map(|batch| batch.reserved_slots)
+                .sum(),
+        )
     }
 
     fn id_is_reserved(&self, id: &Id16) -> bool {
-        self.reservations.values().any(|reservation| &reservation.id == id)
-            || self.batches.values().any(|batch| batch.items.iter().any(|item| &item.id == id))
+        self.reservations
+            .values()
+            .any(|reservation| &reservation.id == id)
+            || self
+                .batches
+                .values()
+                .any(|batch| batch.items.iter().any(|item| &item.id == id))
     }
 
     /// Private aggregate reservation model for the file-symbol + manifest
     /// operation. Every item is preflighted before any capacity counter is
     /// changed, so a rejected batch cannot leave a partial reservation.
-    fn reserve_batch(&mut self, requests: &[(BundleMeta, u32)]) -> Result<BatchToken, ReserveError> {
+    fn reserve_batch(
+        &mut self,
+        requests: &[(BundleMeta, u32)],
+    ) -> Result<BatchToken, ReserveError> {
         if requests.is_empty() {
             return Err(ReserveError::Invalid);
         }
@@ -200,7 +232,9 @@ impl FixedStore {
                 .map(|(_, body)| (u64::try_from(body.len()).unwrap_or(u64::MAX), false))
                 .unwrap_or((0, true));
             let extra_bytes = requested.saturating_sub(old_len);
-            reserved_bytes = reserved_bytes.checked_add(extra_bytes).ok_or(ReserveError::Capacity)?;
+            reserved_bytes = reserved_bytes
+                .checked_add(extra_bytes)
+                .ok_or(ReserveError::Capacity)?;
             reserved_slots = reserved_slots
                 .checked_add(usize::from(new_slot))
                 .ok_or(ReserveError::Capacity)?;
@@ -226,11 +260,18 @@ impl FixedStore {
             return Err(ReserveError::Capacity);
         }
 
-        let nonce = self.next_token.checked_add(1).ok_or(ReserveError::Capacity)?;
+        let nonce = self
+            .next_token
+            .checked_add(1)
+            .ok_or(ReserveError::Capacity)?;
         self.next_token = nonce;
         self.batches.insert(
             BatchToken { nonce },
-            BatchReservation { items, reserved_bytes, reserved_slots },
+            BatchReservation {
+                items,
+                reserved_bytes,
+                reserved_slots,
+            },
         );
         Ok(BatchToken { nonce })
     }
@@ -243,7 +284,11 @@ impl FixedStore {
         token: BatchToken,
         entries: &[(BundleMeta, Vec<u8>)],
     ) -> Result<(), CommitError> {
-        let reservation = self.batches.get(&token).cloned().ok_or(CommitError::ReservationMismatch)?;
+        let reservation = self
+            .batches
+            .get(&token)
+            .cloned()
+            .ok_or(CommitError::ReservationMismatch)?;
         if entries.len() != reservation.items.len() {
             return Err(CommitError::ReservationMismatch);
         }
@@ -260,7 +305,11 @@ impl FixedStore {
             };
             if meta.size != item.byte_len
                 || bytes.len() != item.byte_len as usize
-                || self.entries.get(&item.id).map_or(0, |(_, body)| body.len() as u64) != item.old_len
+                || self
+                    .entries
+                    .get(&item.id)
+                    .map_or(0, |(_, body)| body.len() as u64)
+                    != item.old_len
             {
                 return Err(CommitError::ReservationMismatch);
             }
@@ -298,9 +347,13 @@ impl FixedStore {
         meta: BundleMeta,
         bytes: &[u8],
     ) -> Result<(), CommitError> {
-        let reservation = *self.reservations.get(&token).ok_or(CommitError::ReservationMismatch)?;
+        let reservation = *self
+            .reservations
+            .get(&token)
+            .ok_or(CommitError::ReservationMismatch)?;
         if reservation.id != meta.id
-            || reservation.byte_len != u32::try_from(bytes.len()).map_err(|_| CommitError::Invalid)?
+            || reservation.byte_len
+                != u32::try_from(bytes.len()).map_err(|_| CommitError::Invalid)?
             || meta.size != reservation.byte_len
         {
             return Err(CommitError::ReservationMismatch);
@@ -333,7 +386,9 @@ impl FixedStore {
         self.entries.insert(meta.id, (meta, bytes.to_vec()));
         self.used_bytes = new_used;
         self.reservations.remove(&token);
-        self.reserved_bytes = self.reserved_bytes.saturating_sub(reservation.reserved_bytes);
+        self.reserved_bytes = self
+            .reserved_bytes
+            .saturating_sub(reservation.reserved_bytes);
         if reservation.reserved_slot {
             self.reserved_slots = self.reserved_slots.saturating_sub(1);
         }
@@ -343,8 +398,12 @@ impl FixedStore {
     /// Release an uncommitted token. Releasing an unknown or already-consumed
     /// token is deliberately idempotent and cannot remove a committed entry.
     fn abort(&mut self, token: ReservationToken) {
-        let Some(reservation) = self.reservations.remove(&token) else { return };
-        self.reserved_bytes = self.reserved_bytes.saturating_sub(reservation.reserved_bytes);
+        let Some(reservation) = self.reservations.remove(&token) else {
+            return;
+        };
+        self.reserved_bytes = self
+            .reserved_bytes
+            .saturating_sub(reservation.reserved_bytes);
         if reservation.reserved_slot {
             self.reserved_slots = self.reserved_slots.saturating_sub(1);
         }
@@ -361,7 +420,9 @@ impl FixedStore {
         recovered.used_bytes = recovered
             .entries
             .values()
-            .try_fold(0u64, |used, (_, body)| used.checked_add(u64::try_from(body.len()).ok()?))
+            .try_fold(0u64, |used, (_, body)| {
+                used.checked_add(u64::try_from(body.len()).ok()?)
+            })
             .unwrap_or(u64::MAX);
         recovered
     }
@@ -438,7 +499,10 @@ fn abort_is_idempotent_and_committed_tokens_are_not_reusable() {
     store.abort(token);
     assert_eq!(store.used_bytes, 0);
     assert_eq!(store.reserved_bytes, 0);
-    assert_eq!(store.commit(token, meta(1, 4), &[0xaa; 4]), Err(CommitError::ReservationMismatch));
+    assert_eq!(
+        store.commit(token, meta(1, 4), &[0xaa; 4]),
+        Err(CommitError::ReservationMismatch)
+    );
 
     let committed = store.reserve(meta(1, 4), 4).unwrap();
     store.commit(committed, meta(1, 4), &[0xaa; 4]).unwrap();
@@ -461,7 +525,10 @@ fn stale_wrong_id_and_wrong_length_commits_fail_without_consuming_reservation() 
     );
     assert!(store.reservations.contains_key(&token));
     store.commit(token, meta(1, 4), &[0xaa; 4]).unwrap();
-    assert_eq!(store.commit(token, meta(1, 4), &[0xaa; 4]), Err(CommitError::ReservationMismatch));
+    assert_eq!(
+        store.commit(token, meta(1, 4), &[0xaa; 4]),
+        Err(CommitError::ReservationMismatch)
+    );
 }
 
 #[test]
@@ -479,7 +546,11 @@ fn failed_commit_preserves_runtime_state_and_recovers_last_durable_generation() 
         store.commit(replacement, meta(1, 8), &[0xbb; 8]),
         Err(CommitError::InjectedFailure)
     );
-    assert_eq!(store.state(), reserved, "failed commit leaves reservation and bytes unchanged");
+    assert_eq!(
+        store.state(),
+        reserved,
+        "failed commit leaves reservation and bytes unchanged"
+    );
 
     let recovered = store.recover();
     assert_eq!(recovered.entries.get(&Id16([1; 16])).unwrap().1, &[0xaa; 4]);
@@ -499,14 +570,24 @@ fn aggregate_reservation_rejects_partial_capacity_and_duplicate_ids() {
         store.reserve_batch(&[(meta(2, 5), 5), (meta(3, 4), 4)]),
         Err(ReserveError::Capacity)
     );
-    assert_eq!(store.state(), before, "a rejected batch must not reserve a partial prefix");
+    assert_eq!(
+        store.state(),
+        before,
+        "a rejected batch must not reserve a partial prefix"
+    );
     assert_eq!(
         store.reserve_batch(&[(meta(2, 5), 5), (meta(2, 5), 5)]),
         Err(ReserveError::Invalid)
     );
-    assert_eq!(store.state(), before, "duplicate IDs must not mutate capacity state");
+    assert_eq!(
+        store.state(),
+        before,
+        "duplicate IDs must not mutate capacity state"
+    );
 
-    let batch = store.reserve_batch(&[(meta(2, 5), 5), (meta(3, 3), 3)]).unwrap();
+    let batch = store
+        .reserve_batch(&[(meta(2, 5), 5), (meta(3, 3), 3)])
+        .unwrap();
     assert_eq!(store.total_reserved_bytes(), 8);
     assert_eq!(store.total_reserved_slots(), 2);
     store.abort_batch(batch);
@@ -532,24 +613,52 @@ fn aggregate_commit_failure_keeps_old_generation_and_success_publishes_complete_
         (meta(2, 5), vec![0xcc; 5]),
         (meta(3, 3), vec![0xdd; 3]),
     ];
-    assert_eq!(store.commit_batch(token, &entries), Err(CommitError::InjectedFailure));
-    assert_eq!(store.entries, old_visible, "failed batch must publish no visible prefix");
-    assert_eq!(store.durable, old_durable, "failed batch must not rewrite the durable generation");
-    assert!(store.batches.contains_key(&token), "failed batch remains abortable");
+    assert_eq!(
+        store.commit_batch(token, &entries),
+        Err(CommitError::InjectedFailure)
+    );
+    assert_eq!(
+        store.entries, old_visible,
+        "failed batch must publish no visible prefix"
+    );
+    assert_eq!(
+        store.durable, old_durable,
+        "failed batch must not rewrite the durable generation"
+    );
+    assert!(
+        store.batches.contains_key(&token),
+        "failed batch remains abortable"
+    );
     assert_eq!(store.total_reserved_bytes(), reserved_bytes);
-    assert_eq!(store.recover().entries, old_durable, "restart must recover the old generation");
+    assert_eq!(
+        store.recover().entries,
+        old_durable,
+        "restart must recover the old generation"
+    );
     store.abort_batch(token);
     assert_eq!(store.total_reserved_bytes(), 0);
 
     let token = store.reserve_batch(&requests).unwrap();
     store.commit_batch(token, &entries).unwrap();
     assert_eq!(store.entries.len(), 3);
-    assert!(store.batches.is_empty(), "successful batch consumes its reservation exactly once");
+    assert!(
+        store.batches.is_empty(),
+        "successful batch consumes its reservation exactly once"
+    );
     store.persist();
     let recovered = store.recover();
-    assert_eq!(recovered.entries, store.entries, "restart after success must recover the complete generation");
-    assert_eq!(recovered.entries.get(&Id16([2; 16])).unwrap().1, vec![0xcc; 5]);
-    assert_eq!(recovered.entries.get(&Id16([3; 16])).unwrap().1, vec![0xdd; 3]);
+    assert_eq!(
+        recovered.entries, store.entries,
+        "restart after success must recover the complete generation"
+    );
+    assert_eq!(
+        recovered.entries.get(&Id16([2; 16])).unwrap().1,
+        vec![0xcc; 5]
+    );
+    assert_eq!(
+        recovered.entries.get(&Id16([3; 16])).unwrap().1,
+        vec![0xdd; 3]
+    );
 }
 
 #[test]

@@ -68,7 +68,9 @@ fn direct_message_delivery_via_ffi_surface() {
     drain(&bob);
 
     let bob_id = bob.node_id();
-    let msg_id = alice.send_text(bob_id.clone(), "hello over the mesh".to_string()).unwrap();
+    let msg_id = alice
+        .send_text(bob_id.clone(), "hello over the mesh".to_string())
+        .unwrap();
 
     contact(&alice, &bob, 1, 10_000);
     let bob_events = drain(&bob);
@@ -84,7 +86,9 @@ fn direct_message_delivery_via_ffi_surface() {
     contact(&alice, &bob, 2, 20_000);
     let alice_events = drain(&alice);
     assert!(
-        alice_events.iter().any(|e| matches!(e, FfiEvent::Delivered { id } if *id == msg_id)),
+        alice_events
+            .iter()
+            .any(|e| matches!(e, FfiEvent::Delivered { id } if *id == msg_id)),
         "alice got the delivery receipt: {alice_events:?}"
     );
 }
@@ -111,7 +115,8 @@ fn file_api_returns_bounded_identifiers_and_rejects_unknown_fetches() {
 
     let unknown_root = vec![0xa5; 16];
     assert_eq!(
-        bob.file_progress(unknown_root.clone()).expect("valid root length"),
+        bob.file_progress(unknown_root.clone())
+            .expect("valid root length"),
         None,
         "unknown roots must not expose an assembly through the FFI"
     );
@@ -153,6 +158,24 @@ fn status_and_metrics_snapshot_is_secret_free_and_tracks_host_state() {
 }
 
 #[test]
+fn beta_snapshot_is_versioned_secret_free_and_matches_component_reports() {
+    let node = node(80);
+
+    let snapshot = node.beta_snapshot();
+
+    assert_eq!(snapshot.schema_version, 1);
+    assert_eq!(snapshot.status, node.status());
+    assert_eq!(snapshot.metrics, node.metrics());
+    assert_eq!(snapshot.capabilities, node.capabilities());
+
+    let debug = format!("{snapshot:?}");
+    assert!(
+        !debug.contains("50505050"),
+        "identity seed must not appear in the snapshot"
+    );
+}
+
+#[test]
 fn capabilities_report_is_stable_and_secret_free() {
     let node = node(76);
     let report = node.capabilities();
@@ -173,24 +196,16 @@ fn capabilities_report_is_stable_and_secret_free() {
 #[test]
 fn capabilities_report_marks_file_backed_persistence_only() {
     let dir = TempDir::new("capabilities-persistence");
-    let node = MmpNode::new(
-        vec![77u8; 32],
-        FfiTier::Relay,
-        Some(dir.file("node.mmp")),
-    )
-    .expect("valid snapshot path");
+    let node = MmpNode::new(vec![77u8; 32], FfiTier::Relay, Some(dir.file("node.mmp")))
+        .expect("valid snapshot path");
     assert!(node.capabilities().persistent_store);
 }
 
 #[test]
 fn status_reports_persistent_store_without_exposing_path() {
     let dir = TempDir::new("status-persistence");
-    let node = MmpNode::new(
-        vec![74u8; 32],
-        FfiTier::Leaf,
-        Some(dir.file("node.mmp")),
-    )
-    .expect("valid snapshot path");
+    let node = MmpNode::new(vec![74u8; 32], FfiTier::Leaf, Some(dir.file("node.mmp")))
+        .expect("valid snapshot path");
 
     let status = node.status();
     assert!(status.persistent_store);
@@ -259,7 +274,10 @@ fn link_quality_is_validated_before_session_admission() {
         },
     )
     .expect("valid quality must admit the link");
-    assert!(node.poll_send().is_some(), "admitted link starts its handshake");
+    assert!(
+        node.poll_send().is_some(),
+        "admitted link starts its handshake"
+    );
 }
 
 #[test]
@@ -267,17 +285,27 @@ fn first_tick_anchors_persisted_message_deadline() {
     let dir = TempDir::new("first-tick-deadline");
     let path = dir.file("alice.mmp");
     let bob = node(22);
-    let alice = MmpNode::new(vec![21u8; 32], FfiTier::Relay, Some(path.clone())).expect("valid seed");
+    let alice =
+        MmpNode::new(vec![21u8; 32], FfiTier::Relay, Some(path.clone())).expect("valid seed");
     introduce(&alice, &bob);
     drain(&alice);
     drain(&bob);
 
     const NOW: u64 = 123_456;
     alice.tick(NOW);
-    let message = alice.send_text(bob.node_id(), "clock anchored".to_string()).expect("known peer");
-    alice.flush().expect("flush to a writable temp dir must succeed");
+    let message = alice
+        .send_text(bob.node_id(), "clock anchored".to_string())
+        .expect("known peer");
+    alice
+        .flush()
+        .expect("flush to a writable temp dir must succeed");
 
-    let id = Id16(message.as_slice().try_into().expect("FFI returns a 16-byte BundleID"));
+    let id = Id16(
+        message
+            .as_slice()
+            .try_into()
+            .expect("FFI returns a 16-byte BundleID"),
+    );
     let snapshot = SnapshotStore::open(path);
     let meta = snapshot
         .all_meta()
@@ -288,18 +316,17 @@ fn first_tick_anchors_persisted_message_deadline() {
     assert_eq!(meta.expires_at - meta.stored_at, LIFETIME_MESSAGE_MS);
 
     alice.tick(NOW + 1);
-    assert!(alice.store_len() > 0, "the first post-send tick must retain the message");
+    assert!(
+        alice.store_len() > 0,
+        "the first post-send tick must retain the message"
+    );
 }
 
 #[test]
 fn backward_tick_is_ignored_at_ffi_boundary() {
     let dir = TempDir::new("backward-tick");
-    let node = MmpNode::new(
-        vec![71u8; 32],
-        FfiTier::Leaf,
-        Some(dir.file("node.mmp")),
-    )
-    .expect("valid seed");
+    let node = MmpNode::new(vec![71u8; 32], FfiTier::Leaf, Some(dir.file("node.mmp")))
+        .expect("valid seed");
 
     node.tick(10_000);
     node.tick(9_999);
@@ -309,7 +336,10 @@ fn backward_tick_is_ignored_at_ffi_boundary() {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
         .last_seen_now_ms;
-    assert_eq!(observed, 10_000, "stale native callback must not rewind FFI persistence time");
+    assert_eq!(
+        observed, 10_000,
+        "stale native callback must not rewind FFI persistence time"
+    );
 }
 
 #[test]
@@ -324,7 +354,10 @@ fn in_memory_tick_still_advances_ffi_monotonic_guard() {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
         .last_seen_now_ms;
-    assert_eq!(observed, 10_000, "in-memory hosts must retain the latest monotonic sample");
+    assert_eq!(
+        observed, 10_000,
+        "in-memory hosts must retain the latest monotonic sample"
+    );
 }
 
 #[test]
@@ -352,7 +385,10 @@ fn concurrent_ticks_keep_the_largest_monotonic_sample() {
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
         .last_seen_now_ms;
-    assert_eq!(observed, 8_000, "the largest sample must win despite callback races");
+    assert_eq!(
+        observed, 8_000,
+        "the largest sample must win despite callback races"
+    );
 }
 
 #[test]
@@ -364,7 +400,9 @@ fn first_contact_reordering_guard_is_visible_at_ffi_boundary() {
     drain(&bob);
 
     let bob_id = bob.node_id();
-    alice.send_text(bob_id.clone(), "first".to_string()).unwrap();
+    alice
+        .send_text(bob_id.clone(), "first".to_string())
+        .unwrap();
     assert_eq!(
         alice.send_text(bob_id, "second before root".to_string()),
         Err(FfiError::ConversationPending)
@@ -399,11 +437,16 @@ fn oversized_text_is_rejected_without_poisoning_first_contact_at_ffi_boundary() 
     // mobile-facing API boundary: a host-controlled String at the bundle cap
     // must map to BadArg and must not leave a pending conversation behind.
     let oversized = "x".repeat(MAX_BUNDLE);
-    assert_eq!(alice.send_text(bob.node_id(), oversized), Err(FfiError::BadArg));
+    assert_eq!(
+        alice.send_text(bob.node_id(), oversized),
+        Err(FfiError::BadArg)
+    );
 
     // A valid retry must still be accepted immediately; otherwise the
     // rejected caller input would have poisoned the first-contact state.
-    assert!(alice.send_text(bob.node_id(), "retry after rejection".to_string()).is_ok());
+    assert!(alice
+        .send_text(bob.node_id(), "retry after rejection".to_string())
+        .is_ok());
 }
 
 #[test]
@@ -414,7 +457,10 @@ fn bounded_store_constructor_surfaces_persist_failure() {
         .expect("valid bounded store constructor arguments");
     node.tick(1);
     assert_eq!(node.flush(), Err(FfiError::Internal));
-    assert!(node.last_persist_error().is_some(), "host must be able to surface the cap failure");
+    assert!(
+        node.last_persist_error().is_some(),
+        "host must be able to surface the cap failure"
+    );
 }
 
 #[test]
@@ -430,19 +476,26 @@ fn constructor_rejects_unreadable_snapshot_path_fail_closed() {
         MmpNode::new(vec![49u8; 32], FfiTier::Relay, Some(path.clone())),
         Err(FfiError::Internal)
     ));
-    assert!(std::path::Path::new(&path).is_dir(), "constructor must not replace the primary path");
+    assert!(
+        std::path::Path::new(&path).is_dir(),
+        "constructor must not replace the primary path"
+    );
 }
 
 #[test]
 fn bounded_store_rejects_nickname_as_internal_without_claim_side_effects() {
     let dir = TempDir::new("bounded-claim");
-    let node = MmpNode::new_with_store_limit(vec![45u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)
-        .expect("valid bounded store constructor arguments");
+    let node =
+        MmpNode::new_with_store_limit(vec![45u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)
+            .expect("valid bounded store constructor arguments");
     node.tick(1);
     let claims_before = node.own_claims();
     let store_before = node.store_len();
 
-    assert_eq!(node.set_nickname("capacity-failure".to_string(), 1), Err(FfiError::Internal));
+    assert_eq!(
+        node.set_nickname("capacity-failure".to_string(), 1),
+        Err(FfiError::Internal)
+    );
     assert_eq!(node.own_claims(), claims_before);
     assert_eq!(node.store_len(), store_before);
 }
@@ -450,13 +503,9 @@ fn bounded_store_rejects_nickname_as_internal_without_claim_side_effects() {
 #[test]
 fn typed_revocation_reports_provider_rejection_without_claim_side_effects() {
     let dir = TempDir::new("bounded-revocation");
-    let node = MmpNode::new_with_store_limit(
-        vec![46u8; 32],
-        FfiTier::Relay,
-        dir.file("bounded.mmp"),
-        1,
-    )
-    .expect("valid bounded store constructor arguments");
+    let node =
+        MmpNode::new_with_store_limit(vec![46u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)
+            .expect("valid bounded store constructor arguments");
     node.tick(1);
     let claims_before = node.own_claims();
     let store_before = node.store_len();
@@ -487,13 +536,9 @@ fn typed_revocation_returns_claim_and_reports_second_attempt() {
 #[test]
 fn successor_revocation_reports_provider_rejection_instead_of_empty_success() {
     let dir = TempDir::new("bounded-successor-revocation");
-    let node = MmpNode::new_with_store_limit(
-        vec![48u8; 32],
-        FfiTier::Relay,
-        dir.file("bounded.mmp"),
-        1,
-    )
-    .expect("valid bounded store constructor arguments");
+    let node =
+        MmpNode::new_with_store_limit(vec![48u8; 32], FfiTier::Relay, dir.file("bounded.mmp"), 1)
+            .expect("valid bounded store constructor arguments");
     node.tick(1);
     let claims_before = node.own_claims();
     let store_before = node.store_len();
@@ -547,7 +592,11 @@ fn callback_event_queue_saturation_is_visible_at_the_ffi_boundary() {
     // alternate tiers until the bounded mmp-node FIFO starts dropping the
     // newest event.
     for index in 0..4096 {
-        node.set_tier(if index % 2 == 0 { FfiTier::Leaf } else { FfiTier::Relay });
+        node.set_tier(if index % 2 == 0 {
+            FfiTier::Leaf
+        } else {
+            FfiTier::Relay
+        });
     }
 
     assert!(node.event_queue_dropped() > 0);
@@ -567,8 +616,16 @@ fn successor_revocation_forwards_and_validates_fixed_length_keys() {
     let revocation = mmp_types::claim::Revocation::decode(&claim.body).expect("well-formed body");
     assert_eq!(revocation.revoked_key.0.to_vec(), bob.public_key());
     assert_eq!(revocation.reason, 9);
-    assert_eq!(revocation.successor, Some(mmp_types::ids::Key32(successor_key.clone().try_into().unwrap())));
-    assert_eq!(revocation.successor_countersig, Some(mmp_types::ids::Sig64(countersig)));
+    assert_eq!(
+        revocation.successor,
+        Some(mmp_types::ids::Key32(
+            successor_key.clone().try_into().unwrap()
+        ))
+    );
+    assert_eq!(
+        revocation.successor_countersig,
+        Some(mmp_types::ids::Sig64(countersig))
+    );
 
     assert_eq!(
         bob.revoke_identity_with_successor(9, vec![0u8; 31], countersig.to_vec()),
@@ -605,7 +662,11 @@ impl TempDir {
     }
 
     fn file(&self, name: &str) -> String {
-        self.0.join(name).to_str().expect("valid utf-8 temp path").to_string()
+        self.0
+            .join(name)
+            .to_str()
+            .expect("valid utf-8 temp path")
+            .to_string()
     }
 }
 
@@ -635,12 +696,19 @@ fn state_survives_restart() {
         // Queue a bundle in alice's store without ever contacting bob, so
         // the bundle (and alice's own claim-gossip bundles) stay put.
         let bob_id = bob.node_id();
-        alice.send_text(bob_id, "still here after restart".to_string()).expect("bob's claims known");
+        alice
+            .send_text(bob_id, "still here after restart".to_string())
+            .expect("bob's claims known");
 
         before_restart = alice.store_len();
-        assert!(before_restart > 0, "expect at least the queued message + gossiped claims");
+        assert!(
+            before_restart > 0,
+            "expect at least the queued message + gossiped claims"
+        );
 
-        alice.flush().expect("flush to a writable temp dir must succeed");
+        alice
+            .flush()
+            .expect("flush to a writable temp dir must succeed");
         assert_eq!(alice.last_persist_error(), None);
 
         // alice (and its Arc<MmpNode>) is dropped at the end of this block —
@@ -687,8 +755,12 @@ fn claims_and_group_membership_survive_restart() {
         drain(&carol);
 
         gid = alice.create_group();
-        alice.group_invite(gid.clone(), bob.node_id()).expect("bob is a known peer");
-        alice.group_invite(gid.clone(), carol.node_id()).expect("carol is a known peer");
+        alice
+            .group_invite(gid.clone(), bob.node_id())
+            .expect("bob is a known peer");
+        alice
+            .group_invite(gid.clone(), carol.node_id())
+            .expect("carol is a known peer");
 
         assert_eq!(
             alice.group_members(gid.clone()).unwrap().len(),
@@ -699,7 +771,9 @@ fn claims_and_group_membership_survive_restart() {
         // (learned via `introduce`, not just alice's own claims).
         assert!(!alice.own_claims().is_empty());
 
-        alice.flush().expect("flush to a writable temp dir must succeed");
+        alice
+            .flush()
+            .expect("flush to a writable temp dir must succeed");
         assert_eq!(alice.last_persist_error(), None);
 
         // alice is dropped here — simulates process death after a successful flush.
@@ -709,15 +783,24 @@ fn claims_and_group_membership_survive_restart() {
         MmpNode::new(seed, FfiTier::Relay, Some(path)).expect("reopen the same snapshot path");
 
     // Group membership survived without re-inviting anyone.
-    let members = alice2.group_members(gid).expect("group known without re-creating it");
-    assert_eq!(members.len(), 3, "membership (alice + bob + carol) must survive the restart");
+    let members = alice2
+        .group_members(gid)
+        .expect("group known without re-creating it");
+    assert_eq!(
+        members.len(),
+        3,
+        "membership (alice + bob + carol) must survive the restart"
+    );
     assert!(members.contains(&bob.node_id()));
     assert!(members.contains(&carol.node_id()));
 
     // Bob and carol's claims survived without re-running `introduce`: alice2
     // can address them by NodeID right away.
     let msg = alice2.send_text(bob.node_id(), "still know you after restart".to_string());
-    assert!(msg.is_ok(), "bob's exchange-key/prekey claims must have survived the restart: {msg:?}");
+    assert!(
+        msg.is_ok(),
+        "bob's exchange-key/prekey claims must have survived the restart: {msg:?}"
+    );
 }
 
 /// The real acceptance test for handbook §4.3 step 3 ("SeenIndex ...
@@ -743,27 +826,42 @@ fn authority_admission_survives_restart() {
             issuer: mmp_types::ids::Key32(authority.public().0),
             sig: mmp_types::ids::Sig64::ZERO,
         };
-        cert.sig = authority.sign(mmp_types::domain::SigDomain::AuthCert, &cert.signed_object());
+        cert.sig = authority.sign(
+            mmp_types::domain::SigDomain::AuthCert,
+            &cert.signed_object(),
+        );
         cert.encode()
     };
-    let scope = mmp_types::authcert::scope_id_of(b"persisted-scope").0.to_vec();
+    let scope = mmp_types::authcert::scope_id_of(b"persisted-scope")
+        .0
+        .to_vec();
 
     let bob = MmpNode::new(vec![44; 32], FfiTier::Relay, Some(path.clone())).expect("valid seed");
     introduce(&alice, &bob);
     bob.subscribe_scope("persisted-scope".to_string());
-    bob.pin_authority_root(scope.clone(), authority.public().0.to_vec()).unwrap();
+    bob.pin_authority_root(scope.clone(), authority.public().0.to_vec())
+        .unwrap();
     bob.set_wall_clock(100);
 
     alice
-        .publish_announcement(scope.clone(), 1, 1, "before restart".to_string(), Some(cert.clone()))
+        .publish_announcement(
+            scope.clone(),
+            1,
+            1,
+            "before restart".to_string(),
+            Some(cert.clone()),
+        )
         .unwrap();
     contact(&alice, &bob, 1, 10_000);
     let before = drain(&bob);
-    assert!(before.iter().any(|event| matches!(
-        event,
-        FfiEvent::Announcement { effective_priority, official, .. }
-            if *effective_priority == 1 && *official
-    )), "the pinned authority should elevate before restart: {before:?}");
+    assert!(
+        before.iter().any(|event| matches!(
+            event,
+            FfiEvent::Announcement { effective_priority, official, .. }
+                if *effective_priority == 1 && *official
+        )),
+        "the pinned authority should elevate before restart: {before:?}"
+    );
 
     bob.flush().expect("authority snapshot flush");
     drop(bob);
@@ -775,11 +873,14 @@ fn authority_admission_survives_restart() {
         .unwrap();
     contact(&alice, &bob2, 2, 20_000);
     let after = drain(&bob2);
-    assert!(after.iter().any(|event| matches!(
-        event,
-        FfiEvent::Announcement { effective_priority, official, text, .. }
-            if *effective_priority == 1 && *official && text == b"after restart"
-    )), "authority admission should survive restart: {after:?}");
+    assert!(
+        after.iter().any(|event| matches!(
+            event,
+            FfiEvent::Announcement { effective_priority, official, text, .. }
+                if *effective_priority == 1 && *official && text == b"after restart"
+        )),
+        "authority admission should survive restart: {after:?}"
+    );
 }
 
 #[test]
@@ -823,26 +924,44 @@ fn mint_auth_cert_signs_locally_without_auto_trusting_the_issuer() {
     recipient.subscribe_scope("minted-scope".to_string());
     recipient.set_wall_clock(1_000);
     issuer
-        .publish_announcement(scope.0.to_vec(), 1, 1, "untrusted issuer".to_string(), Some(cert_bytes))
+        .publish_announcement(
+            scope.0.to_vec(),
+            1,
+            1,
+            "untrusted issuer".to_string(),
+            Some(cert_bytes),
+        )
         .expect("announcement with attached cert");
     contact(&issuer, &recipient, 45, 45_000);
     let events = drain(&recipient);
-    assert!(events.iter().any(|event| matches!(
-        event,
-        FfiEvent::Announcement { effective_priority, official, text, .. }
-            if *effective_priority == 2 && !*official && text == b"untrusted issuer"
-    )), "local minting must not auto-trust its issuer: {events:?}");
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            FfiEvent::Announcement { effective_priority, official, text, .. }
+                if *effective_priority == 2 && !*official && text == b"untrusted issuer"
+        )),
+        "local minting must not auto-trust its issuer: {events:?}"
+    );
 }
 
 #[test]
 fn mint_auth_cert_rejects_unknown_caps_and_expired_parameters() {
     let node = node(47);
-    let scope = mmp_types::authcert::scope_id_of(b"mint-validation").0.to_vec();
+    let scope = mmp_types::authcert::scope_id_of(b"mint-validation")
+        .0
+        .to_vec();
     let subject = node.public_key();
     node.set_wall_clock(1_000);
 
     assert_eq!(
-        node.mint_auth_cert(2, subject.clone(), scope.clone(), mmp_types::authcert::CAP_ANNOUNCE, 1, 2_000),
+        node.mint_auth_cert(
+            2,
+            subject.clone(),
+            scope.clone(),
+            mmp_types::authcert::CAP_ANNOUNCE,
+            1,
+            2_000
+        ),
         Err(FfiError::BadArg),
         "only the frozen v1 AuthCert suite is mintable"
     );
@@ -852,12 +971,26 @@ fn mint_auth_cert_rejects_unknown_caps_and_expired_parameters() {
         "reserved capability bits must not be minted"
     );
     assert_eq!(
-        node.mint_auth_cert(1, subject.clone(), scope.clone(), mmp_types::authcert::CAP_PRIORITY_EMERGENCY, 1, 2_000),
+        node.mint_auth_cert(
+            1,
+            subject.clone(),
+            scope.clone(),
+            mmp_types::authcert::CAP_PRIORITY_EMERGENCY,
+            1,
+            2_000
+        ),
         Err(FfiError::BadArg),
         "emergency capability requires announce capability"
     );
     assert_eq!(
-        node.mint_auth_cert(1, subject.clone(), scope.clone(), mmp_types::authcert::CAP_ANNOUNCE, 1, 1_000),
+        node.mint_auth_cert(
+            1,
+            subject.clone(),
+            scope.clone(),
+            mmp_types::authcert::CAP_ANNOUNCE,
+            1,
+            1_000
+        ),
         Err(FfiError::BadArg),
         "expiry at the issuer's current wall clock is invalid"
     );
@@ -876,7 +1009,8 @@ fn blocklist_survives_restart_and_denies_reintroduced_peer() {
     let seed = vec![50; 32];
 
     {
-        let alice = MmpNode::new(seed.clone(), FfiTier::Relay, Some(path.clone())).expect("valid seed");
+        let alice =
+            MmpNode::new(seed.clone(), FfiTier::Relay, Some(path.clone())).expect("valid seed");
         introduce(&alice, &bob);
         drain(&alice);
         drain(&bob);
@@ -888,7 +1022,9 @@ fn blocklist_survives_restart_and_denies_reintroduced_peer() {
     contact(&alice2, &bob, 7, 70_000);
     let alice_events = drain(&alice2);
     assert!(
-        !alice_events.iter().any(|event| matches!(event, FfiEvent::Established { .. })),
+        !alice_events
+            .iter()
+            .any(|event| matches!(event, FfiEvent::Established { .. })),
         "a persisted blocklist must deny a reintroduced peer: {alice_events:?}"
     );
 }
@@ -921,7 +1057,9 @@ fn seen_index_survives_restart_and_dedups_a_replayed_bundle() {
             "alice must receive the message before restart"
         );
 
-        alice.flush().expect("flush to a writable temp dir must succeed");
+        alice
+            .flush()
+            .expect("flush to a writable temp dir must succeed");
         assert_eq!(alice.last_persist_error(), None);
         // alice is dropped here — simulates process death after a successful flush.
     }
@@ -981,10 +1119,17 @@ fn group_remove_and_set_tier_roundtrip() {
 
     let gid = alice.create_group();
     let bob_id = bob.node_id();
-    alice.group_invite(gid.clone(), bob_id.clone()).expect("known peer");
+    alice
+        .group_invite(gid.clone(), bob_id.clone())
+        .expect("known peer");
 
-    let epoch = alice.group_remove(gid, bob_id).expect("admin removes a known member");
-    assert_eq!(epoch, 2, "groups start at epoch 1; first removal rotates to epoch 2");
+    let epoch = alice
+        .group_remove(gid, bob_id)
+        .expect("admin removes a known member");
+    assert_eq!(
+        epoch, 2,
+        "groups start at epoch 1; first removal rotates to epoch 2"
+    );
 
     // set_tier / public_key just need to be callable through the FFI surface
     // and behave sanely.
@@ -999,7 +1144,9 @@ fn group_remove_unknown_member_maps_to_unknown_peer() {
     let gid = alice.create_group();
     let unknown = vec![0xd5; 16];
 
-    let err = alice.group_remove(gid, unknown).expect_err("unknown member must be rejected");
+    let err = alice
+        .group_remove(gid, unknown)
+        .expect_err("unknown member must be rejected");
     assert_eq!(err, super::FfiError::UnknownPeer);
 }
 
@@ -1014,8 +1161,11 @@ fn friendship_handshake_via_ffi_surface() {
     drain(&bob);
     drain(&carol);
 
-    carol.allow_friendship_from(bob.public_key()).expect("32-byte key");
-    bob.request_friendship(carol.public_key()).expect("32-byte key");
+    carol
+        .allow_friendship_from(bob.public_key())
+        .expect("32-byte key");
+    bob.request_friendship(carol.public_key())
+        .expect("32-byte key");
     contact(&bob, &carol, 1, 10_000);
 
     let bob_events = drain(&bob);
@@ -1039,7 +1189,11 @@ fn friendship_handshake_via_ffi_surface() {
             FfiEvent::FriendshipEstablished { since, .. } => Some(*since),
             _ => None,
         });
-        assert_eq!(since, Some(10_000), "friendship timestamp uses host monotonic milliseconds");
+        assert_eq!(
+            since,
+            Some(10_000),
+            "friendship timestamp uses host monotonic milliseconds"
+        );
     }
 }
 
@@ -1059,7 +1213,9 @@ fn revoke_identity_surfaces_as_peer_revoked_and_blocks_further_sends() {
 
     let bob_id = bob.node_id();
     // Sanity: alice can message bob before the revocation.
-    alice.send_text(bob_id.clone(), "before".to_string()).expect("known peer, not yet revoked");
+    alice
+        .send_text(bob_id.clone(), "before".to_string())
+        .expect("known peer, not yet revoked");
 
     let claim_bytes = bob.revoke_identity(3);
     let claim = mmp_types::claim::Claim::decode(&claim_bytes).expect("well-formed claim");
@@ -1124,8 +1280,16 @@ fn oversized_nickname_is_rejected_before_claim_or_gossip_side_effects() {
     let oversized = "n".repeat(NICKNAME_MAX + 1);
 
     assert_eq!(node.set_nickname(oversized, 1), Err(FfiError::BadArg));
-    assert_eq!(node.own_claims(), claims_before, "invalid input must not publish a claim");
-    assert_eq!(node.store_len(), store_before, "invalid input must not enqueue gossip");
+    assert_eq!(
+        node.own_claims(),
+        claims_before,
+        "invalid input must not publish a claim"
+    );
+    assert_eq!(
+        node.store_len(),
+        store_before,
+        "invalid input must not enqueue gossip"
+    );
 }
 
 #[test]
@@ -1136,7 +1300,14 @@ fn revoked_identity_rejects_nickname_through_ffi_error_surface() {
     assert!(!revocation.is_empty());
     let claims_after_revocation = node.own_claims();
     let store_after_revocation = node.store_len();
-    assert_eq!(node.set_nickname("after-revocation".to_string(), 1), Err(FfiError::Internal));
+    assert_eq!(
+        node.set_nickname("after-revocation".to_string(), 1),
+        Err(FfiError::Internal)
+    );
     assert_eq!(node.own_claims(), claims_after_revocation);
-    assert_eq!(node.store_len(), store_after_revocation, "only the revocation gossip is stored");
+    assert_eq!(
+        node.store_len(),
+        store_after_revocation,
+        "only the revocation gossip is stored"
+    );
 }

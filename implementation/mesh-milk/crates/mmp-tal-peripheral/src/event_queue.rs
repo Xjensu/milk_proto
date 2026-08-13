@@ -136,7 +136,9 @@ impl EventSender {
     }
 
     fn control_full(&self) -> Result<(), ControlEnqueueError> {
-        self.0.control_events_dropped.fetch_add(1, Ordering::Relaxed);
+        self.0
+            .control_events_dropped
+            .fetch_add(1, Ordering::Relaxed);
         Err(ControlEnqueueError::Full)
     }
 
@@ -147,11 +149,8 @@ impl EventSender {
         if !state.can_track_generation(link) {
             return;
         }
-        if let Some(incoming_generation) = streams
-            .iter()
-            .flatten()
-            .map(|stamp| stamp.generation)
-            .max()
+        if let Some(incoming_generation) =
+            streams.iter().flatten().map(|stamp| stamp.generation).max()
         {
             let current_control = state.control_current.get(&link).copied();
             let last_generation = state.last_generation.get(&link).copied();
@@ -212,9 +211,7 @@ impl EventSender {
     ) -> Result<(), DataEnqueueError> {
         let mut state = self.0.state.lock().expect("event ingress mutex poisoned");
         let side = usize::from(stamp.side);
-        if side >= 2
-            || state.current.get(&link).and_then(|streams| streams[side]) != Some(stamp)
-        {
+        if side >= 2 || state.current.get(&link).and_then(|streams| streams[side]) != Some(stamp) {
             return Err(DataEnqueueError::Stale);
         }
         if matches!(&event, TalEvent::LinkData { bytes, .. } if bytes.len() > MAX_LINK_DATA_BYTES) {
@@ -273,9 +270,11 @@ impl EventSender {
             state.control_current.remove(&link);
             state.current.remove(&link);
             purge_link(&mut state, link);
-            if let Some(index) = state.controls.iter().position(|pending| {
-                pending.link == link && pending.kind == ControlKind::Down
-            }) {
+            if let Some(index) = state
+                .controls
+                .iter()
+                .position(|pending| pending.link == link && pending.kind == ControlKind::Down)
+            {
                 state.controls[index].generation = state.controls[index].generation.max(generation);
                 let mut seen_down = false;
                 state.controls.retain(|pending| {
@@ -302,7 +301,12 @@ impl EventSender {
                 let had_same_link = state.controls.iter().any(|pending| pending.link == link);
                 if had_same_link {
                     state.controls.retain(|pending| pending.link != link);
-                    state.controls.push_back(ControlRecord { link, generation, kind, event });
+                    state.controls.push_back(ControlRecord {
+                        link,
+                        generation,
+                        kind,
+                        event,
+                    });
                     drop(state);
                     self.0.notify.notify_one();
                     return Ok(());
@@ -318,16 +322,19 @@ impl EventSender {
         } else if state.emergency_down.contains_key(&link) {
             return self.control_full();
         }
-        if let Some(index) = state.controls.iter().rposition(|pending| pending.link == link) {
+        if let Some(index) = state
+            .controls
+            .iter()
+            .rposition(|pending| pending.link == link)
+        {
             if state.controls[index].kind == kind {
                 state.controls[index].generation = state.controls[index].generation.max(generation);
                 if kind == ControlKind::Up {
                     state.controls[index].event = event;
                     let admitted_generation = state.controls[index].generation;
-                    state
-                        .control_current
-                        .insert(link, admitted_generation);
-                    if state.replacement_generation.get(&link).copied() == Some(admitted_generation) {
+                    state.control_current.insert(link, admitted_generation);
+                    if state.replacement_generation.get(&link).copied() == Some(admitted_generation)
+                    {
                         state.replacement_generation.remove(&link);
                     }
                     state.record_generation(link, generation);
@@ -347,7 +354,12 @@ impl EventSender {
             }
             state.record_generation(link, generation);
         }
-        state.controls.push_back(ControlRecord { link, generation, kind, event });
+        state.controls.push_back(ControlRecord {
+            link,
+            generation,
+            kind,
+            event,
+        });
         drop(state);
         self.0.notify.notify_one();
         Ok(())
@@ -374,7 +386,9 @@ impl State {
             *last = (*last).max(generation);
             return true;
         }
-        if self.generation_ledger_exhausted || self.last_generation.len() >= MAX_GENERATION_TOMBSTONES {
+        if self.generation_ledger_exhausted
+            || self.last_generation.len() >= MAX_GENERATION_TOMBSTONES
+        {
             self.generation_ledger_exhausted = true;
             return false;
         }
@@ -404,7 +418,8 @@ impl State {
                 .map(|stamp| stamp.generation)
                 .max();
             return generation < current
-                || stream_generation.is_some_and(|stream| stream > current && generation <= current);
+                || stream_generation
+                    .is_some_and(|stream| stream > current && generation <= current);
         }
         if self.replacement_generation.get(&link).copied() == Some(generation) {
             return false;
@@ -426,16 +441,22 @@ async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEve
             let mut state = inner.state.lock().expect("event ingress mutex poisoned");
             if let Some(control) = state.controls.pop_front() {
                 Some(control.event)
-            } else if let Some((link, _generation)) = state.emergency_down.iter().next().map(|(link, generation)| (*link, *generation)) {
+            } else if let Some((link, _generation)) = state
+                .emergency_down
+                .iter()
+                .next()
+                .map(|(link, generation)| (*link, *generation))
+            {
                 state.emergency_down.remove(&link);
                 Some(TalEvent::LinkDown { link })
             } else {
                 loop {
-                    let Some(data) = state.data.pop_front() else { break None };
-                    let current = state
-                        .current
-                        .get(&data.link)
-                        .is_some_and(|streams| streams.iter().flatten().any(|stamp| *stamp == data.stamp));
+                    let Some(data) = state.data.pop_front() else {
+                        break None;
+                    };
+                    let current = state.current.get(&data.link).is_some_and(|streams| {
+                        streams.iter().flatten().any(|stamp| *stamp == data.stamp)
+                    });
                     if current {
                         break Some(data.event);
                     }
@@ -462,47 +483,112 @@ mod tests {
     use tokio::time::{timeout, Duration};
 
     fn data(byte: u8) -> TalEvent {
-        TalEvent::LinkData { link: 7, bytes: vec![byte] }
+        TalEvent::LinkData {
+            link: 7,
+            bytes: vec![byte],
+        }
     }
 
     fn reader(generation: u64) -> StreamStamp {
-        StreamStamp { generation, side: 0 }
+        StreamStamp {
+            generation,
+            side: 0,
+        }
     }
 
     fn writer(generation: u64) -> StreamStamp {
-        StreamStamp { generation, side: 1 }
+        StreamStamp {
+            generation,
+            side: 1,
+        }
     }
 
     #[tokio::test]
     async fn control_survives_full_data_lane() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
-        for byte in 0..DATA_CAPACITY { tx.try_stream_data(7, reader(1), data(byte as u8)).unwrap(); }
-        assert_eq!(tx.try_stream_data(7, reader(1), data(0xff)), Err(DataEnqueueError::Full));
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
+        for byte in 0..DATA_CAPACITY {
+            tx.try_stream_data(7, reader(1), data(byte as u8)).unwrap();
+        }
+        assert_eq!(
+            tx.try_stream_data(7, reader(1), data(0xff)),
+            Err(DataEnqueueError::Full)
+        );
         tx.retire_link(7);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         drop(tx);
-        assert!(timeout(Duration::from_millis(100), rx.recv()).await.unwrap().is_none());
+        assert!(timeout(Duration::from_millis(100), rx.recv())
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
     async fn stale_stream_data_is_rejected_after_replacement() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_stream_data(7, reader(1), data(1)).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 2).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
-        assert_eq!(tx.try_stream_data(7, reader(1), data(2)), Err(DataEnqueueError::Stale));
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            tx.try_stream_data(7, reader(1), data(2)),
+            Err(DataEnqueueError::Stale)
+        );
         tx.try_stream_data(7, reader(2), data(3)).unwrap();
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(3)));
     }
 
@@ -510,18 +596,51 @@ mod tests {
     async fn stale_writer_data_is_rejected_after_replacement() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [None, Some(writer(1))]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_stream_data(7, writer(1), data(1)).unwrap();
         tx.set_streams(7, [None, Some(writer(2))]);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 2).unwrap();
         tx.set_streams(7, [None, Some(writer(2))]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
 
-        assert_eq!(tx.try_stream_data(7, writer(1), data(2)), Err(DataEnqueueError::Stale));
+        assert_eq!(
+            tx.try_stream_data(7, writer(1), data(2)),
+            Err(DataEnqueueError::Stale)
+        );
         tx.try_stream_data(7, writer(2), data(3)).unwrap();
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(3)));
     }
 
@@ -529,12 +648,39 @@ mod tests {
     async fn stale_lifecycle_controls_cannot_retire_new_generation() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [Some(reader(2)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality { mtu: 244, ..Default::default() } }, 1).unwrap();
-        tx.try_stream_data(7, reader(2), data(9)).expect("current generation must remain live");
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..Default::default()
+                },
+            },
+            1,
+        )
+        .unwrap();
+        tx.try_stream_data(7, reader(2), data(9))
+            .expect("current generation must remain live");
 
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(9)));
     }
 
@@ -542,16 +688,40 @@ mod tests {
     async fn stale_down_cannot_retire_preannounced_replacement() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         // Peripheral attach installs the replacement stream before publishing
         // its lifecycle controls. A delayed Down from generation 1 must not
         // purge that generation-2 stream.
         tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 2).unwrap();
-        tx.try_stream_data(7, reader(2), data(9)).expect("replacement stream must remain live");
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
+        tx.try_stream_data(7, reader(2), data(9))
+            .expect("replacement stream must remain live");
 
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(9)));
     }
 
@@ -559,12 +729,38 @@ mod tests {
     async fn stale_up_cannot_reopen_retired_generation() {
         let (tx, mut rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.retire_link(7);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
-        assert_eq!(tx.try_stream_data(7, reader(1), data(9)), Err(DataEnqueueError::Stale));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }));
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            tx.try_stream_data(7, reader(1), data(9)),
+            Err(DataEnqueueError::Stale)
+        );
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
     }
 
@@ -572,51 +768,90 @@ mod tests {
     async fn oversized_link_data_is_rejected_before_queueing() {
         let (tx, _rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1)
-            .unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         let oversized = TalEvent::LinkData {
             link: 7,
             bytes: vec![0; mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 4],
         };
 
-        assert_eq!(tx.try_stream_data(7, reader(1), oversized), Err(DataEnqueueError::Full));
+        assert_eq!(
+            tx.try_stream_data(7, reader(1), oversized),
+            Err(DataEnqueueError::Full)
+        );
     }
 
     #[tokio::test]
     async fn hostile_stream_side_is_rejected_without_panicking() {
         let (tx, _rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1)
-            .unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
 
         // `StreamStamp::side` is transport-internal, but keeping this check
         // total protects the ingress boundary if a malformed callback ever
         // crosses it. The side is validated before indexing the two-entry
         // stream table.
-        let hostile = StreamStamp { generation: 1, side: u8::MAX };
-        assert_eq!(tx.try_stream_data(7, hostile, data(0)), Err(DataEnqueueError::Stale));
+        let hostile = StreamStamp {
+            generation: 1,
+            side: u8::MAX,
+        };
+        assert_eq!(
+            tx.try_stream_data(7, hostile, data(0)),
+            Err(DataEnqueueError::Stale)
+        );
     }
 
     #[tokio::test]
     async fn stale_retirement_tombstone_cannot_purge_reused_link() {
         let (tx, _rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.retire_link(7);
         // A later physical attachment reuses the stable LinkId with a newer
         // generation before its LinkUp is published.
         tx.set_streams(7, [Some(reader(2)), None]);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_stream_data(7, reader(2), data(9)).expect("new stream must survive stale Down");
+        tx.try_stream_data(7, reader(2), data(9))
+            .expect("new stream must survive stale Down");
     }
 
     #[tokio::test]
     async fn enqueue_is_nonblocking_when_public_receiver_is_not_drained() {
         let (tx, _rx) = event_channel();
         tx.set_streams(7, [Some(reader(1)), None]);
-        for byte in 0..DATA_CAPACITY { tx.try_stream_data(7, reader(1), data(byte as u8)).unwrap(); }
-        let task = tokio::spawn(async move { tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap(); });
-        timeout(Duration::from_millis(100), task).await.unwrap().unwrap();
+        for byte in 0..DATA_CAPACITY {
+            tx.try_stream_data(7, reader(1), data(byte as u8)).unwrap();
+        }
+        let task = tokio::spawn(async move {
+            tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
+        });
+        timeout(Duration::from_millis(100), task)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
@@ -624,18 +859,51 @@ mod tests {
         let (tx, mut rx) = event_channel();
         let quality = LinkQuality::default();
         tx.set_streams(7, [Some(reader(1)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality,
+            },
+            1,
+        )
+        .unwrap();
         tx.retire_link(7);
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
         tx.set_streams(7, [Some(reader(2)), None]);
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality { mtu: 244, ..quality } }, 2).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..quality
+                },
+            },
+            2,
+        )
+        .unwrap();
 
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: false, quality }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         assert_eq!(
             rx.recv().await,
-            Some(TalEvent::LinkUp { link: 7, initiator: false, quality: LinkQuality { mtu: 244, ..quality } })
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: false,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..quality
+                }
+            })
         );
     }
 
@@ -644,7 +912,11 @@ mod tests {
         let (tx, mut rx) = event_channel();
         for link in 8..(8 + CONTROL_CAPACITY as u64) {
             tx.try_control(
-                TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() },
+                TalEvent::LinkUp {
+                    link,
+                    initiator: false,
+                    quality: LinkQuality::default(),
+                },
                 1,
             )
             .unwrap();
@@ -661,14 +933,24 @@ mod tests {
     async fn control_saturation_is_sticky_and_visible() {
         let (tx, _rx) = event_channel();
         for link in 8..(8 + CONTROL_CAPACITY as u64) {
-            tx.try_control(TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() }, 1)
-                .expect("normal control lane must fill");
+            tx.try_control(
+                TalEvent::LinkUp {
+                    link,
+                    initiator: false,
+                    quality: LinkQuality::default(),
+                },
+                1,
+            )
+            .expect("normal control lane must fill");
         }
         for link in 100..(100 + CONTROL_CAPACITY as u64) {
             tx.try_control(TalEvent::LinkDown { link }, 1)
                 .expect("emergency down lane must fill");
         }
-        assert_eq!(tx.try_control(TalEvent::LinkDown { link: 999 }, 1), Err(super::ControlEnqueueError::Full));
+        assert_eq!(
+            tx.try_control(TalEvent::LinkDown { link: 999 }, 1),
+            Err(super::ControlEnqueueError::Full)
+        );
         assert_eq!(tx.control_events_dropped(), 1);
     }
 }

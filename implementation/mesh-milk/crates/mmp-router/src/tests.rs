@@ -10,7 +10,9 @@ use mmp_types::ids::Id16;
 
 use crate::quota::OriginBuckets;
 use crate::utility::UtilityState;
-use crate::{eviction_order, handoff_decision, origin_budget, spray_split, transfer_order, Handoff};
+use crate::{
+    eviction_order, handoff_decision, origin_budget, spray_split, transfer_order, Handoff,
+};
 
 fn meta(id: u8, class: u8, priority: u8, size: u32, budget: u8, own: bool) -> BundleMeta {
     BundleMeta {
@@ -76,11 +78,29 @@ fn handoff_rules() {
     // Focus at budget 1 needs a decisively better peer.
     let m1 = meta(2, 1, 1, 100, 1, false);
     assert_eq!(
-        handoff_decision(&m1, &peer, 0.5, 0.7, false, false, SuppressSignal::None, now),
+        handoff_decision(
+            &m1,
+            &peer,
+            0.5,
+            0.7,
+            false,
+            false,
+            SuppressSignal::None,
+            now
+        ),
         Handoff::Focus
     );
     assert_eq!(
-        handoff_decision(&m1, &peer, 0.5, 0.6, false, false, SuppressSignal::None, now),
+        handoff_decision(
+            &m1,
+            &peer,
+            0.5,
+            0.6,
+            false,
+            false,
+            SuppressSignal::None,
+            now
+        ),
         Handoff::Keep
     );
     // Receipt hints suppress offers (never purge — that's the store's job).
@@ -96,7 +116,16 @@ fn zero_budget_non_destination_is_not_offered_again() {
     let zero = meta(3, 1, 1, 100, 0, false);
 
     assert_eq!(
-        handoff_decision(&zero, &peer, 0.1, 0.9, false, false, SuppressSignal::None, 0),
+        handoff_decision(
+            &zero,
+            &peer,
+            0.1,
+            0.9,
+            false,
+            false,
+            SuppressSignal::None,
+            0
+        ),
         Handoff::Keep,
         "a focused zero-budget copy must not mint another grant"
     );
@@ -108,7 +137,16 @@ fn zero_budget_still_delivers_to_destination() {
     let zero = meta(4, 1, 1, 100, 0, false);
 
     assert_eq!(
-        handoff_decision(&zero, &destination, 0.1, 0.0, true, false, SuppressSignal::None, 0),
+        handoff_decision(
+            &zero,
+            &destination,
+            0.1,
+            0.0,
+            true,
+            false,
+            SuppressSignal::None,
+            0
+        ),
         Handoff::Deliver,
         "direct delivery must remain unconditional even after focus"
     );
@@ -118,16 +156,16 @@ fn zero_budget_still_delivers_to_destination() {
 fn transfer_order_is_value_dense() {
     let peer = Id16([0xDD; 16]); // matches dest of meta()
     let metas = vec![
-        meta(1, 1, 1, 500, 4, false),  // spray, mid
-        meta(2, 0, 0, 50, 4, false),   // control → first
-        meta(3, 1, 0, 100, 4, false),  // dest == peer → second
-        meta(4, 1, 3, 100, 4, false),  // spray, low priority → last-ish
-        meta(5, 1, 1, 100, 4, false),  // spray, smaller than #1
+        meta(1, 1, 1, 500, 4, false), // spray, mid
+        meta(2, 0, 0, 50, 4, false),  // control → first
+        meta(3, 1, 0, 100, 4, false), // dest == peer → second
+        meta(4, 1, 3, 100, 4, false), // spray, low priority → last-ish
+        meta(5, 1, 1, 100, 4, false), // spray, smaller than #1
     ];
     let order = transfer_order(&metas, &peer, 0);
     assert_eq!(order[0], 1); // class 0
     assert_eq!(order[1], 2); // destination-here
-    // Among spray: priority asc then size asc → #5 (100B, p1) before #1 (500B, p1), then #4 (p3).
+                             // Among spray: priority asc then size asc → #5 (100B, p1) before #1 (500B, p1), then #4 (p3).
     assert_eq!(&order[2..], &[4, 0, 3]);
 }
 
@@ -145,7 +183,13 @@ fn eviction_protects_own_originals_and_prefers_confirmed() {
     ];
     let order = eviction_order(
         &metas,
-        |id| if *id == confirmed { SuppressSignal::Purge } else { SuppressSignal::None },
+        |id| {
+            if *id == confirmed {
+                SuppressSignal::Purge
+            } else {
+                SuppressSignal::None
+            }
+        },
         0,
     );
     assert_eq!(order[0], confirmed); // receipt-confirmed evicts first
@@ -172,7 +216,11 @@ fn transfer_order_uses_declared_priority_eviction_order_uses_effective() {
     // eviction_order: the clamped bundle (effective=2, worse) evicts before
     // the elevated one (effective=1) under pressure.
     let e_order = eviction_order(&metas, |_| SuppressSignal::None, 0);
-    assert_eq!(e_order[0], Id16([1; 16]), "clamped (effective NORMAL) evicts first");
+    assert_eq!(
+        e_order[0],
+        Id16([1; 16]),
+        "clamped (effective NORMAL) evicts first"
+    );
     assert_eq!(e_order[1], Id16([2; 16]));
 }
 
@@ -238,7 +286,10 @@ fn utility_ephem_window_is_bounded_under_beacon_flood() {
     // unresolved-ephemeral factor.  In particular, this must not grow with
     // the number of hostile advertisements.
     let n = u.n_hat(1);
-    assert!(n <= 0.75 * CONTACT_GRAPH_CAP as f32, "n_hat grew beyond bounded window: {n}");
+    assert!(
+        n <= 0.75 * CONTACT_GRAPH_CAP as f32,
+        "n_hat grew beyond bounded window: {n}"
+    );
 }
 
 #[test]

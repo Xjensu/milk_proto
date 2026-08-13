@@ -76,7 +76,10 @@ impl OrSet {
 
     /// Observed add-tags for `member` — what a REMOVE must reference.
     pub fn tags_of(&self, member: &NodeId) -> Vec<Tag> {
-        self.adds.get(member).map(|s| s.iter().copied().collect()).unwrap_or_default()
+        self.adds
+            .get(member)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default()
     }
 
     /// Every member with at least one live add-tag.
@@ -182,8 +185,7 @@ impl OrSet {
         // from turning a tiny count field into an expensive parse.
         const MEMBER_MIN_BYTES: usize = 16 + 4;
         if bytes.len().saturating_sub(pos) < 4
-            || member_count as usize
-                > (bytes.len().saturating_sub(pos) - 4) / MEMBER_MIN_BYTES
+            || member_count as usize > (bytes.len().saturating_sub(pos) - 4) / MEMBER_MIN_BYTES
         {
             return None;
         }

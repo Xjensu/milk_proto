@@ -90,7 +90,11 @@ impl ClusteredMobility {
         for node in 0..node_count {
             communities[node % community_count].push(node);
         }
-        Some(Self { communities, bridge_every, contact_index: 0 })
+        Some(Self {
+            communities,
+            bridge_every,
+            contact_index: 0,
+        })
     }
 
     /// Select the next `(left, right, is_bridge)` contact.
@@ -106,8 +110,15 @@ impl ClusteredMobility {
             let members = &self.communities[community];
             let first = self.pick(members, rng);
             let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
-            let first_index = members.iter().position(|node| *node == first).expect("picked member");
-            (first, members[(first_index + offset) % members.len()], false)
+            let first_index = members
+                .iter()
+                .position(|node| *node == first)
+                .expect("picked member");
+            (
+                first,
+                members[(first_index + offset) % members.len()],
+                false,
+            )
         };
         self.contact_index = self.contact_index.saturating_add(1);
         pair
@@ -190,9 +201,7 @@ impl BoundedHeavyTailClusteredMobility {
         for node in 0..node_count {
             communities[node % community_count].push(node);
         }
-        let dwell_weight_total = (dwell_min..=dwell_max)
-            .map(Self::dwell_weight)
-            .sum();
+        let dwell_weight_total = (dwell_min..=dwell_max).map(Self::dwell_weight).sum();
         Some(Self {
             communities,
             active_community: 0,
@@ -233,8 +242,7 @@ impl BoundedHeavyTailClusteredMobility {
         } else if self.remaining_intra == 0 {
             let previous = self.active_community;
             let offset = 1 + rng.below((self.communities.len() - 1) as u64) as usize;
-            self.active_community =
-                (self.active_community + offset) % self.communities.len();
+            self.active_community = (self.active_community + offset) % self.communities.len();
             self.bridge_count = self.bridge_count.saturating_add(1);
             self.start_episode(rng);
             self.bridge_pair(previous, rng)
@@ -283,7 +291,11 @@ impl BoundedHeavyTailClusteredMobility {
             .iter()
             .position(|node| *node == first)
             .expect("picked member");
-        (first, members[(first_index + offset) % members.len()], false)
+        (
+            first,
+            members[(first_index + offset) % members.len()],
+            false,
+        )
     }
 
     fn bridge_pair(&self, previous: usize, rng: &mut Rng) -> (usize, usize, bool) {
@@ -368,8 +380,15 @@ impl SocialClusteredMobility {
             let members = &self.communities[current];
             let first = self.pick(members, rng);
             let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
-            let first_index = members.iter().position(|node| *node == first).expect("picked member");
-            (first, members[(first_index + offset) % members.len()], false)
+            let first_index = members
+                .iter()
+                .position(|node| *node == first)
+                .expect("picked member");
+            (
+                first,
+                members[(first_index + offset) % members.len()],
+                false,
+            )
         };
         (left, right, is_bridge)
     }
@@ -559,7 +578,11 @@ fn trace_hasher(node_count: usize, seed: u64) -> blake3::Hasher {
 }
 
 fn update_trace(hasher: &mut blake3::Hasher, left: usize, right: usize, gap_ms: u64) {
-    let (trace_left, trace_right) = if left < right { (left, right) } else { (right, left) };
+    let (trace_left, trace_right) = if left < right {
+        (left, right)
+    } else {
+        (right, left)
+    };
     hasher.update(b"meet-v1");
     hasher.update(&(trace_left as u64).to_le_bytes());
     hasher.update(&(trace_right as u64).to_le_bytes());
@@ -620,7 +643,9 @@ impl Sim {
         let mut nodes = Vec::with_capacity(n);
         for i in 0..n {
             let mut node_seed = [0u8; 32];
-            let a = seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let a = seed
+                .wrapping_add(i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let b = rng.next_u64();
             node_seed[..8].copy_from_slice(&a.to_le_bytes());
             node_seed[8..16].copy_from_slice(&b.to_le_bytes());
@@ -729,7 +754,9 @@ impl Sim {
     /// directly on `Event::Delivered { id }`.
     pub fn send_text(&mut self, from: usize, to: usize, text: &str) -> Id16 {
         let peer = self.nodes[to].node_id();
-        let id = self.nodes[from].send_text(&peer, text).expect("peer claims known (introduce first)");
+        let id = self.nodes[from]
+            .send_text(&peer, text)
+            .expect("peer claims known (introduce first)");
         self.tracked.insert(id);
         self.sent_at_ms.insert(id, self.now_ms);
         self.counters.messages_sent += 1;
@@ -755,8 +782,16 @@ impl Sim {
 
         a.tick(now);
         b.tick(now);
-        a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() });
-        b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() });
+        a.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality: LinkQuality::default(),
+        });
+        b.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: false,
+            quality: LinkQuality::default(),
+        });
         for _ in 0..300 {
             let mut quiet = true;
             while let Some((l, bytes)) = a.poll_send() {
@@ -788,7 +823,8 @@ impl Sim {
                     {
                         self.counters.messages_delivered += 1;
                         if let Some(sent) = self.sent_at_ms.get(id) {
-                            self.delivery_latencies_ms.push(self.now_ms.saturating_sub(*sent));
+                            self.delivery_latencies_ms
+                                .push(self.now_ms.saturating_sub(*sent));
                         }
                     }
                     _ => {}
@@ -837,7 +873,13 @@ impl Sim {
     /// (manifest, receipts): at file-transfer scale that is a close proxy
     /// for "class-4 loss specifically" anyway (a multi-hundred-symbol
     /// transfer dwarfs the handful of other bundles in the same contact).
-    pub fn meet_with_bundle_loss(&mut self, i: usize, j: usize, dt_ms: u64, drop_pct: u64) -> Vec<(usize, Event)> {
+    pub fn meet_with_bundle_loss(
+        &mut self,
+        i: usize,
+        j: usize,
+        dt_ms: u64,
+        drop_pct: u64,
+    ) -> Vec<(usize, Event)> {
         assert_ne!(i, j, "a node cannot meet itself");
         assert!(drop_pct <= 100);
         let link = self.next_link;
@@ -851,8 +893,16 @@ impl Sim {
 
         a.tick(now);
         b.tick(now);
-        a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() });
-        b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() });
+        a.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality: LinkQuality::default(),
+        });
+        b.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: false,
+            quality: LinkQuality::default(),
+        });
         'contact: for _ in 0..1200 {
             let mut quiet = true;
             while let Some((l, bytes)) = a.poll_send() {
@@ -898,10 +948,7 @@ impl Sim {
     /// two nodes are present, so an invalid experiment cannot silently report
     /// a distorted fixed-gap trace.
     pub fn run_random_meetings(&mut self, count: usize, min_gap_ms: u64, max_gap_ms: u64) {
-        assert!(
-            min_gap_ms <= max_gap_ms,
-            "min_gap_ms must be <= max_gap_ms"
-        );
+        assert!(min_gap_ms <= max_gap_ms, "min_gap_ms must be <= max_gap_ms");
         let n = self.nodes.len() as u64;
         assert!(n >= 2, "need at least two nodes to meet");
         let span = max_gap_ms - min_gap_ms;
@@ -931,7 +978,9 @@ impl Sim {
         if min_gap_ms > max_gap_ms {
             return false;
         }
-        let Some(mut plan) = ClusteredMobility::new(self.nodes.len(), community_count, bridge_every) else {
+        let Some(mut plan) =
+            ClusteredMobility::new(self.nodes.len(), community_count, bridge_every)
+        else {
             return false;
         };
         let span = (max_gap_ms - min_gap_ms).max(1);
@@ -1076,7 +1125,9 @@ impl Sim {
         }
         let mut sorted = self.delivery_latencies_ms.clone();
         sorted.sort_unstable();
-        let idx = ((sorted.len() as f64 * p).ceil() as usize).saturating_sub(1).min(sorted.len() - 1);
+        let idx = ((sorted.len() as f64 * p).ceil() as usize)
+            .saturating_sub(1)
+            .min(sorted.len() - 1);
         Some(sorted[idx])
     }
 
@@ -1095,7 +1146,11 @@ impl Sim {
     /// getter, so this is the tightest check available from outside.
     pub fn quota_ok(&self) -> bool {
         self.nodes.iter().all(|n| {
-            let quota = if n.tier() == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
+            let quota = if n.tier() == Tier::Anchor {
+                QUOTA_ANCHOR
+            } else {
+                QUOTA_STANDARD
+            };
             (n.store_len() as u64) * (MAX_BUNDLE as u64) <= quota
         })
     }
@@ -1137,6 +1192,6 @@ mod tests_adversarial;
 #[cfg(test)]
 mod tests_blob;
 #[cfg(test)]
-mod tests_scale;
-#[cfg(test)]
 mod tests_deployment;
+#[cfg(test)]
+mod tests_scale;

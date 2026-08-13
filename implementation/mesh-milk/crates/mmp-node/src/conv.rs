@@ -55,7 +55,14 @@ impl Conv {
         recv: RecvChain,
         dag: ConversationDag,
     ) -> Conv {
-        Conv { id, peer, receipt_key: Zeroizing::new(receipt_key), send, recv, dag }
+        Conv {
+            id,
+            peer,
+            receipt_key: Zeroizing::new(receipt_key),
+            send,
+            recv,
+            dag,
+        }
     }
 }
 

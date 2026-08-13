@@ -52,7 +52,13 @@ impl Identity {
         let public = Key32(signing.verifying_key().to_bytes());
         let exchange_public = Key32(x25519_dalek::PublicKey::from(&exchange).to_bytes());
         let node_id = node_id_of(&public);
-        Identity { signing, exchange, public, exchange_public, node_id }
+        Identity {
+            signing,
+            exchange,
+            public,
+            exchange_public,
+            node_id,
+        }
     }
 
     /// The Ed25519 public identity key.

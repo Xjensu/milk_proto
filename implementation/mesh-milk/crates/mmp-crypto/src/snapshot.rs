@@ -98,15 +98,34 @@ pub fn seal(
 
     let mut nonce = [0u8; NONCE_LEN];
     rng.fill_bytes(&mut nonce);
-    let ciphertext_len = plaintext.len().checked_add(TAG_LEN).ok_or_else(snapshot_error)?;
-    let header = build_header(kind, generation, written_at_ms, ciphertext_len, &context_hash(context), &nonce)?;
+    let ciphertext_len = plaintext
+        .len()
+        .checked_add(TAG_LEN)
+        .ok_or_else(snapshot_error)?;
+    let header = build_header(
+        kind,
+        generation,
+        written_at_ms,
+        ciphertext_len,
+        &context_hash(context),
+        &nonce,
+    )?;
     let cipher = ChaCha20Poly1305::new(dek.into());
     let ciphertext = cipher
-        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext, aad: &header })
+        .encrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: plaintext,
+                aad: &header,
+            },
+        )
         .map_err(|_| snapshot_error())?;
     debug_assert_eq!(ciphertext.len(), ciphertext_len);
 
-    let total_len = header.len().checked_add(ciphertext.len()).ok_or_else(snapshot_error)?;
+    let total_len = header
+        .len()
+        .checked_add(ciphertext.len())
+        .ok_or_else(snapshot_error)?;
     let mut envelope = Vec::with_capacity(total_len);
     envelope.extend_from_slice(&header);
     envelope.extend_from_slice(&ciphertext);
@@ -151,11 +170,15 @@ pub fn open(
     let mut ciphertext_len_bytes = [0u8; 4];
     ciphertext_len_bytes.copy_from_slice(&header[22..26]);
     let ciphertext_len = u32::from_le_bytes(ciphertext_len_bytes) as usize;
-    let max_ciphertext_len = MAX_PLAINTEXT_BYTES.checked_add(TAG_LEN).ok_or_else(snapshot_error)?;
+    let max_ciphertext_len = MAX_PLAINTEXT_BYTES
+        .checked_add(TAG_LEN)
+        .ok_or_else(snapshot_error)?;
     if ciphertext_len < TAG_LEN || ciphertext_len > max_ciphertext_len {
         return Err(snapshot_error());
     }
-    let expected_len = HEADER_LEN.checked_add(ciphertext_len).ok_or_else(snapshot_error)?;
+    let expected_len = HEADER_LEN
+        .checked_add(ciphertext_len)
+        .ok_or_else(snapshot_error)?;
     if envelope.len() != expected_len {
         return Err(snapshot_error());
     }
@@ -168,7 +191,13 @@ pub fn open(
     nonce.copy_from_slice(&header[58..70]);
     let cipher = ChaCha20Poly1305::new(dek.into());
     let plaintext = cipher
-        .decrypt(Nonce::from_slice(&nonce), Payload { msg: &envelope[HEADER_LEN..], aad: header })
+        .decrypt(
+            Nonce::from_slice(&nonce),
+            Payload {
+                msg: &envelope[HEADER_LEN..],
+                aad: header,
+            },
+        )
         .map_err(|_| snapshot_error())?;
     if plaintext.len() > MAX_PLAINTEXT_BYTES {
         return Err(snapshot_error());
@@ -225,7 +254,15 @@ mod tests {
         .unwrap();
         assert_eq!(generation, 1);
         assert_eq!(&*plaintext, b"typed secret aggregate");
-        assert!(open(KIND_NODE_SECRET_STATE, b"wrong", &[7u8; 32], &first, 1_001, DEFAULT_TTL_MS).is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            b"wrong",
+            &[7u8; 32],
+            &first,
+            1_001,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
     }
 
     #[test]
@@ -234,15 +271,47 @@ mod tests {
         let original = envelope(&mut rng);
         let mut tampered = original.clone();
         tampered[HEADER_LEN] ^= 1;
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &tampered, 1_001, DEFAULT_TTL_MS).is_err());
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[8u8; 32], &original, 1_001, DEFAULT_TTL_MS).is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &tampered,
+            1_001,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[8u8; 32],
+            &original,
+            1_001,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
         assert!(open(2, CONTEXT, &[7u8; 32], &original, 1_001, DEFAULT_TTL_MS).is_err());
         let mut truncated = original.clone();
         truncated.pop();
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &truncated, 1_001, DEFAULT_TTL_MS).is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &truncated,
+            1_001,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
         let mut bad_version = original;
         bad_version[4] = VERSION + 1;
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &bad_version, 1_001, DEFAULT_TTL_MS).is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &bad_version,
+            1_001,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
     }
 
     #[test]
@@ -251,13 +320,65 @@ mod tests {
         assert!(validate_next_generation(0, 1).is_ok());
         assert!(validate_next_generation(1, 1).is_err());
         assert!(validate_next_generation(1, 0).is_err());
-        assert!(seal(KIND_NODE_SECRET_STATE, 1, 0, CONTEXT, &[7u8; 32], &mut rng, b"x").is_err());
-        assert!(seal(KIND_NODE_SECRET_STATE, 1, u64::MAX, CONTEXT, &[7u8; 32], &mut rng, b"x").is_err());
-        let stale = seal(KIND_NODE_SECRET_STATE, 1, 1_000, CONTEXT, &[7u8; 32], &mut rng, b"x").unwrap();
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &stale, 1_001 + DEFAULT_TTL_MS, DEFAULT_TTL_MS).is_err());
-        assert!(open(KIND_NODE_SECRET_STATE, CONTEXT, &[7u8; 32], &stale, 999, DEFAULT_TTL_MS).is_err());
+        assert!(seal(
+            KIND_NODE_SECRET_STATE,
+            1,
+            0,
+            CONTEXT,
+            &[7u8; 32],
+            &mut rng,
+            b"x"
+        )
+        .is_err());
+        assert!(seal(
+            KIND_NODE_SECRET_STATE,
+            1,
+            u64::MAX,
+            CONTEXT,
+            &[7u8; 32],
+            &mut rng,
+            b"x"
+        )
+        .is_err());
+        let stale = seal(
+            KIND_NODE_SECRET_STATE,
+            1,
+            1_000,
+            CONTEXT,
+            &[7u8; 32],
+            &mut rng,
+            b"x",
+        )
+        .unwrap();
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &stale,
+            1_001 + DEFAULT_TTL_MS,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
+        assert!(open(
+            KIND_NODE_SECRET_STATE,
+            CONTEXT,
+            &[7u8; 32],
+            &stale,
+            999,
+            DEFAULT_TTL_MS
+        )
+        .is_err());
         let oversized = vec![0u8; MAX_PLAINTEXT_BYTES + 1];
-        assert!(seal(KIND_NODE_SECRET_STATE, 1, 1_000, CONTEXT, &[7u8; 32], &mut rng, &oversized).is_err());
+        assert!(seal(
+            KIND_NODE_SECRET_STATE,
+            1,
+            1_000,
+            CONTEXT,
+            &[7u8; 32],
+            &mut rng,
+            &oversized
+        )
+        .is_err());
     }
 
     #[test]

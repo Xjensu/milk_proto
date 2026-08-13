@@ -51,7 +51,11 @@ impl Beacon {
     /// [`BEACON_LEN`] and any non-1 wire version.
     pub fn decode(bytes: &[u8]) -> Result<Beacon, WireError> {
         if bytes.len() != BEACON_LEN {
-            return Err(if bytes.len() < BEACON_LEN { WireError::Truncated } else { WireError::Trailing });
+            return Err(if bytes.len() < BEACON_LEN {
+                WireError::Truncated
+            } else {
+                WireError::Trailing
+            });
         }
         let ver = bytes[0] >> 4;
         if ver != crate::bundle::WIRE_VERSION {

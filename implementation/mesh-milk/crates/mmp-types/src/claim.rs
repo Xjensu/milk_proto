@@ -180,7 +180,11 @@ impl PrekeyBatch {
             prekeys.push(r.key32()?);
         }
         r.finish()?;
-        Ok(PrekeyBatch { signed_prekey, spk_sig, prekeys })
+        Ok(PrekeyBatch {
+            signed_prekey,
+            spk_sig,
+            prekeys,
+        })
     }
 
     /// The `object_bytes` under the `mmp1/prekey` domain tag.
@@ -225,7 +229,11 @@ impl EpochAnchor {
         r.finish()?;
         let mut member_root = [0u8; 32];
         member_root.copy_from_slice(root);
-        Ok(EpochAnchor { gid, epoch, member_root })
+        Ok(EpochAnchor {
+            gid,
+            epoch,
+            member_root,
+        })
     }
 }
 
@@ -287,7 +295,12 @@ impl Revocation {
             _ => return Err(WireError::BadValue("revocation.has_successor")),
         };
         r.finish()?;
-        Ok(Revocation { revoked_key, reason, successor, successor_countersig })
+        Ok(Revocation {
+            revoked_key,
+            reason,
+            successor,
+            successor_countersig,
+        })
     }
 }
 
@@ -322,8 +335,11 @@ impl Friendship {
     /// Strict decode of the wire form produced by [`Friendship::encode`].
     pub fn decode(bytes: &[u8]) -> Result<Friendship, WireError> {
         let mut r = Reader::new(bytes);
-        let friendship =
-            Friendship { friend: r.key32()?, since: r.u64()?, countersig: r.sig64()? };
+        let friendship = Friendship {
+            friend: r.key32()?,
+            since: r.u64()?,
+            countersig: r.sig64()?,
+        };
         r.finish()?;
         Ok(friendship)
     }
@@ -383,8 +399,14 @@ mod tests {
         };
         assert_eq!(Claim::decode(&oversized.encode()), Err(WireError::Oversize));
 
-        let non_utf8 = Claim { body: vec![0xff], ..oversized };
-        assert_eq!(Claim::decode(&non_utf8.encode()), Err(WireError::BadValue("claim.nickname.utf8")));
+        let non_utf8 = Claim {
+            body: vec![0xff],
+            ..oversized
+        };
+        assert_eq!(
+            Claim::decode(&non_utf8.encode()),
+            Err(WireError::BadValue("claim.nickname.utf8"))
+        );
     }
 
     #[test]
@@ -411,8 +433,17 @@ mod tests {
             (field::REVOCATION, revocation),
         ];
         for (field_id, body) in cases {
-            let claim = Claim { owner, field: field_id, seq: 1, body, sig: Sig64::ZERO };
-            assert!(Claim::decode(&claim.encode()).is_err(), "field {field_id:#x} must reject");
+            let claim = Claim {
+                owner,
+                field: field_id,
+                seq: 1,
+                body,
+                sig: Sig64::ZERO,
+            };
+            assert!(
+                Claim::decode(&claim.encode()).is_err(),
+                "field {field_id:#x} must reject"
+            );
         }
     }
 
@@ -420,13 +451,27 @@ mod tests {
     fn claim_validation_leaves_authority_pointer_fields_opaque() {
         let owner = Key32([4; 32]);
         for field_id in [field::AUTHCERT, field::REVOCATION_LIST] {
-            let claim = Claim { owner, field: field_id, seq: 1, body: vec![0xff], sig: Sig64::ZERO };
-            assert!(claim.validate_known_body().is_ok(), "field {field_id:#x} is store-only");
+            let claim = Claim {
+                owner,
+                field: field_id,
+                seq: 1,
+                body: vec![0xff],
+                sig: Sig64::ZERO,
+            };
+            assert!(
+                claim.validate_known_body().is_ok(),
+                "field {field_id:#x} is store-only"
+            );
         }
     }
 
     fn revocation_no_successor() -> Revocation {
-        Revocation { revoked_key: Key32([1; 32]), reason: 3, successor: None, successor_countersig: None }
+        Revocation {
+            revoked_key: Key32([1; 32]),
+            reason: 3,
+            successor: None,
+            successor_countersig: None,
+        }
     }
 
     fn revocation_with_successor() -> Revocation {
@@ -460,7 +505,10 @@ mod tests {
     fn revocation_decode_rejects_bad_flag_byte() {
         let mut bytes = revocation_no_successor().encode();
         bytes[33] = 0x02; // neither 0x00 nor 0x01
-        assert_eq!(Revocation::decode(&bytes), Err(WireError::BadValue("revocation.has_successor")));
+        assert_eq!(
+            Revocation::decode(&bytes),
+            Err(WireError::BadValue("revocation.has_successor"))
+        );
     }
 
     #[test]
@@ -483,7 +531,11 @@ mod tests {
 
     #[test]
     fn friendship_roundtrip() {
-        let f = Friendship { friend: Key32([2; 32]), since: 1_700_000_000, countersig: Sig64([3; 64]) };
+        let f = Friendship {
+            friend: Key32([2; 32]),
+            since: 1_700_000_000,
+            countersig: Sig64([3; 64]),
+        };
         let bytes = f.encode();
         assert_eq!(bytes.len(), 32 + 8 + 64);
         assert_eq!(Friendship::decode(&bytes).unwrap(), f);
@@ -491,13 +543,26 @@ mod tests {
 
     #[test]
     fn friendship_decode_rejects_truncated_body() {
-        let bytes = Friendship { friend: Key32([2; 32]), since: 1, countersig: Sig64([3; 64]) }.encode();
-        assert_eq!(Friendship::decode(&bytes[..bytes.len() - 1]), Err(WireError::Truncated));
+        let bytes = Friendship {
+            friend: Key32([2; 32]),
+            since: 1,
+            countersig: Sig64([3; 64]),
+        }
+        .encode();
+        assert_eq!(
+            Friendship::decode(&bytes[..bytes.len() - 1]),
+            Err(WireError::Truncated)
+        );
     }
 
     #[test]
     fn friendship_decode_rejects_trailing_bytes() {
-        let mut bytes = Friendship { friend: Key32([2; 32]), since: 1, countersig: Sig64([3; 64]) }.encode();
+        let mut bytes = Friendship {
+            friend: Key32([2; 32]),
+            since: 1,
+            countersig: Sig64([3; 64]),
+        }
+        .encode();
         bytes.push(0);
         assert_eq!(Friendship::decode(&bytes), Err(WireError::Trailing));
     }

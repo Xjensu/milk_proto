@@ -75,8 +75,21 @@ impl FileEntry {
         if flags & !1 != 0 {
             return Err(WireError::ReservedBits);
         }
-        let thumb_root = if flags & 1 != 0 { Some(r.id16()?) } else { None };
-        Ok(FileEntry { name, mime, size, file_root, rs_k, rs_n, full_hash, thumb_root })
+        let thumb_root = if flags & 1 != 0 {
+            Some(r.id16()?)
+        } else {
+            None
+        };
+        Ok(FileEntry {
+            name,
+            mime,
+            size,
+            file_root,
+            rs_k,
+            rs_n,
+            full_hash,
+            thumb_root,
+        })
     }
 }
 
@@ -110,7 +123,12 @@ impl FileManifest {
         }
         let sig = r.sig64()?;
         r.finish()?;
-        Ok(FileManifest { suite, sharer, entries, sig })
+        Ok(FileManifest {
+            suite,
+            sharer,
+            entries,
+            sig,
+        })
     }
 
     /// The `object_bytes` under the `mmp1/manifest` domain tag.

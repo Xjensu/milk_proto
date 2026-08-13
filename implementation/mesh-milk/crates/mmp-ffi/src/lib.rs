@@ -101,7 +101,9 @@ impl std::fmt::Display for FfiError {
         match self {
             FfiError::BadArg => write!(f, "bad argument: wrong length or malformed encoding"),
             FfiError::UnknownPeer => write!(f, "unknown peer or group member"),
-            FfiError::ConversationPending => write!(f, "conversation pending: await first-contact receipt"),
+            FfiError::ConversationPending => {
+                write!(f, "conversation pending: await first-contact receipt")
+            }
             FfiError::Internal => write!(f, "internal error"),
         }
     }
@@ -328,7 +330,10 @@ impl FfiLinkQuality {
         {
             return Err(FfiError::BadArg);
         }
-        Ok(LinkQuality { mtu: self.mtu, goodput_bps: self.goodput_bps })
+        Ok(LinkQuality {
+            mtu: self.mtu,
+            goodput_bps: self.goodput_bps,
+        })
     }
 }
 
@@ -443,7 +448,10 @@ pub struct FfiFileSend {
 
 impl From<FileSend> for FfiFileSend {
     fn from(s: FileSend) -> Self {
-        FfiFileSend { message_id: s.message_id.0.to_vec(), root: s.root.0.to_vec() }
+        FfiFileSend {
+            message_id: s.message_id.0.to_vec(),
+            root: s.root.0.to_vec(),
+        }
     }
 }
 
@@ -661,7 +669,13 @@ pub enum FfiEvent {
 impl From<Event> for FfiEvent {
     fn from(e: Event) -> Self {
         match e {
-            Event::MessageReceived { conv, from, id, body, apptype } => FfiEvent::MessageReceived {
+            Event::MessageReceived {
+                conv,
+                from,
+                id,
+                body,
+                apptype,
+            } => FfiEvent::MessageReceived {
                 conv: conv.0.to_vec(),
                 from: from.0.to_vec(),
                 id: id.0.to_vec(),
@@ -673,37 +687,52 @@ impl From<Event> for FfiEvent {
                 parents: parents.into_iter().map(|p| p.0.to_vec()).collect(),
             },
             Event::Delivered { id } => FfiEvent::Delivered { id: id.0.to_vec() },
-            Event::DeliveryProgress { id, state } => {
-                FfiEvent::DeliveryProgress { id: id.0.to_vec(), state: state.into() }
-            }
-            Event::ClaimUpdated { owner, field } => {
-                FfiEvent::ClaimUpdated { owner: owner.0.to_vec(), field }
-            }
-            Event::CompromiseWarning { owner } => {
-                FfiEvent::CompromiseWarning { owner: owner.0.to_vec() }
-            }
+            Event::DeliveryProgress { id, state } => FfiEvent::DeliveryProgress {
+                id: id.0.to_vec(),
+                state: state.into(),
+            },
+            Event::ClaimUpdated { owner, field } => FfiEvent::ClaimUpdated {
+                owner: owner.0.to_vec(),
+                field,
+            },
+            Event::CompromiseWarning { owner } => FfiEvent::CompromiseWarning {
+                owner: owner.0.to_vec(),
+            },
             Event::PeerRevoked { peer, successor } => FfiEvent::PeerRevoked {
                 peer: peer.0.to_vec(),
                 successor: successor.map(|s| s.0.to_vec()),
             },
-            Event::FriendshipEstablished { peer, since } => {
-                FfiEvent::FriendshipEstablished { peer: peer.0.to_vec(), since }
-            }
-            Event::ContactSeen { peer } => FfiEvent::ContactSeen { peer: peer.0.to_vec() },
-            Event::Established { peer } => FfiEvent::Established { peer: peer.0.to_vec() },
-            Event::GroupInvite { gid, from } => {
-                FfiEvent::GroupInvite { gid: gid.0.to_vec(), from: from.0.to_vec() }
-            }
-            Event::GroupMessage { gid, from, id, apptype, body } => FfiEvent::GroupMessage {
+            Event::FriendshipEstablished { peer, since } => FfiEvent::FriendshipEstablished {
+                peer: peer.0.to_vec(),
+                since,
+            },
+            Event::ContactSeen { peer } => FfiEvent::ContactSeen {
+                peer: peer.0.to_vec(),
+            },
+            Event::Established { peer } => FfiEvent::Established {
+                peer: peer.0.to_vec(),
+            },
+            Event::GroupInvite { gid, from } => FfiEvent::GroupInvite {
+                gid: gid.0.to_vec(),
+                from: from.0.to_vec(),
+            },
+            Event::GroupMessage {
+                gid,
+                from,
+                id,
+                apptype,
+                body,
+            } => FfiEvent::GroupMessage {
                 gid: gid.0.to_vec(),
                 from: from.0.to_vec(),
                 id: id.0.to_vec(),
                 apptype,
                 body,
             },
-            Event::GroupEpochChanged { gid, epoch } => {
-                FfiEvent::GroupEpochChanged { gid: gid.0.to_vec(), epoch }
-            }
+            Event::GroupEpochChanged { gid, epoch } => FfiEvent::GroupEpochChanged {
+                gid: gid.0.to_vec(),
+                epoch,
+            },
             Event::TierChanged { tier } => FfiEvent::TierChanged { tier: tier.into() },
             Event::Announcement {
                 id,
@@ -726,18 +755,25 @@ impl From<Event> for FfiEvent {
                 effective_priority,
                 scope_name_hint,
             },
-            Event::FileOffered { conv, from, sharer, entries } => FfiEvent::FileOffered {
+            Event::FileOffered {
+                conv,
+                from,
+                sharer,
+                entries,
+            } => FfiEvent::FileOffered {
                 conv: conv.0.to_vec(),
                 from: from.0.to_vec(),
                 sharer: sharer.0.to_vec(),
                 entries: entries.into_iter().map(FfiFileOffer::from).collect(),
             },
-            Event::FileReady { root, path } => {
-                FfiEvent::FileReady { root: root.0.to_vec(), path: path.to_string_lossy().into_owned() }
-            }
-            Event::FileFailed { root, reason } => {
-                FfiEvent::FileFailed { root: root.0.to_vec(), reason: reason.into() }
-            }
+            Event::FileReady { root, path } => FfiEvent::FileReady {
+                root: root.0.to_vec(),
+                path: path.to_string_lossy().into_owned(),
+            },
+            Event::FileFailed { root, reason } => FfiEvent::FileFailed {
+                root: root.0.to_vec(),
+                reason: reason.into(),
+            },
         }
     }
 }
@@ -822,7 +858,9 @@ struct PersistState {
 
 impl MmpNode {
     fn lock(&self) -> MutexGuard<'_, Node> {
-        self.inner.lock().unwrap_or_else(|poison| poison.into_inner())
+        self.inner
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 
     /// Write the snapshot to disk now and record the outcome. Callers must
@@ -855,7 +893,10 @@ impl MmpNode {
             s.set_blocklist(blocklist);
             s.persist()
         };
-        let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
+        let mut st = self
+            .persist
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         st.last_persist_ms = now_ms;
         st.last_error = result.as_ref().err().map(std::string::ToString::to_string);
         result
@@ -868,31 +909,33 @@ impl MmpNode {
         limits: Option<SnapshotLimits>,
     ) -> Result<Arc<Self>, FfiError> {
         let seed: [u8; 32] = seed.try_into().map_err(|_| FfiError::BadArg)?;
-        let (store, snapshot): (Box<dyn mmp_core::store::BundleStore + Send>, Option<Arc<Mutex<SnapshotStore>>>) =
-            match store_path {
-                None => (Box::new(MemStore::new()), None),
-                Some(path) => {
-                    let snap = Arc::new(Mutex::new(match limits {
-                        None => SnapshotStore::open(path),
-                        Some(limits) => SnapshotStore::open_with_limits(path, limits),
-                    }));
-                    // Do not expose a node backed by an image that the store
-                    // deliberately refused to load.  Such a node would look
-                    // empty to the host while every later persist is
-                    // rejected, which makes a restart appear successful and
-                    // silently invites new state to be accumulated only in
-                    // RAM.  The store keeps the primary image untouched; the
-                    // host must repair/select a different path explicitly.
-                    if snap
-                        .lock()
-                        .unwrap_or_else(|poison| poison.into_inner())
-                        .load_rejected()
-                    {
-                        return Err(FfiError::Internal);
-                    }
-                    (Box::new(SharedStore(snap.clone())), Some(snap))
+        let (store, snapshot): (
+            Box<dyn mmp_core::store::BundleStore + Send>,
+            Option<Arc<Mutex<SnapshotStore>>>,
+        ) = match store_path {
+            None => (Box::new(MemStore::new()), None),
+            Some(path) => {
+                let snap = Arc::new(Mutex::new(match limits {
+                    None => SnapshotStore::open(path),
+                    Some(limits) => SnapshotStore::open_with_limits(path, limits),
+                }));
+                // Do not expose a node backed by an image that the store
+                // deliberately refused to load.  Such a node would look
+                // empty to the host while every later persist is
+                // rejected, which makes a restart appear successful and
+                // silently invites new state to be accumulated only in
+                // RAM.  The store keeps the primary image untouched; the
+                // host must repair/select a different path explicitly.
+                if snap
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .load_rejected()
+                {
+                    return Err(FfiError::Internal);
                 }
-            };
+                (Box::new(SharedStore(snap.clone())), Some(snap))
+            }
+        };
         let mut node = Node::new(seed, store, tier.into());
         // Restore step (doc comment above): claims + group membership, if any
         // were loaded from a prior snapshot at this path. `ingest_claim`
@@ -972,7 +1015,11 @@ impl MmpNode {
     /// method that can enqueue a bundle. The constructor intentionally does
     /// not read a wall clock or infer a reboot offset for persisted deadlines.
     #[uniffi::constructor]
-    pub fn new(seed: Vec<u8>, tier: FfiTier, store_path: Option<String>) -> Result<Arc<Self>, FfiError> {
+    pub fn new(
+        seed: Vec<u8>,
+        tier: FfiTier,
+        store_path: Option<String>,
+    ) -> Result<Arc<Self>, FfiError> {
         Self::construct(seed, tier, store_path, None)
     }
 
@@ -1010,7 +1057,10 @@ impl MmpNode {
     /// [`MmpNode::tick`] first after construction.
     pub fn send_text(&self, dest: Vec<u8>, text: String) -> Result<Vec<u8>, FfiError> {
         let dest = id16_from(&dest)?;
-        self.lock().send_text(&dest, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
+        self.lock()
+            .send_text(&dest, &text)
+            .map(|id| id.0.to_vec())
+            .map_err(map_send_error)
     }
 
     /// Send an application-defined body to `dest`, returning its BundleID.
@@ -1049,20 +1099,30 @@ impl MmpNode {
     pub fn group_invite(&self, gid: Vec<u8>, peer: Vec<u8>) -> Result<(), FfiError> {
         let gid = id16_from(&gid)?;
         let peer = id16_from(&peer)?;
-        self.lock().group_invite(&gid, &peer).map_err(map_send_error)
+        self.lock()
+            .group_invite(&gid, &peer)
+            .map_err(map_send_error)
     }
 
     /// Send text into group `gid` under our sender key. Returns the BundleID.
     /// Call [`MmpNode::tick`] first after construction.
     pub fn group_send(&self, gid: Vec<u8>, text: String) -> Result<Vec<u8>, FfiError> {
         let gid = id16_from(&gid)?;
-        self.lock().group_send(&gid, &text).map(|id| id.0.to_vec()).map_err(map_send_error)
+        self.lock()
+            .group_send(&gid, &text)
+            .map(|id| id.0.to_vec())
+            .map_err(map_send_error)
     }
 
     /// Send an application-defined body into group `gid` under our sender key.
     /// The one-byte type tag is encrypted as part of the existing group
     /// payload and is surfaced on `FfiEvent::GroupMessage` after decryption.
-    pub fn group_send_body(&self, gid: Vec<u8>, apptype: u8, payload: Vec<u8>) -> Result<Vec<u8>, FfiError> {
+    pub fn group_send_body(
+        &self,
+        gid: Vec<u8>,
+        apptype: u8,
+        payload: Vec<u8>,
+    ) -> Result<Vec<u8>, FfiError> {
         if (0x02..MIN_CUSTOM_APPTYPE).contains(&apptype) {
             return Err(FfiError::BadArg);
         }
@@ -1076,7 +1136,12 @@ impl MmpNode {
     /// Current known members of group `gid`.
     pub fn group_members(&self, gid: Vec<u8>) -> Result<Vec<Vec<u8>>, FfiError> {
         let gid = id16_from(&gid)?;
-        Ok(self.lock().group_members(&gid).into_iter().map(|m| m.0.to_vec()).collect())
+        Ok(self
+            .lock()
+            .group_members(&gid)
+            .into_iter()
+            .map(|m| m.0.to_vec())
+            .collect())
     }
 
     /// Publish a signed nickname claim (doc 06 §4), gossiped to the mesh.
@@ -1090,7 +1155,9 @@ impl MmpNode {
         if name.len() > NICKNAME_MAX {
             return Err(FfiError::BadArg);
         }
-        self.lock().try_set_nickname(&name, seq).map_err(map_send_error)
+        self.lock()
+            .try_set_nickname(&name, seq)
+            .map_err(map_send_error)
     }
 
     /// Return the locally verified display nickname for `peer`, if one is
@@ -1142,7 +1209,10 @@ impl MmpNode {
     /// `"train/nationalrail/1234"`), returning its derived scope_id. Local
     /// filter only — never transmitted.
     pub fn subscribe_scope(&self, scope_name: String) -> Vec<u8> {
-        self.lock().subscribe_scope(scope_name.as_bytes()).0.to_vec()
+        self.lock()
+            .subscribe_scope(scope_name.as_bytes())
+            .0
+            .to_vec()
     }
 
     /// Unsubscribe from a scope previously subscribed via
@@ -1191,7 +1261,10 @@ impl MmpNode {
         cert: Option<Vec<u8>>,
     ) -> Result<Vec<u8>, FfiError> {
         let scope = id16_from(&scope)?;
-        let cert = cert.map(|c| AuthCert::decode(&c)).transpose().map_err(|_| FfiError::BadArg)?;
+        let cert = cert
+            .map(|c| AuthCert::decode(&c))
+            .transpose()
+            .map_err(|_| FfiError::BadArg)?;
         self.lock()
             .publish_announcement(scope, ann_type, priority, text.as_bytes(), cert.as_ref())
             .map(|id| id.0.to_vec())
@@ -1269,9 +1342,18 @@ impl MmpNode {
     /// `peer`: RS-encode → Merkle → mint class-4 symbol bundles (deduped by
     /// content address) → send the signed `FileManifest` (doc 16).
     /// Call [`MmpNode::tick`] before the first file send after construction.
-    pub fn send_file(&self, peer: Vec<u8>, name: String, mime: String, data: Vec<u8>) -> Result<FfiFileSend, FfiError> {
+    pub fn send_file(
+        &self,
+        peer: Vec<u8>,
+        name: String,
+        mime: String,
+        data: Vec<u8>,
+    ) -> Result<FfiFileSend, FfiError> {
         let peer = id16_from(&peer)?;
-        self.lock().send_file(&peer, &name, &mime, &data).map(FfiFileSend::from).map_err(map_send_error)
+        self.lock()
+            .send_file(&peer, &name, &mime, &data)
+            .map(FfiFileSend::from)
+            .map_err(map_send_error)
     }
 
     /// Explicit user pull for a `root` previously seen via
@@ -1279,7 +1361,9 @@ impl MmpNode {
     /// `FfiEvent::FileReady` fires. Idempotent on an already-active fetch.
     pub fn fetch_file(&self, root: Vec<u8>, dest: String) -> Result<(), FfiError> {
         let root = id16_from(&root)?;
-        self.lock().fetch_file(&root, Path::new(&dest)).map_err(map_fetch_error)
+        self.lock()
+            .fetch_file(&root, Path::new(&dest))
+            .map_err(map_fetch_error)
     }
 
     /// Cancel an in-progress fetch (→ `Abandoned`); already-downloaded
@@ -1330,7 +1414,11 @@ impl MmpNode {
         quality: FfiLinkQuality,
     ) -> Result<(), FfiError> {
         let quality = quality.validate()?;
-        self.lock().on_tal_event(TalEvent::LinkUp { link, initiator, quality });
+        self.lock().on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator,
+            quality,
+        });
         Ok(())
     }
 
@@ -1356,7 +1444,9 @@ impl MmpNode {
 
     /// Drain one outbound wire frame; call in a loop until `None`.
     pub fn poll_send(&self) -> Option<OutFrame> {
-        self.lock().poll_send().map(|(link, bytes)| OutFrame { link, bytes })
+        self.lock()
+            .poll_send()
+            .map(|(link, bytes)| OutFrame { link, bytes })
     }
 
     /// Drain up to `max_items` outbound wire frames in FIFO order.
@@ -1373,7 +1463,9 @@ impl MmpNode {
         let mut node = self.lock();
         let mut frames = Vec::with_capacity(limit);
         while frames.len() < limit {
-            let Some((link, bytes)) = node.poll_send() else { break };
+            let Some((link, bytes)) = node.poll_send() else {
+                break;
+            };
             frames.push(OutFrame { link, bytes });
         }
         frames
@@ -1443,7 +1535,9 @@ impl MmpNode {
         let mut node = self.lock();
         let mut events = Vec::with_capacity(limit);
         while events.len() < limit {
-            let Some(event) = node.poll_event() else { break };
+            let Some(event) = node.poll_event() else {
+                break;
+            };
             events.push(FfiEvent::from(event));
         }
         events
@@ -1493,7 +1587,10 @@ impl MmpNode {
 
         let snapshot = self.snapshot.clone();
         let due = {
-            let mut st = self.persist.lock().unwrap_or_else(|poison| poison.into_inner());
+            let mut st = self
+                .persist
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             st.last_seen_now_ms = now_ms;
             snapshot.is_some() && now_ms.saturating_sub(st.last_persist_ms) >= PERSIST_INTERVAL_MS
         };
@@ -1624,7 +1721,9 @@ impl MmpNode {
     pub fn group_remove(&self, gid: Vec<u8>, member: Vec<u8>) -> Result<u16, FfiError> {
         let gid = id16_from(&gid)?;
         let member = id16_from(&member)?;
-        self.lock().group_remove(&gid, &member).map_err(map_send_error)
+        self.lock()
+            .group_remove(&gid, &member)
+            .map_err(map_send_error)
     }
 
     /// Set the runtime relay tier (battery/charger/OS-mode driven, doc 11 §2).
@@ -1658,16 +1757,27 @@ impl MmpNode {
             .tick_serial
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let Some(snap) = self.snapshot.clone() else { return Ok(()) };
-        let now_ms = self.persist.lock().unwrap_or_else(|poison| poison.into_inner()).last_seen_now_ms;
-        self.persist_now(&snap, now_ms).map_err(|_| FfiError::Internal)
+        let Some(snap) = self.snapshot.clone() else {
+            return Ok(());
+        };
+        let now_ms = self
+            .persist
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .last_seen_now_ms;
+        self.persist_now(&snap, now_ms)
+            .map_err(|_| FfiError::Internal)
     }
 
     /// The `Display` of the most recent persist failure, if the most recent
     /// periodic-or-explicit persist attempt failed. `None` if the last
     /// attempt (if any) succeeded, or no `store_path` was configured.
     pub fn last_persist_error(&self) -> Option<String> {
-        self.persist.lock().unwrap_or_else(|poison| poison.into_inner()).last_error.clone()
+        self.persist
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .last_error
+            .clone()
     }
 }
 

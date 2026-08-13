@@ -48,12 +48,27 @@ fn event_batch_preserves_fifo_and_zero_limit_is_noop() {
     assert!(node.poll_event_batch(0).is_empty());
     let events = node.poll_event_batch(2);
     assert_eq!(events.len(), 2);
-    assert!(matches!(events[0], FfiEvent::TierChanged { tier: FfiTier::Leaf }));
-    assert!(matches!(events[1], FfiEvent::TierChanged { tier: FfiTier::Relay }));
+    assert!(matches!(
+        events[0],
+        FfiEvent::TierChanged {
+            tier: FfiTier::Leaf
+        }
+    ));
+    assert!(matches!(
+        events[1],
+        FfiEvent::TierChanged {
+            tier: FfiTier::Relay
+        }
+    ));
 
     let remaining = node.poll_event_batch(u32::MAX);
     assert_eq!(remaining.len(), 1);
-    assert!(matches!(remaining[0], FfiEvent::TierChanged { tier: FfiTier::Anchor }));
+    assert!(matches!(
+        remaining[0],
+        FfiEvent::TierChanged {
+            tier: FfiTier::Anchor
+        }
+    ));
     assert!(node.poll_event().is_none());
 }
 
@@ -62,7 +77,11 @@ fn event_batch_clamps_large_requests_to_the_hard_bound() {
     let node = node(204, FfiTier::Relay);
     while node.poll_event().is_some() {}
     for index in 0..100 {
-        node.set_tier(if index % 2 == 0 { FfiTier::Leaf } else { FfiTier::Relay });
+        node.set_tier(if index % 2 == 0 {
+            FfiTier::Leaf
+        } else {
+            FfiTier::Relay
+        });
     }
 
     let first = node.poll_event_batch(u32::MAX);

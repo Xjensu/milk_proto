@@ -34,9 +34,9 @@ fn train_profile_a_misdeployment_drill() {
     const ROUNDS: usize = 2; // doc 17 §8's own D-8 band: "<=2 conductor rounds"
     const COPRESENCE_GAP_MS: u64 = 1_000;
     const TRAVEL_MS: u64 = 30_000; // doc 17 §2.4-order dwell between carriages
-    // Misdeployed far-sensor<->conductor contact: a brief walking-past pass,
-    // not persistent same-carriage co-presence — modeled as a lossy contact
-    // rather than a full one. Stated assumption ⚠, not a measured figure.
+                                   // Misdeployed far-sensor<->conductor contact: a brief walking-past pass,
+                                   // not persistent same-carriage co-presence — modeled as a lossy contact
+                                   // rather than a full one. Stated assumption ⚠, not a measured figure.
     const MISDEPLOYED_DROP_PCT: u64 = 60;
 
     // Layout: node 0 = conductor; 1..=CARRIAGES = one anchor per carriage
@@ -97,7 +97,12 @@ fn train_profile_a_misdeployment_drill() {
                 let ev = sim.meet(conductor, anchor(0), TRAVEL_MS);
                 note_arrivals(&ev, &ids, &mut reached);
                 for i in 1..CARRIAGES {
-                    let ev = sim.meet_with_bundle_loss(conductor, sensor(i), TRAVEL_MS, MISDEPLOYED_DROP_PCT);
+                    let ev = sim.meet_with_bundle_loss(
+                        conductor,
+                        sensor(i),
+                        TRAVEL_MS,
+                        MISDEPLOYED_DROP_PCT,
+                    );
                     note_arrivals(&ev, &ids, &mut reached);
                 }
             }
@@ -121,7 +126,10 @@ fn train_profile_a_misdeployment_drill() {
          far_ratio_conforming={far_ratio_conforming:.3} far_ratio_misdeployed={far_ratio_misdeployed:.3}"
     );
 
-    assert!(conforming_ratio >= 0.9, "conforming ratio {conforming_ratio:.3} below 0.9");
+    assert!(
+        conforming_ratio >= 0.9,
+        "conforming ratio {conforming_ratio:.3} below 0.9"
+    );
     assert!(
         far_ratio_misdeployed <= far_ratio_conforming * 0.5,
         "far-carriage misdeployment degradation insufficient: conforming={far_ratio_conforming:.3} \
@@ -157,9 +165,17 @@ fn campus_profile_delivery_drill() {
 
     let ratio = sim.delivery_ratio();
     let minutes = sim.now_ms() as f64 / 60_000.0;
-    eprintln!("campus_profile_delivery_drill: delivery_ratio={ratio:.3} simulated_minutes={minutes:.1}");
+    eprintln!(
+        "campus_profile_delivery_drill: delivery_ratio={ratio:.3} simulated_minutes={minutes:.1}"
+    );
 
-    assert!(minutes <= 15.0, "simulated time {minutes:.1} min exceeded the 15 min drill budget");
+    assert!(
+        minutes <= 15.0,
+        "simulated time {minutes:.1} min exceeded the 15 min drill budget"
+    );
     assert!(sim.quota_ok(), "no node's store may exceed its quota");
-    assert!(ratio >= 0.85, "delivery ratio {ratio:.3} below doc 17 §8 D-9's 0.85 band");
+    assert!(
+        ratio >= 0.85,
+        "delivery ratio {ratio:.3} below doc 17 §8 D-9's 0.85 band"
+    );
 }

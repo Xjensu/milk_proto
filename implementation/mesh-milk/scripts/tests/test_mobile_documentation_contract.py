@@ -51,6 +51,38 @@ class MobileDocumentationContractTests(unittest.TestCase):
         self.assertNotIn("node.tick(Date.now())", self.api_reference)
         self.assertIn("newWithStoreLimit(seed: bytes32", self.api_reference)
 
+    def test_reference_docs_cover_additive_ffi_surface(self) -> None:
+        """Keep the three integration references aligned with mmp-ffi additions."""
+        for name in (
+            "ConversationPending",
+            "betaSnapshot",
+            "status",
+            "capabilities",
+            "metrics",
+            "pollSendBatch",
+            "pollEventBatch",
+            "pollCloseBatch",
+            "linkUpWithQuality",
+        ):
+            self.assertIn(name, self.api_reference, name)
+            self.assertIn(name, self.mobile, name)
+            self.assertIn(name, self.react_native, name)
+
+        # Group application bodies carry the same type tag as direct bodies;
+        # dropping it would make the bridge unable to dispatch custom payloads.
+        self.assertRegex(
+            self.api_reference,
+            r"GroupMessage.*apptype.*body",
+        )
+        self.assertRegex(
+            self.react_native,
+            r"groupMessage.*apptype.*body",
+        )
+
+        # The old claim that link quality was unavailable must not return while
+        # the checked additive method is part of the FFI contract.
+        self.assertNotIn("is not yet exposed at the FFI boundary", self.api_reference)
+
 
 if __name__ == "__main__":
     unittest.main()

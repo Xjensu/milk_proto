@@ -35,7 +35,11 @@ impl Default for SeenIndex {
 impl SeenIndex {
     /// Builds an empty index: no buckets, no recent-ring entries.
     pub fn new() -> SeenIndex {
-        SeenIndex { buckets: VecDeque::new(), recent: VecDeque::new(), recent_set: BTreeSet::new() }
+        SeenIndex {
+            buckets: VecDeque::new(),
+            recent: VecDeque::new(),
+            recent_set: BTreeSet::new(),
+        }
     }
 
     /// Record first sight of `id` at monotonic `now_ms` for `class`.
@@ -46,7 +50,8 @@ impl SeenIndex {
             Some((_, b)) => b,
             None => {
                 let pos = self.buckets.partition_point(|(e, _)| *e < epoch);
-                self.buckets.insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
+                self.buckets
+                    .insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
                 &mut self.buckets[pos].1
             }
         };
@@ -65,7 +70,10 @@ impl SeenIndex {
     /// or a (possibly false-positive) hit in any time-bucketed Bloom.
     pub fn contains(&self, id: &Id16) -> bool {
         self.recent_set.contains(id)
-            || self.buckets.iter().any(|(_, b)| b.contains(id, &INTERNAL_SALT))
+            || self
+                .buckets
+                .iter()
+                .any(|(_, b)| b.contains(id, &INTERNAL_SALT))
     }
 
     /// Drop buckets whose entire expiry window has passed. Monotonic clock only.
@@ -144,6 +152,10 @@ impl SeenIndex {
         if pos != bytes.len() {
             return None; // trailing bytes
         }
-        Some(SeenIndex { buckets, recent, recent_set })
+        Some(SeenIndex {
+            buckets,
+            recent,
+            recent_set,
+        })
     }
 }

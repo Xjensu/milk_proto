@@ -57,7 +57,11 @@ pub fn fingerprint(ids: &[Id16]) -> u64 {
     h.update(&fold);
     h.update(&(ids.len() as u32).to_le_bytes());
     let out = h.finalize();
-    u64::from_le_bytes(out.as_bytes()[..8].try_into().expect("blake3 output ≥ 8 bytes"))
+    u64::from_le_bytes(
+        out.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 output ≥ 8 bytes"),
+    )
 }
 
 /// Byte-wise decrement (saturating at MIN) — used to make exclusive split
@@ -225,7 +229,12 @@ impl Reconciler {
 
     /// Handle a peer range (from RECON_INIT or RECON_RANGE). `is_reply` = the
     /// peer's echo resolving one of OUR ranges.
-    pub fn on_range(&mut self, range: &Range, is_reply: bool, src: &mut impl IdSource) -> Vec<Frame> {
+    pub fn on_range(
+        &mut self,
+        range: &Range,
+        is_reply: bool,
+        src: &mut impl IdSource,
+    ) -> Vec<Frame> {
         if range.lo > range.hi {
             return Vec::new();
         }
@@ -265,7 +274,12 @@ impl Reconciler {
             // Match → echo so the asker resolves this range.
             return alloc::vec![Frame::ReconRange {
                 domain: self.domain | DOMAIN_REPLY_FLAG,
-                ranges: alloc::vec![Range { lo: range.lo, hi: range.hi, count: ids.len() as u32, fp: our_fp }],
+                ranges: alloc::vec![Range {
+                    lo: range.lo,
+                    hi: range.hi,
+                    count: ids.len() as u32,
+                    fp: our_fp
+                }],
             }];
         }
         // The response carries OUR IDs. A small peer-advertised count does
@@ -289,10 +303,18 @@ impl Reconciler {
         self.note_range_response(&range.lo, &range.hi);
         let mut ranges = Vec::with_capacity(RBSR_B_F);
         for (lo, hi, sub) in split_ranges(&range.lo, &range.hi, &ids, RBSR_B_F) {
-            ranges.push(Range { lo, hi, count: sub.len() as u32, fp: fingerprint(&sub) });
+            ranges.push(Range {
+                lo,
+                hi,
+                count: sub.len() as u32,
+                fp: fingerprint(&sub),
+            });
         }
         self.track_all(&ranges);
-        alloc::vec![Frame::ReconRange { domain: self.domain, ranges }]
+        alloc::vec![Frame::ReconRange {
+            domain: self.domain,
+            ranges
+        }]
     }
 
     /// Handle a peer's terminal ID list for `[lo, hi]`.
@@ -318,7 +340,13 @@ impl Reconciler {
     /// size discipline — split rather than list when OUR side exceeds
     /// `RBSR_T_LIST`, recursing (via the same `split_ranges`/`B_F` machinery)
     /// until every leaf is wire-safe.
-    pub fn on_ids(&mut self, lo: &Id16, hi: &Id16, ids: &[Id16], src: &mut impl IdSource) -> Vec<Frame> {
+    pub fn on_ids(
+        &mut self,
+        lo: &Id16,
+        hi: &Id16,
+        ids: &[Id16],
+        src: &mut impl IdSource,
+    ) -> Vec<Frame> {
         if lo > hi || ids.iter().any(|id| *id < *lo || *id > *hi) {
             return Vec::new();
         }
@@ -339,10 +367,18 @@ impl Reconciler {
         if ours.len() > RBSR_T_LIST {
             let mut ranges = Vec::with_capacity(RBSR_B_F);
             for (rlo, rhi, sub) in split_ranges(lo, hi, &ours, RBSR_B_F) {
-                ranges.push(Range { lo: rlo, hi: rhi, count: sub.len() as u32, fp: fingerprint(&sub) });
+                ranges.push(Range {
+                    lo: rlo,
+                    hi: rhi,
+                    count: sub.len() as u32,
+                    fp: fingerprint(&sub),
+                });
             }
             self.track_all(&ranges);
-            return alloc::vec![Frame::ReconRange { domain: self.domain, ranges }];
+            return alloc::vec![Frame::ReconRange {
+                domain: self.domain,
+                ranges
+            }];
         }
         self.list_frames(lo, hi, ours)
     }
@@ -363,10 +399,12 @@ impl Reconciler {
             self.exhausted = true;
             return;
         }
-        self.pending.entry(Self::key(range)).or_insert(PendingState {
-            coverage: BTreeSet::new(),
-            await_terminal: false,
-        });
+        self.pending
+            .entry(Self::key(range))
+            .or_insert(PendingState {
+                coverage: BTreeSet::new(),
+                await_terminal: false,
+            });
         self.refresh_open();
     }
 
@@ -381,14 +419,18 @@ impl Reconciler {
     }
 
     fn track_terminal(&mut self, range: &Range) {
-        if !self.pending.contains_key(&Self::key(range)) && self.pending.len() >= MAX_PENDING_RANGES {
+        if !self.pending.contains_key(&Self::key(range)) && self.pending.len() >= MAX_PENDING_RANGES
+        {
             self.exhausted = true;
             return;
         }
-        let state = self.pending.entry(Self::key(range)).or_insert(PendingState {
-            coverage: BTreeSet::new(),
-            await_terminal: false,
-        });
+        let state = self
+            .pending
+            .entry(Self::key(range))
+            .or_insert(PendingState {
+                coverage: BTreeSet::new(),
+                await_terminal: false,
+            });
         state.await_terminal = true;
         self.refresh_open();
     }
@@ -397,7 +439,10 @@ impl Reconciler {
         let key = Self::key(range);
         // `await_terminal` means this descriptor was emitted as RECON_IDS,
         // not as a range.  A reply-flagged RECON_RANGE cannot satisfy it.
-        let removable = self.pending.get(&key).is_some_and(|state| !state.await_terminal);
+        let removable = self
+            .pending
+            .get(&key)
+            .is_some_and(|state| !state.await_terminal);
         let removed = removable && self.pending.remove(&key).is_some();
         self.refresh_open();
         removed
@@ -422,7 +467,10 @@ impl Reconciler {
                 let better = best.is_none_or(|(old, old_terminal)| {
                     key.0 > old.0
                         || (key.0 == old.0 && key.1 < old.1)
-                        || (key.0 == old.0 && key.1 == old.1 && state.await_terminal && !old_terminal)
+                        || (key.0 == old.0
+                            && key.1 == old.1
+                            && state.await_terminal
+                            && !old_terminal)
                 });
                 if better {
                     best = Some((*key, state.await_terminal));
@@ -461,7 +509,12 @@ impl Reconciler {
         }
         self.listed.insert((*lo, *hi));
         // A list both offers our IDs and (on the peer) resolves this range.
-        alloc::vec![Frame::ReconIds { domain: self.domain, lo: *lo, hi: *hi, ids }]
+        alloc::vec![Frame::ReconIds {
+            domain: self.domain,
+            lo: *lo,
+            hi: *hi,
+            ids
+        }]
     }
 }
 
@@ -475,7 +528,11 @@ mod tests {
 
     impl IdSource for FixedIds {
         fn ids_in(&mut self, _domain: u8, lo: &Id16, hi: &Id16) -> Vec<Id16> {
-            self.ids.iter().copied().filter(|id| *id >= *lo && *id <= *hi).collect()
+            self.ids
+                .iter()
+                .copied()
+                .filter(|id| *id >= *lo && *id <= *hi)
+                .collect()
         }
 
         fn has(&mut self, _id: &Id16) -> bool {
@@ -497,14 +554,21 @@ mod tests {
 
     #[test]
     fn hostile_range_descriptors_trip_pending_cap_without_growth() {
-        let mut source = FixedIds { ids: (0..25).map(id_with_tail).collect() };
+        let mut source = FixedIds {
+            ids: (0..25).map(id_with_tail).collect(),
+        };
         let mut recon = Reconciler::new(0);
 
         // Every descriptor covers the same 25 local IDs but carries a unique
         // upper bound.  A peer can send these as valid, in-cap frames; before
         // the bound each one opened another 16-child split in `pending`.
         for value in 0..=u16::MAX {
-            let range = Range { lo: Id16::MIN, hi: high_bound(value), count: 0, fp: 0 };
+            let range = Range {
+                lo: Id16::MIN,
+                hi: high_bound(value),
+                count: 0,
+                fp: 0,
+            };
             recon.on_range(&range, false, &mut source);
             if recon.resource_exhausted() {
                 break;
@@ -523,7 +587,12 @@ mod tests {
         // Small local ranges take the terminal-list path.  Distinct bounds
         // would otherwise make `listed` grow for the life of the session.
         for value in 0..=u16::MAX {
-            let range = Range { lo: Id16::MIN, hi: high_bound(value), count: 1, fp: 1 };
+            let range = Range {
+                lo: Id16::MIN,
+                hi: high_bound(value),
+                count: 1,
+                fp: 1,
+            };
             recon.on_range(&range, false, &mut source);
             if recon.resource_exhausted() {
                 break;
@@ -534,7 +603,12 @@ mod tests {
 
         let mut recon = Reconciler::new(0);
         let ids: Vec<Id16> = (0..=MAX_MISSING_IDS as u16).map(id_with_tail).collect();
-        let range = Range { lo: Id16::MIN, hi: Id16::MAX, count: ids.len() as u32, fp: 0 };
+        let range = Range {
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            count: ids.len() as u32,
+            fp: 0,
+        };
         recon.on_ids(&range.lo, &range.hi, &ids, &mut source);
         assert!(recon.resource_exhausted());
         assert!(recon.missing.len() <= MAX_MISSING_IDS);
@@ -551,14 +625,30 @@ mod tests {
         // records a terminal-list obligation in addition to the parent
         // coverage.  A RECON_RANGE echo is not a valid response to that
         // terminal-list exchange and must not retire the obligation.
-        let child = Range { lo: id, hi: id, count: 0, fp: 0 };
+        let child = Range {
+            lo: id,
+            hi: id,
+            count: 0,
+            fp: 0,
+        };
         let frames = recon.on_range(&child, false, &mut source);
         assert!(matches!(frames.first(), Some(Frame::ReconIds { .. })));
-        assert_eq!(recon.open, 2, "parent and terminal-list obligations are pending");
+        assert_eq!(
+            recon.open, 2,
+            "parent and terminal-list obligations are pending"
+        );
 
-        let terminal = Range { lo: id, hi: id, count: 1, fp: fingerprint(&[id]) };
+        let terminal = Range {
+            lo: id,
+            hi: id,
+            count: 1,
+            fp: fingerprint(&[id]),
+        };
         assert!(recon.on_range(&terminal, true, &mut source).is_empty());
-        assert_eq!(recon.open, 2, "a range echo must not shortcut RECON_IDS completion");
+        assert_eq!(
+            recon.open, 2,
+            "a range echo must not shortcut RECON_IDS completion"
+        );
     }
 
     #[test]
@@ -569,7 +659,12 @@ mod tests {
         let _ = recon.init_frame(&mut source);
 
         // This creates the terminal-list child obligation for [id, id].
-        let child = Range { lo: id, hi: id, count: 0, fp: 0 };
+        let child = Range {
+            lo: id,
+            hi: id,
+            count: 0,
+            fp: 0,
+        };
         let frames = recon.on_range(&child, false, &mut source);
         assert!(matches!(frames.first(), Some(Frame::ReconIds { .. })));
         assert_eq!(recon.open, 2);
@@ -577,10 +672,18 @@ mod tests {
         // A non-reply range with the exact terminal descriptor is not the
         // required peer ID-list/split response.  It must fail closed rather
         // than retiring the obligation and allowing domain advancement.
-        let matching = Range { lo: id, hi: id, count: 1, fp: fingerprint(&[id]) };
+        let matching = Range {
+            lo: id,
+            hi: id,
+            count: 1,
+            fp: fingerprint(&[id]),
+        };
         assert!(recon.on_range(&matching, false, &mut source).is_empty());
         assert!(recon.resource_exhausted());
-        assert_eq!(recon.open, 2, "malformed range must not retire terminal state");
+        assert_eq!(
+            recon.open, 2,
+            "malformed range must not retire terminal state"
+        );
     }
 
     #[test]
@@ -591,14 +694,21 @@ mod tests {
         // defines one.  This test locks the safe boundary: every RBSR frame
         // produced by a D3 reconciler keeps base domain 3, with only the
         // existing reply flag allowed to vary.
-        let mut source = FixedIds { ids: (0..40).map(id_with_tail).collect() };
+        let mut source = FixedIds {
+            ids: (0..40).map(id_with_tail).collect(),
+        };
         let mut recon = Reconciler::new(3);
         let init = recon.init_frame(&mut source);
         assert_eq!(recon_frame_domain(&init), Some(3));
 
         // Force the split path so the assertion covers generated RECON_RANGE
         // children rather than only the initial full-range frame.
-        let mismatched = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 };
+        let mismatched = Range {
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            count: 0,
+            fp: 0,
+        };
         let replies = recon.on_range(&mismatched, false, &mut source);
         assert!(!replies.is_empty());
         assert!(replies.iter().all(|frame| {
@@ -611,7 +721,12 @@ mod tests {
         // erratum defines a partition identifier and legacy behavior.
         let mut empty = FixedIds { ids: Vec::new() };
         let mut terminal = Reconciler::new(3);
-        let terminal_range = Range { lo: Id16::MIN, hi: Id16::MAX, count: 1, fp: 1 };
+        let terminal_range = Range {
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            count: 1,
+            fp: 1,
+        };
         let terminal_frames = terminal.on_range(&terminal_range, false, &mut empty);
         assert!(terminal_frames.iter().all(|frame| {
             recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)
@@ -620,7 +735,12 @@ mod tests {
         let mut echo_source = FixedIds { ids: Vec::new() };
         let mut echo = Reconciler::new(3);
         let _ = echo.init_frame(&mut echo_source);
-        let matching = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: fingerprint(&[]) };
+        let matching = Range {
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            count: 0,
+            fp: fingerprint(&[]),
+        };
         let echo_frames = echo.on_range(&matching, false, &mut echo_source);
         assert!(echo_frames.iter().all(|frame| {
             recon_frame_domain(frame).is_some_and(|domain| domain & !DOMAIN_REPLY_FLAG == 3)

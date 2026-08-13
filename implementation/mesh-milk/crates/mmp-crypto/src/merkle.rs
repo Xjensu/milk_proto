@@ -116,7 +116,9 @@ impl MerklePath {
         let mut out = Vec::with_capacity(1 + self.levels.len() * (2 + (ARITY - 1) * 32));
         out.push(self.levels.len() as u8);
         for level in &self.levels {
-            debug_assert!(level.siblings.len() < ARITY && usize::from(level.pos) <= level.siblings.len());
+            debug_assert!(
+                level.siblings.len() < ARITY && usize::from(level.pos) <= level.siblings.len()
+            );
             out.push(level.pos);
             out.push(level.siblings.len() as u8);
             for s in &level.siblings {

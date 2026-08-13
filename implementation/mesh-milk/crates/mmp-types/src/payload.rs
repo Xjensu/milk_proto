@@ -85,7 +85,12 @@ impl AsyncPayload {
                 out.extend_from_slice(&eph.0);
                 out.put_var(ct);
             }
-            AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct } => {
+            AsyncPayload::Prekey {
+                prekey_id,
+                sender_xpk,
+                eph,
+                ct,
+            } => {
                 out.push(0x01);
                 out.put_u16(*prekey_id);
                 out.extend_from_slice(&sender_xpk.0);
@@ -99,7 +104,10 @@ impl AsyncPayload {
     pub fn decode(bytes: &[u8]) -> Result<Self, WireError> {
         let mut r = Reader::new(bytes);
         let p = match r.u8()? {
-            0x00 => AsyncPayload::Sealed { eph: r.key32()?, ct: r.varbytes(MAX_BUNDLE)?.to_vec() },
+            0x00 => AsyncPayload::Sealed {
+                eph: r.key32()?,
+                ct: r.varbytes(MAX_BUNDLE)?.to_vec(),
+            },
             0x01 => AsyncPayload::Prekey {
                 prekey_id: r.u16()?,
                 sender_xpk: r.key32()?,

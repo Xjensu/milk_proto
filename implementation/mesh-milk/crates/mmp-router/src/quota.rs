@@ -77,7 +77,8 @@ impl OriginBuckets {
 
     /// Drop idle buckets (bounded state at 10k scale).
     pub fn compact(&mut self, now_ms: u64, idle_ms: u64) {
-        self.map.retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
+        self.map
+            .retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
     }
 
     /// Number of distinct origins currently tracked.

@@ -61,7 +61,10 @@ fn clustered_mobility_measurement_is_reproducible() {
     }
 
     assert!(sim.run_clustered_meetings(MEETINGS, 1_000, 5_000, COMMUNITIES, BRIDGE_EVERY));
-    assert!(sim.quota_ok(), "clustered schedule must stay within store quotas");
+    assert!(
+        sim.quota_ok(),
+        "clustered schedule must stay within store quotas"
+    );
     eprintln!(
         "clustered_mobility_measurement: delivery_ratio={:.3} p50_ms={:?} p90_ms={:?} meetings={} simulated_hours={:.2}",
         sim.delivery_ratio(),
@@ -99,7 +102,10 @@ fn social_clustered_mobility_measurement_is_reproducible() {
             BRIDGE_PROBABILITY_PER_MILLE,
         )
         .expect("valid social clustered profile");
-    assert!(sim.quota_ok(), "social clustered schedule must stay within store quotas");
+    assert!(
+        sim.quota_ok(),
+        "social clustered schedule must stay within store quotas"
+    );
     eprintln!(
         "social_clustered_mobility_measurement: delivery_ratio={:.3} p50_ms={:?} p90_ms={:?} \
          meetings={} bridges={} bridge_rate={:.3} realized_bridge_rate_per_mille={} \
@@ -162,7 +168,10 @@ fn thousand_node_mesh_scale_validation() {
     // Stay well inside LIFETIME_MESSAGE_MS (72 h) — a run that eats its own
     // TTL budget invalidates every conclusion below (the recorded tuning
     // lesson from the 100-node scenario's development).
-    assert!(simulated_hours < 72.0, "simulated time {simulated_hours:.1}h ate its own message TTL budget");
+    assert!(
+        simulated_hours < 72.0,
+        "simulated time {simulated_hours:.1}h ate its own message TTL budget"
+    );
 
     // 1000-node store growth stays within quota even under this scenario's
     // inflated meeting density (doc 13 §3's "ample inside quotas" claim).
@@ -172,5 +181,8 @@ fn thousand_node_mesh_scale_validation() {
     // why that band doesn't apply to this model/timescale): a future change
     // that degrades mixing much further than the measured ~0.45 is worth
     // noticing, with headroom for legitimate PRNG-path variance.
-    assert!(ratio >= 0.40, "delivery ratio {ratio:.3} regressed below the measured 0.45 baseline");
+    assert!(
+        ratio >= 0.40,
+        "delivery ratio {ratio:.3} regressed below the measured 0.45 baseline"
+    );
 }

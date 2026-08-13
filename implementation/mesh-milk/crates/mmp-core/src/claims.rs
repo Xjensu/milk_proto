@@ -9,8 +9,8 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
 use mmp_types::claim::{
-    field, friendship_signed_object, succession_signed_object, Claim, EpochAnchor, Friendship, PrekeyBatch,
-    Revocation,
+    field, friendship_signed_object, succession_signed_object, Claim, EpochAnchor, Friendship,
+    PrekeyBatch, Revocation,
 };
 use mmp_types::consts::LIFETIME_CLAIM_MS;
 use mmp_types::domain::SigDomain;
@@ -68,17 +68,30 @@ impl ClaimStore {
         match claim.field {
             field::EXCHANGE_KEY => claim.body.len() == 32,
             field::PREKEY_BATCH => {
-                let Ok(batch) = PrekeyBatch::decode(&claim.body) else { return false };
-                mmp_crypto::verify(SigDomain::Prekey, &claim.owner, &batch.signed_object(), &batch.spk_sig).is_ok()
+                let Ok(batch) = PrekeyBatch::decode(&claim.body) else {
+                    return false;
+                };
+                mmp_crypto::verify(
+                    SigDomain::Prekey,
+                    &claim.owner,
+                    &batch.signed_object(),
+                    &batch.spk_sig,
+                )
+                .is_ok()
             }
             field::FRIENDSHIP => {
-                let Ok(body) = Friendship::decode(&claim.body) else { return false };
+                let Ok(body) = Friendship::decode(&claim.body) else {
+                    return false;
+                };
                 let preimage = friendship_signed_object(&claim.owner, &body.friend, body.since);
-                mmp_crypto::verify(SigDomain::Friend, &body.friend, &preimage, &body.countersig).is_ok()
+                mmp_crypto::verify(SigDomain::Friend, &body.friend, &preimage, &body.countersig)
+                    .is_ok()
             }
             field::GROUP_EPOCH_ANCHOR => EpochAnchor::decode(&claim.body).is_ok(),
             field::REVOCATION => {
-                let Ok(body) = Revocation::decode(&claim.body) else { return false };
+                let Ok(body) = Revocation::decode(&claim.body) else {
+                    return false;
+                };
                 body.revoked_key == claim.owner
             }
             // AVATAR_ROOT has no complete body codec in the frozen suite;
@@ -124,7 +137,14 @@ impl ClaimStore {
         let key = (node, claim.field);
         match self.map.get_mut(&key) {
             None => {
-                self.map.insert(key, Stored { claim, received_at: now_ms, pinned });
+                self.map.insert(
+                    key,
+                    Stored {
+                        claim,
+                        received_at: now_ms,
+                        pinned,
+                    },
+                );
                 ClaimMerge::Adopted
             }
             Some(cur) => {
@@ -160,7 +180,9 @@ impl ClaimStore {
     /// (fixed-size, no allocation) and keeps `Stored` from needing a second,
     /// redundant decoded copy.
     pub fn revocation(&self, owner: &NodeId) -> Option<Revocation> {
-        self.map.get(&(*owner, field::REVOCATION)).and_then(|s| Revocation::decode(&s.claim.body).ok())
+        self.map
+            .get(&(*owner, field::REVOCATION))
+            .and_then(|s| Revocation::decode(&s.claim.body).ok())
     }
 
     /// The trusted successor for `owner`'s revocation, if the revocation
@@ -211,7 +233,8 @@ impl ClaimStore {
 
     /// Strangers' claims expire at 7 d; pinned (contact) claims are retained.
     pub fn expire(&mut self, now_ms: u64) {
-        self.map.retain(|_, s| s.pinned || s.received_at.saturating_add(LIFETIME_CLAIM_MS) > now_ms);
+        self.map
+            .retain(|_, s| s.pinned || s.received_at.saturating_add(LIFETIME_CLAIM_MS) > now_ms);
     }
 
     /// All currently-stored claims, in `(owner, field)` order.
@@ -235,13 +258,24 @@ mod tests {
     }
 
     fn signed_claim(owner: &Identity, field_id: u8, seq: u32, body: Vec<u8>) -> Claim {
-        let mut c = Claim { owner: owner.public(), field: field_id, seq, body, sig: Sig64::ZERO };
+        let mut c = Claim {
+            owner: owner.public(),
+            field: field_id,
+            seq,
+            body,
+            sig: Sig64::ZERO,
+        };
         c.sig = owner.sign(SigDomain::Claim, &c.signed_object());
         c
     }
 
     fn revoke(owner: &Identity, seq: u32) -> Claim {
-        let body = Revocation { revoked_key: owner.public(), reason: 1, successor: None, successor_countersig: None };
+        let body = Revocation {
+            revoked_key: owner.public(),
+            reason: 1,
+            successor: None,
+            successor_countersig: None,
+        };
         signed_claim(owner, field::REVOCATION, seq, body.encode())
     }
 
@@ -254,7 +288,10 @@ mod tests {
         let nick = signed_claim(&alice, field::NICKNAME, 5, b"alice".to_vec());
         assert_eq!(store.merge(nick, 0, false), ClaimMerge::Adopted);
 
-        assert_eq!(store.merge(revoke(&alice, 1), 0, false), ClaimMerge::Adopted);
+        assert_eq!(
+            store.merge(revoke(&alice, 1), 0, false),
+            ClaimMerge::Adopted
+        );
 
         // A LATER, higher-seq nickname claim must be ignored — the tombstone wins.
         let later_nick = signed_claim(&alice, field::NICKNAME, 99, b"alicia".to_vec());
@@ -274,8 +311,10 @@ mod tests {
         let mallory = identity(3); // signs instead, under the wrong key
 
         let mut store = ClaimStore::new();
-        let bad_sig =
-            mallory.sign(SigDomain::Claim, &succession_signed_object(&alice.public(), &bob.public()));
+        let bad_sig = mallory.sign(
+            SigDomain::Claim,
+            &succession_signed_object(&alice.public(), &bob.public()),
+        );
         let body = Revocation {
             revoked_key: alice.public(),
             reason: 0,
@@ -287,7 +326,10 @@ mod tests {
 
         let n = node_id_of(&alice.public());
         assert!(store.revocation(&n).is_some(), "revocation stands");
-        assert!(store.successor(&n).is_none(), "bad countersig => no trusted successor");
+        assert!(
+            store.successor(&n).is_none(),
+            "bad countersig => no trusted successor"
+        );
     }
 
     /// A correctly counter-signed succession DOES resolve — the mirror image
@@ -298,8 +340,10 @@ mod tests {
         let bob = identity(2);
 
         let mut store = ClaimStore::new();
-        let sig =
-            bob.sign(SigDomain::Claim, &succession_signed_object(&alice.public(), &bob.public()));
+        let sig = bob.sign(
+            SigDomain::Claim,
+            &succession_signed_object(&alice.public(), &bob.public()),
+        );
         let body = Revocation {
             revoked_key: alice.public(),
             reason: 0,
@@ -320,7 +364,10 @@ mod tests {
     fn revoked_owners_later_claims_of_any_field_are_rejected() {
         let alice = identity(1);
         let mut store = ClaimStore::new();
-        assert_eq!(store.merge(revoke(&alice, 1), 0, false), ClaimMerge::Adopted);
+        assert_eq!(
+            store.merge(revoke(&alice, 1), 0, false),
+            ClaimMerge::Adopted
+        );
 
         let exchange = signed_claim(&alice, field::EXCHANGE_KEY, 1, vec![7u8; 32]);
         assert_eq!(store.merge(exchange, 0, false), ClaimMerge::Stale);
@@ -335,7 +382,10 @@ mod tests {
     fn a_second_revocation_for_the_same_owner_is_ignored() {
         let alice = identity(1);
         let mut store = ClaimStore::new();
-        assert_eq!(store.merge(revoke(&alice, 1), 0, false), ClaimMerge::Adopted);
+        assert_eq!(
+            store.merge(revoke(&alice, 1), 0, false),
+            ClaimMerge::Adopted
+        );
         assert_eq!(store.merge(revoke(&alice, 2), 0, false), ClaimMerge::Stale);
     }
 
@@ -346,9 +396,14 @@ mod tests {
         let alice = identity(1); // dependent
         let bob = identity(2); // patron
         let since = 1_000;
-        let preimage = mmp_types::claim::friendship_signed_object(&alice.public(), &bob.public(), since);
+        let preimage =
+            mmp_types::claim::friendship_signed_object(&alice.public(), &bob.public(), since);
         let countersig = bob.sign(SigDomain::Friend, &preimage);
-        let body = mmp_types::claim::Friendship { friend: bob.public(), since, countersig };
+        let body = mmp_types::claim::Friendship {
+            friend: bob.public(),
+            since,
+            countersig,
+        };
         let claim = signed_claim(&alice, field::FRIENDSHIP, 1, body.encode());
 
         let mut store = ClaimStore::new();
@@ -364,9 +419,14 @@ mod tests {
         let bob = identity(2); // claimed patron
         let mallory = identity(3); // actually signs — not bob
         let since = 1_000;
-        let preimage = mmp_types::claim::friendship_signed_object(&alice.public(), &bob.public(), since);
+        let preimage =
+            mmp_types::claim::friendship_signed_object(&alice.public(), &bob.public(), since);
         let bad_countersig = mallory.sign(SigDomain::Friend, &preimage);
-        let body = mmp_types::claim::Friendship { friend: bob.public(), since, countersig: bad_countersig };
+        let body = mmp_types::claim::Friendship {
+            friend: bob.public(),
+            since,
+            countersig: bad_countersig,
+        };
         let claim = signed_claim(&alice, field::FRIENDSHIP, 1, body.encode());
 
         let mut store = ClaimStore::new();
@@ -382,8 +442,12 @@ mod tests {
         let alice = identity(1);
         let carol = identity(4);
         let mut store = ClaimStore::new();
-        let body =
-            Revocation { revoked_key: carol.public(), reason: 0, successor: None, successor_countersig: None };
+        let body = Revocation {
+            revoked_key: carol.public(),
+            reason: 0,
+            successor: None,
+            successor_countersig: None,
+        };
         let rev = signed_claim(&alice, field::REVOCATION, 1, body.encode());
         assert_eq!(store.merge(rev, 0, false), ClaimMerge::Rejected);
 

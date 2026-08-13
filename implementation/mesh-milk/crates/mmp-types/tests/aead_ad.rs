@@ -20,15 +20,24 @@ fn canonical_aead_ad_excludes_payload_signature_and_live_lifetime() {
     let base = bundle(72_000, 0x22, 1, vec![0xaa, 0xbb, 0xcc]);
     let mut changed_lifetime = base.clone();
     changed_lifetime.lifetime_ms = 1;
-    assert_eq!(base.canonical_aead_ad(), changed_lifetime.canonical_aead_ad());
+    assert_eq!(
+        base.canonical_aead_ad(),
+        changed_lifetime.canonical_aead_ad()
+    );
 
     let mut changed_payload = base.clone();
     changed_payload.payload = vec![0xdd, 0xee, 0xff];
-    assert_eq!(base.canonical_aead_ad(), changed_payload.canonical_aead_ad());
+    assert_eq!(
+        base.canonical_aead_ad(),
+        changed_payload.canonical_aead_ad()
+    );
 
     let mut changed_signature = base.clone();
     changed_signature.signature = Sig64([0x77; 64]);
-    assert_eq!(base.canonical_aead_ad(), changed_signature.canonical_aead_ad());
+    assert_eq!(
+        base.canonical_aead_ad(),
+        changed_signature.canonical_aead_ad()
+    );
 }
 
 #[test]
@@ -40,7 +49,10 @@ fn canonical_aead_ad_binds_routing_header_fields() {
 
     let mut changed_priority = base.clone();
     changed_priority.priority = 2;
-    assert_ne!(base.canonical_aead_ad(), changed_priority.canonical_aead_ad());
+    assert_ne!(
+        base.canonical_aead_ad(),
+        changed_priority.canonical_aead_ad()
+    );
 }
 
 #[test]

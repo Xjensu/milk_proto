@@ -52,6 +52,16 @@ JS receives only **app-level events** — `MessageReceived`, `Delivered`, `Conta
 (the `Event` enum in `mmp-node/src/lib.rs`) — emitted at a rate of maybe a few per second
 even under load, which the bridge handles trivially.
 
+The generated native error surface includes `FfiError::ConversationPending`. Treat it as a
+normal first-contact state: wait for the authenticated receipt/`deliveryProgress` transition
+before retrying another direct body for that peer; do not turn it into a generic retry storm.
+
+Native radio code may provide measured `FfiLinkQuality` through the additive
+`linkUpWithQuality(link, initiator, quality)` call. The legacy `linkUp` call remains valid and
+uses the conservative BLE-GATT floor. MTU/goodput hints stay inside the native/Rust scheduling
+path, are bounded before admission, and never cross the frozen MMP/1 wire format; the JS bridge
+does not need to expose them.
+
 Concretely: the Kotlin/Swift module holds `BluetoothGattServer`/`CBPeripheralManager` and
 the `MmpNode` object in the same process and calls `node.linkData(link, bytes)`
 straight from the characteristic-write callback — the clock is advanced separately, on
@@ -93,6 +103,11 @@ import { NativeModules, NativeEventEmitter, EmitterSubscription } from 'react-na
 export type NodeIdHex = string;   // 32 lowercase hex chars (16 bytes)
 export type MsgIdHex = string;    // 32 lowercase hex chars (16 bytes)
 export type GroupIdHex = string;  // 32 lowercase hex chars (16 bytes)
+export type ScopeIdHex = string;  // 32 lowercase hex chars (16 bytes)
+export type FileRootHex = string; // 32 lowercase hex chars (16-byte Merkle root)
+export type Base64Value = string; // opaque variable-length bytes
+export type PublicKeyB64 = Base64Value;
+export type SignatureB64 = Base64Value;
 
 export type Tier = 'leaf' | 'relay' | 'anchor';
 
@@ -105,18 +120,44 @@ export type MmpEvent =
   | { type: 'deliveryProgress'; id: MsgIdHex; state: DeliveryState }
   | { type: 'claimUpdated'; owner: NodeIdHex; field: number }
   | { type: 'compromiseWarning'; owner: NodeIdHex }
+  | { type: 'peerRevoked'; peer: NodeIdHex; successor: string | null /* base64 32-byte public key */ }
   | { type: 'contactSeen'; peer: NodeIdHex }
   | { type: 'established'; peer: NodeIdHex }
   | { type: 'groupInvite'; gid: GroupIdHex; from: NodeIdHex }
-  | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; body: string /* base64 */ }
+  | { type: 'groupMessage'; gid: GroupIdHex; from: NodeIdHex; id: MsgIdHex; apptype: number; body: string /* base64 */ }
   | { type: 'groupEpochChanged'; gid: GroupIdHex; epoch: number }
-  | { type: 'tierChanged'; tier: Tier };
+  | { type: 'tierChanged'; tier: Tier }
+  | { type: 'announcement'; id: MsgIdHex; scope: ScopeIdHex; annType: number; notAfter: number; text: Base64Value; from: NodeIdHex; official: boolean; effectivePriority: number; scopeNameHint: Base64Value | null }
+  | { type: 'fileOffered'; conv: MsgIdHex; from: NodeIdHex; sharer: NodeIdHex; entries: FileOffer[] }
+  | { type: 'fileReady'; root: FileRootHex; path: string }
+  | { type: 'fileFailed'; root: FileRootHex; reason: FileFailReason };
+
+export type FileFailReason = 'hashMismatch' | 'abandoned';
+export interface FileOffer { nameB64: Base64Value; mimeB64: Base64Value; size: number; root: FileRootHex; thumbRoot: FileRootHex | null }
+export interface FileSend { messageId: MsgIdHex; root: FileRootHex }
+export interface FileProgress { state: 'wanted' | 'fetching' | 'assembled' | 'abandoned'; haveSymbols: number; totalSymbols: number; stripesDone: number; stripes: number }
+export interface OutFrame { link: number; bytes: Base64Value }
+export interface NodeStatus { tier: Tier; persistentStore: boolean; diagnosticsEnabled: boolean; lastTickMs: number }
+export interface NodeMetrics { storeLen: number; closeActionsDropped: number; eventQueueDropped: number; diagnosticRecords: number; diagnosticClamps: number; diagnosticDrops: number }
+export type Capability = 'directMessaging' | 'groupMessaging' | 'fileTransfer' | 'announcements' | 'diagnostics' | 'transportInjection';
+export interface Capabilities { capabilities: Capability[]; persistentStore: boolean }
+export interface BetaSnapshot { schemaVersion: 1; status: NodeStatus; metrics: NodeMetrics; capabilities: Capabilities }
 
 interface MmpMeshNative {
   // Lifecycle. Idempotent: if a node already exists for this seed/store, returns its id.
   start(tier: Tier): Promise<NodeIdHex>;
   stop(): Promise<void>;
   setTier(tier: Tier): Promise<void>;
+  status(): Promise<NodeStatus>;
+  metrics(): Promise<NodeMetrics>;
+  capabilities(): Promise<Capabilities>;
+  betaSnapshot(): Promise<BetaSnapshot>;
+  setWallClock(unixS: number): Promise<void>;
+  pinAuthorityRoot(scope: ScopeIdHex, issuerPublicKeyB64: PublicKeyB64): Promise<void>;
+  subscribeScope(scopeName: string): Promise<ScopeIdHex>;
+  unsubscribeScope(scope: ScopeIdHex): Promise<void>;
+  mintAuthCert(suite: number, subjectPublicKeyB64: PublicKeyB64, scope: ScopeIdHex, caps: number, priorityBudget: number, notAfter: number): Promise<Base64Value>;
+  publishAnnouncement(scope: ScopeIdHex, annType: number, priority: number, text: string, certB64: Base64Value | null): Promise<MsgIdHex>;
 
   // Identity / claims.
   nodeId(): Promise<NodeIdHex>;
@@ -124,23 +165,42 @@ interface MmpMeshNative {
   ownClaims(): Promise<string[]>;               // base64-encoded Claim records
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   setNickname(name: string, seq: number): Promise<void>;
+  nicknameOf(peer: NodeIdHex): Promise<string | null>;
+  revokeIdentity(reason: number): Promise<string>; // base64 Claim
   tryRevokeIdentity(reason: number): Promise<string>; // rejects on local provider/lifecycle failure
+  revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string>;
   block(peer: NodeIdHex): Promise<void>;
+  requestFriendship(peerPublicKeyB64: PublicKeyB64): Promise<void>;
+  allowFriendshipFrom(peerPublicKeyB64: PublicKeyB64): Promise<void>;
 
   // Messaging.
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex>;
+  sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex>;
   messageState(id: MsgIdHex): Promise<DeliveryState | null>;
 
   // Groups.
   createGroup(): Promise<GroupIdHex>;
   groupInvite(gid: GroupIdHex, peer: NodeIdHex): Promise<void>;
   groupSend(gid: GroupIdHex, text: string): Promise<MsgIdHex>;
+  groupSendBody(gid: GroupIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex>;
   groupMembers(gid: GroupIdHex): Promise<NodeIdHex[]>;
   groupRemove(gid: GroupIdHex, member: NodeIdHex): Promise<number>;  // returns the new epoch
 
+  // Explicit-pull file transfer.
+  sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend>;
+  fetchFile(root: FileRootHex, dest: string): Promise<void>;
+  cancelFetch(root: FileRootHex): Promise<void>;
+  fileProgress(root: FileRootHex): Promise<FileProgress | null>;
+
   // Diagnostics.
   enableDiagnostics(): Promise<void>;
+  disableDiagnostics(): Promise<void>;
   diagDump(): Promise<string>;
+
+  // Bounded host-owned polling; each native batch is capped at 64 items.
+  pollSendBatch(maxItems: number): Promise<OutFrame[]>;
+  pollEventBatch(maxItems: number): Promise<Record<string, unknown>[]>;
+  pollCloseBatch(maxItems: number): Promise<number[]>;
 
   // Storage / persistence — only meaningful when the native module started the node with a
   // store path (see §5 "Store persistence"); a no-op / zero on an in-memory-only node.
@@ -172,6 +232,46 @@ export class MmpClient {
     return native.setTier(tier);
   }
 
+  status(): Promise<NodeStatus> {
+    return native.status();
+  }
+
+  metrics(): Promise<NodeMetrics> {
+    return native.metrics();
+  }
+
+  capabilities(): Promise<Capabilities> {
+    return native.capabilities();
+  }
+
+  betaSnapshot(): Promise<BetaSnapshot> {
+    return native.betaSnapshot();
+  }
+
+  setWallClock(unixS: number): Promise<void> {
+    return native.setWallClock(unixS);
+  }
+
+  pinAuthorityRoot(scope: ScopeIdHex, issuerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return native.pinAuthorityRoot(scope, issuerPublicKeyB64);
+  }
+
+  subscribeScope(scopeName: string): Promise<ScopeIdHex> {
+    return native.subscribeScope(scopeName);
+  }
+
+  unsubscribeScope(scope: ScopeIdHex): Promise<void> {
+    return native.unsubscribeScope(scope);
+  }
+
+  mintAuthCert(suite: number, subjectPublicKeyB64: PublicKeyB64, scope: ScopeIdHex, caps: number, priorityBudget: number, notAfter: number): Promise<Base64Value> {
+    return native.mintAuthCert(suite, subjectPublicKeyB64, scope, caps, priorityBudget, notAfter);
+  }
+
+  publishAnnouncement(scope: ScopeIdHex, annType: number, priority: number, text: string, certB64: Base64Value | null): Promise<MsgIdHex> {
+    return native.publishAnnouncement(scope, annType, priority, text, certB64);
+  }
+
   nodeId(): Promise<NodeIdHex> {
     return native.nodeId();
   }
@@ -182,6 +282,10 @@ export class MmpClient {
 
   sendText(peer: NodeIdHex, text: string): Promise<MsgIdHex> {
     return native.sendText(peer, text);
+  }
+
+  sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    return native.sendBody(peer, apptype, payloadB64);
   }
 
   messageState(id: MsgIdHex): Promise<DeliveryState | null> {
@@ -200,6 +304,10 @@ export class MmpClient {
     return native.groupSend(gid, text);
   }
 
+  groupSendBody(gid: GroupIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex> {
+    return native.groupSendBody(gid, apptype, payloadB64);
+  }
+
   groupMembers(gid: GroupIdHex): Promise<NodeIdHex[]> {
     return native.groupMembers(gid);
   }
@@ -208,12 +316,28 @@ export class MmpClient {
     return native.groupRemove(gid, member);
   }
 
+  sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend> {
+    return native.sendFile(peer, name, mime, dataB64);
+  }
+
+  fetchFile(root: FileRootHex, dest: string): Promise<void> {
+    return native.fetchFile(root, dest);
+  }
+
+  cancelFetch(root: FileRootHex): Promise<void> {
+    return native.cancelFetch(root);
+  }
+
+  fileProgress(root: FileRootHex): Promise<FileProgress | null> {
+    return native.fileProgress(root);
+  }
+
   setNickname(name: string, seq: number): Promise<void> {
     return native.setNickname(name, seq);
   }
 
-  tryRevokeIdentity(reason: number): Promise<string> {
-    return native.tryRevokeIdentity(reason);
+  nicknameOf(peer: NodeIdHex): Promise<string | null> {
+    return native.nicknameOf(peer);
   }
 
   ownClaims(): Promise<string[]> {
@@ -224,16 +348,52 @@ export class MmpClient {
     return native.ingestClaim(claimB64, verified);
   }
 
+  revokeIdentity(reason: number): Promise<string> {
+    return native.revokeIdentity(reason);
+  }
+
+  tryRevokeIdentity(reason: number): Promise<string> {
+    return native.tryRevokeIdentity(reason);
+  }
+
+  revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string> {
+    return native.revokeIdentityWithSuccessor(reason, successorPublicKeyB64, countersigB64);
+  }
+
   block(peer: NodeIdHex): Promise<void> {
     return native.block(peer);
+  }
+
+  requestFriendship(peerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return native.requestFriendship(peerPublicKeyB64);
+  }
+
+  allowFriendshipFrom(peerPublicKeyB64: PublicKeyB64): Promise<void> {
+    return native.allowFriendshipFrom(peerPublicKeyB64);
   }
 
   enableDiagnostics(): Promise<void> {
     return native.enableDiagnostics();
   }
 
+  disableDiagnostics(): Promise<void> {
+    return native.disableDiagnostics();
+  }
+
   diagDump(): Promise<string> {
     return native.diagDump();
+  }
+
+  pollSendBatch(maxItems: number): Promise<OutFrame[]> {
+    return native.pollSendBatch(maxItems);
+  }
+
+  pollEventBatch(maxItems: number): Promise<Record<string, unknown>[]> {
+    return native.pollEventBatch(maxItems);
+  }
+
+  pollCloseBatch(maxItems: number): Promise<number[]> {
+    return native.pollCloseBatch(maxItems);
   }
 
   storeLen(): Promise<number> {
@@ -274,22 +434,47 @@ export interface Spec extends TurboModule {
   start(tier: string): Promise<string>;
   stop(): Promise<void>;
   setTier(tier: string): Promise<void>;
+  status(): Promise<NodeStatus>;
+  metrics(): Promise<NodeMetrics>;
+  capabilities(): Promise<Capabilities>;
+  betaSnapshot(): Promise<BetaSnapshot>;
+  setWallClock(unixS: number): Promise<void>;
+  pinAuthorityRoot(scope: string, issuerPublicKeyB64: string): Promise<void>;
+  subscribeScope(scopeName: string): Promise<string>;
+  unsubscribeScope(scope: string): Promise<void>;
+  mintAuthCert(suite: number, subjectPublicKeyB64: string, scope: string, caps: number, priorityBudget: number, notAfter: number): Promise<string>;
+  publishAnnouncement(scope: string, annType: number, priority: number, text: string, certB64: string | null): Promise<string>;
   nodeId(): Promise<string>;
   publicKey(): Promise<string>;
   sendText(peer: string, text: string): Promise<string>;
+  sendBody(peer: string, apptype: number, payloadB64: string): Promise<string>;
   messageState(id: string): Promise<string | null>;
   createGroup(): Promise<string>;
   groupInvite(gid: string, peer: string): Promise<void>;
   groupSend(gid: string, text: string): Promise<string>;
+  groupSendBody(gid: string, apptype: number, payloadB64: string): Promise<string>;
   groupMembers(gid: string): Promise<string[]>;
   groupRemove(gid: string, member: string): Promise<number>;
+  sendFile(peer: string, name: string, mime: string, dataB64: string): Promise<FileSend>;
+  fetchFile(root: string, dest: string): Promise<void>;
+  cancelFetch(root: string): Promise<void>;
+  fileProgress(root: string): Promise<FileProgress | null>;
   setNickname(name: string, seq: number): Promise<void>;
+  nicknameOf(peer: string): Promise<string | null>;
+  revokeIdentity(reason: number): Promise<string>;
   tryRevokeIdentity(reason: number): Promise<string>;
+  revokeIdentityWithSuccessor(reason: number, successorPublicKeyB64: string, countersigB64: string): Promise<string>;
   ownClaims(): Promise<string[]>;
   ingestClaim(claimB64: string, verified: boolean): Promise<void>;
   block(peer: string): Promise<void>;
+  requestFriendship(peerPublicKeyB64: string): Promise<void>;
+  allowFriendshipFrom(peerPublicKeyB64: string): Promise<void>;
   enableDiagnostics(): Promise<void>;
+  disableDiagnostics(): Promise<void>;
   diagDump(): Promise<string>;
+  pollSendBatch(maxItems: number): Promise<OutFrame[]>;
+  pollEventBatch(maxItems: number): Promise<Record<string, unknown>[]>;
+  pollCloseBatch(maxItems: number): Promise<number[]>;
   storeLen(): Promise<number>;
   flush(): Promise<void>;
   lastPersistError(): Promise<string | null>;
@@ -440,8 +625,8 @@ class MmpMeshModule(reactContext: ReactApplicationContext) :
     }
 
     // createGroup / groupInvite / groupSend / groupMembers / groupRemove / setNickname /
-    // tryRevokeIdentity / ownClaims / ingestClaim / block / enableDiagnostics / diagDump /
-    // setTier / publicKey /
+    // revokeIdentity / tryRevokeIdentity / revokeIdentityWithSuccessor / ownClaims / ingestClaim / block /
+    // enableDiagnostics / diagDump / setTier / publicKey /
     // storeLen / flush / lastPersistError follow the identical "post to driveHandler, call
     // the UniFFI binding, resolve/reject" shape and are omitted here for brevity — see
     // MmpMeshModuleFull.kt in the reference app.
@@ -608,8 +793,8 @@ class MmpMesh: RCTEventEmitter, CBCentralManagerDelegate, CBPeripheralManagerDel
     }
 
     // messageState / createGroup / groupInvite / groupSend / groupMembers / groupRemove /
-    // setNickname / tryRevokeIdentity / ownClaims / ingestClaim / block /
-    // enableDiagnostics / diagDump /
+    // setNickname / revokeIdentity / tryRevokeIdentity / revokeIdentityWithSuccessor / ownClaims / ingestClaim /
+    // block / enableDiagnostics / diagDump /
     // setTier / publicKey / storeLen / flush / lastPersistError: identical
     // "driveQueue.async { ... resolve/reject }" shape, omitted for brevity.
 
@@ -739,6 +924,11 @@ restarted node re-establishes sessions the same way a freshly-met peer would (do
 RN's JS layer never touches the path directly; if you need bundle-count-style diagnostics
 (e.g. showing storage usage in a settings screen), use `MmpClient.storeLen()` rather than
 exposing a raw path string.
+
+For a bounded on-disk quota, the native service may construct the node with
+`newWithStoreLimit(seed, tier, storePath, maxStoreBytes)` before exposing its lifecycle through
+`start()`. This constructor choice remains native-only; the JS API does not receive the identity
+seed or a filesystem path.
 
 ## 6. Expo
 

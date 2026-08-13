@@ -65,15 +65,16 @@ convention table including variable-length fields.
 ### 4.2 `FfiError`
 
 ```
-enum FfiError { BadArg, UnknownPeer, Internal }
+enum FfiError { BadArg, UnknownPeer, ConversationPending, Internal }
 ```
 Deliberately coarse — the host app cannot act differently on finer-grained core error variants,
-and none of the failure reasons are secret, so a three-way enum keeps generated bindings simple.
+and none of the failure reasons are secret, so this small enum keeps generated bindings simple.
 
 | Variant | Meaning | Typical cause |
 |---|---|---|
 | `BadArg` | A byte slice had the wrong length, or a claim/body failed to decode | wrong-length ID, corrupt claim bytes, oversized send |
-| `UnknownPeer` | No exchange key / prekey batch on file for this peer yet, **or** the peer has published a valid identity revocation (`SendError::PeerRevoked` folds into this variant — see `Event`/`FfiEvent::PeerRevoked` §4.6 for the distinguishing signal) | tried to message someone before ingesting their claims, or tried to message someone after they revoked their identity (handbook §4.6) |
+| `UnknownPeer` | No exchange key on file for this peer yet, **or** the peer has published a valid identity revocation (`SendError::PeerRevoked` folds into this variant — see `Event`/`FfiEvent::PeerRevoked` §4.6 for the distinguishing signal). A prekey batch is optional because direct messaging falls back to the sealed-box baseline. | tried to message someone before ingesting their exchange claim, or tried to message someone after they revoked their identity (handbook §4.6) |
+| `ConversationPending` | The first-contact asynchronous bundle is awaiting an authenticated receipt. Retry after the receipt establishes the conversation root; do not create another direct bundle in the meantime. | a second `sendText`/`sendBody` call while first contact is still pending |
 | `Internal` | A core invariant was violated | should not happen; report as a bug |
 
 ### 4.3 `FfiTier`
@@ -125,7 +126,7 @@ projection of this stream.
 | `ContactSeen` | `peer` | a beacon/session activity resolved to a known contact (not necessarily a full session) |
 | `Established` | `peer` | a session handshake + ID_PROOF completed with `peer` |
 | `GroupInvite` | `gid, from` | you were added to a group |
-| `GroupMessage` | `gid, from, id, body` | a group message decrypted successfully |
+| `GroupMessage` | `gid, from, id, apptype, body` | a group message decrypted successfully; `apptype` is the application type tag and `body` excludes it |
 | `GroupEpochChanged` | `gid, epoch` | membership changed (add/remove) — re-render member list |
 | `TierChanged` | `tier: FfiTier` | the core itself changed tier (rare; usually host-driven via `set_tier`) |
 | `Announcement` | `id, scope, annType, notAfter, text, from, official, effectivePriority, scopeNameHint` | a class-5 announcement arrived for a scope you subscribed to (doc 18) |
@@ -153,13 +154,14 @@ per-symbol Merkle check) or `Abandoned` (TTL, `cancelFetch`, or a rename/remove 
 finalize). A manifest that fails to parse or verify is the doc 16 §3.1 fail-safe case: `MessageReceived`
 still fires alone, nothing errors, and no `FileOffered` follows.
 
-**`PeerRevoked`, precisely** (doc handbook §4.6): `successor` is present only when the succession
-counter-signature verified (the successor signed `revokedKey ‖ successor` under `mmp1/claim` with
-its own key) — a missing successor, an unsigned one, or one with a bad signature all read as
-`successor == null`, and in every case the revocation itself still stands (sessions with `peer`
-are already refused and `peer`'s prekey claims already unusable by the time this fires). This is a
-hook to **offer** "trust successor" in the UI — never migrate a petname automatically; the petname
-model requires explicit user confirmation for every trust decision, this one included.
+**`PeerRevoked`, precisely** (doc handbook §4.6): `successor` is the successor's 32-byte public key
+and is present only when the succession counter-signature verified (the successor signed
+`revokedKey ‖ successor` under `mmp1/claim` with its own key) — a missing successor, an unsigned one,
+or one with a bad signature all read as `successor == null`, and in every case the revocation itself
+still stands (sessions with `peer` are already refused and `peer`'s prekey claims already unusable
+by the time this fires). This is a hook to **offer** "trust successor" in the UI — never migrate a
+petname automatically; the petname model requires explicit user confirmation for every trust
+decision, this one included.
 
 ## 5. Method reference — the drive loop
 
@@ -185,25 +187,42 @@ file-backed `SnapshotStore`, opened/created immediately, periodically flushed by
 ### 5.2 Transport injection (host → core)
 
 ```
+node.beacon(nowMs: u64) -> bytes24
 node.linkUp(link: u64, initiator: bool)
+node.linkUpWithQuality(link: u64, initiator: bool, quality: FfiLinkQuality)
 node.linkData(link: u64, bytes: bytes)
 node.linkDown(link: u64)
 node.onBeacon(payload: bytes, rssi: i8)
 ```
 Call these from your native BLE callbacks *directly* — never route raw link bytes through the RN
 JS bridge (see `REACT_NATIVE_INTEGRATION.md` §1, the "golden rule"). `linkUp`'s `quality`
-parameter from the core `TalEvent` is not yet exposed at the FFI boundary — the core assumes the
-pessimistic BLE-GATT floor. `onBeacon` is bookkeeping-only (§4.6) — call it for every scanned
-advertisement whose service UUID matches ours, no need to pre-filter further.
+parameter from the core `TalEvent` is exposed by the additive `linkUpWithQuality` method. The
+original `linkUp` remains the compatibility form and uses the pessimistic BLE-GATT floor.
+`FfiLinkQuality { mtu: u16, goodputBps: u32 }` is local scheduling metadata only (valid ranges
+`23..=4096` and `1..=10_000_000`) and is never serialized into an MMP/1 frame; invalid hints
+return `FfiError::BadArg` before the link is admitted. `onBeacon` is bookkeeping-only (§4.6) —
+call it for every scanned advertisement whose service UUID matches ours, no need to pre-filter
+further. `beacon(nowMs)` returns the 24-byte payload to advertise.
 
 ### 5.3 Output polling (core → host)
 
 ```
 node.pollSend() -> OutFrame?     // drain in a loop until null
 node.pollEvent() -> FfiEvent?    // drain in a loop until null
+node.pollSendBatch(maxItems: u32) -> [OutFrame]
+node.pollEventBatch(maxItems: u32) -> [FfiEvent]
+node.pollClose() -> u64?
+node.pollCloseBatch(maxItems: u32) -> [u64]
+node.closeActionsDropped() -> u64
+node.eventQueueDropped() -> u64
 ```
-Both are non-blocking, single-item pops. Drain each to exhaustion after every injected event and
-after every `tick()` call — the core does not push, the host pulls.
+The single-item methods are non-blocking FIFO pops. Batch methods consume the same queues in the
+same order, clamp `maxItems` to 64, and treat zero as a no-op. `pollClose*` returns transport-local
+link handles that the native host must close and then report with `linkDown`; these values are not
+wire frames. Drain each queue to exhaustion after every injected event and after every `tick()`
+call — the core does not push, the host pulls. `closeActionsDropped()` and `eventQueueDropped()`
+are sticky backpressure counters; a non-zero value is an operational signal to stop admitting new
+work, reconcile the transport/event layer, and surface the condition in diagnostics.
 
 ### 5.4 Time
 
@@ -220,10 +239,13 @@ persistence.
 
 ```
 node.sendText(dest: bytes16, text: string) -> bytes16      // throws FfiError; returns BundleID
+node.sendBody(dest: bytes16, apptype: u8, payload: bytes) -> bytes16 // throws FfiError
 node.messageState(id: bytes16) -> FfiDeliveryState?         // throws FfiError
 ```
-`sendText` requires the destination's exchange key/prekey batch to already be known (via
-`ingestClaim`, from a prior QR exchange or mesh gossip) — otherwise `FfiError.UnknownPeer`.
+`sendText` requires the destination's exchange key to already be known (via `ingestClaim`,
+from a prior QR exchange or mesh gossip). A prekey batch upgrades first contact to X3DH;
+when it is absent or unusable, the sealed-box baseline is used. Without an exchange key,
+`FfiError.UnknownPeer` is returned.
 Track delivery via the returned BundleID against `messageState()` or the `Delivered` /
 `DeliveryProgress` events.
 
@@ -233,6 +255,7 @@ Track delivery via the returned BundleID against `messageState()` or the `Delive
 node.createGroup() -> bytes16
 node.groupInvite(gid: bytes16, peer: bytes16)                // throws FfiError
 node.groupSend(gid: bytes16, text: string) -> bytes16        // throws FfiError; returns BundleID
+node.groupSendBody(gid: bytes16, apptype: u8, payload: bytes) -> bytes16 // throws FfiError
 node.groupMembers(gid: bytes16) -> [bytes16]
 node.groupRemove(gid: bytes16, member: bytes16) -> u16       // throws FfiError; returns new epoch
 ```
@@ -247,10 +270,11 @@ tell the user removal is instant; see `docs/USER_FEATURES.md` for the honest UX 
 node.nodeId() -> bytes16
 node.publicKey() -> bytes32
 node.setNickname(name: string, seq: u32)                        // throws FfiError
+node.nicknameOf(peer: bytes16) -> string?                         // throws FfiError; local verified lookup
 node.ownClaims() -> [bytes]                                  // encoded Claim objects, for QR/out-of-band exchange
 node.ingestClaim(claim: bytes, verified: bool)                // throws FfiError
 node.block(peer: bytes16)                                     // throws FfiError
-node.revokeIdentity(reason: u8) -> bytes                       // encoded Claim, already queued into gossip
+node.revokeIdentity(reason: u8) -> bytes                       // successor-less encoded Claim
 node.tryRevokeIdentity(reason: u8) -> bytes                     // throws FfiError; preferred checked form
 node.revokeIdentityWithSuccessor(reason: u8, successor: bytes32, countersig: bytes64) -> bytes
                                                                // throws FfiError
@@ -263,24 +287,39 @@ stale one. `verified: true` in `ingestClaim` marks the owner non-TOFU (completed
 `revokeIdentity` publishes a self-revocation claim (field `0x09`, doc handbook §4.6): tombstones
 every other claim you own, in every node that adopts it — they refuse new sessions with you and
 stop using your prekey batch for X3DH, even one already on file from before the revocation. This
-is **irreversible** once gossiped and adopted; there is no "un-revoke." It does not accept a
-successor — succession needs the successor's own counter-signature, which a single call from the
-revoked device cannot produce; build one out-of-band and publish it via the lower-level claim path
-if you need succession. The returned bytes are for local display/logging only — the claim is
-already queued into gossip, nothing further needs to be done with them.
+is **irreversible** once gossiped and adopted; there is no "un-revoke." The legacy method returns
+an empty byte vector if local publication is rejected; use `tryRevokeIdentity` when the host must
+distinguish a durable claim from a provider/lifecycle failure (`FfiError.Internal`).
+`revokeIdentityWithSuccessor` accepts the successor's already-produced 64-byte counter-signature
+and returns the encoded claim or throws `FfiError`; it never migrates a petname automatically.
+The returned claim bytes are already queued into gossip, so the host does not re-submit them.
 
 ### 5.8 Tier and diagnostics
 
 ```
 node.setTier(tier: FfiTier)
 node.enableDiagnostics()
+node.disableDiagnostics()
 node.diagDump() -> string
 node.storeLen() -> u64
+node.status() -> FfiNodeStatus
+node.capabilities() -> FfiCapabilities
+node.metrics() -> FfiMetrics
+node.betaSnapshot() -> FfiBetaSnapshot
 ```
 Diagnostics are off by default (doc 12 §7.7) and, once enabled, are **local-only** — nothing here
 is telemetry; `diagDump()` is for in-app "message journey" UI or bug reports the user explicitly
 shares, never auto-uploaded (see `docs/ROADMAP_TO_PRODUCTION.md` Phase E, "operational
 diagnostics policy").
+`disableDiagnostics()` stops recording new journey records while retaining the current local dump.
+`status`, `capabilities`, and `metrics` are secret-free snapshots for local status/diagnostics
+screens. `betaSnapshot()` is a versioned (`schemaVersion = 1`) envelope containing those three
+records; it is an API-report schema, not a wire-protocol version. None of these methods expose
+peer/session identifiers, wire bytes, provider handles, keys, or persistence paths. `FfiNodeStatus`
+contains `tier`, `persistentStore`, `diagnosticsEnabled`, and `lastTickMs`; `FfiCapabilities`
+contains the ordered capability list and `persistentStore`; `FfiMetrics` contains bounded local
+counters (`storeLen`, `closeActionsDropped`, `eventQueueDropped`, `diagnosticRecords`,
+`diagnosticClamps`, and `diagnosticDrops`).
 
 ### 5.9 Friendship / proxy buffering (handbook §4.5)
 
@@ -339,7 +378,7 @@ forward, doc 03 §8) but never surface an `Announcement` event.
 `publishAnnouncement`'s `cert` parameter is an encoded `AuthCert` (opaque bytes, same pattern as
 `ownClaims()`/`ingestClaim()` — no dedicated UniFFI Record type yet). Attaching it (TLV `0x81`,
 RECOMMENDED whenever `priority` ≤ 1/OPERATIONAL, doc 18 §5.2.1) lets a stranger receiver — one who
-hasn't seen your AuthCert over claim gossip yet — verify and elevate on first contact. Minting an
+hasn't seen your AuthCert over claim gossip yet — verify and elevate on first contact.
 `mintAuthCert(suite, subject, scope, caps, priorityBudget, notAfter)` returns an encoded
 issuer-signed `AuthCert` after validating its inputs. It does not pin the local key, adopt the
 certificate, or make a receiver trust it; the receiver still needs an explicit root pin.
@@ -393,8 +432,8 @@ Fetching → Assembled`, or `Abandoned` from either of the first two.
 **Not yet in this surface** (deferred, see `docs/IMPLEMENTATION_HANDBOOK.md` §4.4's shipped note
 for the full residual list): thumbnails (`thumb_root`'s doc 16 §5.1 eager-auto-fetch tier — nothing
 auto-downloads yet, a safe-default residual, not a bug); group file sharing (`deliver_group`
-discards the apptype byte needed to route a manifest inside a group message); a dedicated `AuthCert`-
-style mint helper is not relevant here, but note `sendFile` takes the whole file in host RAM — there
+discards the apptype byte needed to route a manifest inside a group message). The `AuthCert` mint
+helper is documented in §5.10; note that `sendFile` takes the whole file in host RAM — there
 is no disk-streaming encode path yet, so very large hosts should keep call sites off files near the
 8 MiB ceiling on memory-constrained devices.
 
@@ -417,8 +456,9 @@ Cross-check against `docs/ROADMAP_TO_PRODUCTION.md` before assuming any of these
   MVP; doc 06 §7's "friend answers reconciliation on the dependent's behalf while it's still
   offline," signed proxy summaries with a validity horizon, and ephem-id resolution remain
   unimplemented — see `docs/IMPLEMENTATION_HANDBOOK.md` §4.5's shipped note for the exact list).
-- **Link quality** on `linkUp` — parameter exists in the core `TalEvent` but isn't threaded
-  through the FFI call; the core currently assumes a pessimistic default.
+- **Link quality** — `linkUpWithQuality` is exposed as an additive FFI method. The original
+  `linkUp` remains available and uses the pessimistic default; host hints are local scheduling
+  metadata and do not change the frozen wire protocol.
 - **Blob plane — group sharing, thumbnails, and airtime sub-budgets** (§5.12 ships 1:1 file
   transfer): sharing a file inside a *group* conversation is out of reach until `deliver_group`
   stops discarding the apptype byte; the doc 16 §5.1 eager thumbnail auto-fetch tier is unbuilt

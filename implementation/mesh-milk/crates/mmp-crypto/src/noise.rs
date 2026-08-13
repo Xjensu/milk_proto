@@ -121,7 +121,9 @@ impl NoiseHandshake {
             .build_initiator()
             .map_err(|_| CryptoError::Noise)?;
         let mut msg1 = alloc::vec![0u8; HS_OVERHEAD];
-        let n = hs.write_message(&[], &mut msg1).map_err(|_| CryptoError::Noise)?;
+        let n = hs
+            .write_message(&[], &mut msg1)
+            .map_err(|_| CryptoError::Noise)?;
         msg1.truncate(n);
         Ok((
             msg1,
@@ -187,19 +189,30 @@ impl NoiseHandshake {
 
         if hs.is_handshake_finished() {
             // Responder after reading msg3.
-            return Ok(HandshakeOutcome { reply: None, channel: Some(self.finish(hs)?) });
+            return Ok(HandshakeOutcome {
+                reply: None,
+                channel: Some(self.finish(hs)?),
+            });
         }
 
         let mut out = alloc::vec![0u8; self.local_payload.len() + HS_OVERHEAD];
-        let n = hs.write_message(&self.local_payload, &mut out).map_err(|_| CryptoError::Noise)?;
+        let n = hs
+            .write_message(&self.local_payload, &mut out)
+            .map_err(|_| CryptoError::Noise)?;
         out.truncate(n);
 
         if hs.is_handshake_finished() {
             // Initiator after writing msg3.
-            return Ok(HandshakeOutcome { reply: Some(out), channel: Some(self.finish(hs)?) });
+            return Ok(HandshakeOutcome {
+                reply: Some(out),
+                channel: Some(self.finish(hs)?),
+            });
         }
         self.hs = Some(hs);
-        Ok(HandshakeOutcome { reply: Some(out), channel: None })
+        Ok(HandshakeOutcome {
+            reply: Some(out),
+            channel: None,
+        })
     }
 
     fn finish(&mut self, hs: snow::HandshakeState) -> Result<NoiseChannel, CryptoError> {
@@ -214,7 +227,11 @@ impl NoiseHandshake {
             transport,
             handshake_hash,
             initiator: self.initiator,
-            peer: PeerIntro { identity, exchange: Key32(exchange), hello },
+            peer: PeerIntro {
+                identity,
+                exchange: Key32(exchange),
+                hello,
+            },
         })
     }
 }
@@ -242,7 +259,10 @@ impl NoiseChannel {
             return Err(CryptoError::Noise);
         }
         let mut out = alloc::vec![0u8; plaintext.len() + 16];
-        let n = self.transport.write_message(plaintext, &mut out).map_err(|_| CryptoError::Noise)?;
+        let n = self
+            .transport
+            .write_message(plaintext, &mut out)
+            .map_err(|_| CryptoError::Noise)?;
         out.truncate(n);
         Ok(out)
     }
@@ -256,7 +276,10 @@ impl NoiseChannel {
             return Err(CryptoError::Noise);
         }
         let mut out = alloc::vec![0u8; ciphertext.len()];
-        let n = self.transport.read_message(ciphertext, &mut out).map_err(|_| CryptoError::Noise)?;
+        let n = self
+            .transport
+            .read_message(ciphertext, &mut out)
+            .map_err(|_| CryptoError::Noise)?;
         out.truncate(n);
         Ok(out)
     }
@@ -276,7 +299,10 @@ impl NoiseChannel {
         } else {
             (self.peer.identity, identity.public())
         };
-        identity.sign(SigDomain::ChanBind, &chanbind_object(&self.handshake_hash, &init_pk, &resp_pk))
+        identity.sign(
+            SigDomain::ChanBind,
+            &chanbind_object(&self.handshake_hash, &init_pk, &resp_pk),
+        )
     }
 
     /// Verify the peer's ID_PROOF against its claimed identity key.

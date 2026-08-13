@@ -218,7 +218,11 @@ impl RevocationList {
         }
         let mut entries = Vec::with_capacity(count);
         for _ in 0..count {
-            entries.push(RevEntry { subject: r.key32()?, scope: r.id16()?, not_after: r.u32()? });
+            entries.push(RevEntry {
+                subject: r.key32()?,
+                scope: r.id16()?,
+                not_after: r.u32()?,
+            });
         }
         r.finish()?;
         Ok(RevocationList { suite, entries })
@@ -304,8 +308,16 @@ mod tests {
         let list = RevocationList {
             suite: 1,
             entries: vec![
-                RevEntry { subject: Key32([1; 32]), scope: Id16([2; 16]), not_after: 10 },
-                RevEntry { subject: Key32([3; 32]), scope: Id16([4; 16]), not_after: 20 },
+                RevEntry {
+                    subject: Key32([1; 32]),
+                    scope: Id16([2; 16]),
+                    not_after: 10,
+                },
+                RevEntry {
+                    subject: Key32([3; 32]),
+                    scope: Id16([4; 16]),
+                    not_after: 20,
+                },
             ],
         };
         let bytes = list.encode();
@@ -321,7 +333,10 @@ mod tests {
     fn revocation_list_rejects_count_before_allocating_entries() {
         // The count is valid by itself, but no fixed-width RevEntry follows.
         // Decode must reject before reserving REVLIST_MAX entries.
-        assert_eq!(RevocationList::decode(&[1, REVLIST_MAX as u8]), Err(WireError::Truncated));
+        assert_eq!(
+            RevocationList::decode(&[1, REVLIST_MAX as u8]),
+            Err(WireError::Truncated)
+        );
     }
 
     #[test]

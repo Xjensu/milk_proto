@@ -56,7 +56,12 @@ impl SenderKeyDist {
         chain_seed.copy_from_slice(r.take(32)?);
         let sig_pub = r.key32()?;
         r.finish()?;
-        Ok(SenderKeyDist { gid, epoch, chain_seed, sig_pub })
+        Ok(SenderKeyDist {
+            gid,
+            epoch,
+            chain_seed,
+            sig_pub,
+        })
     }
 }
 
@@ -93,7 +98,11 @@ impl LocalSenderKey {
             chain_seed,
             sig_pub: Key32(sig.verifying_key().to_bytes()),
         };
-        LocalSenderKey { chain: SendChain::new(chain_seed, epoch), sig, dist }
+        LocalSenderKey {
+            chain: SendChain::new(chain_seed, epoch),
+            sig,
+            dist,
+        }
     }
 
     /// The distributable record (`gid`, `epoch`, `chain_seed`, `sig_pub`) to
@@ -162,7 +171,8 @@ impl LocalSenderKey {
             member_sig: Sig64::ZERO,
         };
         let ad = make_ad(&p);
-        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
+        let bound =
+            aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
         p.ct = aead::seal(&bound, &ad, body);
         let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
         p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
@@ -195,7 +205,8 @@ impl LocalSenderKey {
             member_sig: Sig64::ZERO,
         };
         let ad = make_ad(&p);
-        let bound = aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
+        let bound =
+            aead::committed_key(&key, &group_context(&self.dist.gid, epoch, &member, index));
         p.ct = aead::seal(&bound, &ad, body);
         let msg = signed_preimage(SigDomain::GroupMsg, &p.signed_object());
         p.member_sig = Sig64(self.sig.sign(&msg).to_bytes());
@@ -246,14 +257,21 @@ impl RemoteSenderKey {
 
     /// Verify the member signature, then decrypt.
     pub fn decrypt(&mut self, p: &GroupPayload, ad: &[u8]) -> Result<Vec<u8>, CryptoError> {
-        verify(SigDomain::GroupMsg, &self.sig_pub, &p.signed_object(), &p.member_sig)?;
+        verify(
+            SigDomain::GroupMsg,
+            &self.sig_pub,
+            &p.signed_object(),
+            &p.member_sig,
+        )?;
         // Do not consume the receive-chain index until the AEAD has opened.
         // A member can produce a valid group signature over a ciphertext that
         // fails under the receiver's outer-header AD; committing first would
         // turn that authenticated-but-invalid packet into a replay-state DoS.
         let key = self.recv.peek_key_for(p.epoch, p.chain_index)?;
-        let bound =
-            aead::committed_key(&key, &group_context(&self.gid, p.epoch, &p.member, p.chain_index));
+        let bound = aead::committed_key(
+            &key,
+            &group_context(&self.gid, p.epoch, &p.member, p.chain_index),
+        );
         let plaintext = aead::open(&bound, ad, &p.ct)?;
         // `peek_key_for` performed the same checks against an unchanged chain;
         // this commit therefore cannot fail unless the object is concurrently
@@ -308,22 +326,30 @@ mod tests {
             .try_encrypt_with_ad_candidate(member, b"body", |_| b"ad".to_vec())
             .expect("candidate");
         assert_eq!(payload.chain_index, 0);
-        let live = local.try_encrypt(member, b"ad", b"next").expect("live send");
+        let live = local
+            .try_encrypt(member, b"ad", b"next")
+            .expect("live send");
         assert_eq!(live.chain_index, 0, "staging must not consume index zero");
 
         // The candidate is still valid only for the pre-commit chain. Commit
         // it on a fresh key to verify the explicit producer boundary without
         // exposing chain internals to callers.
         let mut committed = LocalSenderKey::generate(&mut StdRng::seed_from_u64(17), gid, 1);
-        committed.commit_candidate(candidate).expect("matching candidate");
-        let after = committed.try_encrypt(member, b"ad", b"after").expect("post-commit send");
+        committed
+            .commit_candidate(candidate)
+            .expect("matching candidate");
+        let after = committed
+            .try_encrypt(member, b"ad", b"after")
+            .expect("post-commit send");
         assert_eq!(after.chain_index, 1);
 
         let mut stale = LocalSenderKey::generate(&mut StdRng::seed_from_u64(17), gid, 1);
         let (_, stale_candidate) = stale
             .try_encrypt_with_ad_candidate(member, b"body", |_| b"ad".to_vec())
             .expect("stale candidate");
-        stale.try_encrypt(member, b"ad", b"advance").expect("advance live chain");
+        stale
+            .try_encrypt(member, b"ad", b"advance")
+            .expect("advance live chain");
         assert_eq!(
             stale.commit_candidate(stale_candidate),
             Err(CryptoError::Ratchet),
@@ -340,7 +366,9 @@ mod tests {
             Err(CryptoError::Ratchet),
             "a candidate from another signing key must be rejected"
         );
-        let target_next = target.try_encrypt(member, b"ad", b"target").expect("target remains live");
+        let target_next = target
+            .try_encrypt(member, b"ad", b"target")
+            .expect("target remains live");
         assert_eq!(target_next.chain_index, 0);
     }
 }

@@ -24,8 +24,16 @@ pub use utility::UtilityState;
 /// Origin copy budget: `L = clamp(4, 2·⌈log₂(N̂+1)⌉, 32)` (doc 05 §2.2).
 /// Integer math (no_std-safe): ⌈log₂(x)⌉ = 32 − leading_zeros(x−1) for x > 1.
 pub fn origin_budget(n_hat: f32) -> u8 {
-    let x = if n_hat <= 0.0 { 1u32 } else { (n_hat as u32).saturating_add(1) };
-    let ceil_log2 = if x <= 1 { 0 } else { 32 - (x - 1).leading_zeros() };
+    let x = if n_hat <= 0.0 {
+        1u32
+    } else {
+        (n_hat as u32).saturating_add(1)
+    };
+    let ceil_log2 = if x <= 1 {
+        0
+    } else {
+        32 - (x - 1).leading_zeros()
+    };
     (2 * ceil_log2 as u8).clamp(4, L_MAX)
 }
 
@@ -143,10 +151,10 @@ pub fn eviction_order(
     candidates.sort_by_key(|m| {
         let confirmed = matches!(signal(&m.id), SuppressSignal::Purge);
         (
-            core::cmp::Reverse(confirmed as u8),      // receipt-confirmed first
-            core::cmp::Reverse(m.effective_priority),  // lowest effective priority first
-            core::cmp::Reverse(m.size),               // largest first
-            m.remaining_ms(now_ms),                   // least life first
+            core::cmp::Reverse(confirmed as u8), // receipt-confirmed first
+            core::cmp::Reverse(m.effective_priority), // lowest effective priority first
+            core::cmp::Reverse(m.size),          // largest first
+            m.remaining_ms(now_ms),              // least life first
         )
     });
     candidates.into_iter().map(|m| m.id).collect()

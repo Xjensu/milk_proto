@@ -11,7 +11,9 @@ use mmp_types::ids::{Id16, Key32};
 use crate::group::{LocalSenderKey, RemoteSenderKey, SenderKeyDist};
 use crate::identity::{verify, Identity};
 use crate::merkle;
-use crate::noise::{NoiseHandshake, MAX_HANDSHAKE_MESSAGE, MAX_TRANSPORT_CIPHERTEXT, MAX_TRANSPORT_PLAINTEXT};
+use crate::noise::{
+    NoiseHandshake, MAX_HANDSHAKE_MESSAGE, MAX_TRANSPORT_CIPHERTEXT, MAX_TRANSPORT_PLAINTEXT,
+};
 use crate::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use crate::ratchet::{direction_chain, RecvChain, SendChain};
 use crate::receipt::{mac_eq, receipt_key, receipt_mac};
@@ -28,11 +30,25 @@ fn rng() -> impl rand_core::CryptoRngCore {
 }
 
 fn hello() -> Hello {
-    Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
+    Hello {
+        ver: 1,
+        suites: vec![0x01],
+        tier: 2,
+        flags: 0,
+        credits: 8,
+        psm: 0,
+    }
 }
 
 fn hello_with_suites(suites: Vec<u8>) -> Hello {
-    Hello { ver: 1, suites, tier: 2, flags: 0, credits: 8, psm: 0 }
+    Hello {
+        ver: 1,
+        suites,
+        tier: 2,
+        flags: 0,
+        credits: 8,
+        psm: 0,
+    }
 }
 
 #[test]
@@ -98,14 +114,26 @@ fn noise_transport_bounds_reject_oversized_input_without_advancing_nonce() {
     let mut chan_b = b.advance(&msg3).unwrap().channel.unwrap();
 
     let oversized_plaintext = vec![0xa5; MAX_TRANSPORT_PLAINTEXT + 1];
-    assert_eq!(chan_a.encrypt(&oversized_plaintext), Err(CryptoError::Noise));
+    assert_eq!(
+        chan_a.encrypt(&oversized_plaintext),
+        Err(CryptoError::Noise)
+    );
     let ciphertext = chan_a.encrypt(b"after-oversized-plaintext").unwrap();
-    assert_eq!(chan_b.decrypt(&ciphertext).unwrap(), b"after-oversized-plaintext");
+    assert_eq!(
+        chan_b.decrypt(&ciphertext).unwrap(),
+        b"after-oversized-plaintext"
+    );
 
     let oversized_ciphertext = vec![0x5a; MAX_TRANSPORT_CIPHERTEXT + 1];
-    assert_eq!(chan_b.decrypt(&oversized_ciphertext), Err(CryptoError::Noise));
+    assert_eq!(
+        chan_b.decrypt(&oversized_ciphertext),
+        Err(CryptoError::Noise)
+    );
     let ciphertext = chan_a.encrypt(b"after-oversized-ciphertext").unwrap();
-    assert_eq!(chan_b.decrypt(&ciphertext).unwrap(), b"after-oversized-ciphertext");
+    assert_eq!(
+        chan_b.decrypt(&ciphertext).unwrap(),
+        b"after-oversized-ciphertext"
+    );
 }
 
 #[test]
@@ -123,7 +151,10 @@ fn noise_xx_rejects_oversized_pre_auth_input_without_poisoning_state() {
     assert!(matches!(b.advance(&oversized), Err(CryptoError::Noise)));
     let out_b = b.advance(&msg1).unwrap();
     assert!(out_b.reply.is_some());
-    assert!(out_b.reply.as_ref().is_some_and(|m| m.len() <= MAX_HANDSHAKE_MESSAGE));
+    assert!(out_b
+        .reply
+        .as_ref()
+        .is_some_and(|m| m.len() <= MAX_HANDSHAKE_MESSAGE));
 }
 
 #[test]
@@ -131,13 +162,17 @@ fn noise_xx_ignores_nonempty_msg1_payload_until_encrypted_intro() {
     let alice = id(1);
     let bob = id(2);
     let secret = alice.exchange_secret_bytes();
-    let params = crate::noise::NOISE_PARAMS.parse().expect("valid noise params");
+    let params = crate::noise::NOISE_PARAMS
+        .parse()
+        .expect("valid noise params");
     let mut raw_initiator = snow::Builder::new(params)
         .local_private_key(&secret[..])
         .build_initiator()
         .unwrap();
     let mut msg1 = vec![0u8; MAX_HANDSHAKE_MESSAGE];
-    let n = raw_initiator.write_message(&[0xde, 0xad, 0xbe, 0xef], &mut msg1).unwrap();
+    let n = raw_initiator
+        .write_message(&[0xde, 0xad, 0xbe, 0xef], &mut msg1)
+        .unwrap();
     msg1.truncate(n);
     let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
 
@@ -150,7 +185,9 @@ fn noise_xx_ignores_nonempty_msg1_payload_until_encrypted_intro() {
     assert!(n >= 32);
     let mut msg3_payload = alice.public().0.to_vec();
     msg3_payload.extend_from_slice(&hello().encode());
-    let n = raw_initiator.write_message(&msg3_payload, &mut payload).unwrap();
+    let n = raw_initiator
+        .write_message(&msg3_payload, &mut payload)
+        .unwrap();
     payload.truncate(n);
     let out_b = b.advance(&payload).unwrap();
     let channel = out_b.channel.expect("encrypted msg3 completes handshake");
@@ -203,7 +240,8 @@ fn noise_xx_handshake_accepts_overlapping_multi_suite_list() {
     // (0x01, the only real suite today) must still succeed.
     let alice = id(1);
     let bob = id(2);
-    let (msg1, mut a) = NoiseHandshake::initiator(&alice, &hello_with_suites(vec![0x02, 0x01])).unwrap();
+    let (msg1, mut a) =
+        NoiseHandshake::initiator(&alice, &hello_with_suites(vec![0x02, 0x01])).unwrap();
     let mut b = NoiseHandshake::responder(&bob, &hello()).unwrap();
     let msg2 = b.advance(&msg1).unwrap().reply.unwrap();
     let out_a = a.advance(&msg2).unwrap();
@@ -243,8 +281,15 @@ fn sealed_box_root_matches_recipient_derivation() {
     let mut r = rng();
     let ad = b"sealed-header-ad";
     let body = b"first-contact";
-    let (eph, ct, sender_root) =
-        try_seal_box_with_root(&mut r, &bob.exchange_public(), &alice.public(), &bob.public(), ad, body).unwrap();
+    let (eph, ct, sender_root) = try_seal_box_with_root(
+        &mut r,
+        &bob.exchange_public(),
+        &alice.public(),
+        &bob.public(),
+        ad,
+        body,
+    )
+    .unwrap();
 
     assert_eq!(open_box(&bob, &eph, ad, &ct).unwrap(), body);
     let dh = bob.exchange_dh(&eph);
@@ -262,15 +307,29 @@ fn prekey_agreement_matches_both_sides() {
 
     // With a one-time prekey.
     let sa = sender_agree(&mut r, &alice, &bob.public(), &batch, Some(2)).unwrap();
-    let ck_b = recipient_agree(&store, &bob, &alice.public(), &alice.exchange_public(), &sa.eph_pub, sa.prekey_id)
-        .unwrap();
+    let ck_b = recipient_agree(
+        &store,
+        &bob,
+        &alice.public(),
+        &alice.exchange_public(),
+        &sa.eph_pub,
+        sa.prekey_id,
+    )
+    .unwrap();
     assert_eq!(*sa.ck0, *ck_b);
 
     // Signed-prekey-only fallback.
     let sa2 = sender_agree(&mut r, &alice, &bob.public(), &batch, None).unwrap();
     assert_eq!(sa2.prekey_id, PREKEY_NONE);
-    let ck_b2 = recipient_agree(&store, &bob, &alice.public(), &alice.exchange_public(), &sa2.eph_pub, PREKEY_NONE)
-        .unwrap();
+    let ck_b2 = recipient_agree(
+        &store,
+        &bob,
+        &alice.public(),
+        &alice.exchange_public(),
+        &sa2.eph_pub,
+        PREKEY_NONE,
+    )
+    .unwrap();
     assert_eq!(*sa2.ck0, *ck_b2);
     assert_ne!(*sa.ck0, *sa2.ck0);
 }
@@ -335,7 +394,15 @@ fn prekey_and_sealed_open_reject_low_order_points() {
     low_batch.signed_prekey = low;
     low_batch.spk_sig = bob.sign(SigDomain::Prekey, &low_batch.signed_object());
     assert!(sender_agree(&mut r, &alice, &bob.public(), &low_batch, None).is_err());
-    assert!(recipient_agree(&store, &bob, &alice.public(), &alice.exchange_public(), &low, PREKEY_NONE).is_err());
+    assert!(recipient_agree(
+        &store,
+        &bob,
+        &alice.public(),
+        &alice.exchange_public(),
+        &low,
+        PREKEY_NONE
+    )
+    .is_err());
     assert!(recipient_agree(&store, &bob, &alice.public(), &low, &low, PREKEY_NONE).is_err());
     assert!(open_box(&bob, &low, b"ad", &[0; 16]).is_err());
 }
@@ -448,7 +515,9 @@ fn legacy_ratchet_wrappers_fail_closed_at_exhaustion() {
     assert_eq!(legacy.next_index, u32::MAX);
 
     let mut legacy_epoch = SendChain::new([0x77; 32], u16::MAX);
-    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| legacy_epoch.bump_epoch(&[0x88; 32])));
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        legacy_epoch.bump_epoch(&[0x88; 32])
+    }));
     assert!(panic.is_err());
     assert_eq!(legacy_epoch.epoch, u16::MAX);
 }
@@ -671,7 +740,10 @@ fn group_aead_failure_does_not_consume_sender_key_index() {
     // supplies the correct AD.
     let payload = local.encrypt(member, b"correct-header", b"group body");
     assert!(remote.decrypt(&payload, b"wrong-header").is_err());
-    assert_eq!(remote.decrypt(&payload, b"correct-header").unwrap(), b"group body");
+    assert_eq!(
+        remote.decrypt(&payload, b"correct-header").unwrap(),
+        b"group body"
+    );
 }
 
 #[test]
@@ -764,5 +836,8 @@ fn conversation_id_is_commutative() {
     let a = Key32([1; 32]);
     let b = Key32([2; 32]);
     assert_eq!(conversation_id(&a, &b), conversation_id(&b, &a));
-    assert_ne!(conversation_id(&a, &b), conversation_id(&a, &Key32([3; 32])));
+    assert_ne!(
+        conversation_id(&a, &b),
+        conversation_id(&a, &Key32([3; 32]))
+    );
 }

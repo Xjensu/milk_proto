@@ -145,8 +145,10 @@ mod tests {
         assert_eq!(&symbols[..8], &data[..]); // systematic
 
         // Drop symbols 0,3,5,7 — recover from a mixed set incl. parity.
-        let received: Vec<(u8, Vec<u8>)> =
-            [1u8, 2, 4, 6, 8, 9, 10, 11].iter().map(|&i| (i, symbols[i as usize].clone())).collect();
+        let received: Vec<(u8, Vec<u8>)> = [1u8, 2, 4, 6, 8, 9, 10, 11]
+            .iter()
+            .map(|&i| (i, symbols[i as usize].clone()))
+            .collect();
         let recovered = decode(&received, 8).unwrap();
         assert_eq!(recovered, data);
     }
@@ -171,8 +173,10 @@ mod tests {
         let data: Vec<Vec<u8>> = (0..4u8).map(|i| vec![i + 1; 16]).collect();
         let mut symbols = encode(&data, 8);
         symbols[5][0] ^= 0xff;
-        let received: Vec<(u8, Vec<u8>)> =
-            [4u8, 5, 6, 7].iter().map(|&i| (i, symbols[i as usize].clone())).collect();
+        let received: Vec<(u8, Vec<u8>)> = [4u8, 5, 6, 7]
+            .iter()
+            .map(|&i| (i, symbols[i as usize].clone()))
+            .collect();
         let recovered = decode(&received, 4).unwrap();
         assert_ne!(recovered, data);
     }

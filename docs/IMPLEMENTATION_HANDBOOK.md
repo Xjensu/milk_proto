@@ -778,16 +778,16 @@ key is silently denied; succession countersig failure → succession ignored, re
   { peer, successor }` fires from `learn_claim`'s `REVOCATION` arm — `successor` is `Some` only once
   `ClaimStore::successor` verifies, so the event itself is the "offer trust successor" hook; nothing
   in this crate migrates a petname automatically. New `Node::publish_claim` now returns the encoded
-  claim bytes (was `()`) so `Node::revoke_identity(reason: u8) -> Vec<u8>` — a thin wrapper that
-  builds a successor-less `Revocation` at a fixed `seq = 1` (correct, not a shortcut: a revocation is
-  a one-shot tombstone, there is never a second write to race against) — can hand them back.
+  claim bytes (was `()`) so `Node::revoke_identity(reason: u8) -> Vec<u8>` and
+  `Node::revoke_identity_with_successor(reason, successor, successor_countersig) -> Vec<u8>` —
+  thin wrappers that build the corresponding fixed-seq (`1`) `Revocation` forms — can hand them back.
 - `mmp-ffi/src/lib.rs`: `FfiEvent::PeerRevoked { peer, successor }` mirrors the core event (public
-  keys only). `MmpNode::revoke_identity(reason: u8) -> Vec<u8>` mirrors `Node::revoke_identity`.
+  keys only). `MmpNode::revoke_identity(reason: u8) -> Vec<u8>` and
+  `MmpNode::revoke_identity_with_successor(reason, successor, countersig) -> Result<Vec<u8>, FfiError>`
+  validates 32-byte/64-byte argument lengths as `BadArg` and reports provider/lifecycle failures.
   `MmpNode::try_revoke_identity(reason) -> Result<Vec<u8>, FfiError>` is the preferred checked
   form and maps local provider/lifecycle rejection to `FfiError::Internal`; the legacy helper
   remains source-compatible and represents that rejection as an empty byte vector.
-  `MmpNode::revoke_identity_with_successor(reason, successor, countersig) -> Result<Vec<u8>, FfiError>`
-  validates the 32-byte/64-byte arguments and reports provider/lifecycle failures.
   `SendError::PeerRevoked` folds into the existing `FfiError::UnknownPeer` rather than growing the
   three-variant FFI error enum — consistent with that enum's own documented "deliberately coarse"
   rationale; `Event::PeerRevoked` is what carries the actual distinction (including the successor)
@@ -800,10 +800,9 @@ methodology, not silently decided): (1) the query methods' exact signatures — 
 said `revocation(owner: &Key32)`; implemented as `&NodeId` instead, matching every other
 `ClaimStore` query (`get`, `pin`, …), all of which are `NodeId`-keyed since the store itself is;
 (2) `revoke_identity`'s FFI shape — "returning the claim bytes or queuing it into gossip" was
-explicitly left open; implemented as both (gossips via the existing `publish_claim` path AND
-returns the bytes) with no successor parameter (a succession claim needs the successor's own
-counter-signature, which a single unilateral FFI call from the revoked party's device cannot
-produce — out of scope for this entry point, documented at the call site); (3) `ClaimMerge` gained
+  explicitly left open; implemented as both (gossips via the existing `publish_claim` path AND
+  returns the bytes). The explicit successor helper accepts the successor's already-produced
+  counter-signature and still performs no automatic petname migration; (3) `ClaimMerge` gained
 a fourth variant (`Rejected`) rather than overloading `Stale` for "invalid body, nothing was ever
 stored" — the one exhaustive match site (`mmp-node`'s `learn_claim`) was updated accordingly.
 

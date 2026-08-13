@@ -18,7 +18,9 @@ use mmp_crypto::Identity;
 use mmp_node::diag::JourneyEvent;
 use mmp_types::bundle::class;
 use mmp_types::claim::field;
-use mmp_types::consts::{FILTER_BUCKET_MS, L_MAX, LIFETIME_MESSAGE_MS, MAX_FRAME_PAYLOAD, ORIGIN_BUCKET_BURST};
+use mmp_types::consts::{
+    FILTER_BUCKET_MS, LIFETIME_MESSAGE_MS, L_MAX, MAX_FRAME_PAYLOAD, ORIGIN_BUCKET_BURST,
+};
 use mmp_types::frame::{Frame, Summary, SummaryBucket};
 use mmp_types::ids::Id16;
 use mmp_types::payload::ReceiptPayload;
@@ -89,14 +91,20 @@ fn replay_storm_delivers_exactly_once() {
         .iter()
         .filter(|e| matches!(e, mmp_node::Event::MessageReceived { id, .. } if *id == msg_id))
         .count();
-    assert_eq!(received, 1, "100x replay must deliver exactly once: {events:?}");
+    assert_eq!(
+        received, 1,
+        "100x replay must deliver exactly once: {events:?}"
+    );
 
     // The store observable confirms it too: only the first copy (plus the
     // one receipt bundle the victim emits in response) landed — the other 99
     // took the `Disposition::Duplicate` path (SeenIndex hit, dropped before
     // `store.put`), never touching the store at all.
     let after = sim.store_len(VICTIM);
-    assert!(after - before <= 2, "replay storm must not multiply store entries: {before} -> {after}");
+    assert!(
+        after - before <= 2,
+        "replay storm must not multiply store entries: {before} -> {after}"
+    );
 }
 
 /// ---------------------------------------------------------------------
@@ -171,8 +179,14 @@ fn flood_origin_is_throttled_but_others_deliver() {
     });
 
     let admitted = sim.store_len(victim).saturating_sub(before) as u64;
-    assert!(admitted <= bound + 1, "flood admitted {admitted} bundles, bucket bound is {bound}");
-    assert!(sent >= admitted * 10, "flood must send far more than the bucket ever admits");
+    assert!(
+        admitted <= bound + 1,
+        "flood admitted {admitted} bundles, bucket bound is {bound}"
+    );
+    assert!(
+        sent >= admitted * 10,
+        "flood must send far more than the bucket ever admits"
+    );
 
     assert!(
         sim.delivery_ratio() >= 0.9,
@@ -207,7 +221,15 @@ fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
     for i in 0..=local_bound {
         let mut payload = vec![0u8; PAYLOAD_LEN];
         payload[..8].copy_from_slice(&(i as u64).to_le_bytes());
-        let bundle = signed_bundle(&origin, class::DIRECT, DEST, 1, LIFETIME_MESSAGE_MS, 0, payload);
+        let bundle = signed_bundle(
+            &origin,
+            class::DIRECT,
+            DEST,
+            1,
+            LIFETIME_MESSAGE_MS,
+            0,
+            payload,
+        );
         wire.push((bundle.id(), bundle.encode()));
     }
     let baseline = [sim.store_len(LEFT), sim.store_len(RIGHT)];
@@ -223,7 +245,10 @@ fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
         adversary_contact(sim.node_mut(receiver), &mut session, link, now, |sess| {
             for (id, bytes) in &wire {
                 sess.send(Frame::Bundle(bytes.clone()));
-                sess.send(Frame::Budget { id: *id, granted: GRANT });
+                sess.send(Frame::Budget {
+                    id: *id,
+                    granted: GRANT,
+                });
             }
         });
         let admitted = sim.store_len(receiver).saturating_sub(before);
@@ -254,12 +279,13 @@ fn byzantine_double_grant_is_bounded_per_receiver_not_globally() {
                 _ => None,
             })
             .expect("receiver must answer WANT for the admitted bundle");
-        assert!(grant > 0 && grant <= L_MAX, "receiver {receiver} leaked an invalid grant: {grant}");
+        assert!(
+            grant > 0 && grant <= L_MAX,
+            "receiver {receiver} leaked an invalid grant: {grant}"
+        );
     }
 
-    let aggregate = sim
-        .store_len(LEFT)
-        .saturating_sub(baseline[0])
+    let aggregate = sim.store_len(LEFT).saturating_sub(baseline[0])
         + sim.store_len(RIGHT).saturating_sub(baseline[1]);
     assert!(
         aggregate > local_bound,
@@ -300,7 +326,10 @@ fn quota_abuse_degrades_gracefully() {
 
     // Give the relay an unconfirmed (not-yet-receipted) copy to protect.
     sim.meet(SENDER, RELAY, 60_000);
-    assert!(sim.store_len(RELAY) > 0, "relay must be carrying the honest bundle");
+    assert!(
+        sim.store_len(RELAY) > 0,
+        "relay must be carrying the honest bundle"
+    );
 
     sim.node_mut(RELAY).enable_diagnostics();
 
@@ -322,7 +351,10 @@ fn quota_abuse_degrades_gracefully() {
     let mut link = 10_000u64;
     let mut sybil_i = 0u64;
     while (sim.store_len(RELAY) as u64) * WIRE_LEN <= target_bytes {
-        assert!(sybil_i < 10_000, "admission appears broken — store never reached 2x quota");
+        assert!(
+            sybil_i < 10_000,
+            "admission appears broken — store never reached 2x quota"
+        );
         let mut seed = [0u8; 32];
         seed[..8].copy_from_slice(&sybil_i.to_le_bytes());
         seed[8] = 0x51; // "sybil" tag, avoids colliding with other seeds in this suite
@@ -334,7 +366,14 @@ fn quota_abuse_degrades_gracefully() {
             for j in 0..sends_per_identity {
                 let mut payload = vec![0xA5u8; PAYLOAD_LEN];
                 payload[..8].copy_from_slice(&j.to_le_bytes());
-                let b = sybil.bundle(class::DIRECT, Id16([0x99; 16]), 1, LIFETIME_MESSAGE_MS, 0, payload);
+                let b = sybil.bundle(
+                    class::DIRECT,
+                    Id16([0x99; 16]),
+                    1,
+                    LIFETIME_MESSAGE_MS,
+                    0,
+                    payload,
+                );
                 sess.send(Frame::Bundle(b.encode()));
             }
         });
@@ -368,7 +407,10 @@ fn quota_abuse_degrades_gracefully() {
         .filter(|r| r.event == JourneyEvent::Evicted)
         .map(|r| r.bundle)
         .collect();
-    assert!(!evicted.is_empty(), "2x quota pressure must have triggered eviction");
+    assert!(
+        !evicted.is_empty(),
+        "2x quota pressure must have triggered eviction"
+    );
     assert!(
         !evicted.contains(&msg_id),
         "the honest, unreceipted, small bundle must not be among the evicted"
@@ -379,7 +421,11 @@ fn quota_abuse_degrades_gracefully() {
     for k in 0..3 {
         sim.meet(SENDER, RECEIVER, 120_000 + k * 1_000);
     }
-    assert!(sim.delivery_ratio() >= 0.7, "honest delivery ratio degraded below 0.7: {}", sim.delivery_ratio());
+    assert!(
+        sim.delivery_ratio() >= 0.7,
+        "honest delivery ratio degraded below 0.7: {}",
+        sim.delivery_ratio()
+    );
 }
 
 /// ---------------------------------------------------------------------
@@ -450,7 +496,15 @@ fn eclipse_gains_nothing() {
     // impersonating Carol, it is trying to fake being Dave's receipt.
     let carol = Identity::from_seed(&[0xCA; 32]);
     let dave = Id16([0xDA; 16]); // a NodeId no honest node in this test owns
-    let relayed = signed_bundle(&carol, class::DIRECT, dave, 1, LIFETIME_MESSAGE_MS, 0, b"for dave".to_vec());
+    let relayed = signed_bundle(
+        &carol,
+        class::DIRECT,
+        dave,
+        1,
+        LIFETIME_MESSAGE_MS,
+        0,
+        b"for dave".to_vec(),
+    );
     let relayed_id = relayed.id();
 
     let before = sim.store_len(VICTIM);
@@ -459,7 +513,11 @@ fn eclipse_gains_nothing() {
     adversary_contact(sim.node_mut(VICTIM), &mut s3, 3, now, |sess| {
         sess.send(Frame::Bundle(relayed.encode()));
     });
-    assert_eq!(sim.store_len(VICTIM), before + 1, "the relayed bundle must be stored");
+    assert_eq!(
+        sim.store_len(VICTIM),
+        before + 1,
+        "the relayed bundle must be stored"
+    );
 
     let now = sim.now_ms();
     let mut s4 = adv.dial(now);
@@ -468,8 +526,19 @@ fn eclipse_gains_nothing() {
         // delivered. `handle_receipt`'s purge gate requires
         // `stored.dest == receipt_bundle.origin_node()` — that only holds if
         // the receipt truly comes from Dave.
-        let payload = ReceiptPayload { delivered: relayed_id, mac: [0x42; 16] }.encode();
-        let forged = adv.bundle(class::CONTROL, adv.node_id(), 0, mmp_types::consts::LIFETIME_CONTROL_MS, 0, payload);
+        let payload = ReceiptPayload {
+            delivered: relayed_id,
+            mac: [0x42; 16],
+        }
+        .encode();
+        let forged = adv.bundle(
+            class::CONTROL,
+            adv.node_id(),
+            0,
+            mmp_types::consts::LIFETIME_CONTROL_MS,
+            0,
+            payload,
+        );
         sess.send(Frame::Bundle(forged.encode()));
     });
     // +2, not +1: the CONTROL bundle carrying the forged receipt is itself a
@@ -509,7 +578,10 @@ fn eclipse_gains_nothing() {
             }
         }
     }
-    assert!(s5.established(), "the session must still establish normally under eclipse");
+    assert!(
+        s5.established(),
+        "the session must still establish normally under eclipse"
+    );
     let granted = granted.expect("adversary's WANT for the victim's own message must be answered");
     assert!(
         granted <= L_MAX,
@@ -559,7 +631,11 @@ fn bloom_poison_never_deletes() {
 
     // Hints only deprioritize offers — they can never delete. Nothing was
     // purged by the poisoned SUMMARY alone.
-    assert_eq!(sim.store_len(RELAY), before, "a poisoned summary bloom must delete nothing");
+    assert_eq!(
+        sim.store_len(RELAY),
+        before,
+        "a poisoned summary bloom must delete nothing"
+    );
 
     // Delivery still completes: `handoff_decision` checks `peer_is_dest`
     // BEFORE it ever consults the (poisoned) receipt hint, so the real
@@ -569,6 +645,10 @@ fn bloom_poison_never_deletes() {
     for k in 0..3 {
         sim.meet(SENDER, RECEIVER, 120_000 + k * 1_000);
     }
-    assert_eq!(sim.counters().messages_received, 1, "delivery must still complete via the WANT path");
+    assert_eq!(
+        sim.counters().messages_received,
+        1,
+        "delivery must still complete via the WANT path"
+    );
     let _ = msg_id;
 }

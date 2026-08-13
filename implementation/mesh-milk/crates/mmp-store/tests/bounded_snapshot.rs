@@ -41,10 +41,13 @@ fn bounded_open_rejects_before_read_and_never_overwrites_primary() {
     // A smaller candidate must not shadow an oversized primary: the primary
     // path remains authoritative even when the host refuses to load it.
     fs::write(&temp, b"MMPSNAP2").expect("candidate fixture");
-    let rejected = SnapshotStore::open_with_limits(&path, SnapshotLimits::new((image.len() - 1) as u64));
+    let rejected =
+        SnapshotStore::open_with_limits(&path, SnapshotLimits::new((image.len() - 1) as u64));
     assert!(rejected.load_rejected());
     assert!(rejected.get(&Id16([1; 16])).is_none());
-    let error = rejected.persist().expect_err("rejected image must not be replaced");
+    let error = rejected
+        .persist()
+        .expect_err("rejected image must not be replaced");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert_eq!(fs::read(&path).expect("primary remains intact"), image);
 
@@ -54,14 +57,19 @@ fn bounded_open_rejects_before_read_and_never_overwrites_primary() {
 
 #[test]
 fn bounded_persist_removes_oversized_temp_image() {
-    let path = std::env::temp_dir().join(format!("mmp-store-bounded-write-{}.mmp", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "mmp-store-bounded-write-{}.mmp",
+        std::process::id()
+    ));
     let temp = path.with_extension("tmp");
     let _ = fs::remove_file(&path);
     let _ = fs::remove_file(&temp);
 
     let mut store = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(8));
     store.put(meta(2), b"hello");
-    let error = store.persist().expect_err("fixture exceeds the complete-file limit");
+    let error = store
+        .persist()
+        .expect_err("fixture exceeds the complete-file limit");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert!(!path.exists());
     assert!(!temp.exists());
@@ -94,7 +102,8 @@ fn bounded_try_put_accounts_for_replacement_delta_before_admission() {
     // One extra byte is available: replacing the existing body with six
     // bytes must fit, while inserting even a one-byte second record must not
     // fit because it also carries framing, metadata, and a checksum.
-    let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64 + 1));
+    let mut bounded =
+        SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64 + 1));
     let mut replacement = meta(1);
     replacement.size = 6;
     assert_eq!(
@@ -113,7 +122,9 @@ fn bounded_try_put_accounts_for_replacement_delta_before_admission() {
     assert_eq!(bounded.len(), 1);
     assert_eq!(bounded.total_bytes(), 6);
 
-    bounded.persist().expect("the exact-fill replacement remains durable");
+    bounded
+        .persist()
+        .expect("the exact-fill replacement remains durable");
     assert_eq!(fs::metadata(&path).unwrap().len(), image.len() as u64 + 1);
     let restored = SnapshotStore::open(&path);
     assert_eq!(restored.get(&replacement.id).unwrap().1, b"123456");
@@ -126,7 +137,10 @@ fn bounded_try_put_accounts_for_replacement_delta_before_admission() {
 
 #[test]
 fn bounded_try_put_rejected_replacement_preserves_all_state() {
-    let stem = format!("mmp-store-bounded-reject-replacement-{}", std::process::id());
+    let stem = format!(
+        "mmp-store-bounded-reject-replacement-{}",
+        std::process::id()
+    );
     let fixture_path = std::env::temp_dir().join(format!("{stem}-fixture.mmp"));
     let path = std::env::temp_dir().join(format!("{stem}.mmp"));
     for file in [&fixture_path, &path] {
@@ -140,7 +154,8 @@ fn bounded_try_put_rejected_replacement_preserves_all_state() {
     let image = fs::read(&fixture_path).expect("fixture image");
     fs::write(&path, &image).expect("copy complete fixture image");
 
-    let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64));
+    let mut bounded =
+        SnapshotStore::open_with_limits(&path, SnapshotLimits::new(image.len() as u64));
     let id = Id16([1; 16]);
     let before_get = bounded.get(&id);
     let before_meta = bounded.all_meta();

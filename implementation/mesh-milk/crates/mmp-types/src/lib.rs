@@ -29,6 +29,8 @@ pub mod domain;
 pub mod err;
 /// Session frame envelope and every v1 frame type (doc 10 §2).
 pub mod frame;
+/// Candidate group membership control and bootstrap codecs.
+pub mod group_control;
 /// Fixed-size wire primitives (doc 10 §1) and NodeID derivation (doc 03 §3.2).
 pub mod ids;
 /// FileManifest (doc 16 §2): a signed share of 1..16 files.
@@ -46,6 +48,10 @@ pub use claim::{Claim, Friendship, PrekeyBatch, Revocation};
 pub use domain::{signed_preimage, SigDomain};
 pub use err::WireError;
 pub use frame::{Frame, Hello, Range, Summary};
+pub use group_control::{
+    AddTag, AdminInfo, AdminKey, AnchorAck, BootstrapDistribution, BootstrapInvite, EpochAnchor,
+    EpochAnchorSignature, GroupControlBatch, SenderKeyDist, SenderKeyGrant, SignedMembershipOp,
+};
 pub use ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 pub use manifest::{FileEntry, FileManifest};
 pub use payload::{AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};

@@ -39,6 +39,12 @@ pub enum SigDomain {
     /// (doc 10 §4.2 defines the field; the registry assigns no tag —
     /// implementation-assigned, prefix-freeness preserved).
     GroupMsg,
+    /// Candidate administrator membership-control signatures.
+    GroupControl,
+    /// Candidate sender-key grant signatures.
+    GroupGrant,
+    /// Candidate pairwise bootstrap signatures.
+    GroupBootstrap,
 }
 
 impl SigDomain {
@@ -56,6 +62,9 @@ impl SigDomain {
             SigDomain::AuthCert => b"mmp1/authcert\x01",
             SigDomain::Announce => b"mmp1/announce\x01",
             SigDomain::GroupMsg => b"mmp1/groupmsg\x01",
+            SigDomain::GroupControl => b"mmp1/group-control/v1\x01",
+            SigDomain::GroupGrant => b"mmp1/group-grant/v1\x01",
+            SigDomain::GroupBootstrap => b"mmp1/group-welcome/v1\x01",
         }
     }
 }

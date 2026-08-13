@@ -70,8 +70,13 @@ pub fn ingest(
     // 2. Derive, never trust: NodeID from the inline origin key.
     let origin_node = bundle.origin_node();
     // 3. Unconditional verify-before-store (strict, domain-separated).
-    if mmp_crypto::verify(SigDomain::Bundle, &bundle.origin, &bundle.canonical_zeroed(), &bundle.signature)
-        .is_err()
+    if mmp_crypto::verify(
+        SigDomain::Bundle,
+        &bundle.origin,
+        &bundle.canonical_zeroed(),
+        &bundle.signature,
+    )
+    .is_err()
     {
         return (Disposition::Dropped(DropReason::BadSignature), None);
     }

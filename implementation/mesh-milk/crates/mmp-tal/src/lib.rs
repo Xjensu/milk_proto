@@ -47,7 +47,10 @@ pub struct LinkQuality {
 impl Default for LinkQuality {
     fn default() -> Self {
         // Pessimistic BLE-GATT floor (doc 02 Track B).
-        LinkQuality { mtu: 247, goodput_bps: 50_000 }
+        LinkQuality {
+            mtu: 247,
+            goodput_bps: 50_000,
+        }
     }
 }
 

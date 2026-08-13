@@ -73,8 +73,11 @@ impl PrekeyStore {
             .values()
             .map(|s| Key32(x25519_dalek::PublicKey::from(s).to_bytes()))
             .collect();
-        let mut batch =
-            PrekeyBatch { signed_prekey: self.spk_public, spk_sig: mmp_types::ids::Sig64::ZERO, prekeys };
+        let mut batch = PrekeyBatch {
+            signed_prekey: self.spk_public,
+            spk_sig: mmp_types::ids::Sig64::ZERO,
+            prekeys,
+        };
         batch.spk_sig = identity.sign(SigDomain::Prekey, &batch.signed_object());
         batch
     }
@@ -114,8 +117,12 @@ impl PrekeyStore {
         if count > PREKEY_BATCH {
             return Err(CryptoError::Snapshot);
         }
-        let records_len = count.checked_mul(SNAPSHOT_RECORD_LEN).ok_or(CryptoError::Snapshot)?;
-        let expected_len = SNAPSHOT_HEADER_LEN.checked_add(records_len).ok_or(CryptoError::Snapshot)?;
+        let records_len = count
+            .checked_mul(SNAPSHOT_RECORD_LEN)
+            .ok_or(CryptoError::Snapshot)?;
+        let expected_len = SNAPSHOT_HEADER_LEN
+            .checked_add(records_len)
+            .ok_or(CryptoError::Snapshot)?;
         if bytes.len() != expected_len {
             return Err(CryptoError::Snapshot);
         }
@@ -178,7 +185,11 @@ impl PrekeyStore {
     /// Set local, trusted expiry metadata for the signed and one-time prekey
     /// material. Zero means not provisioned; this does not alter the wire
     /// claim because expiry is not represented by the frozen batch grammar.
-    pub fn set_expiry(&mut self, spk_not_after_ms: u64, otk_not_after_ms: u64) -> Result<(), CryptoError> {
+    pub fn set_expiry(
+        &mut self,
+        spk_not_after_ms: u64,
+        otk_not_after_ms: u64,
+    ) -> Result<(), CryptoError> {
         if spk_not_after_ms == u64::MAX || otk_not_after_ms == u64::MAX {
             return Err(CryptoError::Snapshot);
         }
@@ -198,7 +209,10 @@ impl PrekeyStore {
         if self.generation == 0 || self.generation == u64::MAX {
             return Err(CryptoError::Snapshot);
         }
-        let next = self.generation.checked_add(1).ok_or(CryptoError::Snapshot)?;
+        let next = self
+            .generation
+            .checked_add(1)
+            .ok_or(CryptoError::Snapshot)?;
         if next == u64::MAX {
             return Err(CryptoError::Snapshot);
         }
@@ -219,7 +233,9 @@ impl PrekeyStore {
             return Err(CryptoError::Snapshot);
         }
         let mut out = Zeroizing::new(Vec::with_capacity(
-            STATE_SNAPSHOT_HEADER_LEN + self.one_time.len() * SNAPSHOT_RECORD_LEN + self.consumed.len() * 2,
+            STATE_SNAPSHOT_HEADER_LEN
+                + self.one_time.len() * SNAPSHOT_RECORD_LEN
+                + self.consumed.len() * 2,
         ));
         out.push(STATE_SNAPSHOT_VERSION);
         let spk = Zeroizing::new(self.spk.to_bytes());
@@ -243,14 +259,36 @@ impl PrekeyStore {
     /// Restore private keys and lifecycle metadata from an authenticated
     /// provider-local state snapshot.
     pub fn restore_state(bytes: &[u8]) -> Result<PrekeyStore, CryptoError> {
-        if bytes.len() < STATE_SNAPSHOT_HEADER_LEN || bytes.first().copied() != Some(STATE_SNAPSHOT_VERSION) {
+        if bytes.len() < STATE_SNAPSHOT_HEADER_LEN
+            || bytes.first().copied() != Some(STATE_SNAPSHOT_VERSION)
+        {
             return Err(CryptoError::Snapshot);
         }
-        let generation = u64::from_le_bytes(bytes[33..41].try_into().map_err(|_| CryptoError::Snapshot)?);
-        let spk_not_after_ms = u64::from_le_bytes(bytes[41..49].try_into().map_err(|_| CryptoError::Snapshot)?);
-        let otk_not_after_ms = u64::from_le_bytes(bytes[49..57].try_into().map_err(|_| CryptoError::Snapshot)?);
-        let count = u16::from_le_bytes(bytes[57..59].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
-        let consumed_count = u16::from_le_bytes(bytes[59..61].try_into().map_err(|_| CryptoError::Snapshot)?) as usize;
+        let generation = u64::from_le_bytes(
+            bytes[33..41]
+                .try_into()
+                .map_err(|_| CryptoError::Snapshot)?,
+        );
+        let spk_not_after_ms = u64::from_le_bytes(
+            bytes[41..49]
+                .try_into()
+                .map_err(|_| CryptoError::Snapshot)?,
+        );
+        let otk_not_after_ms = u64::from_le_bytes(
+            bytes[49..57]
+                .try_into()
+                .map_err(|_| CryptoError::Snapshot)?,
+        );
+        let count = u16::from_le_bytes(
+            bytes[57..59]
+                .try_into()
+                .map_err(|_| CryptoError::Snapshot)?,
+        ) as usize;
+        let consumed_count = u16::from_le_bytes(
+            bytes[59..61]
+                .try_into()
+                .map_err(|_| CryptoError::Snapshot)?,
+        ) as usize;
         if generation == 0
             || generation == u64::MAX
             || spk_not_after_ms == u64::MAX
@@ -261,7 +299,11 @@ impl PrekeyStore {
             return Err(CryptoError::Snapshot);
         }
         let expected_len = STATE_SNAPSHOT_HEADER_LEN
-            .checked_add(count.checked_mul(SNAPSHOT_RECORD_LEN).ok_or(CryptoError::Snapshot)?)
+            .checked_add(
+                count
+                    .checked_mul(SNAPSHOT_RECORD_LEN)
+                    .ok_or(CryptoError::Snapshot)?,
+            )
             .and_then(|n| n.checked_add(consumed_count.checked_mul(2)?))
             .ok_or(CryptoError::Snapshot)?;
         if bytes.len() != expected_len {
@@ -289,7 +331,10 @@ impl PrekeyStore {
         let mut previous_consumed = None;
         for _ in 0..consumed_count {
             let id = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]);
-            if id as usize >= count || previous_consumed.is_some_and(|old| old >= id) || !consumed.insert(id) {
+            if id as usize >= count
+                || previous_consumed.is_some_and(|old| old >= id)
+                || !consumed.insert(id)
+            {
                 return Err(CryptoError::Snapshot);
             }
             previous_consumed = Some(id);
@@ -331,8 +376,13 @@ pub fn sender_agree(
     batch: &PrekeyBatch,
     prekey_index: Option<u16>,
 ) -> Result<SenderAgreement, CryptoError> {
-    verify(SigDomain::Prekey, recipient_identity, &batch.signed_object(), &batch.spk_sig)
-        .map_err(|_| CryptoError::Prekey)?;
+    verify(
+        SigDomain::Prekey,
+        recipient_identity,
+        &batch.signed_object(),
+        &batch.spk_sig,
+    )
+    .map_err(|_| CryptoError::Prekey)?;
 
     let eph = x25519_dalek::StaticSecret::random_from_rng(&mut *rng);
     let eph_pub = Key32(x25519_dalek::PublicKey::from(&eph).to_bytes());
@@ -359,7 +409,11 @@ pub fn sender_agree(
         &sender.public(),
         recipient_identity,
     );
-    Ok(SenderAgreement { eph_pub, prekey_id, ck0 })
+    Ok(SenderAgreement {
+        eph_pub,
+        prekey_id,
+        ck0,
+    })
 }
 
 /// Recipient: mirror the DH set with private prekey material.
@@ -382,7 +436,9 @@ pub fn recipient_agree(
         reject_low_order(dh2.as_bytes())?;
         Some(dh2)
     };
-    let dh3 = store.spk.diffie_hellman(&x25519_dalek::PublicKey::from(sender_exchange.0));
+    let dh3 = store
+        .spk
+        .diffie_hellman(&x25519_dalek::PublicKey::from(sender_exchange.0));
     reject_low_order(dh3.as_bytes())?;
 
     Ok(derive_ck0(
@@ -432,7 +488,10 @@ mod lifecycle_tests {
         original.set_expiry(10_000, 20_000).unwrap();
         let snapshot = original.snapshot_state().unwrap();
         let restored = PrekeyStore::restore_state(&snapshot).unwrap();
-        assert_eq!(restored.snapshot_state().unwrap().as_slice(), snapshot.as_slice());
+        assert_eq!(
+            restored.snapshot_state().unwrap().as_slice(),
+            snapshot.as_slice()
+        );
         assert!(restored.otk_consumed(2));
         assert!(!restored.otk_consumed(1));
     }
@@ -539,11 +598,17 @@ mod lifecycle_tests {
 
         assert!(store.mark_otk_consumed(0).is_err());
         assert!(!store.otk_consumed(0));
-        assert_eq!(store.snapshot_state().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            store.snapshot_state().unwrap().as_slice(),
+            before.as_slice()
+        );
 
         assert!(store.set_expiry(10_000, 20_000).is_err());
         assert_eq!(store.spk_not_after_ms, 0);
         assert_eq!(store.otk_not_after_ms, 0);
-        assert_eq!(store.snapshot_state().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            store.snapshot_state().unwrap().as_slice(),
+            before.as_slice()
+        );
     }
 }

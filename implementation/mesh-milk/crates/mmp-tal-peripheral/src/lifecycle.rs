@@ -7,8 +7,8 @@
 //! BlueZ presents the two GATT directions as independent control events.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use mmp_tal::LinkId;
 use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
@@ -27,7 +27,9 @@ pub(crate) const MAX_RETIRED_ENDPOINTS_PER_SIDE: usize = 256;
 pub(crate) async fn acquire_write_gate_bounded(
     gate: &Arc<AsyncMutex<()>>,
 ) -> Option<OwnedMutexGuard<()>> {
-    timeout(Duration::from_millis(250), gate.clone().lock_owned()).await.ok()
+    timeout(Duration::from_millis(250), gate.clone().lock_owned())
+        .await
+        .ok()
 }
 
 /// Acquire the lifecycle gate only while admission remains enabled. The flag
@@ -116,7 +118,9 @@ impl LinkLifecycle {
         endpoint: i64,
     ) -> Result<AttachResult, AttachReject> {
         if !self.records.contains_key(&link) {
-            let generation = self.allocate_generation().ok_or(AttachReject::GenerationExhausted)?;
+            let generation = self
+                .allocate_generation()
+                .ok_or(AttachReject::GenerationExhausted)?;
             let token = StreamToken {
                 link,
                 generation,
@@ -129,7 +133,11 @@ impl LinkLifecycle {
                 StreamSide::Writer => record.writer = Some(token),
             }
             self.records.insert(link, record);
-            return Ok(AttachResult { token, restarted: false, link_was_new: true });
+            return Ok(AttachResult {
+                token,
+                restarted: false,
+                link_was_new: true,
+            });
         }
 
         let record = self.records.get(&link).expect("record exists");
@@ -163,15 +171,23 @@ impl LinkLifecycle {
             StreamSide::Reader => usize::from(record.writer.is_some()),
             StreamSide::Writer => usize::from(existing.is_some()),
         };
-        if record.retired_reader_endpoints.len().saturating_add(reader_retirements)
+        if record
+            .retired_reader_endpoints
+            .len()
+            .saturating_add(reader_retirements)
             > MAX_RETIRED_ENDPOINTS_PER_SIDE
-            || record.retired_writer_endpoints.len().saturating_add(writer_retirements)
+            || record
+                .retired_writer_endpoints
+                .len()
+                .saturating_add(writer_retirements)
                 > MAX_RETIRED_ENDPOINTS_PER_SIDE
         {
             return Err(AttachReject::RetiredCapacity);
         }
 
-        let generation = self.allocate_generation().ok_or(AttachReject::GenerationExhausted)?;
+        let generation = self
+            .allocate_generation()
+            .ok_or(AttachReject::GenerationExhausted)?;
         let token = StreamToken {
             link,
             generation,
@@ -206,11 +222,17 @@ impl LinkLifecycle {
                 }
             }
         }
-        Ok(AttachResult { token, restarted, link_was_new: false })
+        Ok(AttachResult {
+            token,
+            restarted,
+            link_was_new: false,
+        })
     }
 
     pub(crate) fn is_current(&self, token: StreamToken) -> bool {
-        let Some(record) = self.records.get(&token.link) else { return false };
+        let Some(record) = self.records.get(&token.link) else {
+            return false;
+        };
         match token.side {
             StreamSide::Reader => record.reader == Some(token),
             StreamSide::Writer => record.writer == Some(token),
@@ -290,7 +312,10 @@ mod tests {
         .expect("close path must not wait indefinitely")
         .is_none();
 
-        assert!(completed, "a stuck write gate must time out and fail closed");
+        assert!(
+            completed,
+            "a stuck write gate must time out and fail closed"
+        );
         drop(held);
     }
 
@@ -318,8 +343,12 @@ mod tests {
     #[test]
     fn reader_and_writer_attach_to_one_generation() {
         let mut lifecycle = LinkLifecycle::default();
-        let reader = lifecycle.attach(7, StreamSide::Reader, 11).expect("reader accepted");
-        let writer = lifecycle.attach(7, StreamSide::Writer, 12).expect("writer accepted");
+        let reader = lifecycle
+            .attach(7, StreamSide::Reader, 11)
+            .expect("reader accepted");
+        let writer = lifecycle
+            .attach(7, StreamSide::Writer, 12)
+            .expect("writer accepted");
 
         assert!(reader.link_was_new);
         assert!(!writer.link_was_new);
@@ -331,8 +360,13 @@ mod tests {
     #[test]
     fn stale_writer_cannot_close_replacement() {
         let mut lifecycle = LinkLifecycle::default();
-        let old = lifecycle.attach(7, StreamSide::Writer, 12).expect("writer accepted").token;
-        let replacement = lifecycle.attach(7, StreamSide::Writer, 13).expect("replacement accepted");
+        let old = lifecycle
+            .attach(7, StreamSide::Writer, 12)
+            .expect("writer accepted")
+            .token;
+        let replacement = lifecycle
+            .attach(7, StreamSide::Writer, 13)
+            .expect("replacement accepted");
 
         assert!(replacement.restarted);
         assert!(!lifecycle.is_current(old));
@@ -344,16 +378,25 @@ mod tests {
     fn duplicate_endpoint_is_not_attached_twice() {
         let mut lifecycle = LinkLifecycle::default();
         assert!(lifecycle.attach(7, StreamSide::Reader, 15).is_ok());
-        assert!(matches!(lifecycle.attach(7, StreamSide::Reader, 15), Err(super::AttachReject::DuplicateEndpoint)));
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 15),
+            Err(super::AttachReject::DuplicateEndpoint)
+        ));
     }
 
     #[test]
     fn reconnect_generation_is_not_reused() {
         let mut lifecycle = LinkLifecycle::default();
-        let old = lifecycle.attach(7, StreamSide::Reader, 21).expect("reader accepted").token;
+        let old = lifecycle
+            .attach(7, StreamSide::Reader, 21)
+            .expect("reader accepted")
+            .token;
         assert!(lifecycle.close_if_current(old));
 
-        let replacement = lifecycle.attach(7, StreamSide::Reader, 21).expect("reader accepted").token;
+        let replacement = lifecycle
+            .attach(7, StreamSide::Reader, 21)
+            .expect("reader accepted")
+            .token;
         assert_ne!(old.generation, replacement.generation);
         assert!(!lifecycle.is_current(old));
         assert!(lifecycle.is_current(replacement));
@@ -362,8 +405,14 @@ mod tests {
     #[test]
     fn stale_reader_data_is_rejected_after_replacement() {
         let mut lifecycle = LinkLifecycle::default();
-        let old = lifecycle.attach(7, StreamSide::Reader, 31).expect("reader accepted").token;
-        let replacement = lifecycle.attach(7, StreamSide::Reader, 32).expect("replacement accepted").token;
+        let old = lifecycle
+            .attach(7, StreamSide::Reader, 31)
+            .expect("reader accepted")
+            .token;
+        let replacement = lifecycle
+            .attach(7, StreamSide::Reader, 32)
+            .expect("replacement accepted")
+            .token;
 
         assert!(!lifecycle.is_current(old));
         assert!(lifecycle.is_current(replacement));
@@ -374,20 +423,32 @@ mod tests {
     #[test]
     fn delayed_opposite_endpoint_is_rejected_after_replacement() {
         let mut lifecycle = LinkLifecycle::default();
-        let old_reader = lifecycle.attach(7, StreamSide::Reader, 41).expect("reader accepted");
-        let old_writer = lifecycle.attach(7, StreamSide::Writer, 42).expect("writer accepted");
-        let replacement = lifecycle.attach(7, StreamSide::Reader, 43).expect("replacement accepted");
+        let old_reader = lifecycle
+            .attach(7, StreamSide::Reader, 41)
+            .expect("reader accepted");
+        let old_writer = lifecycle
+            .attach(7, StreamSide::Writer, 42)
+            .expect("writer accepted");
+        let replacement = lifecycle
+            .attach(7, StreamSide::Reader, 43)
+            .expect("replacement accepted");
 
         assert!(!lifecycle.is_current(old_reader.token));
         assert!(!lifecycle.is_current(old_writer.token));
-        assert!(matches!(lifecycle.attach(7, StreamSide::Writer, 42), Err(super::AttachReject::RetiredEndpoint)));
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Writer, 42),
+            Err(super::AttachReject::RetiredEndpoint)
+        ));
         assert!(lifecycle.is_current(replacement.token));
     }
 
     #[test]
     fn retired_endpoint_cap_fails_closed_without_eviction() {
         let mut lifecycle = LinkLifecycle::default();
-        let mut current = lifecycle.attach(7, StreamSide::Reader, 1000).expect("initial reader").token;
+        let mut current = lifecycle
+            .attach(7, StreamSide::Reader, 1000)
+            .expect("initial reader")
+            .token;
         for endpoint in 0..MAX_RETIRED_ENDPOINTS_PER_SIDE {
             current = lifecycle
                 .attach(7, StreamSide::Reader, endpoint as i64)
@@ -395,22 +456,37 @@ mod tests {
                 .token;
         }
         let rejected = lifecycle.attach(7, StreamSide::Reader, 999_999);
-        assert!(matches!(rejected, Err(super::AttachReject::RetiredCapacity)), "replacement must fail closed at the cap");
+        assert!(
+            matches!(rejected, Err(super::AttachReject::RetiredCapacity)),
+            "replacement must fail closed at the cap"
+        );
         assert!(lifecycle.is_current(current));
-        assert!(matches!(lifecycle.attach(7, StreamSide::Reader, 1000), Err(super::AttachReject::RetiredEndpoint)), "evicted endpoint must not be re-admitted");
+        assert!(
+            matches!(
+                lifecycle.attach(7, StreamSide::Reader, 1000),
+                Err(super::AttachReject::RetiredEndpoint)
+            ),
+            "evicted endpoint must not be re-admitted"
+        );
     }
 
     #[test]
     fn capacity_quarantine_keeps_delayed_endpoints_fenced() {
         let mut lifecycle = LinkLifecycle::default();
-        let mut current = lifecycle.attach(7, StreamSide::Reader, 1000).expect("initial reader").token;
+        let mut current = lifecycle
+            .attach(7, StreamSide::Reader, 1000)
+            .expect("initial reader")
+            .token;
         for endpoint in 0..MAX_RETIRED_ENDPOINTS_PER_SIDE {
             current = lifecycle
                 .attach(7, StreamSide::Reader, endpoint as i64)
                 .expect("replacement must fit the retired identity budget")
                 .token;
         }
-        assert!(matches!(lifecycle.attach(7, StreamSide::Reader, 999_999), Err(super::AttachReject::RetiredCapacity)));
+        assert!(matches!(
+            lifecycle.attach(7, StreamSide::Reader, 999_999),
+            Err(super::AttachReject::RetiredCapacity)
+        ));
         assert_eq!(lifecycle.quarantine_link(7), Some(current.generation));
         assert!(matches!(
             lifecycle.attach(7, StreamSide::Reader, 999_999),
@@ -425,33 +501,57 @@ mod tests {
     #[test]
     fn explicit_retire_and_drain_preserve_generation_monotonicity() {
         let mut lifecycle = LinkLifecycle::default();
-        let first = lifecycle.attach(7, StreamSide::Reader, 1).expect("reader accepted").token;
+        let first = lifecycle
+            .attach(7, StreamSide::Reader, 1)
+            .expect("reader accepted")
+            .token;
         assert_eq!(lifecycle.retire_link(7), Some(first.generation));
-        let second = lifecycle.attach(7, StreamSide::Reader, 2).expect("replacement accepted").token;
+        let second = lifecycle
+            .attach(7, StreamSide::Reader, 2)
+            .expect("replacement accepted")
+            .token;
         let drained = lifecycle.drain();
         assert_eq!(drained, vec![(7, second.generation)]);
-        let third = lifecycle.attach(7, StreamSide::Reader, 3).expect("new link accepted").token;
+        let third = lifecycle
+            .attach(7, StreamSide::Reader, 3)
+            .expect("new link accepted")
+            .token;
         assert!(third.generation > second.generation);
     }
 
     #[test]
     fn generation_allocator_fails_closed_at_maximum() {
-        let mut lifecycle = LinkLifecycle { next_generation: u64::MAX, ..Default::default() };
+        let mut lifecycle = LinkLifecycle {
+            next_generation: u64::MAX,
+            ..Default::default()
+        };
         assert!(matches!(
             lifecycle.attach(7, StreamSide::Reader, 1),
             Err(super::AttachReject::GenerationExhausted)
         ));
-        assert!(lifecycle.records.is_empty(), "overflow must not create a live endpoint");
+        assert!(
+            lifecycle.records.is_empty(),
+            "overflow must not create a live endpoint"
+        );
     }
 
     #[test]
     fn replacement_overflow_preserves_existing_endpoint() {
-        let mut lifecycle = LinkLifecycle { next_generation: u64::MAX - 1, ..Default::default() };
-        let current = lifecycle.attach(7, StreamSide::Reader, 1).expect("initial endpoint").token;
+        let mut lifecycle = LinkLifecycle {
+            next_generation: u64::MAX - 1,
+            ..Default::default()
+        };
+        let current = lifecycle
+            .attach(7, StreamSide::Reader, 1)
+            .expect("initial endpoint")
+            .token;
         assert!(matches!(
             lifecycle.attach(7, StreamSide::Reader, 2),
             Err(super::AttachReject::GenerationExhausted)
         ));
-        assert!(lifecycle.is_current(current), "overflow must not retire the current endpoint");
+        assert!(
+            lifecycle.is_current(current),
+            "overflow must not retire the current endpoint"
+        );
     }
 }

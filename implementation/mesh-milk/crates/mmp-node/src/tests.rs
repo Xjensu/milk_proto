@@ -8,28 +8,34 @@ use std::sync::Arc;
 
 use mmp_core::store::{
     BundleMeta, BundleStore, MemStore, SlotState, StoreAbortError, StoreBatchEntry,
-    StoreBatchReservation, StoreCommitError, StorePutError, StorePutOutcome, StoreReserveError,
-    StoreReservation,
+    StoreBatchReservation, StoreCommitError, StorePutError, StorePutOutcome, StoreReservation,
+    StoreReserveError,
 };
 use mmp_core::{IdSource, SeenIndex, SessionHost};
 use mmp_crypto::{conversation_id, Identity};
 use mmp_tal::TalEvent;
-use mmp_types::frame::{ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD};
 use mmp_types::authcert::{AnnouncementBody, AuthCert};
 use mmp_types::bundle::{class, prio, Bundle};
-use mmp_types::claim::{friendship_signed_object, EpochAnchor, Friendship, PrekeyBatch, Revocation};
+use mmp_types::claim::{
+    friendship_signed_object, EpochAnchor, Friendship, PrekeyBatch, Revocation,
+};
 use mmp_types::consts::{
     BLOB_INTEREST_TTL_MS, FILE_MAX, FRIENDSHIP_TTL_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS,
-    MAX_BUNDLE,
-    NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
+    MAX_BUNDLE, NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, RS_DATA_K, RS_TOTAL_N,
+    SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
+use mmp_types::frame::{
+    ProxySummaryBody, FT_CLOSE, FT_ERROR, FT_HS, FT_SUMMARY, MAX_ENVELOPE_PAYLOAD,
+};
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
 use mmp_types::payload::{apptype, AsyncPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::Ext;
 
 use crate::diag::JourneyEvent;
-use crate::{ClaimPublishError, DeliveryState, Event, KnownClaimBody, Node, SendError, SentMessage, Tier};
+use crate::{
+    ClaimPublishError, DeliveryState, Event, KnownClaimBody, Node, SendError, SentMessage, Tier,
+};
 
 #[cfg(target_os = "windows")]
 use crate::WindowsVault;
@@ -43,7 +49,8 @@ fn own_bundle_deadline_saturates_at_clock_max() {
     let mut n = node(250);
     n.tick(u64::MAX);
 
-    n.try_set_nickname("max-clock", 1).expect("claim publication remains valid");
+    n.try_set_nickname("max-clock", 1)
+        .expect("claim publication remains valid");
 
     let claim_meta = n
         .core
@@ -81,7 +88,10 @@ fn claim_publication_store_rejection_is_side_effect_free() {
     let seen_before = n.core.seen.encode();
     let events_before = n.core.events.len();
 
-    assert_eq!(n.try_set_nickname("durable-failure", 1), Err(SendError::ResourceLimit));
+    assert_eq!(
+        n.try_set_nickname("durable-failure", 1),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(n.own_claims(), claims_before);
     assert_eq!(n.core.seen.encode(), seen_before);
     assert_eq!(n.store_len(), 0);
@@ -102,8 +112,12 @@ fn rejected_bootstrap_claims_remain_discoverable_without_durable_side_effects() 
     // discovery material even when the provider cannot accept the bootstrap
     // bundles.  The provider rejection must not make either claim disappear.
     assert_eq!(claims.len(), 2);
-    assert!(claims.iter().any(|claim| claim.field == mmp_types::claim::field::EXCHANGE_KEY));
-    assert!(claims.iter().any(|claim| claim.field == mmp_types::claim::field::PREKEY_BATCH));
+    assert!(claims
+        .iter()
+        .any(|claim| claim.field == mmp_types::claim::field::EXCHANGE_KEY));
+    assert!(claims
+        .iter()
+        .any(|claim| claim.field == mmp_types::claim::field::PREKEY_BATCH));
 
     // A failed durable write is not bundle publication: no bundle, first-sight
     // dedup entry, or Created diagnostic may be observable.  ClaimUpdated
@@ -138,10 +152,15 @@ fn typed_revocation_reports_provider_failure_and_tombstone_state() {
     assert_eq!(rejected.diagnostics().records().len(), diagnostics_before);
 
     let mut published = node(241);
-    let bytes = published.try_revoke_identity(7).expect("durable revocation");
+    let bytes = published
+        .try_revoke_identity(7)
+        .expect("durable revocation");
     let claim = mmp_types::claim::Claim::decode(&bytes).expect("encoded revocation claim");
     assert_eq!(claim.field, mmp_types::claim::field::REVOCATION);
-    assert_eq!(published.try_revoke_identity(8), Err(ClaimPublishError::OwnerRevoked));
+    assert_eq!(
+        published.try_revoke_identity(8),
+        Err(ClaimPublishError::OwnerRevoked)
+    );
 }
 
 #[test]
@@ -176,7 +195,9 @@ fn generic_nickname_publication_rejects_invalid_body_before_gossip() {
     // The generic infallible publication API remains source-compatible, but
     // now returns an empty result and performs no side effects for a known
     // field whose body violates its normative bound.
-    assert!(n.publish_claim(mmp_types::claim::field::NICKNAME, 2, oversized).is_empty());
+    assert!(n
+        .publish_claim(mmp_types::claim::field::NICKNAME, 2, oversized)
+        .is_empty());
     assert_eq!(n.own_claims(), before_claims);
     assert_eq!(n.store_len(), before_store_len);
 }
@@ -188,9 +209,15 @@ fn recognized_claim_publication_rejects_malformed_bodies_before_side_effects() {
     let before_store_len = n.store_len();
     let cases = [
         (mmp_types::claim::field::EXCHANGE_KEY, vec![0u8; 31]),
-        (mmp_types::claim::field::PREKEY_BATCH, vec![0u8; 32 + 64 + 1]),
+        (
+            mmp_types::claim::field::PREKEY_BATCH,
+            vec![0u8; 32 + 64 + 1],
+        ),
         (mmp_types::claim::field::FRIENDSHIP, vec![0u8; 32 + 8 + 64]),
-        (mmp_types::claim::field::GROUP_EPOCH_ANCHOR, vec![0u8; 16 + 2 + 32 - 1]),
+        (
+            mmp_types::claim::field::GROUP_EPOCH_ANCHOR,
+            vec![0u8; 16 + 2 + 32 - 1],
+        ),
         (mmp_types::claim::field::REVOCATION, vec![0u8; 32 + 1 + 1]),
     ];
 
@@ -223,7 +250,11 @@ fn typed_known_claims_validate_before_signing_and_keep_opaque_path() {
         KnownClaimBody::Nickname("typed".to_owned()),
         KnownClaimBody::ExchangeKey(Key32([0x55; 32])),
         KnownClaimBody::PrekeyBatch(n.core.prekeys.batch(&n.core.identity)),
-        KnownClaimBody::Friendship(Friendship { friend: friend.public(), since, countersig }),
+        KnownClaimBody::Friendship(Friendship {
+            friend: friend.public(),
+            since,
+            countersig,
+        }),
         KnownClaimBody::GroupEpochAnchor(EpochAnchor {
             gid: mmp_types::ids::Id16([0x66; 16]),
             epoch: 3,
@@ -299,7 +330,10 @@ fn oversized_unknown_claim_is_rejected_before_signing_or_storage() {
 #[test]
 fn claim_publication_after_self_revocation_fails_before_signing_or_gossip() {
     let mut n = node(250);
-    assert!(!n.revoke_identity(7).is_empty(), "the initial tombstone remains publishable");
+    assert!(
+        !n.revoke_identity(7).is_empty(),
+        "the initial tombstone remains publishable"
+    );
     let claims_after_revoke = n.own_claims();
     let store_after_revoke = n.store_len();
 
@@ -365,7 +399,10 @@ fn persisted_handoff_revalidates_raw_bundle_before_mutation() {
     );
 
     assert!(SessionHost::load_for_handoff(&mut n.core, &peer, &id).is_none());
-    assert!(n.core.store.meta(&id).is_none(), "invalid persisted bundle must be removed");
+    assert!(
+        n.core.store.meta(&id).is_none(),
+        "invalid persisted bundle must be removed"
+    );
 }
 
 #[test]
@@ -390,7 +427,11 @@ fn startup_rebuild_rejects_signed_but_merkle_invalid_symbol() {
         // The shape is decodable and the bundle signature is valid, but the
         // path is not a proof for `root`; startup must not index it as
         // servable holder state.
-        payload: SymbolPayload { path: vec![0], symbol: vec![0; SYMBOL_SIZE] }.encode(),
+        payload: SymbolPayload {
+            path: vec![0],
+            symbol: vec![0; SYMBOL_SIZE],
+        }
+        .encode(),
         signature: Sig64::ZERO,
     };
     bundle.signature = signer.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
@@ -414,7 +455,10 @@ fn startup_rebuild_rejects_signed_but_merkle_invalid_symbol() {
     store.put(meta, &bytes);
 
     let restored = Node::new([247; 32], Box::new(store), Tier::Relay);
-    assert!(restored.core.store.meta(&id).is_none(), "invalid symbol must not survive startup");
+    assert!(
+        restored.core.store.meta(&id).is_none(),
+        "invalid symbol must not survive startup"
+    );
     assert!(!restored.core.blob_index.contains_key(&root));
 }
 
@@ -487,7 +531,15 @@ struct ReservationProbeStore {
 }
 
 impl ReservationProbeStore {
-    fn new(mode: ReservationMode) -> (Self, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>, Arc<AtomicBool>) {
+    fn new(
+        mode: ReservationMode,
+    ) -> (
+        Self,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+    ) {
         let reserve_calls = Arc::new(AtomicBool::new(false));
         let commit_calls = Arc::new(AtomicBool::new(false));
         let abort_calls = Arc::new(AtomicBool::new(false));
@@ -545,10 +597,7 @@ impl BundleStore for ReservationProbeStore {
         self.inner.commit_reserved(reservation, meta, bytes)
     }
 
-    fn abort_reservation(
-        &mut self,
-        reservation: &StoreReservation,
-    ) -> Result<(), StoreAbortError> {
+    fn abort_reservation(&mut self, reservation: &StoreReservation) -> Result<(), StoreAbortError> {
         self.abort_calls.store(true, Ordering::Relaxed);
         self.inner.abort_reservation(reservation)
     }
@@ -624,9 +673,7 @@ type BatchProbeHandles = (
 );
 
 impl AtomicBatchProbeStore {
-    fn new(
-        mode: BatchReservationMode,
-    ) -> BatchProbeHandles {
+    fn new(mode: BatchReservationMode) -> BatchProbeHandles {
         let reserve_calls = Arc::new(AtomicBool::new(false));
         let commit_calls = Arc::new(AtomicBool::new(false));
         let abort_calls = Arc::new(AtomicBool::new(false));
@@ -690,11 +737,17 @@ impl BundleStore for AtomicBatchProbeStore {
         match self.mode {
             BatchReservationMode::Accept => {
                 self.batch_symbol_entries.store(
-                    entries.iter().filter(|entry| entry.meta.class == class::SYMBOL).count(),
+                    entries
+                        .iter()
+                        .filter(|entry| entry.meta.class == class::SYMBOL)
+                        .count(),
                     Ordering::Relaxed,
                 );
                 self.batch_manifest_entries.store(
-                    entries.iter().filter(|entry| entry.meta.class == class::DIRECT).count(),
+                    entries
+                        .iter()
+                        .filter(|entry| entry.meta.class == class::DIRECT)
+                        .count(),
                     Ordering::Relaxed,
                 );
                 self.inner.commit_reserved_batch(batch, entries)
@@ -789,7 +842,17 @@ fn assert_atomic_file_failure_with_source(
         .core
         .convs
         .iter()
-        .map(|(id, conv)| (*id, (conv.peer, conv.send.epoch, conv.send.next_index, conv.dag.heads())))
+        .map(|(id, conv)| {
+            (
+                *id,
+                (
+                    conv.peer,
+                    conv.send.epoch,
+                    conv.send.next_index,
+                    conv.dag.heads(),
+                ),
+            )
+        })
         .collect();
     let pending_async_before = alice.core.pending_async.clone();
     let pending_first_before = alice.core.pending_first_contact.clone();
@@ -803,31 +866,81 @@ fn assert_atomic_file_failure_with_source(
     let data = vec![0x4a; 3000];
     let result = if reader_source {
         let mut reader = Cursor::new(data.clone());
-        alice.send_file_from_reader(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &mut reader)
+        alice.send_file_from_reader(
+            &bob.node_id(),
+            "atomic-failure.bin",
+            "application/octet-stream",
+            &mut reader,
+        )
     } else {
-        alice.send_file(&bob.node_id(), "atomic-failure.bin", "application/octet-stream", &data)
+        alice.send_file(
+            &bob.node_id(),
+            "atomic-failure.bin",
+            "application/octet-stream",
+            &data,
+        )
     };
     assert_eq!(result, Err(SendError::ResourceLimit));
 
-    assert!(reserve_calls.load(Ordering::Relaxed), "file send must request atomic batch capacity");
+    assert!(
+        reserve_calls.load(Ordering::Relaxed),
+        "file send must request atomic batch capacity"
+    );
     assert_eq!(commit_calls.load(Ordering::Relaxed), expect_commit);
     assert_eq!(abort_calls.load(Ordering::Relaxed), expect_commit);
-    assert!(!single_write_calls.load(Ordering::Relaxed), "atomic failure must not fall back to singles");
-    assert_eq!(alice.core.store.all_meta(), store_meta_before, "failed batch must not publish records");
+    assert!(
+        !single_write_calls.load(Ordering::Relaxed),
+        "atomic failure must not fall back to singles"
+    );
+    assert_eq!(
+        alice.core.store.all_meta(),
+        store_meta_before,
+        "failed batch must not publish records"
+    );
     assert_eq!(alice.core.store.total_bytes(), store_bytes_before);
     assert_eq!(alice.core.store.len(), store_len_before);
-    assert_eq!(alice.core.blob_index, blob_index_before, "failed batch must not mutate holder index");
-    assert_eq!(alice.core.symbol_of, symbol_of_before, "failed batch must not mutate reverse index");
-    assert_eq!(alice.core.seen.encode(), seen_before, "failed batch must not mutate SeenIndex");
-    assert_eq!(alice.diagnostics().dump(), diagnostics_before, "failed batch must not log Created");
-    assert_eq!(alice.core.events, events_before, "manifest candidate must not emit events");
+    assert_eq!(
+        alice.core.blob_index, blob_index_before,
+        "failed batch must not mutate holder index"
+    );
+    assert_eq!(
+        alice.core.symbol_of, symbol_of_before,
+        "failed batch must not mutate reverse index"
+    );
+    assert_eq!(
+        alice.core.seen.encode(),
+        seen_before,
+        "failed batch must not mutate SeenIndex"
+    );
+    assert_eq!(
+        alice.diagnostics().dump(),
+        diagnostics_before,
+        "failed batch must not log Created"
+    );
+    assert_eq!(
+        alice.core.events, events_before,
+        "manifest candidate must not emit events"
+    );
     let convs_after: BTreeMap<Id16, (Key32, u16, u32, Vec<Id16>)> = alice
         .core
         .convs
         .iter()
-        .map(|(id, conv)| (*id, (conv.peer, conv.send.epoch, conv.send.next_index, conv.dag.heads())))
+        .map(|(id, conv)| {
+            (
+                *id,
+                (
+                    conv.peer,
+                    conv.send.epoch,
+                    conv.send.next_index,
+                    conv.dag.heads(),
+                ),
+            )
+        })
         .collect();
-    assert_eq!(convs_after, convs_before, "manifest candidate must not commit a conversation");
+    assert_eq!(
+        convs_after, convs_before,
+        "manifest candidate must not commit a conversation"
+    );
     assert_eq!(alice.core.pending_async, pending_async_before);
     assert_eq!(alice.core.pending_first_contact, pending_first_before);
     let sent_after: BTreeMap<Id16, (Id16, DeliveryState)> = alice
@@ -836,7 +949,10 @@ fn assert_atomic_file_failure_with_source(
         .iter()
         .map(|(id, message)| (*id, (message.conv, message.state)))
         .collect();
-    assert_eq!(sent_after, sent_before, "manifest candidate must not enter sent history");
+    assert_eq!(
+        sent_after, sent_before,
+        "manifest candidate must not enter sent history"
+    );
 }
 
 #[test]
@@ -867,12 +983,24 @@ fn send_file_atomic_success_commits_symbols_and_manifest_together() {
     drain(&mut alice);
     drain(&mut bob);
 
-    let (probe, reserve_calls, commit_calls, _abort_calls, single_write_calls, symbol_entries, manifest_entries) =
-        AtomicBatchProbeStore::new(BatchReservationMode::Accept);
+    let (
+        probe,
+        reserve_calls,
+        commit_calls,
+        _abort_calls,
+        single_write_calls,
+        symbol_entries,
+        manifest_entries,
+    ) = AtomicBatchProbeStore::new(BatchReservationMode::Accept);
     alice.core.store = Box::new(probe);
     let data = vec![0x4b; 3000];
     let sent = alice
-        .send_file(&bob.node_id(), "atomic-success.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "atomic-success.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("atomic provider accepts the complete file transaction");
 
     let expected_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
@@ -882,10 +1010,23 @@ fn send_file_atomic_success_commits_symbols_and_manifest_together() {
     assert_eq!(symbol_entries.load(Ordering::Relaxed), expected_symbols);
     assert_eq!(manifest_entries.load(Ordering::Relaxed), 1);
     assert_eq!(alice.core.store.len(), expected_symbols + 1);
-    assert_eq!(alice.core.store.meta(&sent.message_id).map(|meta| meta.class), Some(class::DIRECT));
+    assert_eq!(
+        alice
+            .core
+            .store
+            .meta(&sent.message_id)
+            .map(|meta| meta.class),
+        Some(class::DIRECT)
+    );
     assert_eq!(alice.core.symbol_of.len(), expected_symbols);
-    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(expected_symbols));
-    assert_eq!(alice.message_state(&sent.message_id), Some(DeliveryState::Queued));
+    assert_eq!(
+        alice.core.blob_index.get(&sent.root).map(BTreeMap::len),
+        Some(expected_symbols)
+    );
+    assert_eq!(
+        alice.message_state(&sent.message_id),
+        Some(DeliveryState::Queued)
+    );
 }
 
 #[test]
@@ -901,7 +1042,12 @@ fn send_file_success_does_not_orphan_records_on_malformed_batch_outcomes() {
     alice.core.store = Box::new(probe);
     let data = vec![0x4c; 3000];
     let sent = alice
-        .send_file(&bob.node_id(), "atomic-malformed-outcomes.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "atomic-malformed-outcomes.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("successful publication must not be converted into an orphaning failure");
 
     let expected_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
@@ -912,7 +1058,10 @@ fn send_file_success_does_not_orphan_records_on_malformed_batch_outcomes() {
     assert_eq!(alice.core.store.len(), expected_symbols + 1);
     assert!(alice.core.store.meta(&sent.message_id).is_some());
     assert_eq!(alice.core.symbol_of.len(), expected_symbols);
-    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(expected_symbols));
+    assert_eq!(
+        alice.core.blob_index.get(&sent.root).map(BTreeMap::len),
+        Some(expected_symbols)
+    );
     assert!(alice.core.seen.contains(&sent.message_id));
 }
 
@@ -928,11 +1077,21 @@ struct PrefixCapacityStore {
 
 impl PrefixCapacityStore {
     fn new(symbol_limit: usize) -> Self {
-        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit, reject_direct: None }
+        Self {
+            inner: MemStore::new(),
+            accepted_symbols: 0,
+            symbol_limit,
+            reject_direct: None,
+        }
     }
 
     fn rejecting_direct(symbol_limit: usize, gate: Arc<AtomicBool>) -> Self {
-        Self { inner: MemStore::new(), accepted_symbols: 0, symbol_limit, reject_direct: Some(gate) }
+        Self {
+            inner: MemStore::new(),
+            accepted_symbols: 0,
+            symbol_limit,
+            reject_direct: Some(gate),
+        }
     }
 }
 
@@ -950,7 +1109,10 @@ impl BundleStore for PrefixCapacityStore {
         // the class-1 boundary as the manifest rejection point rather than
         // attempting to inspect the apptype inside ciphertext.
         if meta.class == class::DIRECT
-            && self.reject_direct.as_ref().is_some_and(|gate| gate.load(Ordering::Relaxed))
+            && self
+                .reject_direct
+                .as_ref()
+                .is_some_and(|gate| gate.load(Ordering::Relaxed))
         {
             return Err(StorePutError::Capacity);
         }
@@ -1005,10 +1167,12 @@ impl BundleStore for PrefixCapacityStore {
 #[test]
 fn own_publication_prefers_provider_reservation() {
     let mut n = node(241);
-    let (probe, reserved, committed, aborted, tried) = ReservationProbeStore::new(ReservationMode::Accept);
+    let (probe, reserved, committed, aborted, tried) =
+        ReservationProbeStore::new(ReservationMode::Accept);
     n.core.store = Box::new(probe);
 
-    n.try_set_nickname("reserved", 100).expect("reservation-backed publication");
+    n.try_set_nickname("reserved", 100)
+        .expect("reservation-backed publication");
 
     assert!(reserved.load(Ordering::Relaxed));
     assert!(committed.load(Ordering::Relaxed));
@@ -1023,7 +1187,8 @@ fn own_publication_falls_back_only_for_unsupported_reservation() {
         ReservationProbeStore::new(ReservationMode::Unsupported);
     n.core.store = Box::new(probe);
 
-    n.try_set_nickname("legacy", 100).expect("legacy publication");
+    n.try_set_nickname("legacy", 100)
+        .expect("legacy publication");
 
     assert!(reserved.load(Ordering::Relaxed));
     assert!(!committed.load(Ordering::Relaxed));
@@ -1034,13 +1199,17 @@ fn own_publication_falls_back_only_for_unsupported_reservation() {
 #[test]
 fn reservation_rejection_does_not_publish_local_state() {
     let mut n = node(239);
-    let (probe, reserved, committed, aborted, tried) = ReservationProbeStore::new(ReservationMode::Reject);
+    let (probe, reserved, committed, aborted, tried) =
+        ReservationProbeStore::new(ReservationMode::Reject);
     n.core.store = Box::new(probe);
     let seen_before = n.core.seen.encode();
     let diagnostics_before = n.diagnostics().records().len();
     let claims_before = n.own_claims();
 
-    assert_eq!(n.try_set_nickname("rejected", 100), Err(SendError::ResourceLimit));
+    assert_eq!(
+        n.try_set_nickname("rejected", 100),
+        Err(SendError::ResourceLimit)
+    );
 
     assert!(reserved.load(Ordering::Relaxed));
     assert!(!committed.load(Ordering::Relaxed));
@@ -1061,7 +1230,10 @@ fn reservation_commit_failure_aborts_without_publishing_local_state() {
     let diagnostics_before = n.diagnostics().records().len();
     let claims_before = n.own_claims();
 
-    assert_eq!(n.try_set_nickname("commit-fails", 100), Err(SendError::ResourceLimit));
+    assert_eq!(
+        n.try_set_nickname("commit-fails", 100),
+        Err(SendError::ResourceLimit)
+    );
 
     assert!(reserved.load(Ordering::Relaxed));
     assert!(committed.load(Ordering::Relaxed));
@@ -1154,11 +1326,22 @@ fn sync_view_keeps_current_base_domains_without_priority_partition() {
         view.ids_in(0, &Id16::MIN, &Id16::MAX),
         vec![Id16([0x10; 16]), Id16([0x20; 16])],
     );
-    assert_eq!(view.ids_in(1, &Id16::MIN, &Id16::MAX), vec![Id16([0x30; 16])]);
-    assert_eq!(view.ids_in(2, &Id16::MIN, &Id16::MAX), vec![Id16([0x40; 16])]);
+    assert_eq!(
+        view.ids_in(1, &Id16::MIN, &Id16::MAX),
+        vec![Id16([0x30; 16])]
+    );
+    assert_eq!(
+        view.ids_in(2, &Id16::MIN, &Id16::MAX),
+        vec![Id16([0x40; 16])]
+    );
     assert_eq!(
         view.ids_in(3, &Id16::MIN, &Id16::MAX),
-        vec![Id16([0x50; 16]), Id16([0x60; 16]), Id16([0x70; 16]), Id16([0x71; 16])],
+        vec![
+            Id16([0x50; 16]),
+            Id16([0x60; 16]),
+            Id16([0x70; 16]),
+            Id16([0x71; 16])
+        ],
     );
 }
 
@@ -1226,11 +1409,15 @@ fn callback_event_queue_is_bounded_when_host_does_not_poll() {
     let mut n = node(251);
     while n.poll_event().is_some() {}
     for _ in 0..(super::EVENT_QUEUE_CAPACITY * 2) {
-        n.core.enqueue_event(Event::TierChanged { tier: Tier::Relay });
+        n.core
+            .enqueue_event(Event::TierChanged { tier: Tier::Relay });
     }
 
     assert_eq!(n.core.events.len(), super::EVENT_QUEUE_CAPACITY);
-    assert_eq!(n.core.event_queue_dropped, super::EVENT_QUEUE_CAPACITY as u64);
+    assert_eq!(
+        n.core.event_queue_dropped,
+        super::EVENT_QUEUE_CAPACITY as u64
+    );
 }
 
 #[test]
@@ -1241,16 +1428,35 @@ fn node_store_rejection_prevents_delivery_and_post_store_side_effects() {
     drain(&mut alice);
     drain(&mut bob);
 
-    let message_id = alice.send_text(&bob.node_id(), "provider capacity").unwrap();
-    let (_, raw) = alice.core.store.get(&message_id).expect("source bundle stored");
+    let message_id = alice
+        .send_text(&bob.node_id(), "provider capacity")
+        .unwrap();
+    let (_, raw) = alice
+        .core
+        .store
+        .get(&message_id)
+        .expect("source bundle stored");
 
     bob.core.on_bundle(&alice.node_id(), &raw);
 
-    assert_eq!(bob.core.store.len(), 0, "provider rejection must not retain bytes");
-    assert_eq!(bob.core.diag.drops, 1, "rejected ingest must be visible as a local drop");
-    assert!(bob.core.seen.contains(&message_id), "first-sight dedup still prevents replay loops");
+    assert_eq!(
+        bob.core.store.len(),
+        0,
+        "provider rejection must not retain bytes"
+    );
+    assert_eq!(
+        bob.core.diag.drops, 1,
+        "rejected ingest must be visible as a local drop"
+    );
     assert!(
-        !bob.core.events.iter().any(|event| matches!(event, Event::MessageReceived { id, .. } if *id == message_id)),
+        bob.core.seen.contains(&message_id),
+        "first-sight dedup still prevents replay loops"
+    );
+    assert!(
+        !bob.core
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::MessageReceived { id, .. } if *id == message_id)),
         "delivery must not run before a durable store accepts the bundle"
     );
 }
@@ -1266,12 +1472,19 @@ fn sealed_first_contact_store_rejection_is_side_effect_free() {
     let peer_key = peer.public_key();
     let conv_id = conversation_id(&n.core.public, &peer_key);
     let seen_before = n.core.seen.encode();
-    assert_eq!(n.send_text(&peer_id, "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(
+        n.send_text(&peer_id, "provider capacity"),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(n.store_len(), 0);
     assert_eq!(n.core.seen.encode(), seen_before);
     assert!(!n.core.convs.contains_key(&conv_id));
     assert!(!n.core.pending_first_contact.contains_key(&conv_id));
-    assert!(!n.core.events.iter().any(|event| matches!(event, Event::DeliveryProgress { .. })));
+    assert!(!n
+        .core
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::DeliveryProgress { .. })));
     assert!(!n
         .diagnostics()
         .records()
@@ -1292,7 +1505,10 @@ fn prekey_first_contact_store_rejection_is_side_effect_free() {
     let diag_before = sender.diagnostics().records().len();
     sender.core.store = Box::new(CapacityRejectStore);
 
-    assert_eq!(sender.send_text(&peer.node_id(), "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(
+        sender.send_text(&peer.node_id(), "provider capacity"),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(sender.store_len(), 0);
     assert_eq!(sender.core.seen.encode(), seen_before);
     assert!(!sender.core.convs.contains_key(&conv_id));
@@ -1305,10 +1521,15 @@ fn prekey_first_contact_store_rejection_is_side_effect_free() {
     // A capacity failure must not poison the first-contact retry. Restoring
     // a durable provider yields a normal X3DH/prekey bundle.
     sender.core.store = Box::new(MemStore::new());
-    let id = sender.send_text(&peer.node_id(), "retry after capacity").expect("retry succeeds");
+    let id = sender
+        .send_text(&peer.node_id(), "retry after capacity")
+        .expect("retry succeeds");
     let (_, raw) = sender.core.store.get(&id).expect("retry bundle stored");
     let bundle = Bundle::decode_canonical(&raw).expect("retry bundle decodes");
-    assert!(matches!(AsyncPayload::decode(&bundle.payload).unwrap(), AsyncPayload::Prekey { .. }));
+    assert!(matches!(
+        AsyncPayload::decode(&bundle.payload).unwrap(),
+        AsyncPayload::Prekey { .. }
+    ));
 
     contact(&mut sender, &mut peer, 253, 10_000);
     assert!(drain(&mut peer).iter().any(
@@ -1322,7 +1543,9 @@ fn established_direct_store_rejection_is_side_effect_free() {
     let mut peer = node(240);
     introduce(&mut sender, &mut peer);
 
-    let first = sender.send_text(&peer.node_id(), "establish conversation").unwrap();
+    let first = sender
+        .send_text(&peer.node_id(), "establish conversation")
+        .unwrap();
     contact(&mut sender, &mut peer, 241, 10_000);
     assert!(drain(&mut peer).iter().any(
         |event| matches!(event, Event::MessageReceived { id, body, .. } if *id == first && body == b"establish conversation")
@@ -1333,7 +1556,11 @@ fn established_direct_store_rejection_is_side_effect_free() {
 
     let conv_id = conversation_id(&sender.core.public, &peer.core.public);
     assert!(!sender.core.pending_first_contact.contains_key(&conv_id));
-    let conv = sender.core.convs.get(&conv_id).expect("conversation established");
+    let conv = sender
+        .core
+        .convs
+        .get(&conv_id)
+        .expect("conversation established");
     let send_before = (conv.send.epoch, conv.send.next_index);
     let send_snapshot_before = conv.send.snapshot().expect("sender snapshot");
     let dag_before = conv.dag.snapshot().expect("DAG snapshot");
@@ -1346,11 +1573,21 @@ fn established_direct_store_rejection_is_side_effect_free() {
     let diag_before = sender.diagnostics().records().len();
     sender.core.store = Box::new(CapacityRejectStore);
 
-    assert_eq!(sender.send_text(&peer.node_id(), "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(
+        sender.send_text(&peer.node_id(), "provider capacity"),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(sender.store_len(), 0);
     assert_eq!(sender.core.seen.encode(), seen_before);
-    let conv_after = sender.core.convs.get(&conv_id).expect("conversation remains");
-    assert_eq!((conv_after.send.epoch, conv_after.send.next_index), send_before);
+    let conv_after = sender
+        .core
+        .convs
+        .get(&conv_id)
+        .expect("conversation remains");
+    assert_eq!(
+        (conv_after.send.epoch, conv_after.send.next_index),
+        send_before
+    );
     assert_eq!(conv_after.send.snapshot().unwrap(), send_snapshot_before);
     assert_eq!(conv_after.dag.snapshot().unwrap(), dag_before);
     assert_eq!(sender.core.pending_async, pending_async_before);
@@ -1364,10 +1601,13 @@ fn established_direct_store_rejection_is_side_effect_free() {
     assert_eq!(sender.diagnostics().records().len(), diag_before);
 
     sender.core.store = Box::new(MemStore::new());
-    let retry = sender.send_text(&peer.node_id(), "retry after capacity").expect("retry succeeds");
+    let retry = sender
+        .send_text(&peer.node_id(), "retry after capacity")
+        .expect("retry succeeds");
     let (_, retry_raw) = sender.core.store.get(&retry).expect("retry bundle stored");
     let retry_bundle = Bundle::decode_canonical(&retry_raw).expect("retry bundle decodes");
-    let retry_direct = mmp_types::payload::DirectPayload::decode(&retry_bundle.payload).expect("direct retry payload");
+    let retry_direct = mmp_types::payload::DirectPayload::decode(&retry_bundle.payload)
+        .expect("direct retry payload");
     assert_eq!((retry_direct.epoch, retry_direct.index), send_before);
     contact(&mut sender, &mut peer, 243, 30_000);
     assert!(drain(&mut peer).iter().any(
@@ -1402,11 +1642,18 @@ fn proxy_summary_hints_are_bounded_per_peer() {
     for value in 0..(super::MAX_PROXY_HINTS_PER_PEER * 2) {
         let mut dependent = [0u8; 16];
         dependent[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        let body = ProxySummaryBody { dependent: Id16(dependent), bloom: Vec::new() }.encode();
+        let body = ProxySummaryBody {
+            dependent: Id16(dependent),
+            bloom: Vec::new(),
+        }
+        .encode();
         n.core.on_proxy_summary(&peer, &body);
     }
 
-    assert_eq!(n.core.proxy_hints.get(&peer).map(HashSet::len), Some(super::MAX_PROXY_HINTS_PER_PEER));
+    assert_eq!(
+        n.core.proxy_hints.get(&peer).map(HashSet::len),
+        Some(super::MAX_PROXY_HINTS_PER_PEER)
+    );
 
     for value in 0..(super::MAX_PROXY_HINT_PEERS * 2) {
         let mut peer_id = [0u8; 16];
@@ -1433,20 +1680,30 @@ fn blob_serve_counters_are_bounded_for_unseen_peers() {
     for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
         let mut peer = [0u8; 16];
         peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        n.core.blob_serve_candidates(&Id16(peer), &empty_root, 0, &[0u8; 5], false);
+        n.core
+            .blob_serve_candidates(&Id16(peer), &empty_root, 0, &[0u8; 5], false);
     }
-    assert!(n.core.blob_served.is_empty(), "empty requests must not consume peer slots");
+    assert!(
+        n.core.blob_served.is_empty(),
+        "empty requests must not consume peer slots"
+    );
 
     // Use a genuinely durable and signed symbol so the serving-budget test
     // exercises admission rather than the stale-index repair path.
     let root = n
-        .send_file(&source.node_id(), "serve.bin", "application/octet-stream", &[0x44; 3000])
+        .send_file(
+            &source.node_id(),
+            "serve.bin",
+            "application/octet-stream",
+            &[0x44; 3000],
+        )
         .expect("source file is durable")
         .root;
     for value in 0..(super::MAX_BLOB_SERVE_PEERS * 2) {
         let mut peer = [0u8; 16];
         peer[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        n.core.blob_serve_candidates(&Id16(peer), &root, 0, &[0u8; 5], false);
+        n.core
+            .blob_serve_candidates(&Id16(peer), &root, 0, &[0u8; 5], false);
     }
 
     assert_eq!(n.core.blob_served.len(), super::MAX_BLOB_SERVE_PEERS);
@@ -1462,7 +1719,12 @@ fn non_origin_partial_holder_serves_verified_symbols_via_blob_have() {
     drain(&mut destination);
 
     let sent = origin
-        .send_file(&destination.node_id(), "partial-cache.bin", "application/octet-stream", &[0x7a; 3000])
+        .send_file(
+            &destination.node_id(),
+            "partial-cache.bin",
+            "application/octet-stream",
+            &[0x7a; 3000],
+        )
         .expect("origin file is durable");
     let symbol_id = *origin
         .core
@@ -1470,12 +1732,19 @@ fn non_origin_partial_holder_serves_verified_symbols_via_blob_have() {
         .get(&sent.root)
         .and_then(|index| index.values().next())
         .expect("origin has at least one symbol");
-    let (_, symbol_bytes) = origin.core.store.get(&symbol_id).expect("origin symbol is stored");
+    let (_, symbol_bytes) = origin
+        .core
+        .store
+        .get(&symbol_id)
+        .expect("origin symbol is stored");
 
     // The relay is a non-origin partial holder: it receives one verified
     // symbol, but it has no local BlobAssembly for this root.
     relay.core.on_bundle(&origin.node_id(), &symbol_bytes);
-    assert_eq!(relay.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(1));
+    assert_eq!(
+        relay.core.blob_index.get(&sent.root).map(BTreeMap::len),
+        Some(1)
+    );
 
     let assembly = crate::blob::BlobAssembly::new(
         sent.root,
@@ -1487,7 +1756,9 @@ fn non_origin_partial_holder_serves_verified_symbols_via_blob_have() {
     );
     // A real SessionHost callback is reached only after ID_PROOF. Register
     // the destination as an authenticated peer before exercising the seam.
-    relay.core.accept_peer(&destination.identity.public(), &destination.node_id());
+    relay
+        .core
+        .accept_peer(&destination.identity.public(), &destination.node_id());
     let destination_id = destination.node_id();
     let root = sent.root;
     relay.core.assemblies.insert(root, assembly);
@@ -1495,7 +1766,9 @@ fn non_origin_partial_holder_serves_verified_symbols_via_blob_have() {
     // Destination has no verified symbols yet, so its BLOB_HAVE bitmap is
     // all zeroes. The relay must answer with the symbol it already holds even
     // though the bundle origin is the separate `origin` node.
-    let ids = relay.core.on_blob_have(&destination_id, &root, 0, &[0u8; 5]);
+    let ids = relay
+        .core
+        .on_blob_have(&destination_id, &root, 0, &[0u8; 5]);
     assert_eq!(ids, vec![symbol_id]);
     assert_eq!(relay.core.blob_served.get(&destination_id), Some(&1));
 }
@@ -1508,7 +1781,14 @@ fn blob_have_advertisements_are_bounded_and_rotated_per_peer() {
         let root = Id16([value as u8; 16]);
         n.core.assemblies.insert(
             root,
-            crate::blob::BlobAssembly::new(root, 0, [value as u8; 32], Key32([value as u8; 32]), std::path::PathBuf::from("unused"), 0),
+            crate::blob::BlobAssembly::new(
+                root,
+                0,
+                [value as u8; 32],
+                Key32([value as u8; 32]),
+                std::path::PathBuf::from("unused"),
+                0,
+            ),
         );
     }
 
@@ -1596,7 +1876,11 @@ fn blob_requests_are_origin_targeted_and_bounded() {
     let requests = frames
         .into_iter()
         .filter_map(|frame| match frame {
-            mmp_types::frame::Frame::BlobReq { root, block, bitmap } => Some((root, block, bitmap)),
+            mmp_types::frame::Frame::BlobReq {
+                root,
+                block,
+                bitmap,
+            } => Some((root, block, bitmap)),
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -1667,15 +1951,27 @@ fn blob_request_bitmap_contains_missing_symbols_only() {
         .blob_frames(&peer)
         .into_iter()
         .find_map(|frame| match frame {
-            mmp_types::frame::Frame::BlobReq { root, block, bitmap } => Some((root, block, bitmap)),
+            mmp_types::frame::Frame::BlobReq {
+                root,
+                block,
+                bitmap,
+            } => Some((root, block, bitmap)),
             _ => None,
         })
         .expect("partial assembly must request its missing symbols");
     assert_eq!(request.0, partial_root);
     assert_eq!(request.1, 0);
     assert_eq!(request.2.len(), super::MAX_BLOB_REQ_BITMAP_BYTES);
-    assert_eq!(request.2[0] & 0b0000_0101, 0, "have bits must not be requested");
-    assert_ne!(request.2[0] & 0b0000_0010, 0, "a missing bit must be requested");
+    assert_eq!(
+        request.2[0] & 0b0000_0101,
+        0,
+        "have bits must not be requested"
+    );
+    assert_ne!(
+        request.2[0] & 0b0000_0010,
+        0,
+        "a missing bit must be requested"
+    );
     assert!(
         n.core
             .blob_frames(&peer)
@@ -1703,7 +1999,12 @@ fn blob_multi_stripe_request_applies_block_relative_bitmap_offset() {
 
     let data = vec![0x5a; mmp_types::consts::STRIPE_DATA_BYTES + 1];
     let sent = sender
-        .send_file(&peer.node_id(), "two-stripes.bin", "application/octet-stream", &data)
+        .send_file(
+            &peer.node_id(),
+            "two-stripes.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("multi-stripe file is durable");
 
     // In a block-1 request, bit zero refers to global symbol RS_TOTAL_N, not
@@ -1714,7 +2015,11 @@ fn blob_multi_stripe_request_applies_block_relative_bitmap_offset() {
         .core
         .blob_serve_candidates(&peer.node_id(), &sent.root, 1, &bitmap, true);
 
-    assert_eq!(ids.len(), 1, "the requested second-stripe symbol is present");
+    assert_eq!(
+        ids.len(),
+        1,
+        "the requested second-stripe symbol is present"
+    );
     assert_eq!(
         sender.core.symbol_of.get(&ids[0]),
         Some(&(sent.root, RS_TOTAL_N as u16)),
@@ -1738,20 +2043,41 @@ fn unsolicited_invalid_symbol_is_removed_before_indexing() {
         dest: receiver.node_id(),
         lifetime_ms: LIFETIME_MESSAGE_MS,
         priority: prio::BULK,
-        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
+        exts: vec![Ext::SymbolInfo {
+            root,
+            block: 0,
+            sym: 0,
+            k: 32,
+            n: 40,
+        }],
         // The payload has the required symbol length and a decodable path
         // envelope (depth zero), but the path cannot prove this random root.
-        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        payload: SymbolPayload {
+            path: vec![0],
+            symbol: vec![0u8; SYMBOL_SIZE],
+        }
+        .encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = sender.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = sender
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     let id = bundle.id();
 
     receiver.core.on_bundle(&sender.node_id(), &bundle.encode());
 
-    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must not remain durable");
-    assert!(!receiver.core.symbol_of.contains_key(&id), "invalid symbol must not enter reverse index");
-    assert!(!receiver.core.blob_index.contains_key(&root), "invalid symbol must not enter holder index");
+    assert!(
+        receiver.core.store.meta(&id).is_none(),
+        "invalid symbol must not remain durable"
+    );
+    assert!(
+        !receiver.core.symbol_of.contains_key(&id),
+        "invalid symbol must not enter reverse index"
+    );
+    assert!(
+        !receiver.core.blob_index.contains_key(&root),
+        "invalid symbol must not enter holder index"
+    );
 }
 
 #[test]
@@ -1767,8 +2093,14 @@ fn active_invalid_symbol_is_counted_and_removed() {
             sharer: sender.identity.public(),
         },
     );
-    let dest = std::env::temp_dir().join(format!("mmp-node-invalid-symbol-{}.part", std::process::id()));
-    receiver.core.fetch_file(&root, &dest).expect("cached offer admits fetch");
+    let dest = std::env::temp_dir().join(format!(
+        "mmp-node-invalid-symbol-{}.part",
+        std::process::id()
+    ));
+    receiver
+        .core
+        .fetch_file(&root, &dest)
+        .expect("cached offer admits fetch");
 
     let mut bundle = Bundle {
         class: class::SYMBOL,
@@ -1777,17 +2109,39 @@ fn active_invalid_symbol_is_counted_and_removed() {
         dest: receiver.node_id(),
         lifetime_ms: LIFETIME_MESSAGE_MS,
         priority: prio::BULK,
-        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
-        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        exts: vec![Ext::SymbolInfo {
+            root,
+            block: 0,
+            sym: 0,
+            k: 32,
+            n: 40,
+        }],
+        payload: SymbolPayload {
+            path: vec![0],
+            symbol: vec![0u8; SYMBOL_SIZE],
+        }
+        .encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = sender.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = sender
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     let id = bundle.id();
     receiver.core.on_bundle(&sender.node_id(), &bundle.encode());
 
-    let assembly = receiver.core.assemblies.get(&root).expect("fetch remains visible");
-    assert_eq!(assembly.bad_symbols, 1, "invalid symbol is attributable to the active fetch");
-    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must be removed from storage");
+    let assembly = receiver
+        .core
+        .assemblies
+        .get(&root)
+        .expect("fetch remains visible");
+    assert_eq!(
+        assembly.bad_symbols, 1,
+        "invalid symbol is attributable to the active fetch"
+    );
+    assert!(
+        receiver.core.store.meta(&id).is_none(),
+        "invalid symbol must be removed from storage"
+    );
     assert!(!receiver.core.symbol_of.contains_key(&id));
     assert!(!receiver.core.blob_index.contains_key(&root));
 
@@ -1808,8 +2162,14 @@ fn solicited_symbol_admission_requires_manifest_sharer_and_destination() {
             sharer: sharer.identity.public(),
         },
     );
-    let dest = std::env::temp_dir().join(format!("mmp-node-symbol-admission-{}.part", std::process::id()));
-    receiver.core.fetch_file(&root, &dest).expect("cached offer admits fetch");
+    let dest = std::env::temp_dir().join(format!(
+        "mmp-node-symbol-admission-{}.part",
+        std::process::id()
+    ));
+    receiver
+        .core
+        .fetch_file(&root, &dest)
+        .expect("cached offer admits fetch");
 
     let mut bundle = Bundle {
         class: class::SYMBOL,
@@ -1818,34 +2178,61 @@ fn solicited_symbol_admission_requires_manifest_sharer_and_destination() {
         dest: receiver.node_id(),
         lifetime_ms: LIFETIME_MESSAGE_MS,
         priority: prio::BULK,
-        exts: vec![Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 }],
+        exts: vec![Ext::SymbolInfo {
+            root,
+            block: 0,
+            sym: 0,
+            k: 32,
+            n: 40,
+        }],
         // Shape-valid but Merkle-invalid: this reaches the admission closure,
         // then is removed by the active-fetch verification path.
-        payload: SymbolPayload { path: vec![0], symbol: vec![0u8; SYMBOL_SIZE] }.encode(),
+        payload: SymbolPayload {
+            path: vec![0],
+            symbol: vec![0u8; SYMBOL_SIZE],
+        }
+        .encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = attacker.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = attacker
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     let id = bundle.id();
 
     assert_eq!(receiver.core.buckets.len(), 0);
-    receiver.core.on_bundle(&attacker.node_id(), &bundle.encode());
+    receiver
+        .core
+        .on_bundle(&attacker.node_id(), &bundle.encode());
 
     // An active fetch does not grant every authenticated peer a free write
     // path.  Only the verified manifest sharer and the intended destination
     // may use the requester-side symbol bypass; this attacker-origin symbol
     // must be charged to its ordinary origin bucket before verification.
-    assert_eq!(receiver.core.buckets.len(), 1, "untrusted symbol origin must consume ordinary admission");
-    assert!(receiver.core.store.meta(&id).is_none(), "invalid symbol must still be removed");
+    assert_eq!(
+        receiver.core.buckets.len(),
+        1,
+        "untrusted symbol origin must consume ordinary admission"
+    );
+    assert!(
+        receiver.core.store.meta(&id).is_none(),
+        "invalid symbol must still be removed"
+    );
     assert_eq!(receiver.core.assemblies[&root].bad_symbols, 1);
 
     // A correctly signed sharer-origin symbol addressed to a different
     // destination is not a solicitation for this assembly either.
     bundle.origin = sharer.identity.public();
     bundle.dest = Id16([0xa7; 16]);
-    bundle.signature = sharer.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = sharer
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     let wrong_destination_id = bundle.id();
     receiver.core.on_bundle(&sharer.node_id(), &bundle.encode());
-    assert_eq!(receiver.core.buckets.len(), 2, "wrong-destination symbol must consume its ordinary bucket");
+    assert_eq!(
+        receiver.core.buckets.len(),
+        2,
+        "wrong-destination symbol must consume its ordinary bucket"
+    );
     assert!(receiver.core.store.meta(&wrong_destination_id).is_none());
     assert_eq!(receiver.core.assemblies[&root].bad_symbols, 2);
 
@@ -1861,7 +2248,13 @@ fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
     let new_id = Id16([0x43; 16]);
     let destination_key = Key32([0x44; 32]);
     let destination = node_id_of(&destination_key);
-    let symbol_ext = Ext::SymbolInfo { root, block: 0, sym: 0, k: 32, n: 40 };
+    let symbol_ext = Ext::SymbolInfo {
+        root,
+        block: 0,
+        sym: 0,
+        k: 32,
+        n: 40,
+    };
     let old_bundle = Bundle {
         class: class::SYMBOL,
         flags: 0,
@@ -1873,7 +2266,10 @@ fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
         payload: Vec::new(),
         signature: Sig64::ZERO,
     };
-    let new_bundle = Bundle { origin: Key32([0x46; 32]), ..old_bundle.clone() };
+    let new_bundle = Bundle {
+        origin: Key32([0x46; 32]),
+        ..old_bundle.clone()
+    };
     let meta = |id, origin| BundleMeta {
         id,
         class: class::SYMBOL,
@@ -1894,10 +2290,16 @@ fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
     n.core.store.put(meta(new_id, new_bundle.origin), &[]);
     n.core.index_symbol_bundle(&new_bundle, new_id);
     assert!(!n.core.symbol_of.contains_key(&old_id));
-    assert_eq!(n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)), Some(&new_id));
+    assert_eq!(
+        n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)),
+        Some(&new_id)
+    );
 
     n.core.deindex_symbol(&old_id);
-    assert_eq!(n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)), Some(&new_id));
+    assert_eq!(
+        n.core.blob_index.get(&root).and_then(|idx| idx.get(&0)),
+        Some(&new_id)
+    );
 
     let receipt = Bundle {
         class: class::CONTROL,
@@ -1907,7 +2309,11 @@ fn blob_index_replacement_and_receipt_purge_keep_indexes_consistent() {
         lifetime_ms: LIFETIME_CONTROL_MS,
         priority: prio::EMERGENCY,
         exts: Vec::new(),
-        payload: ReceiptPayload { delivered: new_id, mac: [0; 16] }.encode(),
+        payload: ReceiptPayload {
+            delivered: new_id,
+            mac: [0; 16],
+        }
+        .encode(),
         signature: Sig64::ZERO,
     };
     n.core.handle_receipt(&receipt, false);
@@ -1969,7 +2375,10 @@ fn new_conversation_contacts_are_rejected_at_local_state_cap() {
 
     assert!(!n.core.accept_peer(&identity, &peer));
     assert!(!n.core.known_identities.contains_key(&peer));
-    assert_eq!(n.core.established_convs.len(), super::MAX_CONVERSATION_STATE);
+    assert_eq!(
+        n.core.established_convs.len(),
+        super::MAX_CONVERSATION_STATE
+    );
 }
 
 #[test]
@@ -1983,18 +2392,48 @@ fn outbound_conversation_cap_is_side_effect_free_for_text_and_file() {
         n.core.established_convs.insert(Id16(id));
     }
     let before_total = n.store_len();
-    let before_symbols = n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count();
-
-    assert_eq!(n.send_text(&peer.node_id(), "at capacity"), Err(SendError::ResourceLimit));
-    assert_eq!(n.store_len(), before_total);
-    assert_eq!(n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count(), before_symbols);
+    let before_symbols = n
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .filter(|m| m.class == class::SYMBOL)
+        .count();
 
     assert_eq!(
-        n.send_file(&peer.node_id(), "at-capacity.bin", "application/octet-stream", b"payload"),
+        n.send_text(&peer.node_id(), "at capacity"),
         Err(SendError::ResourceLimit)
     );
     assert_eq!(n.store_len(), before_total);
-    assert_eq!(n.core.store.all_meta().iter().filter(|m| m.class == class::SYMBOL).count(), before_symbols);
+    assert_eq!(
+        n.core
+            .store
+            .all_meta()
+            .iter()
+            .filter(|m| m.class == class::SYMBOL)
+            .count(),
+        before_symbols
+    );
+
+    assert_eq!(
+        n.send_file(
+            &peer.node_id(),
+            "at-capacity.bin",
+            "application/octet-stream",
+            b"payload"
+        ),
+        Err(SendError::ResourceLimit)
+    );
+    assert_eq!(n.store_len(), before_total);
+    assert_eq!(
+        n.core
+            .store
+            .all_meta()
+            .iter()
+            .filter(|m| m.class == class::SYMBOL)
+            .count(),
+        before_symbols
+    );
 }
 
 /// Exchange identity claims out-of-band (the QR / first-sync bootstrap).
@@ -2027,8 +2466,16 @@ fn introduce_exchange_only(a: &mut Node, b: &mut Node) {
 fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
     a.tick(now);
     b.tick(now);
-    a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: Default::default() });
-    b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: Default::default() });
+    a.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: true,
+        quality: Default::default(),
+    });
+    b.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: false,
+        quality: Default::default(),
+    });
     for _ in 0..300 {
         let mut quiet = true;
         while let Some((l, bytes)) = a.poll_send() {
@@ -2052,8 +2499,16 @@ fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
 fn establish(a: &mut Node, b: &mut Node, link: u64) {
     a.tick(0);
     b.tick(0);
-    a.on_tal_event(TalEvent::LinkUp { link, initiator: true, quality: Default::default() });
-    b.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: Default::default() });
+    a.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: true,
+        quality: Default::default(),
+    });
+    b.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: false,
+        quality: Default::default(),
+    });
     for _ in 0..300 {
         let mut quiet = true;
         while let Some((l, bytes)) = a.poll_send() {
@@ -2108,7 +2563,11 @@ fn concurrent_session_admission_caps_leaf_relay_anchor() {
             queued_before_rejection,
             "quota denial must not queue handshake output"
         );
-        assert_eq!(n.poll_close(), Some(10_000), "denied physical link must be closed by host");
+        assert_eq!(
+            n.poll_close(),
+            Some(10_000),
+            "denied physical link must be closed by host"
+        );
         assert_eq!(n.poll_close(), None);
     }
 }
@@ -2127,7 +2586,11 @@ fn duplicate_link_up_preserves_existing_session_and_output() {
         queued_after_first,
         "duplicate LinkUp must not replace the engine or queue another handshake"
     );
-    assert_eq!(n.poll_close(), None, "duplicate LinkUp must not request a close");
+    assert_eq!(
+        n.poll_close(),
+        None,
+        "duplicate LinkUp must not request a close"
+    );
 }
 
 #[test]
@@ -2151,14 +2614,24 @@ fn outbound_queue_overflow_clears_only_the_affected_link() {
     let mut n = Node::new([107; 32], Box::new(MemStore::new()), Tier::Leaf);
     let unrelated = 99;
     for _ in 0..1_000 {
-        n.outbox.push_back((unrelated, vec![0u8; MAX_ENVELOPE_PAYLOAD]));
+        n.outbox
+            .push_back((unrelated, vec![0u8; MAX_ENVELOPE_PAYLOAD]));
     }
 
     link_up(&mut n, 1);
 
-    assert!(!n.sessions.contains_key(&1), "overflow must terminate the affected session");
-    assert!(!n.outbox.iter().any(|(link, _)| *link == 1), "affected-link frames must be cleared atomically");
-    assert!(n.outbox.iter().any(|(link, _)| *link == unrelated), "unrelated queued traffic must survive");
+    assert!(
+        !n.sessions.contains_key(&1),
+        "overflow must terminate the affected session"
+    );
+    assert!(
+        !n.outbox.iter().any(|(link, _)| *link == 1),
+        "affected-link frames must be cleared atomically"
+    );
+    assert!(
+        n.outbox.iter().any(|(link, _)| *link == unrelated),
+        "unrelated queued traffic must survive"
+    );
     assert_eq!(n.poll_close(), Some(1));
 }
 
@@ -2180,7 +2653,8 @@ fn outbound_queue_per_link_cap_is_enforced() {
 fn outbound_queue_byte_cap_is_enforced_before_frame_cap() {
     let mut n = Node::new([109; 32], Box::new(MemStore::new()), Tier::Leaf);
     for _ in 0..11 {
-        n.outbox.push_back((1, vec![0u8; MAX_ENVELOPE_PAYLOAD + 500]));
+        n.outbox
+            .push_back((1, vec![0u8; MAX_ENVELOPE_PAYLOAD + 500]));
     }
 
     link_up(&mut n, 1);
@@ -2201,10 +2675,17 @@ fn session_slot_releases_after_link_down() {
     n.outbox.push_back((1, vec![0x55]));
     n.on_tal_event(TalEvent::LinkDown { link: 1 });
     assert!(n.sessions.is_empty());
-    assert!(!n.outbox.iter().any(|(link, _)| *link == 1), "LinkDown must purge stale queued frames");
+    assert!(
+        !n.outbox.iter().any(|(link, _)| *link == 1),
+        "LinkDown must purge stale queued frames"
+    );
 
     link_up(&mut n, 2);
-    assert_eq!(n.sessions.len(), 1, "LinkDown must release the admission slot");
+    assert_eq!(
+        n.sessions.len(),
+        1,
+        "LinkDown must release the admission slot"
+    );
 }
 
 #[test]
@@ -2228,13 +2709,26 @@ fn session_slot_releases_when_engine_closes() {
         n.core.known_identities.is_empty(),
         "engine closure must release the peer identity before LinkDown"
     );
-    assert_eq!(n.poll_close(), None, "physical close waits for terminal wire frames");
-    let terminal_types: Vec<u8> = std::iter::from_fn(|| n.poll_send().map(|(_, bytes)| bytes[2])).collect();
+    assert_eq!(
+        n.poll_close(),
+        None,
+        "physical close waits for terminal wire frames"
+    );
+    let terminal_types: Vec<u8> =
+        std::iter::from_fn(|| n.poll_send().map(|(_, bytes)| bytes[2])).collect();
     assert_eq!(terminal_types, vec![FT_ERROR, FT_CLOSE]);
-    assert_eq!(n.poll_close(), Some(1), "local session closure must reach the transport host");
+    assert_eq!(
+        n.poll_close(),
+        Some(1),
+        "local session closure must reach the transport host"
+    );
 
     link_up(&mut n, 2);
-    assert_eq!(n.sessions.len(), 1, "Closed must release the admission slot");
+    assert_eq!(
+        n.sessions.len(),
+        1,
+        "Closed must release the admission slot"
+    );
 }
 
 #[test]
@@ -2243,8 +2737,16 @@ fn pre_identity_proof_teardown_does_not_mark_conversation_established() {
     let mut peer = node(119);
     introduce(&mut local, &mut peer);
 
-    local.on_tal_event(TalEvent::LinkUp { link: 1, initiator: true, quality: Default::default() });
-    peer.on_tal_event(TalEvent::LinkUp { link: 1, initiator: false, quality: Default::default() });
+    local.on_tal_event(TalEvent::LinkUp {
+        link: 1,
+        initiator: true,
+        quality: Default::default(),
+    });
+    peer.on_tal_event(TalEvent::LinkUp {
+        link: 1,
+        initiator: false,
+        quality: Default::default(),
+    });
 
     // Complete only the Noise handshake.  The resulting encrypted ID_PROOF
     // frames are intentionally discarded, leaving both engines in Binding.
@@ -2269,7 +2771,10 @@ fn pre_identity_proof_teardown_does_not_mark_conversation_established() {
 
     let conv_id = conversation_id(&local.core.public, &peer.core.public);
     assert!(local.sessions.contains_key(&1));
-    assert!(local.sessions.get(&1).is_some_and(|session| session.peer().is_none()));
+    assert!(local
+        .sessions
+        .get(&1)
+        .is_some_and(|session| session.peer().is_none()));
     assert!(!local.core.established_convs.contains(&conv_id));
 
     local.on_tal_event(TalEvent::LinkDown { link: 1 });
@@ -2284,8 +2789,16 @@ fn pre_identity_proof_internal_close_does_not_mark_conversation_established() {
     let mut peer = node(121);
     introduce(&mut local, &mut peer);
 
-    local.on_tal_event(TalEvent::LinkUp { link: 1, initiator: true, quality: Default::default() });
-    peer.on_tal_event(TalEvent::LinkUp { link: 1, initiator: false, quality: Default::default() });
+    local.on_tal_event(TalEvent::LinkUp {
+        link: 1,
+        initiator: true,
+        quality: Default::default(),
+    });
+    peer.on_tal_event(TalEvent::LinkUp {
+        link: 1,
+        initiator: false,
+        quality: Default::default(),
+    });
 
     // Complete only the Noise handshake.  The resulting encrypted ID_PROOF
     // frames are intentionally discarded, leaving both engines in Binding.
@@ -2309,7 +2822,10 @@ fn pre_identity_proof_internal_close_does_not_mark_conversation_established() {
     }
 
     let conv_id = conversation_id(&local.core.public, &peer.core.public);
-    assert!(local.sessions.get(&1).is_some_and(|session| session.peer().is_none()));
+    assert!(local
+        .sessions
+        .get(&1)
+        .is_some_and(|session| session.peer().is_none()));
 
     // A malformed encrypted frame closes the session internally.  This path
     // must use the same authenticated-only teardown rule as LinkDown.
@@ -2343,9 +2859,15 @@ fn protocol_error_teardown_bumps_ratchet_before_next_contact() {
     let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
     let mut malformed = vec![0u8; 3];
     malformed[..2].copy_from_slice(&oversized_declared_len.to_le_bytes());
-    alice.on_tal_event(TalEvent::LinkData { link: 2, bytes: malformed });
+    alice.on_tal_event(TalEvent::LinkData {
+        link: 2,
+        bytes: malformed,
+    });
 
-    assert!(!alice.sessions.contains_key(&2), "protocol error closes the session");
+    assert!(
+        !alice.sessions.contains_key(&2),
+        "protocol error closes the session"
+    );
     assert_eq!(alice.conv_epoch(&bob.node_id()), Some((1, 1)));
 }
 
@@ -2357,7 +2879,11 @@ fn timer_close_flushes_close_before_physical_teardown() {
 
     n.tick(10_001); // SESSION_IDLE_MS + 1 in the frozen timer table.
     assert!(!n.sessions.contains_key(&1));
-    assert_eq!(n.poll_close(), None, "CLOSE must be drained before teardown");
+    assert_eq!(
+        n.poll_close(),
+        None,
+        "CLOSE must be drained before teardown"
+    );
     let (link, bytes) = n.poll_send().expect("timer close frame");
     assert_eq!(link, 1);
     assert_eq!(bytes[2], FT_CLOSE);
@@ -2375,9 +2901,13 @@ fn terminal_close_preserves_unrelated_link_outbox() {
     let oversized_declared_len = (MAX_ENVELOPE_PAYLOAD + 1) as u16;
     let mut malformed = vec![0u8; 3];
     malformed[..2].copy_from_slice(&oversized_declared_len.to_le_bytes());
-    n.on_tal_event(TalEvent::LinkData { link: 1, bytes: malformed });
+    n.on_tal_event(TalEvent::LinkData {
+        link: 1,
+        bytes: malformed,
+    });
 
-    let queued: Vec<(u64, u8)> = std::iter::from_fn(|| n.poll_send().map(|(link, bytes)| (link, bytes[2]))).collect();
+    let queued: Vec<(u64, u8)> =
+        std::iter::from_fn(|| n.poll_send().map(|(link, bytes)| (link, bytes[2]))).collect();
     assert_eq!(queued, vec![(99, 0x20), (1, FT_ERROR), (1, FT_CLOSE)]);
     assert_eq!(n.poll_close(), Some(1));
 }
@@ -2390,7 +2920,9 @@ fn direct_message_delivery_and_receipt() {
     drain(&mut alice);
     drain(&mut bob);
 
-    let msg_id = alice.send_text(&bob.node_id(), "hello over the mesh").unwrap();
+    let msg_id = alice
+        .send_text(&bob.node_id(), "hello over the mesh")
+        .unwrap();
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Queued));
 
     // One contact: message crosses, receipt comes back in the same session
@@ -2409,7 +2941,9 @@ fn direct_message_delivery_and_receipt() {
     contact(&mut alice, &mut bob, 2, 20_000);
     let alice_events = drain(&mut alice);
     assert!(
-        alice_events.iter().any(|e| matches!(e, Event::Delivered { id } if *id == msg_id)),
+        alice_events
+            .iter()
+            .any(|e| matches!(e, Event::Delivered { id } if *id == msg_id)),
         "alice got the delivery receipt: {alice_events:?}"
     );
     assert_eq!(alice.message_state(&msg_id), Some(DeliveryState::Delivered));
@@ -2423,7 +2957,9 @@ fn receipt_store_rejection_is_side_effect_free_and_retryable() {
     drain(&mut alice);
     drain(&mut bob);
 
-    alice.send_text(&bob.node_id(), "receipt setup").expect("setup send");
+    alice
+        .send_text(&bob.node_id(), "receipt setup")
+        .expect("setup send");
     contact(&mut alice, &mut bob, 5, 10_000);
     drain(&mut alice);
     drain(&mut bob);
@@ -2440,16 +2976,24 @@ fn receipt_store_rejection_is_side_effect_free_and_retryable() {
     let diag_before = bob.diagnostics().records().len();
     bob.core.store = Box::new(CapacityRejectStore);
 
-    bob.core.emit_receipt(&conv_id, &delivered, &alice.core.public);
+    bob.core
+        .emit_receipt(&conv_id, &delivered, &alice.core.public);
     assert_eq!(bob.store_len(), 0);
     assert_eq!(bob.core.seen.encode(), seen_before);
     assert_eq!(bob.core.events.len(), events_before);
     assert_eq!(bob.diagnostics().records().len(), diag_before);
-    assert_eq!(bob.core.pending_receipts.len(), 1, "full provider queues one bounded receipt retry");
+    assert_eq!(
+        bob.core.pending_receipts.len(),
+        1,
+        "full provider queues one bounded receipt retry"
+    );
 
     bob.core.store = Box::new(MemStore::new());
     bob.tick(20_001);
-    assert!(bob.core.pending_receipts.is_empty(), "provider recovery drains the retry queue");
+    assert!(
+        bob.core.pending_receipts.is_empty(),
+        "provider recovery drains the retry queue"
+    );
     let meta = bob
         .core
         .store
@@ -2471,21 +3015,39 @@ fn sent_history_evicts_terminal_entries_but_rejects_when_all_active() {
     for value in 0..super::MAX_SENT_RUNTIME {
         let mut id = [0u8; 16];
         id[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        n.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::Delivered });
+        n.core.sent.insert(
+            Id16(id),
+            SentMessage {
+                conv,
+                state: DeliveryState::Delivered,
+            },
+        );
     }
     assert!(n.core.sent_capacity_available());
     n.core.record_sent(Id16([0xf1; 16]), conv).unwrap();
     assert_eq!(n.core.sent.len(), super::MAX_SENT_RUNTIME);
-    assert_eq!(n.core.sent.get(&Id16([0xf1; 16])).map(|m| m.state), Some(DeliveryState::Queued));
+    assert_eq!(
+        n.core.sent.get(&Id16([0xf1; 16])).map(|m| m.state),
+        Some(DeliveryState::Queued)
+    );
 
     n.core.sent.clear();
     for value in 0..super::MAX_SENT_RUNTIME {
         let mut id = [0u8; 16];
         id[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        n.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+        n.core.sent.insert(
+            Id16(id),
+            SentMessage {
+                conv,
+                state: DeliveryState::InMesh,
+            },
+        );
     }
     assert!(!n.core.sent_capacity_available());
-    assert_eq!(n.core.record_sent(Id16([0xf2; 16]), conv), Err(SendError::ResourceLimit));
+    assert_eq!(
+        n.core.record_sent(Id16([0xf2; 16]), conv),
+        Err(SendError::ResourceLimit)
+    );
     assert!(!n.core.sent.contains_key(&Id16([0xf2; 16])));
 }
 
@@ -2498,10 +3060,19 @@ fn saturated_active_sent_history_rejects_before_bundle_creation() {
     for value in 0..super::MAX_SENT_RUNTIME {
         let mut id = [0u8; 16];
         id[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        a.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+        a.core.sent.insert(
+            Id16(id),
+            SentMessage {
+                conv,
+                state: DeliveryState::InMesh,
+            },
+        );
     }
     let before_store = a.store_len();
-    assert_eq!(a.send_text(&b.node_id(), "blocked"), Err(SendError::ResourceLimit));
+    assert_eq!(
+        a.send_text(&b.node_id(), "blocked"),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(a.store_len(), before_store);
     assert!(!a.core.convs.contains_key(&conv));
 }
@@ -2515,7 +3086,13 @@ fn saturated_active_sent_history_rejects_file_before_symbol_minting() {
     for value in 0..super::MAX_SENT_RUNTIME {
         let mut id = [0u8; 16];
         id[..8].copy_from_slice(&(value as u64).to_le_bytes());
-        a.core.sent.insert(Id16(id), SentMessage { conv, state: DeliveryState::InMesh });
+        a.core.sent.insert(
+            Id16(id),
+            SentMessage {
+                conv,
+                state: DeliveryState::InMesh,
+            },
+        );
     }
 
     let store_before = a.store_len();
@@ -2525,7 +3102,12 @@ fn saturated_active_sent_history_rejects_file_before_symbol_minting() {
     let events_before = a.core.events.len();
     let diagnostics_before = a.diagnostics().records().len();
     assert_eq!(
-        a.send_file(&b.node_id(), "blocked.bin", "application/octet-stream", &[0x51; 3000]),
+        a.send_file(
+            &b.node_id(),
+            "blocked.bin",
+            "application/octet-stream",
+            &[0x51; 3000]
+        ),
         Err(SendError::ResourceLimit)
     );
     assert_eq!(a.store_len(), store_before);
@@ -2624,7 +3206,9 @@ fn sealed_first_contact_delivers_and_returns_receipt_without_prekeys() {
     contact(&mut alice, &mut bob, 42, 20_000);
     let alice_events = drain(&mut alice);
     assert!(
-        alice_events.iter().any(|event| matches!(event, Event::Delivered { id } if *id == msg_id)),
+        alice_events
+            .iter()
+            .any(|event| matches!(event, Event::Delivered { id } if *id == msg_id)),
         "sealed first-contact receipt was not delivered: {alice_events:?}"
     );
 }
@@ -2640,19 +3224,43 @@ fn malformed_prekey_async_does_not_commit_ratchet_state() {
     let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
 
     let mut forged = bundle.clone();
-    let AsyncPayload::Prekey { prekey_id, sender_xpk, eph, mut ct } =
-        AsyncPayload::decode(&forged.payload).unwrap()
+    let AsyncPayload::Prekey {
+        prekey_id,
+        sender_xpk,
+        eph,
+        mut ct,
+    } = AsyncPayload::decode(&forged.payload).unwrap()
     else {
         panic!("full-claim bootstrap should use prekey async form");
     };
     ct[0] ^= 0x80;
-    forged.payload = AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct }.encode();
-    forged.signature = alice.identity.sign(SigDomain::Bundle, &forged.canonical_zeroed());
+    forged.payload = AsyncPayload::Prekey {
+        prekey_id,
+        sender_xpk,
+        eph,
+        ct,
+    }
+    .encode();
+    forged.signature = alice
+        .identity
+        .sign(SigDomain::Bundle, &forged.canonical_zeroed());
 
-    assert!(bob.core.open_async(&forged, &conv_id, &alice.core.public).is_none());
-    assert!(!bob.core.convs.contains_key(&conv_id), "failed AEAD must not commit Conv");
-    assert!(bob.core.open_async(&bundle, &conv_id, &alice.core.public).is_some());
-    assert!(bob.core.convs.contains_key(&conv_id), "valid async must still establish Conv");
+    assert!(bob
+        .core
+        .open_async(&forged, &conv_id, &alice.core.public)
+        .is_none());
+    assert!(
+        !bob.core.convs.contains_key(&conv_id),
+        "failed AEAD must not commit Conv"
+    );
+    assert!(bob
+        .core
+        .open_async(&bundle, &conv_id, &alice.core.public)
+        .is_some());
+    assert!(
+        bob.core.convs.contains_key(&conv_id),
+        "valid async must still establish Conv"
+    );
 }
 
 #[test]
@@ -2660,26 +3268,49 @@ fn malformed_sealed_async_does_not_commit_ratchet_state() {
     let mut alice = node(51);
     let mut bob = node(52);
     introduce_exchange_only(&mut alice, &mut bob);
-    let msg_id = alice.send_text(&bob.node_id(), "sealed candidate state").unwrap();
+    let msg_id = alice
+        .send_text(&bob.node_id(), "sealed candidate state")
+        .unwrap();
     let (_, raw) = alice.core.store.get(&msg_id).expect("sealed bundle stored");
     let bundle = Bundle::decode_canonical(&raw).unwrap();
     let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
 
     let mut forged = bundle.clone();
-    let AsyncPayload::Sealed { eph, mut ct } = AsyncPayload::decode(&forged.payload).unwrap() else {
+    let AsyncPayload::Sealed { eph, mut ct } = AsyncPayload::decode(&forged.payload).unwrap()
+    else {
         panic!("exchange-only bootstrap should use sealed async form");
     };
     ct[0] ^= 0x80;
     forged.payload = AsyncPayload::Sealed { eph, ct }.encode();
-    forged.signature = alice.identity.sign(SigDomain::Bundle, &forged.canonical_zeroed());
+    forged.signature = alice
+        .identity
+        .sign(SigDomain::Bundle, &forged.canonical_zeroed());
 
-    assert!(bob.core.open_async(&forged, &conv_id, &alice.core.public).is_none());
-    assert!(!bob.core.convs.contains_key(&conv_id), "failed AEAD must not commit Conv");
-    assert!(!bob.core.pending_async.contains_key(&conv_id), "failed AEAD must not commit pending X3DH state");
-    assert!(!bob.core.pending_first_contact.contains_key(&conv_id), "failed AEAD must not commit pending first-contact state");
+    assert!(bob
+        .core
+        .open_async(&forged, &conv_id, &alice.core.public)
+        .is_none());
+    assert!(
+        !bob.core.convs.contains_key(&conv_id),
+        "failed AEAD must not commit Conv"
+    );
+    assert!(
+        !bob.core.pending_async.contains_key(&conv_id),
+        "failed AEAD must not commit pending X3DH state"
+    );
+    assert!(
+        !bob.core.pending_first_contact.contains_key(&conv_id),
+        "failed AEAD must not commit pending first-contact state"
+    );
 
-    assert!(bob.core.open_async(&bundle, &conv_id, &alice.core.public).is_some());
-    assert!(bob.core.convs.contains_key(&conv_id), "valid async must still establish Conv");
+    assert!(bob
+        .core
+        .open_async(&bundle, &conv_id, &alice.core.public)
+        .is_some());
+    assert!(
+        bob.core.convs.contains_key(&conv_id),
+        "valid async must still establish Conv"
+    );
 }
 
 #[test]
@@ -2703,12 +3334,21 @@ fn sealed_async_cannot_replace_established_conversation() {
 
     let second = alice
         .core
-        .send_sealed(&bob.node_id(), &bob.core.public, conv_id, apptype::TEXT, b"stale root")
+        .send_sealed(
+            &bob.node_id(),
+            &bob.core.public,
+            conv_id,
+            apptype::TEXT,
+            b"stale root",
+        )
         .unwrap();
     assert_ne!(first, second);
     let (_, raw) = alice.core.store.get(&second).unwrap();
     let sealed = Bundle::decode_canonical(&raw).unwrap();
-    assert!(bob.core.open_async(&sealed, &conv_id, &alice.core.public).is_none());
+    assert!(bob
+        .core
+        .open_async(&sealed, &conv_id, &alice.core.public)
+        .is_none());
     assert_eq!(
         *bob.core.convs.get(&conv_id).unwrap().receipt_key,
         original_receipt_key,
@@ -2723,14 +3363,19 @@ fn oversized_prekey_first_send_does_not_poison_async_state() {
     introduce(&mut alice, &mut bob);
 
     let oversized = "x".repeat(MAX_BUNDLE);
-    assert_eq!(alice.send_text(&bob.node_id(), &oversized), Err(SendError::TooLarge));
+    assert_eq!(
+        alice.send_text(&bob.node_id(), &oversized),
+        Err(SendError::TooLarge)
+    );
     let conv_id = mmp_crypto::conversation_id(&alice.core.public, &bob.core.public);
     assert!(!alice.core.convs.contains_key(&conv_id));
     assert!(!alice.core.pending_async.contains_key(&conv_id));
     assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
     assert!(alice.core.sent.is_empty());
 
-    let msg_id = alice.send_text(&bob.node_id(), "retry after rejection").unwrap();
+    let msg_id = alice
+        .send_text(&bob.node_id(), "retry after rejection")
+        .unwrap();
     let (_, raw) = alice.core.store.get(&msg_id).unwrap();
     let bundle = Bundle::decode_canonical(&raw).unwrap();
     assert!(matches!(
@@ -2754,7 +3399,9 @@ fn second_first_contact_send_is_explicitly_rejected_until_receipt() {
     let mut bob = node(50);
     introduce_exchange_only(&mut alice, &mut bob);
 
-    let first = alice.send_text(&bob.node_id(), "first sealed root").unwrap();
+    let first = alice
+        .send_text(&bob.node_id(), "first sealed root")
+        .unwrap();
     assert_eq!(
         alice.send_text(&bob.node_id(), "must wait"),
         Err(SendError::ConversationPending)
@@ -2770,7 +3417,9 @@ fn second_first_contact_send_is_explicitly_rejected_until_receipt() {
     );
 
     contact(&mut alice, &mut bob, 50, 20_000);
-    assert!(drain(&mut alice).iter().any(|event| matches!(event, Event::Delivered { id } if *id == first)));
+    assert!(drain(&mut alice)
+        .iter()
+        .any(|event| matches!(event, Event::Delivered { id } if *id == first)));
     let second = alice.send_text(&bob.node_id(), "now direct").unwrap();
     let (_, raw) = alice.core.store.get(&second).unwrap();
     let bundle = Bundle::decode_canonical(&raw).unwrap();
@@ -2785,7 +3434,12 @@ fn send_file_pending_rejects_before_minting_new_symbols() {
 
     let first_data = vec![0x11; 3000];
     alice
-        .send_file(&bob.node_id(), "first.bin", "application/octet-stream", &first_data)
+        .send_file(
+            &bob.node_id(),
+            "first.bin",
+            "application/octet-stream",
+            &first_data,
+        )
         .expect("first file manifest establishes the pending root");
     let symbols_before = alice
         .core
@@ -2797,7 +3451,12 @@ fn send_file_pending_rejects_before_minting_new_symbols() {
 
     let second_data = vec![0x22; 3000];
     assert_eq!(
-        alice.send_file(&bob.node_id(), "second.bin", "application/octet-stream", &second_data),
+        alice.send_file(
+            &bob.node_id(),
+            "second.bin",
+            "application/octet-stream",
+            &second_data
+        ),
         Err(SendError::ConversationPending)
     );
     let symbols_after = alice
@@ -2807,7 +3466,10 @@ fn send_file_pending_rejects_before_minting_new_symbols() {
         .iter()
         .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
         .count();
-    assert_eq!(symbols_after, symbols_before, "rejected manifest must not mint symbols");
+    assert_eq!(
+        symbols_after, symbols_before,
+        "rejected manifest must not mint symbols"
+    );
 }
 
 #[test]
@@ -2831,31 +3493,82 @@ fn send_file_symbol_store_rejection_does_not_poison_local_inventory() {
 
     let data = vec![0x37; 3000];
     assert_eq!(
-        alice.send_file(&bob.node_id(), "rejected.bin", "application/octet-stream", &data),
+        alice.send_file(
+            &bob.node_id(),
+            "rejected.bin",
+            "application/octet-stream",
+            &data
+        ),
         Err(SendError::ResourceLimit)
     );
-    assert!(alice.core.blob_index.is_empty(), "rejected symbols must not enter holder index");
-    assert!(alice.core.symbol_of.is_empty(), "rejected symbols must not enter reverse index");
-    assert!(alice.core.store.all_meta().iter().all(|meta| meta.class != class::SYMBOL));
-    assert_eq!(alice.core.seen.encode(), seen_before, "rejected symbols must not enter SeenIndex");
-    assert_eq!(alice.core.events.len(), events_before, "manifest must not be attempted after symbol rejection");
-    assert_eq!(alice.diagnostics().records().len(), diagnostics_before, "rejected symbols must not emit Created diagnostics");
-    assert_eq!(alice.core.pending_async, pending_async_before, "discarded manifest leaves pending async state unchanged");
-    assert_eq!(alice.core.pending_first_contact, pending_first_before, "discarded manifest leaves pending first-contact state unchanged");
-    assert!(!alice.core.convs.contains_key(&conv_id), "discarded manifest creates no conversation");
-    assert!(alice.core.sent.is_empty(), "discarded manifest creates no delivery entry");
+    assert!(
+        alice.core.blob_index.is_empty(),
+        "rejected symbols must not enter holder index"
+    );
+    assert!(
+        alice.core.symbol_of.is_empty(),
+        "rejected symbols must not enter reverse index"
+    );
+    assert!(alice
+        .core
+        .store
+        .all_meta()
+        .iter()
+        .all(|meta| meta.class != class::SYMBOL));
+    assert_eq!(
+        alice.core.seen.encode(),
+        seen_before,
+        "rejected symbols must not enter SeenIndex"
+    );
+    assert_eq!(
+        alice.core.events.len(),
+        events_before,
+        "manifest must not be attempted after symbol rejection"
+    );
+    assert_eq!(
+        alice.diagnostics().records().len(),
+        diagnostics_before,
+        "rejected symbols must not emit Created diagnostics"
+    );
+    assert_eq!(
+        alice.core.pending_async, pending_async_before,
+        "discarded manifest leaves pending async state unchanged"
+    );
+    assert_eq!(
+        alice.core.pending_first_contact, pending_first_before,
+        "discarded manifest leaves pending first-contact state unchanged"
+    );
+    assert!(
+        !alice.core.convs.contains_key(&conv_id),
+        "discarded manifest creates no conversation"
+    );
+    assert!(
+        alice.core.sent.is_empty(),
+        "discarded manifest creates no delivery entry"
+    );
 
     // Recovery is retryable because no false inventory was recorded and no
     // first-contact manifest was committed by the failed attempt.
     alice.core.store = Box::new(MemStore::new());
     let sent = alice
-        .send_file(&bob.node_id(), "rejected.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "rejected.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("retry after provider recovery");
     let total_symbols = super::blob::stripes_for_size(data.len() as u32) as usize * RS_TOTAL_N;
-    assert_eq!(alice.core.blob_index.get(&sent.root).map(BTreeMap::len), Some(total_symbols));
+    assert_eq!(
+        alice.core.blob_index.get(&sent.root).map(BTreeMap::len),
+        Some(total_symbols)
+    );
     assert_eq!(alice.core.symbol_of.len(), total_symbols);
     for id in alice.core.symbol_of.keys() {
-        assert!(alice.core.store.meta(id).is_some(), "every indexed symbol must be durable");
+        assert!(
+            alice.core.store.meta(id).is_some(),
+            "every indexed symbol must be durable"
+        );
     }
 }
 
@@ -2867,7 +3580,12 @@ fn send_file_first_contact_manifest_delivers() {
 
     let data = vec![0x39; 3000];
     let sent = alice
-        .send_file(&bob.node_id(), "first-contact.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "first-contact.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("first-contact manifest and symbols are accepted");
     let events = {
         contact(&mut alice, &mut bob, 59, 30_000);
@@ -2896,7 +3614,12 @@ fn send_file_partial_provider_keeps_only_durable_indexed_prefix() {
     let data = vec![0x43; 3000];
 
     assert_eq!(
-        alice.send_file(&bob.node_id(), "partial.bin", "application/octet-stream", &data),
+        alice.send_file(
+            &bob.node_id(),
+            "partial.bin",
+            "application/octet-stream",
+            &data
+        ),
         Err(SendError::ResourceLimit)
     );
 
@@ -2907,17 +3630,40 @@ fn send_file_partial_provider_keeps_only_durable_indexed_prefix() {
         .into_iter()
         .filter(|meta| meta.class == class::SYMBOL)
         .count();
-    assert_eq!(durable_symbols, 8, "provider accepted exactly the configured prefix");
+    assert_eq!(
+        durable_symbols, 8,
+        "provider accepted exactly the configured prefix"
+    );
     let indexed_symbols: usize = alice.core.blob_index.values().map(BTreeMap::len).sum();
-    assert_eq!(indexed_symbols, 8, "holder index matches durable accepted prefix");
-    assert_eq!(alice.core.symbol_of.len(), 8, "reverse index matches durable accepted prefix");
+    assert_eq!(
+        indexed_symbols, 8,
+        "holder index matches durable accepted prefix"
+    );
+    assert_eq!(
+        alice.core.symbol_of.len(),
+        8,
+        "reverse index matches durable accepted prefix"
+    );
     for id in alice.core.symbol_of.keys() {
-        assert!(alice.core.store.meta(id).is_some(), "every indexed symbol is durable");
-        assert!(alice.core.seen.contains(id), "every accepted symbol is in SeenIndex");
+        assert!(
+            alice.core.store.meta(id).is_some(),
+            "every indexed symbol is durable"
+        );
+        assert!(
+            alice.core.seen.contains(id),
+            "every accepted symbol is in SeenIndex"
+        );
     }
-    assert!(!alice.core.convs.contains_key(&conv_id), "manifest rejection path did not create a conversation");
+    assert!(
+        !alice.core.convs.contains_key(&conv_id),
+        "manifest rejection path did not create a conversation"
+    );
     assert!(!alice.core.pending_first_contact.contains_key(&conv_id));
-    assert_eq!(alice.core.events.len(), events_before, "symbol prefix does not emit a manifest event");
+    assert_eq!(
+        alice.core.events.len(),
+        events_before,
+        "symbol prefix does not emit a manifest event"
+    );
     assert_eq!(alice.diagnostics().records().len(), diagnostics_before);
 }
 
@@ -2930,13 +3676,21 @@ fn send_file_manifest_rejection_preserves_symbols_for_retry() {
     drain(&mut bob);
 
     let gate = Arc::new(AtomicBool::new(true));
-    alice.core.store = Box::new(PrefixCapacityStore::rejecting_direct(usize::MAX, gate.clone()));
+    alice.core.store = Box::new(PrefixCapacityStore::rejecting_direct(
+        usize::MAX,
+        gate.clone(),
+    ));
     let events_before = alice.core.events.len();
     let diagnostics_before = alice.diagnostics().records().len();
     let conv_id = conversation_id(&alice.core.public, &bob.core.public);
     let data = vec![0x46; 3000];
     assert_eq!(
-        alice.send_file(&bob.node_id(), "manifest-retry.bin", "application/octet-stream", &data),
+        alice.send_file(
+            &bob.node_id(),
+            "manifest-retry.bin",
+            "application/octet-stream",
+            &data
+        ),
         Err(SendError::ResourceLimit)
     );
 
@@ -2953,11 +3707,25 @@ fn send_file_manifest_rejection_preserves_symbols_for_retry() {
         "all symbols were accepted before the manifest rejection"
     );
     assert_eq!(
-        alice.core.store.all_meta().into_iter().filter(|meta| meta.class == class::DIRECT).count(),
+        alice
+            .core
+            .store
+            .all_meta()
+            .into_iter()
+            .filter(|meta| meta.class == class::DIRECT)
+            .count(),
         0,
         "the rejected manifest was not persisted"
     );
-    assert_eq!(alice.core.blob_index.values().map(BTreeMap::len).sum::<usize>(), total_symbols);
+    assert_eq!(
+        alice
+            .core
+            .blob_index
+            .values()
+            .map(BTreeMap::len)
+            .sum::<usize>(),
+        total_symbols
+    );
     assert_eq!(alice.core.symbol_of.len(), total_symbols);
     for id in alice.core.symbol_of.keys() {
         assert!(alice.core.store.meta(id).is_some());
@@ -2974,11 +3742,25 @@ fn send_file_manifest_rejection_preserves_symbols_for_retry() {
     // reused without minting another symbol set.
     gate.store(false, Ordering::Relaxed);
     let retry = alice
-        .send_file(&bob.node_id(), "manifest-retry.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "manifest-retry.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("manifest retry after provider recovery");
-    let root = alice.core.blob_index.keys().next().copied().expect("root remains indexed");
+    let root = alice
+        .core
+        .blob_index
+        .keys()
+        .next()
+        .copied()
+        .expect("root remains indexed");
     assert_eq!(retry.root, root);
-    assert_eq!(alice.message_state(&retry.message_id), Some(DeliveryState::Queued));
+    assert_eq!(
+        alice.message_state(&retry.message_id),
+        Some(DeliveryState::Queued)
+    );
     assert!(alice.core.store.meta(&retry.message_id).is_some());
 }
 
@@ -2995,7 +3777,12 @@ fn send_file_cross_destination_dedup_fails_closed_before_manifest() {
 
     let data = vec![0x45; 3000];
     let first = alice
-        .send_file(&bob.node_id(), "same.bin", "application/octet-stream", &data)
+        .send_file(
+            &bob.node_id(),
+            "same.bin",
+            "application/octet-stream",
+            &data,
+        )
         .expect("first destination accepts the file");
     let metas_before = alice.core.store.all_meta();
     let seen_before = alice.core.seen.encode();
@@ -3009,11 +3796,24 @@ fn send_file_cross_destination_dedup_fails_closed_before_manifest() {
     // The one-ID-per-slot holder index contains B-addressed symbols. A
     // root-only count must not make a later C manifest look deliverable.
     assert_eq!(
-        alice.send_file(&carol.node_id(), "same.bin", "application/octet-stream", &data),
+        alice.send_file(
+            &carol.node_id(),
+            "same.bin",
+            "application/octet-stream",
+            &data
+        ),
         Err(SendError::ResourceLimit)
     );
-    assert_eq!(alice.core.store.all_meta(), metas_before, "no C manifest or symbols were stored");
-    assert_eq!(alice.core.seen.encode(), seen_before, "failed destination admission is side-effect free");
+    assert_eq!(
+        alice.core.store.all_meta(),
+        metas_before,
+        "no C manifest or symbols were stored"
+    );
+    assert_eq!(
+        alice.core.seen.encode(),
+        seen_before,
+        "failed destination admission is side-effect free"
+    );
     assert_eq!(alice.core.blob_index, blob_index_before);
     assert_eq!(alice.core.symbol_of, symbol_of_before);
     let sent_after: HashSet<Id16> = alice.core.sent.keys().copied().collect();
@@ -3050,7 +3850,12 @@ fn send_file_revoked_peer_is_transactionally_side_effect_free() {
     let symbol_of_before = alice.core.symbol_of.clone();
 
     assert_eq!(
-        alice.send_file(&bob.node_id(), "revoked.bin", "application/octet-stream", &[0x5a; 3000]),
+        alice.send_file(
+            &bob.node_id(),
+            "revoked.bin",
+            "application/octet-stream",
+            &[0x5a; 3000]
+        ),
         Err(SendError::PeerRevoked)
     );
     let symbol_count_after = alice
@@ -3060,9 +3865,18 @@ fn send_file_revoked_peer_is_transactionally_side_effect_free() {
         .iter()
         .filter(|meta| meta.class == mmp_types::bundle::class::SYMBOL)
         .count();
-    assert_eq!(symbol_count_after, symbol_count_before, "rejected file must not mint symbol bundles");
-    assert_eq!(alice.core.blob_index, blob_index_before, "rejected file must not index symbols");
-    assert_eq!(alice.core.symbol_of, symbol_of_before, "rejected file must not populate reverse index");
+    assert_eq!(
+        symbol_count_after, symbol_count_before,
+        "rejected file must not mint symbol bundles"
+    );
+    assert_eq!(
+        alice.core.blob_index, blob_index_before,
+        "rejected file must not index symbols"
+    );
+    assert_eq!(
+        alice.core.symbol_of, symbol_of_before,
+        "rejected file must not populate reverse index"
+    );
 }
 
 /// E4-S4 bump_epoch wiring (doc 08 §5.2/§5.3): the very first live session
@@ -3085,7 +3899,9 @@ fn ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt() {
     drain(&mut alice);
     let bob_events = drain(&mut bob);
     assert!(
-        bob_events.iter().any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"first")),
+        bob_events
+            .iter()
+            .any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"first")),
         "the first message must cross before any epoch bump: {bob_events:?}"
     );
     assert_eq!(
@@ -3111,7 +3927,9 @@ fn ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt() {
     );
 
     // A message sent AFTER the bump must still cross correctly under epoch 1.
-    alice.send_text(&bob.node_id(), "second, after the bump").unwrap();
+    alice
+        .send_text(&bob.node_id(), "second, after the bump")
+        .unwrap();
     contact(&mut alice, &mut bob, 3, 30_000);
     let bob_events2 = drain(&mut bob);
     assert!(
@@ -3120,7 +3938,11 @@ fn ratchet_epoch_bumps_on_repeat_contact_and_messages_still_decrypt() {
             .any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"second, after the bump")),
         "a message encrypted under the bumped epoch must still decrypt: {bob_events2:?}"
     );
-    assert_eq!(alice.conv_epoch(&bob.node_id()), Some((2, 2)), "the third contact bumps again");
+    assert_eq!(
+        alice.conv_epoch(&bob.node_id()),
+        Some((2, 2)),
+        "the third contact bumps again"
+    );
 }
 
 #[test]
@@ -3174,9 +3996,9 @@ fn three_node_store_carry_forward() {
     contact(&mut r, &mut b, 2, 60_000); // R → B (delivery)
     let b_events = drain(&mut b);
     assert!(
-        b_events
-            .iter()
-            .any(|e| matches!(e, Event::MessageReceived { body, .. } if body == b"carried across time")),
+        b_events.iter().any(
+            |e| matches!(e, Event::MessageReceived { body, .. } if body == b"carried across time")
+        ),
         "B received via relay: {b_events:?}"
     );
 
@@ -3186,7 +4008,9 @@ fn three_node_store_carry_forward() {
     drain(&mut r);
     let a_events = drain(&mut a);
     assert!(
-        a_events.iter().any(|e| matches!(e, Event::Delivered { id } if *id == msg_id)),
+        a_events
+            .iter()
+            .any(|e| matches!(e, Event::Delivered { id } if *id == msg_id)),
         "receipt reached the origin via the relay: {a_events:?}"
     );
 }
@@ -3220,12 +4044,20 @@ fn sender_key_member_must_match_authenticated_origin() {
     let mut forged = Vec::with_capacity(16 + dist.len());
     forged.extend_from_slice(&bob.node_id().0);
     forged.extend_from_slice(&dist);
-    alice.core.send_app(&bob.node_id(), apptype::SENDER_KEY, &forged).unwrap();
+    alice
+        .core
+        .send_app(&bob.node_id(), apptype::SENDER_KEY, &forged)
+        .unwrap();
 
     contact(&mut alice, &mut bob, 91, 910_000);
     let events = drain(&mut bob);
-    assert!(!bob.core.groups.contains_key(&gid), "forged sender-key must not auto-adopt a group");
-    assert!(!events.iter().any(|event| matches!(event, Event::GroupInvite { gid: g, .. } if *g == gid)));
+    assert!(
+        !bob.core.groups.contains_key(&gid),
+        "forged sender-key must not auto-adopt a group"
+    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event, Event::GroupInvite { gid: g, .. } if *g == gid)));
 }
 
 #[test]
@@ -3238,7 +4070,9 @@ fn network_group_bootstrap_is_bounded() {
         let mut gid = [0u8; 16];
         gid[..8].copy_from_slice(&(i as u64).to_le_bytes());
         let gid = Id16(gid);
-        let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1).dist().clone();
+        let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1)
+            .dist()
+            .clone();
         let mut body = Vec::with_capacity(16 + dist.encode().len());
         body.extend_from_slice(&alice.node_id().0);
         body.extend_from_slice(&dist.encode());
@@ -3247,7 +4081,9 @@ fn network_group_bootstrap_is_bounded() {
     assert_eq!(bob.core.groups.len(), crate::group::MAX_GROUPS);
 
     let gid = Id16([0xee; 16]);
-    let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1).dist().clone();
+    let dist = mmp_crypto::group::LocalSenderKey::generate(&mut alice.core.rng, gid, 1)
+        .dist()
+        .clone();
     let mut body = Vec::with_capacity(16 + dist.encode().len());
     body.extend_from_slice(&alice.node_id().0);
     body.extend_from_slice(&dist.encode());
@@ -3259,7 +4095,8 @@ fn network_group_bootstrap_is_bounded() {
         assert!(restored.restore_group(&blob));
     }
     let alice_id = alice.node_id();
-    let extra = crate::group::GroupState::create(&mut alice.core.rng, Id16([0xdd; 16]), alice_id, true);
+    let extra =
+        crate::group::GroupState::create(&mut alice.core.rng, Id16([0xdd; 16]), alice_id, true);
     assert!(!restored.restore_group(&extra.encode()));
 }
 
@@ -3278,7 +4115,10 @@ fn duplicate_group_snapshot_does_not_replace_existing_state() {
 
     let mut restored = node(35);
     assert!(restored.restore_group(&original));
-    assert!(!restored.restore_group(&duplicate), "duplicate group IDs must fail closed");
+    assert!(
+        !restored.restore_group(&duplicate),
+        "duplicate group IDs must fail closed"
+    );
     assert_eq!(restored.all_group_blobs(), vec![original]);
 }
 
@@ -3297,7 +4137,10 @@ fn non_admin_cannot_invite_into_an_immutable_v1_group() {
     drain(&mut alice);
     drain(&mut bob);
 
-    assert_eq!(bob.group_invite(&gid, &carol.node_id()), Err(SendError::UnknownPeer));
+    assert_eq!(
+        bob.group_invite(&gid, &carol.node_id()),
+        Err(SendError::UnknownPeer)
+    );
     assert!(!bob.group_members(&gid).contains(&carol.node_id()));
 }
 
@@ -3318,7 +4161,9 @@ fn removed_member_cannot_reintroduce_stale_sender_key() {
     let mut stale = Vec::with_capacity(16 + old_dist.len());
     stale.extend_from_slice(&bob.node_id().0);
     stale.extend_from_slice(&old_dist);
-    bob.core.send_app(&alice.node_id(), apptype::SENDER_KEY, &stale).unwrap();
+    bob.core
+        .send_app(&alice.node_id(), apptype::SENDER_KEY, &stale)
+        .unwrap();
 
     contact(&mut bob, &mut alice, 93, 930_000);
     assert!(!alice.group_members(&gid).contains(&bob.node_id()));
@@ -3331,8 +4176,14 @@ fn removing_unknown_group_member_reports_unknown_peer_without_rotation() {
     let unknown = Id16([0xd4; 16]);
     let before_epoch = alice.core.groups.get(&gid).expect("group").epoch;
 
-    assert_eq!(alice.group_remove(&gid, &unknown), Err(SendError::UnknownPeer));
-    assert_eq!(alice.core.groups.get(&gid).expect("group").epoch, before_epoch);
+    assert_eq!(
+        alice.group_remove(&gid, &unknown),
+        Err(SendError::UnknownPeer)
+    );
+    assert_eq!(
+        alice.core.groups.get(&gid).expect("group").epoch,
+        before_epoch
+    );
 }
 
 #[test]
@@ -3358,7 +4209,9 @@ fn group_create_invite_and_message() {
 
     let bob_events = drain(&mut bob);
     assert!(
-        bob_events.iter().any(|e| matches!(e, Event::GroupInvite { gid: g, .. } if *g == gid)),
+        bob_events
+            .iter()
+            .any(|e| matches!(e, Event::GroupInvite { gid: g, .. } if *g == gid)),
         "bob saw the invite: {bob_events:?}"
     );
 
@@ -3439,12 +4292,17 @@ fn rejected_group_invite_does_not_mutate_membership() {
     let me = alice.node_id();
     let stranger = Id16([0xa5; 16]);
 
-    assert_eq!(alice.group_invite(&gid, &stranger), Err(SendError::UnknownPeer));
+    assert_eq!(
+        alice.group_invite(&gid, &stranger),
+        Err(SendError::UnknownPeer)
+    );
     assert_eq!(alice.group_members(&gid), vec![me]);
 
     let mut bob = node(63);
     introduce(&mut alice, &mut bob);
-    alice.send_text(&bob.node_id(), "first contact").expect("queue first-contact root");
+    alice
+        .send_text(&bob.node_id(), "first contact")
+        .expect("queue first-contact root");
     assert_eq!(
         alice.group_invite(&gid, &bob.node_id()),
         Err(SendError::ConversationPending)
@@ -3459,13 +4317,21 @@ fn duplicate_live_group_invite_does_not_accumulate_orset_tags() {
     introduce(&mut alice, &mut bob);
 
     let gid = alice.create_group();
-    alice.group_invite(&gid, &bob.node_id()).expect("first invite");
+    alice
+        .group_invite(&gid, &bob.node_id())
+        .expect("first invite");
     let before = alice.core.groups.get(&gid).unwrap().members.state_size();
 
-    alice.group_invite(&gid, &bob.node_id()).expect("duplicate invite is idempotent");
+    alice
+        .group_invite(&gid, &bob.node_id())
+        .expect("duplicate invite is idempotent");
 
     let group = alice.core.groups.get(&gid).unwrap();
-    assert_eq!(group.members.state_size(), before, "repeated live invites must not grow OR-Set state");
+    assert_eq!(
+        group.members.state_size(),
+        before,
+        "repeated live invites must not grow OR-Set state"
+    );
     let members = group.members.members();
     assert_eq!(members.len(), 2);
     assert!(members.contains(&alice.node_id()));
@@ -3478,7 +4344,9 @@ fn oversized_restored_group_send_does_not_distribute_before_rejection() {
     let mut bob = node(65);
     introduce(&mut alice, &mut bob);
     let gid = alice.create_group();
-    alice.group_invite(&gid, &bob.node_id()).expect("known peer");
+    alice
+        .group_invite(&gid, &bob.node_id())
+        .expect("known peer");
     let blob = alice
         .all_group_blobs()
         .into_iter()
@@ -3498,7 +4366,10 @@ fn oversized_restored_group_send_does_not_distribute_before_rejection() {
         Err(SendError::TooLarge)
     );
     assert!(restored.core.groups.get(&gid).unwrap().needs_distribution());
-    assert!(restored.poll_send().is_none(), "rejected send must not queue a distribution");
+    assert!(
+        restored.poll_send().is_none(),
+        "rejected send must not queue a distribution"
+    );
 }
 
 #[test]
@@ -3506,13 +4377,21 @@ fn oversized_group_send_does_not_consume_sender_chain_index() {
     let mut alice = node(61);
     let gid = alice.create_group();
 
-    assert_eq!(alice.group_send(&gid, &"x".repeat(MAX_BUNDLE)), Err(SendError::TooLarge));
+    assert_eq!(
+        alice.group_send(&gid, &"x".repeat(MAX_BUNDLE)),
+        Err(SendError::TooLarge)
+    );
 
-    let id = alice.group_send(&gid, "after rejection").expect("valid group retry");
+    let id = alice
+        .group_send(&gid, "after rejection")
+        .expect("valid group retry");
     let (_, raw) = alice.core.store.get(&id).expect("group bundle stored");
     let bundle = Bundle::decode_canonical(&raw).expect("well-formed group bundle");
     let payload = GroupPayload::decode(&bundle.payload).expect("well-formed group payload");
-    assert_eq!(payload.chain_index, 0, "rejected send must not consume index 0");
+    assert_eq!(
+        payload.chain_index, 0,
+        "rejected send must not consume index 0"
+    );
 }
 
 #[test]
@@ -3525,18 +4404,26 @@ fn group_store_rejection_is_side_effect_free_and_retryable() {
     let diag_before = alice.diagnostics().records().len();
     alice.core.store = Box::new(CapacityRejectStore);
 
-    assert_eq!(alice.group_send(&gid, "provider capacity"), Err(SendError::ResourceLimit));
+    assert_eq!(
+        alice.group_send(&gid, "provider capacity"),
+        Err(SendError::ResourceLimit)
+    );
     assert_eq!(alice.store_len(), 0);
     assert_eq!(alice.core.seen.encode(), seen_before);
     assert_eq!(alice.core.events.len(), events_before);
     assert_eq!(alice.diagnostics().records().len(), diag_before);
 
     alice.core.store = Box::new(MemStore::new());
-    let id = alice.group_send(&gid, "retry after capacity").expect("retry succeeds");
+    let id = alice
+        .group_send(&gid, "retry after capacity")
+        .expect("retry succeeds");
     let (_, raw) = alice.core.store.get(&id).expect("group bundle stored");
     let bundle = Bundle::decode_canonical(&raw).expect("well-formed group bundle");
     let payload = GroupPayload::decode(&bundle.payload).expect("well-formed group payload");
-    assert_eq!(payload.chain_index, 0, "rejected send must not consume index zero");
+    assert_eq!(
+        payload.chain_index, 0,
+        "rejected send must not consume index zero"
+    );
 }
 
 #[test]
@@ -3545,7 +4432,14 @@ fn duplicate_sender_key_retries_reciprocal_distribution_after_rejection() {
     let mut bob = node(59);
     introduce(&mut alice, &mut bob);
     let gid = alice.create_group();
-    let dist = alice.core.groups.get(&gid).expect("group").local.dist().encode();
+    let dist = alice
+        .core
+        .groups
+        .get(&gid)
+        .expect("group")
+        .local
+        .dist()
+        .encode();
     let mut body = Vec::with_capacity(16 + dist.len());
     body.extend_from_slice(&alice.node_id().0);
     body.extend_from_slice(&dist);
@@ -3573,8 +4467,12 @@ fn group_rekey_distribution_retries_after_provider_recovery() {
     introduce(&mut bob, &mut carol);
 
     let gid = alice.create_group();
-    alice.group_invite(&gid, &bob.node_id()).expect("bob invite");
-    alice.group_invite(&gid, &carol.node_id()).expect("carol invite");
+    alice
+        .group_invite(&gid, &bob.node_id())
+        .expect("bob invite");
+    alice
+        .group_invite(&gid, &carol.node_id())
+        .expect("carol invite");
     contact(&mut alice, &mut bob, 54, 10_000);
     contact(&mut alice, &mut carol, 55, 20_000);
     contact(&mut alice, &mut carol, 56, 30_000);
@@ -3585,14 +4483,22 @@ fn group_rekey_distribution_retries_after_provider_recovery() {
 
     alice.core.store = Box::new(CapacityRejectStore);
     let old_epoch = alice.core.groups.get(&gid).expect("group").epoch;
-    assert_eq!(alice.group_remove(&gid, &carol.node_id()), Err(SendError::ResourceLimit));
+    assert_eq!(
+        alice.group_remove(&gid, &carol.node_id()),
+        Err(SendError::ResourceLimit)
+    );
     let group = alice.core.groups.get(&gid).expect("rotated group");
     assert_eq!(group.epoch, old_epoch + 1);
     assert!(group.needs_distribution(), "failed rekey remains pending");
-    assert!(!alice.core.sent_dists.contains(&(gid, bob.node_id(), group.epoch)));
+    assert!(!alice
+        .core
+        .sent_dists
+        .contains(&(gid, bob.node_id(), group.epoch)));
 
     alice.core.store = Box::new(MemStore::new());
-    alice.group_send(&gid, "rekey retry").expect("group send retries distribution");
+    alice
+        .group_send(&gid, "rekey retry")
+        .expect("group send retries distribution");
     let epoch = alice.core.groups.get(&gid).expect("group").epoch;
     assert!(!alice.core.groups.get(&gid).unwrap().needs_distribution());
     assert!(alice.core.sent_dists.contains(&(gid, bob.node_id(), epoch)));
@@ -3799,19 +4705,28 @@ fn unauthenticated_announcement_clamps_to_normal_but_still_reaches_subscribers()
     let scope = bob.subscribe_scope(b"campus/example");
     // Bob subscribes but pins no root: alice's announcement carries no cert
     // and no issuer is trusted for this scope — must clamp, never drop.
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"no authority yet", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"no authority yet", None)
+        .unwrap();
 
     contact(&mut alice, &mut bob, 1, 10_000);
     let evs = drain(&mut bob);
     let ann = evs.iter().find_map(|e| match e {
-        Event::Announcement { effective_priority, official, text, .. } => {
-            Some((*effective_priority, *official, text.clone()))
-        }
+        Event::Announcement {
+            effective_priority,
+            official,
+            text,
+            ..
+        } => Some((*effective_priority, *official, text.clone())),
         _ => None,
     });
     let (effective, official, text) = ann.expect("bob (subscribed) sees the announcement event");
     assert_eq!(text, b"no authority yet");
-    assert_eq!(effective, prio::NORMAL, "clamped: no trusted root, no attached cert");
+    assert_eq!(
+        effective,
+        prio::NORMAL,
+        "clamped: no trusted root, no attached cert"
+    );
     assert!(!official);
 }
 
@@ -3825,7 +4740,11 @@ fn announcement_rejects_invalid_priority_before_storing() {
         alice.publish_announcement(scope, 1, prio::BULK + 1, b"invalid", None),
         Err(SendError::InvalidPriority)
     );
-    assert_eq!(alice.core.store.len(), before, "invalid input must not create a bundle");
+    assert_eq!(
+        alice.core.store.len(),
+        before,
+        "invalid input must not create a bundle"
+    );
 }
 
 #[test]
@@ -3841,7 +4760,10 @@ fn unknown_announcement_suite_is_relay_only_and_not_rendered() {
         text: b"future grammar".to_vec(),
         sig: Sig64::ZERO,
     };
-    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    body.sig = alice
+        .core
+        .identity
+        .sign(SigDomain::Announce, &body.signed_object());
     let mut bundle = Bundle {
         class: mmp_types::bundle::class::ANNOUNCEMENT,
         flags: 0,
@@ -3853,10 +4775,17 @@ fn unknown_announcement_suite_is_relay_only_and_not_rendered() {
         payload: body.encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = alice
+        .core
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
 
     bob.core.handle_announcement(&bundle);
-    assert!(!bob.core.events.iter().any(|event| matches!(event, Event::Announcement { .. })));
+    assert!(!bob
+        .core
+        .events
+        .iter()
+        .any(|event| matches!(event, Event::Announcement { .. })));
 }
 
 #[test]
@@ -3872,7 +4801,10 @@ fn expired_announcement_is_relayed_but_not_rendered() {
         text: b"expired safety notice".to_vec(),
         sig: Sig64::ZERO,
     };
-    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    body.sig = alice
+        .core
+        .identity
+        .sign(SigDomain::Announce, &body.signed_object());
     let mut bundle = Bundle {
         class: mmp_types::bundle::class::ANNOUNCEMENT,
         flags: 0,
@@ -3884,7 +4816,10 @@ fn expired_announcement_is_relayed_but_not_rendered() {
         payload: body.encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = alice
+        .core
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     let id = bundle.id();
     alice
         .core
@@ -3894,9 +4829,14 @@ fn expired_announcement_is_relayed_but_not_rendered() {
     bob.set_wall_clock(100 + NOT_AFTER_SKEW_S + 1);
     contact(&mut alice, &mut bob, 33, 33_000);
 
-    assert!(bob.core.store.get(&id).is_some(), "expired announcements remain relayable");
     assert!(
-        !drain(&mut bob).iter().any(|event| matches!(event, Event::Announcement { .. })),
+        bob.core.store.get(&id).is_some(),
+        "expired announcements remain relayable"
+    );
+    assert!(
+        !drain(&mut bob)
+            .iter()
+            .any(|event| matches!(event, Event::Announcement { .. })),
         "expired announcements must not reach the local display/event surface"
     );
 }
@@ -3914,7 +4854,10 @@ fn unclocked_expiring_announcement_is_not_rendered() {
         text: b"clock not ready".to_vec(),
         sig: Sig64::ZERO,
     };
-    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    body.sig = alice
+        .core
+        .identity
+        .sign(SigDomain::Announce, &body.signed_object());
     let mut bundle = Bundle {
         class: mmp_types::bundle::class::ANNOUNCEMENT,
         flags: 0,
@@ -3926,11 +4869,17 @@ fn unclocked_expiring_announcement_is_not_rendered() {
         payload: body.encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = alice
+        .core
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
 
     bob.core.handle_announcement(&bundle);
     assert!(
-        !bob.core.events.iter().any(|event| matches!(event, Event::Announcement { .. })),
+        !bob.core
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::Announcement { .. })),
         "nonzero display cutoffs require a ready wall clock"
     );
 }
@@ -3940,7 +4889,9 @@ fn unsubscribed_scope_gets_no_announcement_event() {
     let mut alice = node(1);
     let mut bob = node(2);
     let scope = Id16([0x42; 16]); // bob never subscribes to this one
-    alice.publish_announcement(scope, 0, prio::EMERGENCY, b"evacuate", None).unwrap();
+    alice
+        .publish_announcement(scope, 0, prio::EMERGENCY, b"evacuate", None)
+        .unwrap();
 
     contact(&mut alice, &mut bob, 1, 10_000);
     let evs = drain(&mut bob);
@@ -3967,17 +4918,36 @@ fn valid_attached_cert_elevates_priority_and_renders_official() {
         1_000_000_000,
     );
     bob.set_wall_clock(0);
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"platform 3 delayed", Some(&cert)).unwrap();
+    alice
+        .publish_announcement(
+            scope,
+            1,
+            prio::OPERATIONAL,
+            b"platform 3 delayed",
+            Some(&cert),
+        )
+        .unwrap();
 
     contact(&mut alice, &mut bob, 1, 10_000);
     let evs = drain(&mut bob);
     let ann = evs.iter().find_map(|e| match e {
-        Event::Announcement { effective_priority, official, .. } => Some((*effective_priority, *official)),
+        Event::Announcement {
+            effective_priority,
+            official,
+            ..
+        } => Some((*effective_priority, *official)),
         _ => None,
     });
     let (effective, official) = ann.expect("bob sees the elevated announcement");
-    assert_eq!(effective, prio::OPERATIONAL, "valid cert + budget ⇒ declared priority honored");
-    assert!(official, "a valid unrevoked cert with CAP_ANNOUNCE renders official regardless of the bucket");
+    assert_eq!(
+        effective,
+        prio::OPERATIONAL,
+        "valid cert + budget ⇒ declared priority honored"
+    );
+    assert!(
+        official,
+        "a valid unrevoked cert with CAP_ANNOUNCE renders official regardless of the bucket"
+    );
 }
 
 #[test]
@@ -3991,20 +4961,36 @@ fn authority_claim_received_before_wall_clock_is_reconsidered_after_clock_ready(
     // The AuthCert claim arrives while Bob has no trusted wall-clock sample.
     // It must remain usable after the host supplies the clock; otherwise the
     // one-shot claim handler permanently loses a valid authority grant.
-    let cert = signed_cert(&authority, alice.public_key(), scope, mmp_types::authcert::CAP_ANNOUNCE, 10, 1_000);
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        10,
+        1_000,
+    );
     alice.publish_claim(mmp_types::claim::field::AUTHCERT, 1, cert.encode());
     introduce(&mut alice, &mut bob);
     contact(&mut alice, &mut bob, 21, 21_000);
-    assert!(bob.core.claims.get(&alice.node_id(), mmp_types::claim::field::AUTHCERT).is_some());
+    assert!(bob
+        .core
+        .claims
+        .get(&alice.node_id(), mmp_types::claim::field::AUTHCERT)
+        .is_some());
 
     bob.set_wall_clock(0);
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"claim became usable", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"claim became usable", None)
+        .unwrap();
     contact(&mut alice, &mut bob, 22, 22_000);
 
     let announcement = drain(&mut bob).into_iter().find_map(|event| match event {
-        Event::Announcement { effective_priority, official, text, .. } if text == b"claim became usable" => {
-            Some((effective_priority, official))
-        }
+        Event::Announcement {
+            effective_priority,
+            official,
+            text,
+            ..
+        } if text == b"claim became usable" => Some((effective_priority, official)),
         _ => None,
     });
     assert_eq!(announcement, Some((prio::OPERATIONAL, true)));
@@ -4037,9 +5023,12 @@ fn unclocked_authority_cert_fails_closed_even_when_future_dated() {
     let ann = drain(&mut bob)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } => {
-                Some((effective_priority, official, text))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } => Some((effective_priority, official, text)),
             _ => None,
         })
         .expect("subscribed node still surfaces the announcement");
@@ -4075,7 +5064,10 @@ fn attached_authority_cert_received_before_clock_is_replayed_after_clock_ready()
         text: b"clock pending".to_vec(),
         sig: Sig64::ZERO,
     };
-    body.sig = alice.core.identity.sign(SigDomain::Announce, &body.signed_object());
+    body.sig = alice
+        .core
+        .identity
+        .sign(SigDomain::Announce, &body.signed_object());
     let mut bundle = Bundle {
         class: class::ANNOUNCEMENT,
         flags: 0,
@@ -4083,29 +5075,42 @@ fn attached_authority_cert_received_before_clock_is_replayed_after_clock_ready()
         dest: scope,
         lifetime_ms: LIFETIME_MESSAGE_MS,
         priority: prio::OPERATIONAL,
-        exts: vec![Ext::Optional { typ: mmp_types::tlv::TLV_AUTHCERT_ATTACH, val: cert.encode() }],
+        exts: vec![Ext::Optional {
+            typ: mmp_types::tlv::TLV_AUTHCERT_ATTACH,
+            val: cert.encode(),
+        }],
         payload: body.encode(),
         signature: Sig64::ZERO,
     };
-    bundle.signature = alice.core.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+    bundle.signature = alice
+        .core
+        .identity
+        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
     alice.core.try_store_own(bundle, 32).unwrap();
     contact(&mut alice, &mut bob, 24, 24_000);
     assert!(
-        !drain(&mut bob).iter().any(|event| matches!(event, Event::Announcement { .. })),
+        !drain(&mut bob)
+            .iter()
+            .any(|event| matches!(event, Event::Announcement { .. })),
         "an unclocked nonzero cutoff must not reach the display/event surface"
     );
 
     bob.set_wall_clock(0);
     // The next announcement omits the cert: success proves the retained
     // attachment, rather than a fresh wire certificate, became usable.
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"clock ready", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"clock ready", None)
+        .unwrap();
     contact(&mut alice, &mut bob, 25, 25_000);
     let second = drain(&mut bob)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } if text == b"clock ready" => {
-                Some((effective_priority, official))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } if text == b"clock ready" => Some((effective_priority, official)),
             _ => None,
         })
         .expect("the post-clock announcement is visible");
@@ -4128,14 +5133,19 @@ fn attached_authority_cert_is_reconstructed_from_store_after_restart() {
         1_000,
     );
 
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"persisted cert", Some(&cert)).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"persisted cert", Some(&cert))
+        .unwrap();
     contact(&mut alice, &mut bob, 27, 27_000);
     let before_restart = drain(&mut bob)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } if text == b"persisted cert" => {
-                Some((effective_priority, official))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } if text == b"persisted cert" => Some((effective_priority, official)),
             _ => None,
         })
         .expect("the unclocked announcement remains visible but non-official");
@@ -4150,14 +5160,19 @@ fn attached_authority_cert_is_reconstructed_from_store_after_restart() {
     restarted.pin_authority_root(scope, authority.public());
     restarted.set_wall_clock(0);
 
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"after restart", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"after restart", None)
+        .unwrap();
     contact(&mut alice, &mut restarted, 28, 28_000);
     let event = drain(&mut restarted)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } if text == b"after restart" => {
-                Some((effective_priority, official))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } if text == b"after restart" => Some((effective_priority, official)),
             _ => None,
         })
         .expect("the post-restart announcement is visible");
@@ -4190,8 +5205,12 @@ fn rotated_authority_root_accepts_shorter_lived_pending_certificate() {
 
     // Both attachments arrive before Bob has pinned either root.  The old
     // longer-lived entry currently suppresses the newer issuer's certificate.
-    let old_id = alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"old root", Some(&old_cert)).unwrap();
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"new root", Some(&new_cert)).unwrap();
+    let old_id = alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"old root", Some(&old_cert))
+        .unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"new root", Some(&new_cert))
+        .unwrap();
     contact(&mut alice, &mut bob, 30, 30_000);
     // Ensure the second contact exercises the replacement attachment rather
     // than a retransmission of the first bundle.
@@ -4201,14 +5220,19 @@ fn rotated_authority_root_accepts_shorter_lived_pending_certificate() {
 
     bob.pin_authority_root(scope, new_authority.public());
     bob.set_wall_clock(0);
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"rotated", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"rotated", None)
+        .unwrap();
     contact(&mut alice, &mut bob, 32, 32_000);
     let event = drain(&mut bob)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } if text == b"rotated" => {
-                Some((effective_priority, official))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } if text == b"rotated" => Some((effective_priority, official)),
             _ => None,
         })
         .expect("the post-rotation announcement is visible");
@@ -4239,8 +5263,12 @@ fn restored_authority_root_accepts_shorter_lived_pending_certificate() {
         100,
     );
 
-    let old_id = alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"old root", Some(&old_cert)).unwrap();
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"new root", Some(&new_cert)).unwrap();
+    let old_id = alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"old root", Some(&old_cert))
+        .unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"new root", Some(&new_cert))
+        .unwrap();
     contact(&mut alice, &mut bob, 34, 34_000);
     alice.core.store.remove(&old_id);
     contact(&mut alice, &mut bob, 35, 35_000);
@@ -4253,14 +5281,19 @@ fn restored_authority_root_accepts_shorter_lived_pending_certificate() {
     assert!(bob.restore_authority(&snapshot));
     bob.set_wall_clock(0);
 
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"restored rotation", None).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"restored rotation", None)
+        .unwrap();
     contact(&mut alice, &mut bob, 36, 36_000);
     let event = drain(&mut bob)
         .into_iter()
         .find_map(|event| match event {
-            Event::Announcement { effective_priority, official, text, .. } if text == b"restored rotation" => {
-                Some((effective_priority, official))
-            }
+            Event::Announcement {
+                effective_priority,
+                official,
+                text,
+                ..
+            } if text == b"restored rotation" => Some((effective_priority, official)),
             _ => None,
         })
         .expect("the post-restore announcement is visible");
@@ -4289,9 +5322,12 @@ fn wall_clock_rollback_cannot_revalidate_expired_authority() {
         .unwrap();
     contact(&mut alice, &mut bob, 16, 160_000);
     let first = drain(&mut bob).into_iter().find_map(|event| match event {
-        Event::Announcement { effective_priority, official, text, .. } if text == b"before rollback" => {
-            Some((effective_priority, official))
-        }
+        Event::Announcement {
+            effective_priority,
+            official,
+            text,
+            ..
+        } if text == b"before rollback" => Some((effective_priority, official)),
         _ => None,
     });
     assert_eq!(first, Some((prio::OPERATIONAL, true)));
@@ -4305,12 +5341,19 @@ fn wall_clock_rollback_cannot_revalidate_expired_authority() {
         .unwrap();
     contact(&mut alice, &mut bob, 17, 170_000);
     let second = drain(&mut bob).into_iter().find_map(|event| match event {
-        Event::Announcement { effective_priority, official, text, .. } if text == b"after rollback" => {
-            Some((effective_priority, official))
-        }
+        Event::Announcement {
+            effective_priority,
+            official,
+            text,
+            ..
+        } if text == b"after rollback" => Some((effective_priority, official)),
         _ => None,
     });
-    assert_eq!(second, Some((prio::NORMAL, false)), "rollback must not restore authority");
+    assert_eq!(
+        second,
+        Some((prio::NORMAL, false)),
+        "rollback must not restore authority"
+    );
 }
 
 #[test]
@@ -4333,14 +5376,31 @@ fn tick_prunes_expired_authority_entries_for_capacity_recovery() {
         .authority
         .consider_cert(&cert, 0)
         .expect("valid certificate is admitted before expiry");
-    assert!(bob.core.authority.grant_for(&bob.public_key(), &scope, prio::OPERATIONAL, 0).is_some());
+    assert!(bob
+        .core
+        .authority
+        .grant_for(&bob.public_key(), &scope, prio::OPERATIONAL, 0)
+        .is_some());
     let before = bob.authority_snapshot();
 
     bob.set_wall_clock(1 + NOT_AFTER_SKEW_S + 1);
     bob.tick(1);
 
-    assert_ne!(bob.authority_snapshot(), before, "tick must prune expired authority state");
-    assert!(bob.core.authority.grant_for(&bob.public_key(), &scope, prio::OPERATIONAL, 1 + NOT_AFTER_SKEW_S + 1).is_none());
+    assert_ne!(
+        bob.authority_snapshot(),
+        before,
+        "tick must prune expired authority state"
+    );
+    assert!(bob
+        .core
+        .authority
+        .grant_for(
+            &bob.public_key(),
+            &scope,
+            prio::OPERATIONAL,
+            1 + NOT_AFTER_SKEW_S + 1
+        )
+        .is_none());
 }
 
 #[test]
@@ -4353,10 +5413,18 @@ fn per_authority_budget_caps_elevation_across_distinct_announcements() {
     bob.set_wall_clock(0);
 
     // Budget = 2/hour: exactly two of three distinct announcements elevate.
-    let cert =
-        signed_cert(&authority, alice.public_key(), scope, mmp_types::authcert::CAP_ANNOUNCE, 2, 1_000_000_000);
+    let cert = signed_cert(
+        &authority,
+        alice.public_key(),
+        scope,
+        mmp_types::authcert::CAP_ANNOUNCE,
+        2,
+        1_000_000_000,
+    );
     for text in [&b"delay one"[..], b"delay two", b"delay three"] {
-        alice.publish_announcement(scope, 1, prio::OPERATIONAL, text, Some(&cert)).unwrap();
+        alice
+            .publish_announcement(scope, 1, prio::OPERATIONAL, text, Some(&cert))
+            .unwrap();
     }
 
     contact(&mut alice, &mut bob, 1, 10_000);
@@ -4369,7 +5437,11 @@ fn per_authority_budget_caps_elevation_across_distinct_announcements() {
         .iter()
         .filter(|e| matches!(e, Event::Announcement { effective_priority, .. } if *effective_priority == prio::NORMAL))
         .count();
-    assert_eq!((elevated, clamped), (2, 1), "budget=2 admits exactly two of three: {evs:?}");
+    assert_eq!(
+        (elevated, clamped),
+        (2, 1),
+        "budget=2 admits exactly two of three: {evs:?}"
+    );
 }
 
 #[test]
@@ -4389,7 +5461,9 @@ fn revocation_gossip_clamps_a_previously_elevated_subject_and_stays_sticky() {
         10,
         1_000_000_000,
     );
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"first, elevated", Some(&cert)).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"first, elevated", Some(&cert))
+        .unwrap();
     contact(&mut alice, &mut bob, 1, 10_000);
     let evs = drain(&mut bob);
     assert!(
@@ -4416,18 +5490,30 @@ fn revocation_gossip_clamps_a_previously_elevated_subject_and_stays_sticky() {
     claim.sig = authority.sign(SigDomain::Claim, &claim.signed_object());
     bob.ingest_claim(claim.clone(), true);
 
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"second, revoked", Some(&cert)).unwrap();
+    alice
+        .publish_announcement(scope, 1, prio::OPERATIONAL, b"second, revoked", Some(&cert))
+        .unwrap();
     contact(&mut alice, &mut bob, 2, 20_000);
     let evs2 = drain(&mut bob);
     let ann2 = evs2.iter().find_map(|e| match e {
-        Event::Announcement { text, effective_priority, .. } if text == b"second, revoked" => Some(*effective_priority),
+        Event::Announcement {
+            text,
+            effective_priority,
+            ..
+        } if text == b"second, revoked" => Some(*effective_priority),
         _ => None,
     });
-    assert_eq!(ann2, Some(prio::NORMAL), "revoked subject clamps even with a still-valid, still-attached cert");
+    assert_eq!(
+        ann2,
+        Some(prio::NORMAL),
+        "revoked subject clamps even with a still-valid, still-attached cert"
+    );
 
     // A later revocation list that OMITS the entry must not un-revoke it.
-    let later_empty =
-        mmp_types::authcert::RevocationList { suite: 1, entries: vec![] };
+    let later_empty = mmp_types::authcert::RevocationList {
+        suite: 1,
+        entries: vec![],
+    };
     let mut claim2 = mmp_types::claim::Claim {
         owner: authority.public(),
         field: mmp_types::claim::field::REVOCATION_LIST,
@@ -4438,16 +5524,30 @@ fn revocation_gossip_clamps_a_previously_elevated_subject_and_stays_sticky() {
     claim2.sig = authority.sign(SigDomain::Claim, &claim2.signed_object());
     bob.ingest_claim(claim2, true);
 
-    alice.publish_announcement(scope, 1, prio::OPERATIONAL, b"third, still revoked", Some(&cert)).unwrap();
+    alice
+        .publish_announcement(
+            scope,
+            1,
+            prio::OPERATIONAL,
+            b"third, still revoked",
+            Some(&cert),
+        )
+        .unwrap();
     contact(&mut alice, &mut bob, 3, 30_000);
     let evs3 = drain(&mut bob);
     let ann3 = evs3.iter().find_map(|e| match e {
-        Event::Announcement { text, effective_priority, .. } if text == b"third, still revoked" => {
-            Some(*effective_priority)
-        }
+        Event::Announcement {
+            text,
+            effective_priority,
+            ..
+        } if text == b"third, still revoked" => Some(*effective_priority),
         _ => None,
     });
-    assert_eq!(ann3, Some(prio::NORMAL), "sticky: an omitting later list must not restore admission");
+    assert_eq!(
+        ann3,
+        Some(prio::NORMAL),
+        "sticky: an omitting later list must not restore admission"
+    );
 }
 
 // -------------------------------------------------- E5-S2: friendship ------
@@ -4523,9 +5623,17 @@ fn friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt() 
     contact(&mut a, &mut f, 2, 20_000);
     drain(&mut a);
     drain(&mut f);
-    assert!(f.core.store.meta(&msg_id).is_some(), "sanity: F carries the message");
     assert!(
-        f.core.friends.get(&b.node_id()).unwrap().buffered.contains(&msg_id),
+        f.core.store.meta(&msg_id).is_some(),
+        "sanity: F carries the message"
+    );
+    assert!(
+        f.core
+            .friends
+            .get(&b.node_id())
+            .unwrap()
+            .buffered
+            .contains(&msg_id),
         "the message is pinned in F's friend-buffer bookkeeping"
     );
 
@@ -4537,9 +5645,18 @@ fn friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt() 
     inject_junk(&mut f, Id16([0xA3; 16]), 2000, 20_000);
     f.tick(21_000);
 
-    assert!(f.core.store.meta(&Id16([0xA1; 16])).is_none(), "junk #1 evicted under pressure");
-    assert!(f.core.store.meta(&Id16([0xA2; 16])).is_none(), "junk #2 evicted under pressure");
-    assert!(f.core.store.meta(&Id16([0xA3; 16])).is_none(), "junk #3 evicted under pressure");
+    assert!(
+        f.core.store.meta(&Id16([0xA1; 16])).is_none(),
+        "junk #1 evicted under pressure"
+    );
+    assert!(
+        f.core.store.meta(&Id16([0xA2; 16])).is_none(),
+        "junk #2 evicted under pressure"
+    );
+    assert!(
+        f.core.store.meta(&Id16([0xA3; 16])).is_none(),
+        "junk #3 evicted under pressure"
+    );
     assert!(
         f.core.store.meta(&msg_id).is_some(),
         "the friend-pinned bundle survives even quota=1 eviction pressure"
@@ -4562,9 +5679,19 @@ fn friend_buffers_pinned_bundle_through_quota_pressure_then_unpins_on_receipt() 
     drain(&mut b);
     drain(&mut f);
 
-    assert!(f.core.store.meta(&msg_id).is_none(), "F's copy purged once B's receipt arrives");
-    let state = f.core.friends.get(&b.node_id()).expect("friendship still on file");
-    assert!(state.buffered.is_empty(), "unpinned: buffered set empty after purge");
+    assert!(
+        f.core.store.meta(&msg_id).is_none(),
+        "F's copy purged once B's receipt arrives"
+    );
+    let state = f
+        .core
+        .friends
+        .get(&b.node_id())
+        .expect("friendship still on file");
+    assert!(
+        state.buffered.is_empty(),
+        "unpinned: buffered set empty after purge"
+    );
     assert_eq!(state.quota_used, 0, "quota_used refunded after purge");
 }
 
@@ -4610,8 +5737,14 @@ fn non_friend_bundle_evicts_under_the_same_quota_pressure() {
     contact(&mut a, &mut f, 1, 10_000);
     drain(&mut a);
     drain(&mut f);
-    assert!(f.core.store.meta(&msg_id).is_some(), "sanity: F still carries a plain relay copy");
-    assert!(f.core.friends.is_empty(), "sanity: no friendship exists at F");
+    assert!(
+        f.core.store.meta(&msg_id).is_some(),
+        "sanity: F still carries a plain relay copy"
+    );
+    assert!(
+        f.core.friends.is_empty(),
+        "sanity: no friendship exists at F"
+    );
 
     f.core.quota = 1;
     inject_junk(&mut f, Id16([0xB1; 16]), 2000, 10_000);
@@ -4642,12 +5775,19 @@ fn expired_friendship_unpins_its_buffered_bundle() {
     drain(&mut b);
     drain(&mut f);
 
-    let msg_id = a.send_text(&b.node_id(), "will outlive the friendship").unwrap();
+    let msg_id = a
+        .send_text(&b.node_id(), "will outlive the friendship")
+        .unwrap();
     contact(&mut a, &mut f, 2, 20_000);
     drain(&mut a);
     drain(&mut f);
     assert!(
-        f.core.friends.get(&b.node_id()).unwrap().buffered.contains(&msg_id),
+        f.core
+            .friends
+            .get(&b.node_id())
+            .unwrap()
+            .buffered
+            .contains(&msg_id),
         "sanity: pinned before expiry"
     );
 
@@ -4679,9 +5819,21 @@ fn stripes_for_size_padding_edges() {
     use crate::blob::stripes_for_size;
     use mmp_types::consts::STRIPE_DATA_BYTES;
 
-    assert_eq!(stripes_for_size(0), 1, "empty file still gets one zero stripe");
-    assert_eq!(stripes_for_size(1), 1, "one byte still needs a whole stripe");
-    assert_eq!(stripes_for_size(STRIPE_DATA_BYTES as u32), 1, "exactly one stripe's worth");
+    assert_eq!(
+        stripes_for_size(0),
+        1,
+        "empty file still gets one zero stripe"
+    );
+    assert_eq!(
+        stripes_for_size(1),
+        1,
+        "one byte still needs a whole stripe"
+    );
+    assert_eq!(
+        stripes_for_size(STRIPE_DATA_BYTES as u32),
+        1,
+        "exactly one stripe's worth"
+    );
     assert_eq!(
         stripes_for_size(STRIPE_DATA_BYTES as u32 + 1),
         2,
@@ -4709,7 +5861,10 @@ fn blob_write_stripe_rejects_invalid_shape_without_touching_part() {
         line!()
     ));
     let part_path = {
-        let mut name = dest_path.file_name().expect("test destination name").to_os_string();
+        let mut name = dest_path
+            .file_name()
+            .expect("test destination name")
+            .to_os_string();
         name.push(".part");
         dest_path.with_file_name(name)
     };
@@ -4730,8 +5885,14 @@ fn blob_write_stripe_rejects_invalid_shape_without_touching_part() {
         .write_stripe(assembly.stripes, &full_stripe)
         .expect_err("out-of-range stripe must be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(assembly.part.is_none(), "invalid input must not open the partial file");
-    assert!(!part_path.exists(), "invalid input must not create the partial file");
+    assert!(
+        assembly.part.is_none(),
+        "invalid input must not open the partial file"
+    );
+    assert!(
+        !part_path.exists(),
+        "invalid input must not create the partial file"
+    );
 
     drop(assembly);
     let sentinel = b"existing partial bytes";
@@ -4750,8 +5911,14 @@ fn blob_write_stripe_rejects_invalid_shape_without_touching_part() {
         .write_stripe(0, &short_stripe)
         .expect_err("short stripe must be rejected");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(assembly.part.is_none(), "invalid input must not open the partial file");
-    assert_eq!(std::fs::read(&part_path).expect("read partial assembly"), sentinel);
+    assert!(
+        assembly.part.is_none(),
+        "invalid input must not open the partial file"
+    );
+    assert_eq!(
+        std::fs::read(&part_path).expect("read partial assembly"),
+        sentinel
+    );
 
     drop(assembly);
     let _ = std::fs::remove_file(dest_path);
@@ -4785,8 +5952,13 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
     };
     let _ = std::fs::remove_file(&part_path);
 
-    let sent = a.send_file(&b.node_id(), "test.bin", "application/octet-stream", &data).unwrap();
-    assert_eq!(a.message_state(&sent.message_id), Some(DeliveryState::Queued));
+    let sent = a
+        .send_file(&b.node_id(), "test.bin", "application/octet-stream", &data)
+        .unwrap();
+    assert_eq!(
+        a.message_state(&sent.message_id),
+        Some(DeliveryState::Queued)
+    );
     assert!(a
         .core
         .events
@@ -4821,7 +5993,9 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
 
     let b_events2 = drain(&mut b);
     assert!(
-        b_events2.iter().any(|e| matches!(e, Event::FileReady { root, .. } if *root == sent.root)),
+        b_events2
+            .iter()
+            .any(|e| matches!(e, Event::FileReady { root, .. } if *root == sent.root)),
         "FileReady fired: {b_events2:?}"
     );
 
@@ -4838,15 +6012,28 @@ fn send_file_fetch_reassembles_bit_exact_and_dedups() {
     contact(&mut a, &mut b, 2, 20_000);
     drain(&mut a);
     drain(&mut b);
-    assert_eq!(a.message_state(&sent.message_id), Some(DeliveryState::Delivered));
+    assert_eq!(
+        a.message_state(&sent.message_id),
+        Some(DeliveryState::Delivered)
+    );
 
     let symbol_count = |n: &Node| {
-        n.core.store.all_meta().iter().filter(|m| m.class == mmp_types::bundle::class::SYMBOL).count()
+        n.core
+            .store
+            .all_meta()
+            .iter()
+            .filter(|m| m.class == mmp_types::bundle::class::SYMBOL)
+            .count()
     };
     let before = symbol_count(&a);
-    let resent = a.send_file(&b.node_id(), "test.bin", "application/octet-stream", &data).unwrap();
+    let resent = a
+        .send_file(&b.node_id(), "test.bin", "application/octet-stream", &data)
+        .unwrap();
     let after = symbol_count(&a);
-    assert_eq!(before, after, "identical content is deduped, no new symbol bundles minted");
+    assert_eq!(
+        before, after,
+        "identical content is deduped, no new symbol bundles minted"
+    );
     assert_eq!(resent.root, sent.root, "same content address");
 
     let _ = std::fs::remove_file(&dest_path);
@@ -4864,7 +6051,12 @@ fn send_file_from_reader_reassembles_and_preserves_manifest_root() {
     let data: Vec<u8> = (0..5000u32).map(|i| (i % 239) as u8).collect();
     let mut reader = Cursor::new(data.clone());
     let sent = a
-        .send_file_from_reader(&b.node_id(), "reader.bin", "application/octet-stream", &mut reader)
+        .send_file_from_reader(
+            &b.node_id(),
+            "reader.bin",
+            "application/octet-stream",
+            &mut reader,
+        )
         .expect("seekable reader send");
 
     contact(&mut a, &mut b, 1, 10_000);
@@ -4891,8 +6083,12 @@ fn send_file_from_reader_reassembles_and_preserves_manifest_root() {
     };
     let _ = std::fs::remove_file(&part_path);
 
-    b.fetch_file(&sent.root, &dest_path).expect("fetch reader file");
-    assert_eq!(std::fs::read(&dest_path).expect("read assembled file"), data);
+    b.fetch_file(&sent.root, &dest_path)
+        .expect("fetch reader file");
+    assert_eq!(
+        std::fs::read(&dest_path).expect("read assembled file"),
+        data
+    );
     assert!(!part_path.exists(), "reader path leaves no partial file");
     let _ = std::fs::remove_file(&dest_path);
     let _ = std::fs::remove_file(&part_path);
@@ -4938,7 +6134,12 @@ struct MutatingReader {
 
 impl MutatingReader {
     fn new(data: Vec<u8>) -> Self {
-        Self { inner: Cursor::new(data), saw_initial_start: false, second_pass: false, mutated: false }
+        Self {
+            inner: Cursor::new(data),
+            saw_initial_start: false,
+            second_pass: false,
+            mutated: false,
+        }
     }
 }
 
@@ -4986,7 +6187,10 @@ fn send_file_from_reader_preflight_failure_is_side_effect_free() {
     drain(&mut b);
 
     let data = vec![0x63; 5000];
-    let mut reader = FailingReader { inner: Cursor::new(data), fail_after: 1000 };
+    let mut reader = FailingReader {
+        inner: Cursor::new(data),
+        fail_after: 1000,
+    };
     let store_before = a.core.store.all_meta();
     let blob_before = a.core.blob_index.clone();
     let reverse_before = a.core.symbol_of.clone();
@@ -4995,7 +6199,12 @@ fn send_file_from_reader_preflight_failure_is_side_effect_free() {
     let sent_before = a.core.sent.len();
 
     assert_eq!(
-        a.send_file_from_reader(&b.node_id(), "failed.bin", "application/octet-stream", &mut reader),
+        a.send_file_from_reader(
+            &b.node_id(),
+            "failed.bin",
+            "application/octet-stream",
+            &mut reader
+        ),
         Err(SendError::SourceIo)
     );
     assert_eq!(a.core.store.all_meta(), store_before);
@@ -5017,7 +6226,12 @@ fn send_file_from_reader_rejects_oversize_before_reading_or_mutation() {
     let mut reader = ReportedSizeReader(FILE_MAX + 1);
     let store_before = a.core.store.all_meta();
     assert_eq!(
-        a.send_file_from_reader(&b.node_id(), "too-large.bin", "application/octet-stream", &mut reader),
+        a.send_file_from_reader(
+            &b.node_id(),
+            "too-large.bin",
+            "application/octet-stream",
+            &mut reader
+        ),
         Err(SendError::TooLarge)
     );
     assert_eq!(a.core.store.all_meta(), store_before);
@@ -5035,7 +6249,12 @@ fn send_file_from_reader_rejects_source_mutation_before_storing_invalid_symbols(
     let mut reader = MutatingReader::new(vec![0x42; 5000]);
     let store_before = a.core.store.all_meta();
     assert_eq!(
-        a.send_file_from_reader(&b.node_id(), "mutable.bin", "application/octet-stream", &mut reader),
+        a.send_file_from_reader(
+            &b.node_id(),
+            "mutable.bin",
+            "application/octet-stream",
+            &mut reader
+        ),
         Err(SendError::SourceIo)
     );
     assert_eq!(a.core.store.all_meta(), store_before);
@@ -5057,7 +6276,12 @@ fn send_file_from_reader_preserves_only_durable_prefix_on_legacy_capacity_failur
     let mut reader = Cursor::new(data);
 
     assert_eq!(
-        a.send_file_from_reader(&b.node_id(), "reader-prefix.bin", "application/octet-stream", &mut reader),
+        a.send_file_from_reader(
+            &b.node_id(),
+            "reader-prefix.bin",
+            "application/octet-stream",
+            &mut reader
+        ),
         Err(SendError::ResourceLimit)
     );
 
@@ -5068,17 +6292,39 @@ fn send_file_from_reader_preserves_only_durable_prefix_on_legacy_capacity_failur
         .into_iter()
         .filter(|meta| meta.class == class::SYMBOL)
         .count();
-    assert_eq!(durable_symbols, 8, "legacy reader path retains the accepted prefix");
+    assert_eq!(
+        durable_symbols, 8,
+        "legacy reader path retains the accepted prefix"
+    );
     let indexed_symbols: usize = a.core.blob_index.values().map(BTreeMap::len).sum();
-    assert_eq!(indexed_symbols, 8, "holder index tracks only durable symbols");
-    assert_eq!(a.core.symbol_of.len(), 8, "reverse index tracks only durable symbols");
+    assert_eq!(
+        indexed_symbols, 8,
+        "holder index tracks only durable symbols"
+    );
+    assert_eq!(
+        a.core.symbol_of.len(),
+        8,
+        "reverse index tracks only durable symbols"
+    );
     for id in a.core.symbol_of.keys() {
-        assert!(a.core.store.meta(id).is_some(), "every indexed symbol is durable");
-        assert!(a.core.seen.contains(id), "every accepted symbol is in SeenIndex");
+        assert!(
+            a.core.store.meta(id).is_some(),
+            "every indexed symbol is durable"
+        );
+        assert!(
+            a.core.seen.contains(id),
+            "every accepted symbol is in SeenIndex"
+        );
     }
-    assert!(!a.core.convs.contains_key(&conv_id), "manifest failure does not create a conversation");
+    assert!(
+        !a.core.convs.contains_key(&conv_id),
+        "manifest failure does not create a conversation"
+    );
     assert!(!a.core.pending_first_contact.contains_key(&conv_id));
-    assert!(a.core.sent.is_empty(), "manifest failure does not create delivery state");
+    assert!(
+        a.core.sent.is_empty(),
+        "manifest failure does not create delivery state"
+    );
 }
 
 #[test]
@@ -5092,7 +6338,12 @@ fn send_file_from_reader_deduplicates_existing_symbols() {
     let data = vec![0x71; 3000];
     let mut first_reader = Cursor::new(data.clone());
     let first = a
-        .send_file_from_reader(&b.node_id(), "same.bin", "application/octet-stream", &mut first_reader)
+        .send_file_from_reader(
+            &b.node_id(),
+            "same.bin",
+            "application/octet-stream",
+            &mut first_reader,
+        )
         .expect("first reader send");
     contact(&mut a, &mut b, 1, 10_000);
     drain(&mut a);
@@ -5102,12 +6353,22 @@ fn send_file_from_reader_deduplicates_existing_symbols() {
     drain(&mut b);
 
     let symbol_count = |n: &Node| {
-        n.core.store.all_meta().iter().filter(|meta| meta.class == class::SYMBOL).count()
+        n.core
+            .store
+            .all_meta()
+            .iter()
+            .filter(|meta| meta.class == class::SYMBOL)
+            .count()
     };
     let before = symbol_count(&a);
     let mut second_reader = Cursor::new(data);
     let second = a
-        .send_file_from_reader(&b.node_id(), "same.bin", "application/octet-stream", &mut second_reader)
+        .send_file_from_reader(
+            &b.node_id(),
+            "same.bin",
+            "application/octet-stream",
+            &mut second_reader,
+        )
         .expect("deduplicated reader send");
     assert_eq!(second.root, first.root);
     assert_eq!(symbol_count(&a), before);
@@ -5132,16 +6393,24 @@ fn missing_indexed_symbol_is_pruned_before_handoff() {
         .and_then(|idx| idx.get(&0))
         .copied()
         .expect("first symbol is indexed");
-    assert!(a.core.store.remove(&symbol_id), "test provider eviction removes the bytes only");
+    assert!(
+        a.core.store.remove(&symbol_id),
+        "test provider eviction removes the bytes only"
+    );
     assert!(a.core.symbol_of.contains_key(&symbol_id));
 
     assert!(SessionHost::load_for_handoff(&mut a.core, &b.node_id(), &symbol_id).is_none());
-    assert!(!a.core.symbol_of.contains_key(&symbol_id), "missing bytes repair reverse index");
-    assert!(!a
-        .core
-        .blob_index
-        .get(&sent.root)
-        .is_some_and(|idx| idx.contains_key(&0)), "missing bytes repair forward index");
+    assert!(
+        !a.core.symbol_of.contains_key(&symbol_id),
+        "missing bytes repair reverse index"
+    );
+    assert!(
+        !a.core
+            .blob_index
+            .get(&sent.root)
+            .is_some_and(|idx| idx.contains_key(&0)),
+        "missing bytes repair forward index"
+    );
 }
 
 /// `Node::cancel_fetch` moves an active (not-yet-complete) assembly to
@@ -5166,10 +6435,16 @@ fn cancel_fetch_abandons_and_fires_event() {
 
     let dest = std::env::temp_dir().join(format!("mmp-node-cancel-{}.bin", std::process::id()));
     b.fetch_file(&root, &dest).unwrap();
-    assert_eq!(b.file_progress(&root).unwrap().state, crate::BlobState::Wanted);
+    assert_eq!(
+        b.file_progress(&root).unwrap().state,
+        crate::BlobState::Wanted
+    );
 
     b.cancel_fetch(&root);
-    assert_eq!(b.file_progress(&root).unwrap().state, crate::BlobState::Abandoned);
+    assert_eq!(
+        b.file_progress(&root).unwrap().state,
+        crate::BlobState::Abandoned
+    );
     let events = drain(&mut b);
     assert!(
         events.iter().any(|e| matches!(
@@ -5202,14 +6477,18 @@ fn blob_terminal_gc_preserves_active_and_partial_holder_state() {
         );
     }
 
-    let active_dest = std::env::temp_dir().join(format!("mmp-node-active-{}.bin", std::process::id()));
+    let active_dest =
+        std::env::temp_dir().join(format!("mmp-node-active-{}.bin", std::process::id()));
     let abandoned_dest =
         std::env::temp_dir().join(format!("mmp-node-abandoned-{}.bin", std::process::id()));
     b.fetch_file(&active_root, &active_dest).unwrap();
     b.fetch_file(&abandoned_root, &abandoned_dest).unwrap();
     b.cancel_fetch(&abandoned_root);
     assert_eq!(
-        b.core.assemblies.get(&abandoned_root).and_then(|a| a.terminal_at),
+        b.core
+            .assemblies
+            .get(&abandoned_root)
+            .and_then(|a| a.terminal_at),
         Some(0)
     );
 
@@ -5223,25 +6502,46 @@ fn blob_terminal_gc_preserves_active_and_partial_holder_state() {
     b.core.symbol_of.insert(symbol_id, (abandoned_root, 0));
 
     b.tick(BLOB_INTEREST_TTL_MS - 1);
-    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Wanted);
-    assert_eq!(b.file_progress(&abandoned_root).unwrap().state, crate::BlobState::Abandoned);
+    assert_eq!(
+        b.file_progress(&active_root).unwrap().state,
+        crate::BlobState::Wanted
+    );
+    assert_eq!(
+        b.file_progress(&abandoned_root).unwrap().state,
+        crate::BlobState::Abandoned
+    );
     assert!(b.core.blob_index.contains_key(&abandoned_root));
 
     // At the retention boundary the terminal record is gone, but the active
     // request is still within its original interest lifetime and the holder
     // index is untouched.
     b.tick(BLOB_INTEREST_TTL_MS);
-    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Wanted);
+    assert_eq!(
+        b.file_progress(&active_root).unwrap().state,
+        crate::BlobState::Wanted
+    );
     assert!(b.file_progress(&abandoned_root).is_none());
-    assert_eq!(b.core.blob_index.get(&abandoned_root).and_then(|idx| idx.get(&0)), Some(&symbol_id));
+    assert_eq!(
+        b.core
+            .blob_index
+            .get(&abandoned_root)
+            .and_then(|idx| idx.get(&0)),
+        Some(&symbol_id)
+    );
     assert_eq!(b.core.symbol_of.get(&symbol_id), Some(&(abandoned_root, 0)));
 
     // The active request transitions normally once its own TTL lapses and is
     // retained as terminal progress for a fresh window.
     b.tick(BLOB_INTEREST_TTL_MS + 1);
-    assert_eq!(b.file_progress(&active_root).unwrap().state, crate::BlobState::Abandoned);
     assert_eq!(
-        b.core.assemblies.get(&active_root).and_then(|a| a.terminal_at),
+        b.file_progress(&active_root).unwrap().state,
+        crate::BlobState::Abandoned
+    );
+    assert_eq!(
+        b.core
+            .assemblies
+            .get(&active_root)
+            .and_then(|a| a.terminal_at),
         Some(BLOB_INTEREST_TTL_MS + 1)
     );
 
@@ -5252,7 +6552,8 @@ fn blob_terminal_gc_preserves_active_and_partial_holder_state() {
 #[cfg(target_os = "windows")]
 #[test]
 fn windows_vault_public_facade_roundtrips_without_exposing_secret_bytes() {
-    let path = std::env::temp_dir().join(format!("mmp-node-public-vault-{}.bin", std::process::id()));
+    let path =
+        std::env::temp_dir().join(format!("mmp-node-public-vault-{}.bin", std::process::id()));
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("bin.lock"));
 
@@ -5264,7 +6565,12 @@ fn windows_vault_public_facade_roundtrips_without_exposing_secret_bytes() {
             .expect("empty vault is not an error"),
         None
     );
-    assert_eq!(source.save_secret_state_to_windows_vault(&mut vault).unwrap(), 1);
+    assert_eq!(
+        source
+            .save_secret_state_to_windows_vault(&mut vault)
+            .unwrap(),
+        1
+    );
 
     let expected = source.secret_state_snapshot().unwrap();
     let mut restored = node(201);
@@ -5275,7 +6581,10 @@ fn windows_vault_public_facade_roundtrips_without_exposing_secret_bytes() {
             .unwrap(),
         Some(1)
     );
-    assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), expected.as_slice());
+    assert_eq!(
+        restored.secret_state_snapshot().unwrap().as_slice(),
+        expected.as_slice()
+    );
 
     let _ = std::fs::remove_file(&path);
     let _ = std::fs::remove_file(path.with_extension("bin.lock"));

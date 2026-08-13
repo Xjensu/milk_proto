@@ -221,7 +221,17 @@ impl Bundle {
         if has_parents != (flags & FLAG_HAS_PARENTS != 0) {
             return Err(WireError::BadValue("has_parents flag"));
         }
-        Ok(Bundle { class, flags, origin, dest, lifetime_ms, priority, exts, payload, signature })
+        Ok(Bundle {
+            class,
+            flags,
+            origin,
+            dest,
+            lifetime_ms,
+            priority,
+            exts,
+            payload,
+            signature,
+        })
     }
 
     /// True if any extension is critical-unknown per this implementation —

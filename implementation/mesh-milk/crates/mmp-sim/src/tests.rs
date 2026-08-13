@@ -27,7 +27,10 @@ fn clustered_mobility_plan_is_deterministic_and_has_bridge_contacts() {
             bridge_count += 1;
         }
     }
-    assert_eq!(bridge_count, 3, "every fourth contact bridges adjacent communities");
+    assert_eq!(
+        bridge_count, 3,
+        "every fourth contact bridges adjacent communities"
+    );
 }
 
 #[test]
@@ -72,12 +75,21 @@ fn social_clustered_mobility_is_deterministic_with_bounded_bridges() {
         let first_pair = first.next_pair(&mut rng_a);
         let second_pair = second.next_pair(&mut rng_b);
         assert_eq!(first_pair, second_pair, "same seed must reproduce the plan");
-        assert_ne!(first_pair.0, first_pair.1, "a contact cannot contain itself");
+        assert_ne!(
+            first_pair.0, first_pair.1,
+            "a contact cannot contain itself"
+        );
         bridge_count += usize::from(first_pair.2);
     }
     assert_eq!(bridge_count, first.bridge_count());
-    assert!(bridge_count > 0, "a non-zero bridge probability must bridge sometimes");
-    assert!(bridge_count < 100, "a sub-unit bridge probability must retain intra-cluster contacts");
+    assert!(
+        bridge_count > 0,
+        "a non-zero bridge probability must bridge sometimes"
+    );
+    assert!(
+        bridge_count < 100,
+        "a sub-unit bridge probability must retain intra-cluster contacts"
+    );
 }
 
 #[test]
@@ -128,10 +140,10 @@ fn social_clustered_empty_run_has_zero_realized_distribution() {
 
 #[test]
 fn bounded_heavy_tail_mobility_is_deterministic_and_bounded() {
-    let mut first = crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16)
-        .expect("valid bounded profile");
-    let mut second = crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16)
-        .expect("valid bounded profile");
+    let mut first =
+        crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16).expect("valid bounded profile");
+    let mut second =
+        crate::BoundedHeavyTailClusteredMobility::new(24, 4, 1, 16).expect("valid bounded profile");
     let mut rng_a = crate::Rng::new(0xB0AD_D3D0);
     let mut rng_b = crate::Rng::new(0xB0AD_D3D0);
     let mut bridge_count = 0;
@@ -139,7 +151,10 @@ fn bounded_heavy_tail_mobility_is_deterministic_and_bounded() {
         let first_pair = first.next_pair(&mut rng_a);
         let second_pair = second.next_pair(&mut rng_b);
         assert_eq!(first_pair, second_pair, "same seed must reproduce the plan");
-        assert_ne!(first_pair.0, first_pair.1, "a contact cannot contain itself");
+        assert_ne!(
+            first_pair.0, first_pair.1,
+            "a contact cannot contain itself"
+        );
         bridge_count += usize::from(first_pair.2);
     }
     assert_eq!(bridge_count, first.bridge_count());
@@ -155,13 +170,10 @@ fn bounded_heavy_tail_rejects_invalid_configuration() {
     assert!(crate::BoundedHeavyTailClusteredMobility::new(7, 4, 1, 4).is_none());
     assert!(crate::BoundedHeavyTailClusteredMobility::new(8, 4, 0, 4).is_none());
     assert!(crate::BoundedHeavyTailClusteredMobility::new(8, 4, 5, 4).is_none());
-    assert!(crate::BoundedHeavyTailClusteredMobility::new(
-        8,
-        4,
-        1,
-        crate::MAX_CLUSTER_DWELL + 1,
-    )
-    .is_none());
+    assert!(
+        crate::BoundedHeavyTailClusteredMobility::new(8, 4, 1, crate::MAX_CLUSTER_DWELL + 1,)
+            .is_none()
+    );
 }
 
 #[test]
@@ -171,13 +183,18 @@ fn bounded_heavy_tail_run_reports_generator_metrics_without_wire_changes() {
         .run_bounded_heavy_tail_clustered_meetings(120, 1_000, 2_000, 4, 1, 8)
         .expect("valid bounded profile");
     assert_eq!(metrics.meetings, 120);
-    assert_eq!(metrics.bridge_meetings + metrics.intra_community_meetings, 120);
+    assert_eq!(
+        metrics.bridge_meetings + metrics.intra_community_meetings,
+        120
+    );
     assert_eq!(metrics.dwell_min, 1);
     assert_eq!(metrics.dwell_max, 8);
     assert!(metrics.episodes > 0);
     assert!(metrics.max_intra_community_streak <= metrics.dwell_max);
-    assert_eq!(metrics.realized_bridge_probability_per_mille,
-        ((metrics.bridge_meetings * 1_000) / metrics.meetings) as u16);
+    assert_eq!(
+        metrics.realized_bridge_probability_per_mille,
+        ((metrics.bridge_meetings * 1_000) / metrics.meetings) as u16
+    );
     assert_eq!(sim.counters().meetings_run, 120);
     assert!(sim.quota_ok());
 }
@@ -215,7 +232,8 @@ fn contact_model_matrix(seed: u64) -> [crate::ContactScenarioMetrics; 3] {
 
     let mut periodic = setup(seed);
     assert!(periodic.run_clustered_meetings(MEETINGS, 1_000, 2_000, 3, 4));
-    let periodic_metrics = periodic.research_metrics(crate::ContactGeneratorKind::PeriodicClustered, None);
+    let periodic_metrics =
+        periodic.research_metrics(crate::ContactGeneratorKind::PeriodicClustered, None);
 
     let mut social = setup(seed);
     let social_run = social
@@ -234,16 +252,28 @@ fn contact_model_matrix_is_reproducible_and_reports_comparable_metrics() {
     let first = contact_model_matrix(0x0510_C1A1);
     let second = contact_model_matrix(0x0510_C1A1);
     assert_eq!(first, second, "paired contact models must be reproducible");
-    assert_eq!(first[0].generator, crate::ContactGeneratorKind::UniformRandom);
-    assert_eq!(first[1].generator, crate::ContactGeneratorKind::PeriodicClustered);
-    assert_eq!(first[2].generator, crate::ContactGeneratorKind::SocialClustered);
+    assert_eq!(
+        first[0].generator,
+        crate::ContactGeneratorKind::UniformRandom
+    );
+    assert_eq!(
+        first[1].generator,
+        crate::ContactGeneratorKind::PeriodicClustered
+    );
+    assert_eq!(
+        first[2].generator,
+        crate::ContactGeneratorKind::SocialClustered
+    );
     assert_eq!(first[0].meetings, first[1].meetings);
     assert_eq!(first[1].meetings, first[2].meetings);
     assert_eq!(first[0].bridge_meetings, None);
     assert_eq!(first[1].bridge_meetings, None);
     assert!(first[2].bridge_meetings.is_some());
     for metrics in first {
-        assert!(metrics.quota_ok, "contact model must preserve store quota safety");
+        assert!(
+            metrics.quota_ok,
+            "contact model must preserve store quota safety"
+        );
         assert_eq!(metrics.messages_sent, 4);
     }
     eprintln!("contact_model_matrix: {first:?}");
@@ -274,9 +304,21 @@ fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
         4,
         0x7ACE_0001,
         vec![
-            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
-            crate::ContactEvent { left: 2, right: 3, gap_ms: 2_000 },
-            crate::ContactEvent { left: 1, right: 2, gap_ms: 3_000 },
+            crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 1_000,
+            },
+            crate::ContactEvent {
+                left: 2,
+                right: 3,
+                gap_ms: 2_000,
+            },
+            crate::ContactEvent {
+                left: 1,
+                right: 2,
+                gap_ms: 3_000,
+            },
         ],
     )
     .expect("valid replay schedule");
@@ -300,10 +342,26 @@ fn fixed_mmp1_baseline_replay_reports_delivery_and_resource_invariants() {
         NODE_COUNT,
         SEED,
         vec![
-            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
-            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
-            crate::ContactEvent { left: 2, right: 3, gap_ms: 3_000 },
-            crate::ContactEvent { left: 0, right: 3, gap_ms: 4_000 },
+            crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 1_000,
+            },
+            crate::ContactEvent {
+                left: 1,
+                right: 2,
+                gap_ms: 2_000,
+            },
+            crate::ContactEvent {
+                left: 2,
+                right: 3,
+                gap_ms: 3_000,
+            },
+            crate::ContactEvent {
+                left: 0,
+                right: 3,
+                gap_ms: 4_000,
+            },
         ],
     )
     .expect("fixed baseline schedule must validate");
@@ -312,8 +370,14 @@ fn fixed_mmp1_baseline_replay_reports_delivery_and_resource_invariants() {
         let mut sim = Sim::new(NODE_COUNT, schedule.seed());
         sim.introduce(0, 3);
         sim.send_text(0, 3, "MMP/1 deterministic baseline");
-        let trace = schedule.replay(&mut sim).expect("baseline replay must match");
-        assert_eq!(trace, schedule.trace_id(), "replay must consume the declared trace");
+        let trace = schedule
+            .replay(&mut sim)
+            .expect("baseline replay must match");
+        assert_eq!(
+            trace,
+            schedule.trace_id(),
+            "replay must consume the declared trace"
+        );
 
         let metrics = sim.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
         assert_eq!(metrics.trace_id, schedule.trace_id());
@@ -322,8 +386,12 @@ fn fixed_mmp1_baseline_replay_reports_delivery_and_resource_invariants() {
         assert_eq!(metrics.messages_received, 1);
         assert_eq!(metrics.messages_delivered, 1);
         assert_eq!(metrics.delivery_ratio, 1.0);
-        assert!(metrics.p50_latency_ms.is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
-        assert!(metrics.p90_latency_ms.is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
+        assert!(metrics
+            .p50_latency_ms
+            .is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
+        assert!(metrics
+            .p90_latency_ms
+            .is_some_and(|latency| latency <= metrics.simulated_elapsed_ms));
         assert!(metrics.store_high_water_bytes > 0);
         assert!(metrics.quota_ok);
         metrics
@@ -331,7 +399,10 @@ fn fixed_mmp1_baseline_replay_reports_delivery_and_resource_invariants() {
 
     let first = run_baseline(&schedule);
     let second = run_baseline(&schedule);
-    assert_eq!(first, second, "the MMP/1 baseline must be byte-for-byte reproducible");
+    assert_eq!(
+        first, second,
+        "the MMP/1 baseline must be byte-for-byte reproducible"
+    );
     eprintln!("mmp1_baseline_evidence: {first:?}");
 }
 
@@ -340,21 +411,33 @@ fn replay_schedule_rejects_invalid_contacts_before_mutating_sim() {
     let schedule = crate::ContactSchedule::new(
         2,
         0x7ACE_0001,
-        vec![crate::ContactEvent { left: 0, right: 2, gap_ms: 1_000 }],
+        vec![crate::ContactEvent {
+            left: 0,
+            right: 2,
+            gap_ms: 1_000,
+        }],
     );
     assert_eq!(schedule, Err(crate::ScheduleError::NodeOutOfRange));
 
     let schedule = crate::ContactSchedule::new(
         2,
         0x7ACE_0001,
-        vec![crate::ContactEvent { left: 1, right: 1, gap_ms: 1_000 }],
+        vec![crate::ContactEvent {
+            left: 1,
+            right: 1,
+            gap_ms: 1_000,
+        }],
     );
     assert_eq!(schedule, Err(crate::ScheduleError::SelfContact));
 
     let schedule = crate::ContactSchedule::new(
         2,
         0x7ACE_0001,
-        vec![crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 }],
+        vec![crate::ContactEvent {
+            left: 0,
+            right: 1,
+            gap_ms: 1_000,
+        }],
     )
     .expect("valid schedule");
     let mut mismatched = Sim::new(2, 0x7ACE_0002);
@@ -372,8 +455,16 @@ fn replay_trace_is_undirected_per_contact_but_ordered_across_contacts() {
         3,
         0x7ACE_0001,
         vec![
-            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
-            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
+            crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 1_000,
+            },
+            crate::ContactEvent {
+                left: 1,
+                right: 2,
+                gap_ms: 2_000,
+            },
         ],
     )
     .expect("valid forward schedule");
@@ -381,8 +472,16 @@ fn replay_trace_is_undirected_per_contact_but_ordered_across_contacts() {
         3,
         0x7ACE_0001,
         vec![
-            crate::ContactEvent { left: 1, right: 0, gap_ms: 1_000 },
-            crate::ContactEvent { left: 2, right: 1, gap_ms: 2_000 },
+            crate::ContactEvent {
+                left: 1,
+                right: 0,
+                gap_ms: 1_000,
+            },
+            crate::ContactEvent {
+                left: 2,
+                right: 1,
+                gap_ms: 2_000,
+            },
         ],
     )
     .expect("valid direction-reversed schedule");
@@ -390,8 +489,16 @@ fn replay_trace_is_undirected_per_contact_but_ordered_across_contacts() {
         3,
         0x7ACE_0001,
         vec![
-            crate::ContactEvent { left: 1, right: 2, gap_ms: 2_000 },
-            crate::ContactEvent { left: 0, right: 1, gap_ms: 1_000 },
+            crate::ContactEvent {
+                left: 1,
+                right: 2,
+                gap_ms: 2_000,
+            },
+            crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 1_000,
+            },
         ],
     )
     .expect("valid reordered schedule");
@@ -437,10 +544,21 @@ fn ten_node_random_mesh_delivers_and_receipts() {
     }
 
     // (a) node 9 (the receiver) emitted MessageReceived for our bundle.
-    assert_eq!(sim.counters().messages_received, 1, "receiver must see the message exactly once");
+    assert_eq!(
+        sim.counters().messages_received,
+        1,
+        "receiver must see the message exactly once"
+    );
     // (b) node 0 (the origin) eventually saw the delivery receipt.
-    assert_eq!(sim.counters().messages_delivered, 1, "origin must see the delivery receipt");
-    assert!((sim.delivery_ratio() - 1.0).abs() < f64::EPSILON, "1-for-1 delivery ratio");
+    assert_eq!(
+        sim.counters().messages_delivered,
+        1,
+        "origin must see the delivery receipt"
+    );
+    assert!(
+        (sim.delivery_ratio() - 1.0).abs() < f64::EPSILON,
+        "1-for-1 delivery ratio"
+    );
 
     // (c) no node's store exceeded its quota at the end of the run.
     assert!(sim.quota_ok(), "no node's store may exceed its quota");
@@ -497,7 +615,11 @@ fn thirty_node_mesh_delivers_ci() {
         sim.delivery_ratio()
     );
 
-    assert!(sim.delivery_ratio() >= 0.8, "delivery ratio {} below 0.8", sim.delivery_ratio());
+    assert!(
+        sim.delivery_ratio() >= 0.8,
+        "delivery ratio {} below 0.8",
+        sim.delivery_ratio()
+    );
     assert!(sim.quota_ok(), "no node's store may exceed its quota");
 }
 
@@ -520,8 +642,18 @@ fn hundred_node_mesh_stress() {
     const MEETINGS: usize = 8000;
     const MIN_GAP_MS: u64 = 5_000;
     const MAX_GAP_MS: u64 = 20_000;
-    const PAIRS: [(usize, usize); 10] =
-        [(0, 99), (1, 98), (2, 97), (3, 96), (4, 95), (5, 94), (6, 93), (7, 92), (8, 91), (9, 90)];
+    const PAIRS: [(usize, usize); 10] = [
+        (0, 99),
+        (1, 98),
+        (2, 97),
+        (3, 96),
+        (4, 95),
+        (5, 94),
+        (6, 93),
+        (7, 92),
+        (8, 91),
+        (9, 90),
+    ];
 
     let mut sim = Sim::new(N, 0x1000_0000_0000_0000);
 

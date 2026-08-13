@@ -48,8 +48,8 @@ use mmp_crypto::group::SenderKeyDist;
 use mmp_crypto::merkle::{compute_root, hash_block, merkle_path, merkle_root, MerklePath};
 use mmp_crypto::prekey::{recipient_agree, sealed_ck0, sender_agree, PrekeyStore, PREKEY_NONE};
 use mmp_crypto::ratchet::SendChain;
-use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_crypto::sealed::{open_box, try_seal_box_with_root};
+use mmp_crypto::{aead, conversation_id, ephem_id, receipt, Identity};
 use mmp_router::{
     eviction_order, handoff_decision, origin_budget, transfer_order, Handoff, OriginBuckets,
     UtilityState,
@@ -65,11 +65,11 @@ use mmp_types::claim::{
     field, friendship_signed_object, Claim, EpochAnchor, Friendship, PrekeyBatch, Revocation,
 };
 use mmp_types::consts::{
-    BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS,
-    FILE_MAX, FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA,
-    LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE, MAX_PATRONS, MIME_MAX,
-    NAME_MAX, NICKNAME_MAX, NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR,
-    QUOTA_STANDARD, RS_DATA_K, RS_TOTAL_N, STRIPE_DATA_BYTES,
+    BLOB_INTEREST_TTL_MS, BLOB_SERVE_MAX_PER_CONTACT, BLOOM_SUMMARY_MAX, EPHEM_SLOT_MS, FILE_MAX,
+    FILE_MAX_STRIPES, FILE_OFFER_CACHE, FRIENDSHIP_TTL_MS, FRIEND_QUOTA, LIFETIME_CONTROL_MS,
+    LIFETIME_MESSAGE_MS, L_RECEIPT, MAX_BUNDLE, MAX_PATRONS, MIME_MAX, NAME_MAX, NICKNAME_MAX,
+    NOT_AFTER_SKEW_S, OFFER_MIN_LIFETIME_MS, PREKEY_BATCH, QUOTA_ANCHOR, QUOTA_STANDARD, RS_DATA_K,
+    RS_TOTAL_N, STRIPE_DATA_BYTES,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
@@ -77,7 +77,9 @@ use mmp_types::frame::{
     FT_CLOSE, FT_ERROR, MAX_ENVELOPE_PAYLOAD,
 };
 use mmp_types::ids::{node_id_of, Id16, Key32, NodeId, Sig64};
-use mmp_types::payload::{apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
+use mmp_types::payload::{
+    apptype, AsyncPayload, DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload,
+};
 use mmp_types::tlv::{TLV_AUTHCERT_ATTACH, TLV_SCOPE_INFO};
 use mmp_types::{Beacon, Ext, FileEntry, FileManifest};
 
@@ -806,7 +808,11 @@ impl Node {
         let identity = Identity::from_seed(&seed);
         let mut rng = StdRng::from_seed(blake3::derive_key("mmp1 node-rng", &seed));
         let prekeys = PrekeyStore::generate(&mut rng, PREKEY_BATCH);
-        let quota = if tier == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
+        let quota = if tier == Tier::Anchor {
+            QUOTA_ANCHOR
+        } else {
+            QUOTA_STANDARD
+        };
         let mut beacon_salt = [0u8; 16];
         beacon_salt.copy_from_slice(&blake3::derive_key("mmp1 beacon-seed", &seed)[..16]);
         let mut core = NodeCore {
@@ -842,7 +848,9 @@ impl Node {
             diag: DiagLog::new(false),
             rng,
             now: 0,
-            sync_view: SyncView { entries: Vec::new() },
+            sync_view: SyncView {
+                entries: Vec::new(),
+            },
             known_identities: HashMap::new(),
             friends: HashMap::new(),
             patrons: HashMap::new(),
@@ -873,14 +881,23 @@ impl Node {
             outbox: VecDeque::new(),
             close_actions: VecDeque::new(),
             close_actions_dropped: 0,
-            hello: Hello { ver: 1, suites: vec![0x01], tier: tier as u8, flags: 0, credits: 8, psm: 0 },
+            hello: Hello {
+                ver: 1,
+                suites: vec![0x01],
+                tier: tier as u8,
+                flags: 0,
+                credits: 8,
+                psm: 0,
+            },
             beacon_salt,
         };
         // Identity claims (doc 03 §3.3): exchange key + prekey batch, seq 1.
         let exchange = node.core.exchange.0.to_vec();
-        node.core.publish_bootstrap_claim_now(field::EXCHANGE_KEY, 1, exchange);
+        node.core
+            .publish_bootstrap_claim_now(field::EXCHANGE_KEY, 1, exchange);
         let batch = node.core.prekeys.batch(&node.identity).encode();
-        node.core.publish_bootstrap_claim_now(field::PREKEY_BATCH, 1, batch);
+        node.core
+            .publish_bootstrap_claim_now(field::PREKEY_BATCH, 1, batch);
         node
     }
 
@@ -913,7 +930,10 @@ impl Node {
     pub fn conv_epoch(&self, peer: &NodeId) -> Option<(u16, u16)> {
         let peer_pub = self.core.resolve_peer_key(peer)?;
         let conv_id = conversation_id(&self.core.public, &peer_pub);
-        self.core.convs.get(&conv_id).map(|c| (c.send.epoch, c.recv.epoch()))
+        self.core
+            .convs
+            .get(&conv_id)
+            .map(|c| (c.send.epoch, c.recv.epoch()))
     }
 
     /// This node's identity, as a `NodeId` (derived from the Ed25519 public key).
@@ -954,7 +974,11 @@ impl Node {
         if tier != self.core.tier {
             self.core.tier = tier;
             self.hello.tier = tier as u8;
-            self.core.quota = if tier == Tier::Anchor { QUOTA_ANCHOR } else { QUOTA_STANDARD };
+            self.core.quota = if tier == Tier::Anchor {
+                QUOTA_ANCHOR
+            } else {
+                QUOTA_STANDARD
+            };
             self.core.enqueue_event(Event::TierChanged { tier });
         }
     }
@@ -963,7 +987,8 @@ impl Node {
     /// (doc 07 §6.5) — no frame is sent, no error is raised.
     pub fn block(&mut self, peer: NodeId) {
         // Silent (doc 07 §6.5): no frame, no error — just admission denial.
-        if self.core.blocklist.contains(&peer) || self.core.blocklist.len() >= MAX_BLOCKLIST_ENTRIES {
+        if self.core.blocklist.contains(&peer) || self.core.blocklist.len() >= MAX_BLOCKLIST_ENTRIES
+        {
             return;
         }
         self.core.blocklist.insert(peer);
@@ -1021,7 +1046,9 @@ impl Node {
     /// keystore-backed provider. This Rust-internal primitive is not a
     /// persistence mechanism and is intentionally absent from UniFFI.
     #[allow(dead_code)]
-    pub(crate) fn secret_state_snapshot(&self) -> Result<Zeroizing<Vec<u8>>, secret_state::SecretStateError> {
+    pub(crate) fn secret_state_snapshot(
+        &self,
+    ) -> Result<Zeroizing<Vec<u8>>, secret_state::SecretStateError> {
         secret_state::encode(&self.core)
     }
 
@@ -1029,7 +1056,10 @@ impl Node {
     /// live session or wire output exists. Failed decoding is atomic and never
     /// mutates the current node.
     #[allow(dead_code)]
-    pub(crate) fn restore_secret_state(&mut self, bytes: &[u8]) -> Result<(), secret_state::SecretStateError> {
+    pub(crate) fn restore_secret_state(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<(), secret_state::SecretStateError> {
         if !self.sessions.is_empty()
             || !self.outbox.is_empty()
             || !self.core.convs.is_empty()
@@ -1133,8 +1163,13 @@ impl Node {
             self.core.sent = state.sent;
             Ok(())
         };
-        vault::restore_from_vault_if_present_into(&mut vault.inner, &node_public, &node_id, &mut apply)
-            .map_err(map_windows_vault_error)
+        vault::restore_from_vault_if_present_into(
+            &mut vault.inner,
+            &node_public,
+            &node_id,
+            &mut apply,
+        )
+        .map_err(map_windows_vault_error)
     }
 
     /// Seal and durably save the current secret aggregate through the opaque
@@ -1147,7 +1182,8 @@ impl Node {
         vault: &mut WindowsVault,
     ) -> Result<u64, WindowsVaultError> {
         let mut rng = rand::rngs::OsRng;
-        vault::save_core_from_vault(&mut vault.inner, &self.core, &mut rng).map_err(map_windows_vault_error)
+        vault::save_core_from_vault(&mut vault.inner, &self.core, &mut rng)
+            .map_err(map_windows_vault_error)
     }
 
     /// Request a peer to act as a patron for this node. The offer is sent on
@@ -1167,7 +1203,9 @@ impl Node {
     /// a friendship offer from them. No auto-accept (doc 04 §4 security
     /// note) — without this call, offers from `peer_identity` are ignored.
     pub fn allow_friendship_from(&mut self, peer_identity: Key32) {
-        self.core.friend_allowlist.insert(node_id_of(&peer_identity));
+        self.core
+            .friend_allowlist
+            .insert(node_id_of(&peer_identity));
     }
 
     /// Feed the host's wall clock (unix seconds) for doc 18 `not_after`
@@ -1176,7 +1214,11 @@ impl Node {
     /// ready. Later readings that move backwards are ignored so an NTP/user
     /// rollback cannot make an expired authority certificate valid again.
     pub fn set_wall_clock(&mut self, unix_s: u32) {
-        if self.core.wall_unix_s.is_none_or(|previous| unix_s >= previous) {
+        if self
+            .core
+            .wall_unix_s
+            .is_none_or(|previous| unix_s >= previous)
+        {
             self.core.wall_unix_s = Some(unix_s);
             self.core.reconsider_authority_claims();
             self.core.reconsider_pending_authority_certs();
@@ -1192,9 +1234,11 @@ impl Node {
             // former issuer for this scope.  Drop those entries before
             // rebuilding from durable announcements so a shorter-lived
             // replacement cannot be hidden behind a stale certificate.
-            self.core.pending_authcerts.retain(|(_, pending_scope), pending| {
-                *pending_scope != scope || pending.cert.issuer == issuer
-            });
+            self.core
+                .pending_authcerts
+                .retain(|(_, pending_scope), pending| {
+                    *pending_scope != scope || pending.cert.issuer == issuer
+                });
             self.core.rebuild_pending_authority_certs();
         }
         self.core.reconsider_pending_authority_certs();
@@ -1231,7 +1275,8 @@ impl Node {
     /// Unknown fields remain opaque and retain the forward-compatible
     /// store-and-forward behavior from doc 06 §4.1.
     pub fn publish_claim(&mut self, field_id: u8, seq: u32, body: Vec<u8>) -> Vec<u8> {
-        self.try_publish_claim(field_id, seq, body).unwrap_or_default()
+        self.try_publish_claim(field_id, seq, body)
+            .unwrap_or_default()
     }
 
     /// Fallible form of [`Node::publish_claim`]. The claim is validated before
@@ -1336,7 +1381,8 @@ impl Node {
         successor: Key32,
         countersig: Sig64,
     ) -> Vec<u8> {
-        self.try_revoke_identity_with_successor(reason, successor, countersig).unwrap_or_default()
+        self.try_revoke_identity_with_successor(reason, successor, countersig)
+            .unwrap_or_default()
     }
 
     /// Fallible self-revocation helper with a successor countersignature.
@@ -1361,8 +1407,13 @@ impl Node {
     /// Inject an out-of-band-verified claim (QR ceremony, doc 07 §6.1) or a
     /// pre-shared bootstrap claim.
     pub fn ingest_claim(&mut self, claim: Claim, verified: bool) {
-        if mmp_crypto::verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig)
-            .is_err()
+        if mmp_crypto::verify(
+            SigDomain::Claim,
+            &claim.owner,
+            &claim.signed_object(),
+            &claim.sig,
+        )
+        .is_err()
         {
             return;
         }
@@ -1404,7 +1455,9 @@ impl Node {
     /// drop-don't-repair discipline `mmp-store` already applies to bundles
     /// and claims; the caller should simply skip it, not treat it as fatal.
     pub fn restore_group(&mut self, blob: &[u8]) -> bool {
-        let Some(gs) = GroupState::decode(&mut self.core.rng, blob) else { return false };
+        let Some(gs) = GroupState::decode(&mut self.core.rng, blob) else {
+            return false;
+        };
         // The snapshot format carries one record per group.  Do not let a
         // duplicate GroupID replace an already-restored membership/epoch or
         // mint another fresh local sender key: an append-only or stale host
@@ -1455,7 +1508,9 @@ impl Node {
     /// traffic. Returns `false` for malformed, tampered, or cross-scope state
     /// and leaves the current authority store unchanged in that case.
     pub fn restore_authority(&mut self, bytes: &[u8]) -> bool {
-        let Some(authority) = AuthorityStore::decode(bytes) else { return false };
+        let Some(authority) = AuthorityStore::decode(bytes) else {
+            return false;
+        };
         self.core.authority = authority;
         self.core.pending_authcerts.retain(|(_, scope), pending| {
             self.core
@@ -1504,7 +1559,13 @@ impl Node {
     /// RS-encode → Merkle → mint class-4 symbol bundles (deduped by content
     /// address, decision D6) → send the signed `FileManifest` as an
     /// apptype-0x01 class-1 message (doc 16, decision D8).
-    pub fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
+    pub fn send_file(
+        &mut self,
+        peer: &NodeId,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<FileSend, SendError> {
         self.core.send_file(peer, name, mime, data)
     }
 
@@ -1590,7 +1651,10 @@ impl Node {
             issuer: self.core.public,
             sig: Sig64::ZERO,
         };
-        cert.sig = self.core.identity.sign(SigDomain::AuthCert, &cert.signed_object());
+        cert.sig = self
+            .core
+            .identity
+            .sign(SigDomain::AuthCert, &cert.signed_object());
         Some(cert)
     }
 
@@ -1607,7 +1671,8 @@ impl Node {
         text: &[u8],
         cert: Option<&AuthCert>,
     ) -> Result<Id16, SendError> {
-        self.core.publish_announcement(scope, ann_type, priority, text, cert)
+        self.core
+            .publish_announcement(scope, ann_type, priority, text, cert)
     }
 
     // -------------------------------------------------------------- groups --
@@ -1648,16 +1713,18 @@ impl Node {
         // rejected; the key distribution itself does not require membership
         // to have been added yet.
         self.core.send_own_dist(gid, peer)?;
-        let group = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+        let group = self
+            .core
+            .groups
+            .get_mut(gid)
+            .ok_or(SendError::UnknownPeer)?;
         // Re-inviting a live member is an idempotent application operation.
         // Adding another OR-Set tag without an effective membership change
         // would grow tombstone/tag state forever and make later REMOVE ops
         // carry every redundant tag.  A removed member is absent here and
         // still receives a fresh tag, preserving re-invite semantics.
         if needs_member_tag {
-            group
-                .add_member(*peer)
-                .ok_or(SendError::RatchetExhausted)?;
+            group.add_member(*peer).ok_or(SendError::RatchetExhausted)?;
         }
         Ok(())
     }
@@ -1669,7 +1736,11 @@ impl Node {
     /// reads nothing from the new epoch (doc 08 §6.3).
     pub fn group_remove(&mut self, gid: &Id16, member: &NodeId) -> Result<u16, SendError> {
         let (epoch, members) = {
-            let gs = self.core.groups.get_mut(gid).ok_or(SendError::UnknownPeer)?;
+            let gs = self
+                .core
+                .groups
+                .get_mut(gid)
+                .ok_or(SendError::UnknownPeer)?;
             if !gs.is_admin {
                 return Err(SendError::UnknownPeer);
             }
@@ -1689,9 +1760,9 @@ impl Node {
         // groups and the freshly rotated epoch remain untouched.  If a
         // re-key send below fails, the group-wide distribution marker remains
         // set and will be retried by the next group send.
-        self.core.sent_dists.retain(|(sent_gid, _, sent_epoch)| {
-            *sent_gid != *gid || *sent_epoch == epoch
-        });
+        self.core
+            .sent_dists
+            .retain(|(sent_gid, _, sent_epoch)| *sent_gid != *gid || *sent_epoch == epoch);
         let me = self.core.node_id;
         let mut first_error = None;
         for m in members {
@@ -1708,7 +1779,8 @@ impl Node {
                 gs.mark_distribution_attempted();
             }
         }
-        self.core.enqueue_event(Event::GroupEpochChanged { gid: *gid, epoch });
+        self.core
+            .enqueue_event(Event::GroupEpochChanged { gid: *gid, epoch });
         first_error.map_or(Ok(epoch), Err)
     }
 
@@ -1721,7 +1793,12 @@ impl Node {
     /// The existing group wire format already carries the one-byte application
     /// type tag inside the encrypted plaintext; this method only exposes that
     /// tag to host applications and does not change the protocol grammar.
-    pub fn group_send_body(&mut self, gid: &Id16, app: u8, payload: &[u8]) -> Result<Id16, SendError> {
+    pub fn group_send_body(
+        &mut self,
+        gid: &Id16,
+        app: u8,
+        payload: &[u8],
+    ) -> Result<Id16, SendError> {
         // This is an application/FFI boundary: reject a payload that cannot
         // fit in any v1 bundle before copying attacker-sized host input into
         // a temporary body buffer. The exact placeholder preflight below
@@ -1731,9 +1808,18 @@ impl Node {
         }
         self.core.preflight_group_size(gid, payload.len())?;
         let me = self.core.node_id;
-        let needs_distribution = self.core.groups.get(gid).is_some_and(GroupState::needs_distribution);
+        let needs_distribution = self
+            .core
+            .groups
+            .get(gid)
+            .is_some_and(GroupState::needs_distribution);
         if needs_distribution {
-            let members = self.core.groups.get(gid).map(|gs| gs.members.members()).unwrap_or_default();
+            let members = self
+                .core
+                .groups
+                .get(gid)
+                .map(|gs| gs.members.members())
+                .unwrap_or_default();
             for member in members {
                 if member != me {
                     if let Err(err) = self.core.send_own_dist(gid, &member) {
@@ -1753,7 +1839,11 @@ impl Node {
 
     /// Current membership of `gid`, or empty if we don't know that group.
     pub fn group_members(&self, gid: &Id16) -> Vec<NodeId> {
-        self.core.groups.get(gid).map(|g| g.members.members()).unwrap_or_default()
+        self.core
+            .groups
+            .get(gid)
+            .map(|g| g.members.members())
+            .unwrap_or_default()
     }
 
     // -------------------------------------------------------------- beacon --
@@ -1822,7 +1912,8 @@ impl Node {
             || total_bytes.saturating_add(additional_bytes) > byte_cap
             || link_frames >= OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE
             || link_bytes.saturating_add(additional_bytes)
-                > (OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE).saturating_mul(OUTBOX_FRAME_BYTES)
+                > (OUTBOX_DATA_CREDIT_WINDOW + OUTBOX_CONTROL_RESERVE)
+                    .saturating_mul(OUTBOX_FRAME_BYTES)
     }
 
     /// Drop the peer identity cache entry once its last authenticated session
@@ -1832,7 +1923,9 @@ impl Node {
     /// cache. Keeping entries while another link for the same peer remains
     /// established preserves interleaved FRIEND_ACK handling.
     fn release_known_identity_for_link(&mut self, link: LinkId) {
-        let Some(peer) = self.sessions.get(&link).and_then(SessionEngine::peer) else { return };
+        let Some(peer) = self.sessions.get(&link).and_then(SessionEngine::peer) else {
+            return;
+        };
         let still_active = self
             .sessions
             .iter()
@@ -1853,7 +1946,9 @@ impl Node {
     }
 
     fn has_close_frame(&self, link: LinkId) -> bool {
-        self.outbox.iter().any(|(queued_link, bytes)| *queued_link == link && bytes.get(2) == Some(&FT_CLOSE))
+        self.outbox
+            .iter()
+            .any(|(queued_link, bytes)| *queued_link == link && bytes.get(2) == Some(&FT_CLOSE))
     }
 
     fn clear_link_outbox_preserving_close(&mut self, link: LinkId) {
@@ -1861,7 +1956,8 @@ impl Node {
         // queued by an earlier pump is no longer valid once the session has
         // entered CLOSING, but those terminal control frames must still reach
         // the transport before the host tears the physical link down.
-        self.outbox.retain(|(queued_link, bytes)| *queued_link != link || Self::is_close_frame(bytes));
+        self.outbox
+            .retain(|(queued_link, bytes)| *queued_link != link || Self::is_close_frame(bytes));
         self.release_known_identity_for_link(link);
         self.sessions.remove(&link);
     }
@@ -1889,10 +1985,9 @@ impl Node {
     /// removed before the host can deliver `LinkDown`.
     fn bump_ratchet_for_teardown(&mut self, link: LinkId, material: [u8; 32], identity: Key32) {
         let conv_id = conversation_id(&self.core.public, &identity);
-        let another_live_link = self
-            .sessions
-            .iter()
-            .any(|(other, other_engine)| *other != link && other_engine.peer_identity() == Some(identity));
+        let another_live_link = self.sessions.iter().any(|(other, other_engine)| {
+            *other != link && other_engine.peer_identity() == Some(identity)
+        });
         let met_before = self.core.established_convs.contains(&conv_id);
         if !met_before && self.core.established_convs.len() >= MAX_CONVERSATION_STATE {
             self.core.convs.remove(&conv_id);
@@ -1933,7 +2028,9 @@ impl Node {
                     self.core.utility.note_ephem(b.ephem_id, self.core.now);
                 }
             }
-            TalEvent::LinkUp { link, initiator, .. } => {
+            TalEvent::LinkUp {
+                link, initiator, ..
+            } => {
                 // Admission denial is intentionally silent (specification/11
                 // §3): retain existing links and emit no handshake output.
                 if self.sessions.contains_key(&link) {
@@ -1996,7 +2093,9 @@ impl Node {
         let mut closed = false;
         let mut teardown_material = None;
         {
-            let Some(engine) = self.sessions.get_mut(&link) else { return };
+            let Some(engine) = self.sessions.get_mut(&link) else {
+                return;
+            };
             while let Some(bytes) = engine.poll_out() {
                 if Self::outbox_over_budget(&self.outbox, self.core.tier, link, bytes.len()) {
                     overflowed = true;
@@ -2102,7 +2201,9 @@ impl Node {
         let expired = self.core.store.expire(now_ms);
         for id in &expired {
             self.core.diag.log(*id, JourneyEvent::Expired, now_ms);
-            self.core.pending_first_contact.retain(|_, pending| pending != id);
+            self.core
+                .pending_first_contact
+                .retain(|_, pending| pending != id);
             if let Some(m) = self.core.sent.get_mut(id) {
                 if m.state != DeliveryState::Delivered {
                     m.state = DeliveryState::Expired;
@@ -2173,10 +2274,12 @@ impl NodeCore {
     /// to satisfy a later send.
     fn sent_capacity_available(&self) -> bool {
         self.sent.len() < MAX_SENT_RUNTIME
-            || self
-                .sent
-                .values()
-                .any(|message| matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired))
+            || self.sent.values().any(|message| {
+                matches!(
+                    message.state,
+                    DeliveryState::Delivered | DeliveryState::Expired
+                )
+            })
     }
 
     /// Insert one delivery record, evicting only terminal history if the
@@ -2185,12 +2288,24 @@ impl NodeCore {
     fn record_sent(&mut self, id: Id16, conv: Id16) -> Result<(), SendError> {
         if self.sent.len() >= MAX_SENT_RUNTIME {
             let terminal = self.sent.iter().find_map(|(id, message)| {
-                matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired).then_some(*id)
+                matches!(
+                    message.state,
+                    DeliveryState::Delivered | DeliveryState::Expired
+                )
+                .then_some(*id)
             });
-            let Some(terminal) = terminal else { return Err(SendError::ResourceLimit) };
+            let Some(terminal) = terminal else {
+                return Err(SendError::ResourceLimit);
+            };
             self.sent.remove(&terminal);
         }
-        self.sent.insert(id, SentMessage { conv, state: DeliveryState::Queued });
+        self.sent.insert(
+            id,
+            SentMessage {
+                conv,
+                state: DeliveryState::Queued,
+            },
+        );
         Ok(())
     }
 
@@ -2213,7 +2328,10 @@ impl NodeCore {
         let claim_body = claim.body.clone();
         match self.claims.merge(claim, self.now, pinned) {
             mmp_core::ClaimMerge::Adopted => {
-                self.enqueue_event(Event::ClaimUpdated { owner, field: field_id });
+                self.enqueue_event(Event::ClaimUpdated {
+                    owner,
+                    field: field_id,
+                });
                 // Doc 18 §2.1/§6: AuthCert and REVOCATION_LIST ride ordinary
                 // claim gossip at fields 0x07/0x08. Only acted on once
                 // adopted — a Stale claim means we already hold the winner,
@@ -2244,7 +2362,10 @@ impl NodeCore {
                         // verified — a hook for explicit user confirmation,
                         // never an automatic petname migration.
                         let successor = self.claims.successor(&owner);
-                        self.enqueue_event(Event::PeerRevoked { peer: owner, successor });
+                        self.enqueue_event(Event::PeerRevoked {
+                            peer: owner,
+                            successor,
+                        });
                     }
                     _ => {}
                 }
@@ -2261,7 +2382,9 @@ impl NodeCore {
     /// of wall-clock readiness, so dropping these pointers would otherwise
     /// make a valid certificate unusable until the sender gossiped it again.
     fn reconsider_authority_claims(&mut self) {
-        let Some(now_unix_s) = self.wall_unix_s else { return };
+        let Some(now_unix_s) = self.wall_unix_s else {
+            return;
+        };
         let certs: Vec<AuthCert> = self
             .claims
             .iter()
@@ -2282,7 +2405,9 @@ impl NodeCore {
     /// unusable entries are dropped.  An untrusted issuer/capacity condition
     /// remains pending so a later root pin or authority expiry can recover it.
     fn reconsider_pending_authority_certs(&mut self) {
-        let Some(now_unix_s) = self.wall_unix_s else { return };
+        let Some(now_unix_s) = self.wall_unix_s else {
+            return;
+        };
         let pending = std::mem::take(&mut self.pending_authcerts);
         let mut retained = BTreeMap::new();
         for (key, pending) in pending {
@@ -2317,24 +2442,50 @@ impl NodeCore {
             if meta.class != class::ANNOUNCEMENT {
                 continue;
             }
-            let Some((stored_meta, bytes)) = self.store.get(&meta.id) else { continue };
+            let Some((stored_meta, bytes)) = self.store.get(&meta.id) else {
+                continue;
+            };
             if !stored_bundle_is_valid(&stored_meta, &bytes) {
                 continue;
             }
-            let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
-            let Ok(body) = AnnouncementBody::decode(&bundle.payload) else { continue };
+            let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
+                continue;
+            };
+            let Ok(body) = AnnouncementBody::decode(&bundle.payload) else {
+                continue;
+            };
             if body.suite != 0x01
                 || body.scope != bundle.dest
-                || mmp_crypto::verify(SigDomain::Announce, &bundle.origin, &body.signed_object(), &body.sig).is_err()
+                || mmp_crypto::verify(
+                    SigDomain::Announce,
+                    &bundle.origin,
+                    &body.signed_object(),
+                    &body.sig,
+                )
+                .is_err()
             {
                 continue;
             }
             for ext in &bundle.exts {
-                let Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val } = ext else { continue };
-                let Ok(cert) = AuthCert::decode(val) else { continue };
+                let Ext::Optional {
+                    typ: TLV_AUTHCERT_ATTACH,
+                    val,
+                } = ext
+                else {
+                    continue;
+                };
+                let Ok(cert) = AuthCert::decode(val) else {
+                    continue;
+                };
                 if cert.subject != bundle.origin
                     || cert.suite != 0x01
-                    || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+                    || mmp_crypto::verify(
+                        SigDomain::AuthCert,
+                        &cert.issuer,
+                        &cert.signed_object(),
+                        &cert.sig,
+                    )
+                    .is_err()
                 {
                     continue;
                 }
@@ -2357,12 +2508,21 @@ impl NodeCore {
         let key = (cert.subject, cert.scope);
         if let Some(existing) = self.pending_authcerts.get_mut(&key) {
             if cert.not_after > existing.cert.not_after {
-                *existing = PendingAuthCert { cert, display_not_after };
+                *existing = PendingAuthCert {
+                    cert,
+                    display_not_after,
+                };
             }
             return;
         }
         if self.pending_authcerts.len() < MAX_PENDING_AUTH_CERTS {
-            self.pending_authcerts.insert(key, PendingAuthCert { cert, display_not_after });
+            self.pending_authcerts.insert(
+                key,
+                PendingAuthCert {
+                    cert,
+                    display_not_after,
+                },
+            );
         }
     }
 
@@ -2386,7 +2546,13 @@ impl NodeCore {
         body: Vec<u8>,
         retain_bootstrap_on_store_rejection: bool,
     ) -> Result<Vec<u8>, ClaimPublishError> {
-        let mut claim = Claim { owner: self.public, field: field_id, seq, body, sig: Sig64::ZERO };
+        let mut claim = Claim {
+            owner: self.public,
+            field: field_id,
+            seq,
+            body,
+            sig: Sig64::ZERO,
+        };
         // Keep the local publication path subject to the same field-specific
         // semantic checks as wire decoding and ClaimStore::merge. Without
         // this guard a manually supplied claim could be signed and gossiped
@@ -2443,11 +2609,15 @@ impl NodeCore {
             payload: claim.encode(),
             signature: Sig64::ZERO,
         };
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(ClaimPublishError::TooLarge);
         }
-        self.try_store_own(bundle, 8).map(|_| ()).map_err(|_| ClaimPublishError::StoreRejected)
+        self.try_store_own(bundle, 8)
+            .map(|_| ())
+            .map_err(|_| ClaimPublishError::StoreRejected)
     }
 
     // All own-origin producers use the fallible provider seam below.
@@ -2514,10 +2684,18 @@ impl NodeCore {
 
     fn queue_receipt_retry(&mut self, bundle: Bundle) {
         let id = bundle.id();
-        if self.pending_receipts.contains_key(&id) || self.pending_receipts.len() >= MAX_PENDING_RECEIPTS {
+        if self.pending_receipts.contains_key(&id)
+            || self.pending_receipts.len() >= MAX_PENDING_RECEIPTS
+        {
             return;
         }
-        self.pending_receipts.insert(id, PendingReceipt { bundle, queued_at: self.now });
+        self.pending_receipts.insert(
+            id,
+            PendingReceipt {
+                bundle,
+                queued_at: self.now,
+            },
+        );
     }
 
     /// Retry receipts that were refused by a full provider in deterministic
@@ -2527,7 +2705,9 @@ impl NodeCore {
     fn flush_pending_receipts(&mut self) {
         let ids: Vec<Id16> = self.pending_receipts.keys().copied().collect();
         for id in ids {
-            let Some(pending) = self.pending_receipts.get(&id).cloned() else { continue };
+            let Some(pending) = self.pending_receipts.get(&id).cloned() else {
+                continue;
+            };
             if self.now.saturating_sub(pending.queued_at) >= LIFETIME_CONTROL_MS {
                 self.pending_receipts.remove(&id);
                 continue;
@@ -2574,11 +2754,16 @@ impl NodeCore {
             text: text.to_vec(),
             sig: Sig64::ZERO,
         };
-        body.sig = self.identity.sign(SigDomain::Announce, &body.signed_object());
+        body.sig = self
+            .identity
+            .sign(SigDomain::Announce, &body.signed_object());
 
         let mut exts = Vec::new();
         if let Some(c) = cert {
-            exts.push(Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val: c.encode() });
+            exts.push(Ext::Optional {
+                typ: TLV_AUTHCERT_ATTACH,
+                val: c.encode(),
+            });
         }
 
         let mut bundle = Bundle {
@@ -2592,7 +2777,9 @@ impl NodeCore {
             payload: body.encode(),
             signature: Sig64::ZERO,
         };
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
@@ -2606,14 +2793,23 @@ impl NodeCore {
     /// time this runs (ingest's admission gate is priority-blind, doc 18
     /// §5.2.2: "priority buys order, never volume").
     fn handle_announcement(&mut self, bundle: &Bundle) {
-        let Ok(body) = AnnouncementBody::decode(&bundle.payload) else { return };
+        let Ok(body) = AnnouncementBody::decode(&bundle.payload) else {
+            return;
+        };
         // Unknown announcement suites are opaque future-version payloads:
         // relay/storage may retain them, but v1 must not render or act on an
         // unimplemented body grammar.
         if body.suite != 0x01 {
             return;
         }
-        if mmp_crypto::verify(SigDomain::Announce, &bundle.origin, &body.signed_object(), &body.sig).is_err() {
+        if mmp_crypto::verify(
+            SigDomain::Announce,
+            &bundle.origin,
+            &body.signed_object(),
+            &body.sig,
+        )
+        .is_err()
+        {
             return;
         }
         // Doc 18 §3: scope is redundant with dest, explicit for standalone
@@ -2634,14 +2830,24 @@ impl NodeCore {
         // TLV 0x81: a self-contained attached cert is verified and adopted
         // exactly as a gossiped one would be (doc 18 §5.2.1 item 1).
         for ext in &bundle.exts {
-            if let Ext::Optional { typ: TLV_AUTHCERT_ATTACH, val } = ext {
+            if let Ext::Optional {
+                typ: TLV_AUTHCERT_ATTACH,
+                val,
+            } = ext
+            {
                 if let Ok(cert) = AuthCert::decode(val) {
                     // Validate the clock-independent binding before keeping
                     // an attachment across an unclocked interval.  Issuer
                     // trust and expiry are checked on reconsideration.
                     if cert.subject != bundle.origin
                         || cert.suite != 0x01
-                        || mmp_crypto::verify(SigDomain::AuthCert, &cert.issuer, &cert.signed_object(), &cert.sig).is_err()
+                        || mmp_crypto::verify(
+                            SigDomain::AuthCert,
+                            &cert.issuer,
+                            &cert.signed_object(),
+                            &cert.sig,
+                        )
+                        .is_err()
                     {
                         continue;
                     }
@@ -2678,7 +2884,14 @@ impl NodeCore {
         let effective = if bundle.priority < prio::NORMAL {
             let grant = self
                 .wall_unix_s
-                .and_then(|now_unix_s| self.authority.grant_for(&bundle.origin, &bundle.dest, bundle.priority, now_unix_s))
+                .and_then(|now_unix_s| {
+                    self.authority.grant_for(
+                        &bundle.origin,
+                        &bundle.dest,
+                        bundle.priority,
+                        now_unix_s,
+                    )
+                })
                 .copied();
             let now = self.now;
             let auth_buckets = &mut self.auth_buckets;
@@ -2701,9 +2914,10 @@ impl NodeCore {
         // Doc 18 §5.2.1 item 2: rendering is a pure function of
         // (announcement, cert) with no anti-abuse state — independent of the
         // bucket and of declared priority.
-        let official = self
-            .wall_unix_s
-            .is_some_and(|now_unix_s| self.authority.official(&bundle.origin, &bundle.dest, now_unix_s));
+        let official = self.wall_unix_s.is_some_and(|now_unix_s| {
+            self.authority
+                .official(&bundle.origin, &bundle.dest, now_unix_s)
+        });
 
         if subscribed {
             self.enqueue_event(Event::Announcement {
@@ -2756,7 +2970,9 @@ impl NodeCore {
         payload: &[u8],
         mut rng: StdRng,
     ) -> Result<PreparedAppCandidate, SendError> {
-        let peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        let peer_exchange = self
+            .resolve_peer_exchange(peer)
+            .ok_or(SendError::UnknownPeer)?;
         if !self.conversation_capacity_available(&conv_id) {
             return Err(SendError::ResourceLimit);
         }
@@ -2767,7 +2983,11 @@ impl NodeCore {
         // The ephemeral key is part of the async payload, which is excluded
         // from the outer AD. A zero placeholder therefore has the same header
         // length and lets us compute AD before sealing.
-        let placeholder = AsyncPayload::Sealed { eph: Key32([0; 32]), ct: vec![0u8; body.len() + 16] }.encode();
+        let placeholder = AsyncPayload::Sealed {
+            eph: Key32([0; 32]),
+            ct: vec![0u8; body.len() + 16],
+        }
+        .encode();
         let mut bundle = Bundle {
             class: class::DIRECT,
             flags: FLAG_ASYNC_KEYS | FLAG_WANTS_RECEIPT,
@@ -2789,7 +3009,9 @@ impl NodeCore {
         )
         .map_err(|_| SendError::UnknownPeer)?;
         bundle.payload = AsyncPayload::Sealed { eph, ct }.encode();
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
@@ -2815,7 +3037,8 @@ impl NodeCore {
         app: u8,
         payload: &[u8],
     ) -> Result<Id16, SendError> {
-        let candidate = self.prepare_sealed_with_rng(peer, peer_pub, conv_id, app, payload, self.rng.clone())?;
+        let candidate =
+            self.prepare_sealed_with_rng(peer, peer_pub, conv_id, app, payload, self.rng.clone())?;
         self.commit_app_candidate(candidate)
     }
 
@@ -2838,7 +3061,10 @@ impl NodeCore {
         let id = self.send_app(peer, body[0], &body[1..])?;
         let peer_pub = self.resolve_peer_key(peer).expect("resolved in send_app");
         self.record_sent(id, conversation_id(&self.public, &peer_pub))?;
-        self.enqueue_event(Event::DeliveryProgress { id, state: DeliveryState::Queued });
+        self.enqueue_event(Event::DeliveryProgress {
+            id,
+            state: DeliveryState::Queued,
+        });
         Ok(id)
     }
 
@@ -2852,7 +3078,12 @@ impl NodeCore {
     /// live conversation, ratchet, pending, or RNG state. The candidate can
     /// therefore be discarded if an earlier operation (such as file-symbol
     /// admission) is rejected.
-    fn prepare_app(&mut self, peer: &NodeId, app: u8, payload: &[u8]) -> Result<PreparedAppCandidate, SendError> {
+    fn prepare_app(
+        &mut self,
+        peer: &NodeId,
+        app: u8,
+        payload: &[u8],
+    ) -> Result<PreparedAppCandidate, SendError> {
         if self.claims.revocation(peer).is_some() {
             // Handbook §4.6: never open a new conversation, nor use a
             // prekey batch already on file, for a revoked identity — checked
@@ -2908,9 +3139,25 @@ impl NodeCore {
                 .claims
                 .get(peer, field::PREKEY_BATCH)
                 .and_then(|claim| PrekeyBatch::decode(&claim.body).ok())
-                .and_then(|batch| sender_agree(&mut candidate_rng, &self.identity, &peer_pub, &batch, Some(0)).ok());
+                .and_then(|batch| {
+                    sender_agree(
+                        &mut candidate_rng,
+                        &self.identity,
+                        &peer_pub,
+                        &batch,
+                        Some(0),
+                    )
+                    .ok()
+                });
             let Some(agreement) = agreement else {
-                return self.prepare_sealed_with_rng(peer, &peer_pub, conv_id, app, payload, candidate_rng);
+                return self.prepare_sealed_with_rng(
+                    peer,
+                    &peer_pub,
+                    conv_id,
+                    app,
+                    payload,
+                    candidate_rng,
+                );
             };
             return self.prepare_prekey_first_contact(
                 &peer_pub,
@@ -2924,7 +3171,11 @@ impl NodeCore {
 
         let dest = Id16(peer.0);
         let pending = self.pending_async.get(&conv_id).copied();
-        let parents = self.convs.get(&conv_id).map(|conv| conv.dag.heads()).unwrap_or_default();
+        let parents = self
+            .convs
+            .get(&conv_id)
+            .map(|conv| conv.dag.heads())
+            .unwrap_or_default();
         let mut flags = FLAG_WANTS_RECEIPT;
         if pending.is_some() {
             flags |= FLAG_ASYNC_KEYS;
@@ -2952,7 +3203,13 @@ impl NodeCore {
         } else {
             // Epoch and index are fixed-width fields; zero is a sizing
             // placeholder and does not consume the sender ratchet.
-            DirectPayload { conv: conv_id, epoch: 0, index: 0, ct: placeholder_ct }.encode()
+            DirectPayload {
+                conv: conv_id,
+                epoch: 0,
+                index: 0,
+                ct: placeholder_ct,
+            }
+            .encode()
         };
         let mut bundle = Bundle {
             class: class::DIRECT,
@@ -2976,18 +3233,37 @@ impl NodeCore {
             let conv = self.convs.get(&conv_id).expect("just ensured");
             let epoch = conv.send.epoch;
             let index = conv.send.next_index;
-            let (msg_key, candidate_send) =
-                conv.send.try_next_candidate().map_err(|_| SendError::RatchetExhausted)?;
+            let (msg_key, candidate_send) = conv
+                .send
+                .try_next_candidate()
+                .map_err(|_| SendError::RatchetExhausted)?;
             (msg_key, candidate_send, epoch, index)
         };
-        let key = aead::committed_key(&msg_key, &msg_context(&self.public, &dest, &conv_id, epoch, index));
+        let key = aead::committed_key(
+            &msg_key,
+            &msg_context(&self.public, &dest, &conv_id, epoch, index),
+        );
         let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
         bundle.payload = if let Some((eph, prekey_id)) = pending {
-            AsyncPayload::Prekey { prekey_id, sender_xpk: self.exchange, eph, ct }.encode()
+            AsyncPayload::Prekey {
+                prekey_id,
+                sender_xpk: self.exchange,
+                eph,
+                ct,
+            }
+            .encode()
         } else {
-            DirectPayload { conv: conv_id, epoch, index, ct }.encode()
+            DirectPayload {
+                conv: conv_id,
+                epoch,
+                index,
+                ct,
+            }
+            .encode()
         };
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
@@ -3015,8 +3291,10 @@ impl NodeCore {
     ) -> Result<PreparedAppCandidate, SendError> {
         let mut candidate = Conv::new(conv_id, &self.public, peer_pub, *agreement.ck0);
         let (epoch, index) = (candidate.send.epoch, candidate.send.next_index);
-        let (msg_key, candidate_send) =
-            candidate.send.try_next_candidate().map_err(|_| SendError::RatchetExhausted)?;
+        let (msg_key, candidate_send) = candidate
+            .send
+            .try_next_candidate()
+            .map_err(|_| SendError::RatchetExhausted)?;
         let placeholder_ct = vec![0u8; body.len() + 16];
         let mut bundle = Bundle {
             class: class::DIRECT,
@@ -3038,7 +3316,10 @@ impl NodeCore {
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
-        let key = aead::committed_key(&msg_key, &msg_context(&self.public, &bundle.dest, &conv_id, epoch, index));
+        let key = aead::committed_key(
+            &msg_key,
+            &msg_context(&self.public, &bundle.dest, &conv_id, epoch, index),
+        );
         let ct = aead::seal(&key, &bundle.canonical_aead_ad(), &body);
         bundle.payload = AsyncPayload::Prekey {
             prekey_id: agreement.prekey_id,
@@ -3047,13 +3328,19 @@ impl NodeCore {
             ct,
         }
         .encode();
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
 
         candidate.send = candidate_send;
-        Ok(PreparedAppCandidate { bundle, state: PreparedAppState::New { conv: candidate }, rng })
+        Ok(PreparedAppCandidate {
+            bundle,
+            state: PreparedAppState::New { conv: candidate },
+            rng,
+        })
     }
 
     /// Persist the candidate bundle before applying its conversation-local
@@ -3068,7 +3355,12 @@ impl NodeCore {
                 self.convs.insert(conv_id, conv);
                 self.pending_first_contact.insert(conv_id, id);
             }
-            PreparedAppState::Existing { conv_id, send, parents, pending_async } => {
+            PreparedAppState::Existing {
+                conv_id,
+                send,
+                parents,
+                pending_async,
+            } => {
                 let conv = self.convs.get_mut(&conv_id).expect("conversation remains");
                 conv.send = send;
                 conv.dag.insert(id, &parents);
@@ -3182,7 +3474,9 @@ impl NodeCore {
             payload: gp.encode(),
             signature: Sig64::ZERO,
         };
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         if bundle_wire_len(&bundle) > MAX_BUNDLE {
             return Err(SendError::TooLarge);
         }
@@ -3215,11 +3509,16 @@ impl NodeCore {
             .map(|c| c.dag.insert(bundle.id(), bundle.parents()))
             .unwrap_or_default();
         if !missing.is_empty() {
-            self.enqueue_event(Event::MessageGap { conv: conv_id, parents: missing });
+            self.enqueue_event(Event::MessageGap {
+                conv: conv_id,
+                parents: missing,
+            });
         }
 
-        let (app, msg) =
-            body.split_first().map(|(a, r)| (*a, r.to_vec())).unwrap_or((apptype::TEXT, Vec::new()));
+        let (app, msg) = body
+            .split_first()
+            .map(|(a, r)| (*a, r.to_vec()))
+            .unwrap_or((apptype::TEXT, Vec::new()));
         let from = node_id_of(&origin);
 
         if app == apptype::SENDER_KEY {
@@ -3265,16 +3564,23 @@ impl NodeCore {
                 if self.convs.contains_key(conv_id) {
                     return None;
                 }
-                let plaintext = open_box(&self.identity, &eph, &bundle.canonical_aead_ad(), &ct).ok()?;
+                let plaintext =
+                    open_box(&self.identity, &eph, &bundle.canonical_aead_ad(), &ct).ok()?;
                 let dh = self.identity.exchange_dh(&eph);
                 let ck0 = sealed_ck0(&dh, origin, &self.public);
                 // Commit only after the sealed ciphertext authenticates. A
                 // forged, signature-valid bundle must not create conversation
                 // state or consume receiver resources.
-                self.convs.insert(*conv_id, Conv::new(*conv_id, &self.public, origin, *ck0));
+                self.convs
+                    .insert(*conv_id, Conv::new(*conv_id, &self.public, origin, *ck0));
                 Some(plaintext)
             }
-            AsyncPayload::Prekey { prekey_id, sender_xpk, eph, ct } => {
+            AsyncPayload::Prekey {
+                prekey_id,
+                sender_xpk,
+                eph,
+                ct,
+            } => {
                 // Concurrent-initiation conflict: adopt the peer's root only
                 // if its identity is canonically smaller; both sides then
                 // choose the same winner. Build candidate state and verify
@@ -3285,12 +3591,19 @@ impl NodeCore {
                 {
                     return None;
                 }
-                let ck0 =
-                    recipient_agree(&self.prekeys, &self.identity, origin, &sender_xpk, &eph, prekey_id)
-                        .ok()?;
+                let ck0 = recipient_agree(
+                    &self.prekeys,
+                    &self.identity,
+                    origin,
+                    &sender_xpk,
+                    &eph,
+                    prekey_id,
+                )
+                .ok()?;
                 let mut candidate = Conv::new(*conv_id, &self.public, origin, *ck0);
                 let key = candidate.recv.key_for(0, 0).ok()?;
-                let bound = aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
+                let bound =
+                    aead::committed_key(&key, &msg_context(origin, &self.node_id, conv_id, 0, 0));
                 let plaintext = aead::open(&bound, &bundle.canonical_aead_ad(), &ct).ok()?;
                 if prekey_id != PREKEY_NONE {
                     self.prekeys.mark_otk_consumed(prekey_id).ok()?;
@@ -3305,8 +3618,10 @@ impl NodeCore {
         let dp = DirectPayload::decode(&bundle.payload).ok()?;
         let conv = self.convs.get_mut(conv_id)?;
         let key = conv.recv.key_for(dp.epoch, dp.index).ok()?;
-        let bound =
-            aead::committed_key(&key, &msg_context(&bundle.origin, &self.node_id, conv_id, dp.epoch, dp.index));
+        let bound = aead::committed_key(
+            &key,
+            &msg_context(&bundle.origin, &self.node_id, conv_id, dp.epoch, dp.index),
+        );
         aead::open(&bound, &bundle.canonical_aead_ad(), &dp.ct).ok()
     }
 
@@ -3318,7 +3633,9 @@ impl NodeCore {
         let mut member = [0u8; 16];
         member.copy_from_slice(&body[..16]);
         let member = Id16(member);
-        let Ok(dist) = SenderKeyDist::decode(&body[16..]) else { return };
+        let Ok(dist) = SenderKeyDist::decode(&body[16..]) else {
+            return;
+        };
         let gid = dist.gid;
         // The outer direct bundle authenticates `from`; the body member is
         // merely an assertion and must be exactly that authenticated sender.
@@ -3351,7 +3668,9 @@ impl NodeCore {
             self.groups.insert(gid, gs);
             self.enqueue_event(Event::GroupInvite { gid, from: *from });
         } else {
-            let Some(gs) = self.groups.get_mut(&gid) else { return };
+            let Some(gs) = self.groups.get_mut(&gid) else {
+                return;
+            };
             // A removed/non-member peer cannot reintroduce sender-key state.
             if !gs.members.contains(from) || dist.epoch < gs.epoch {
                 return;
@@ -3370,12 +3689,22 @@ impl NodeCore {
     }
 
     fn deliver_group(&mut self, bundle: &Bundle) {
-        let Ok(gp) = GroupPayload::decode(&bundle.payload) else { return };
-        let Some(gs) = self.groups.get_mut(&gp.gid) else { return };
-        let Some(remote) = gs.remotes.get_mut(&(gp.member, gp.epoch)) else { return };
-        let Ok(body) = remote.decrypt(&gp, &bundle.canonical_aead_ad()) else { return };
-        let (apptype, msg) =
-            body.split_first().map(|(a, r)| (*a, r.to_vec())).unwrap_or((apptype::TEXT, Vec::new()));
+        let Ok(gp) = GroupPayload::decode(&bundle.payload) else {
+            return;
+        };
+        let Some(gs) = self.groups.get_mut(&gp.gid) else {
+            return;
+        };
+        let Some(remote) = gs.remotes.get_mut(&(gp.member, gp.epoch)) else {
+            return;
+        };
+        let Ok(body) = remote.decrypt(&gp, &bundle.canonical_aead_ad()) else {
+            return;
+        };
+        let (apptype, msg) = body
+            .split_first()
+            .map(|(a, r)| (*a, r.to_vec()))
+            .unwrap_or((apptype::TEXT, Vec::new()));
         self.enqueue_event(Event::GroupMessage {
             gid: gp.gid,
             from: gp.member,
@@ -3386,9 +3715,15 @@ impl NodeCore {
     }
 
     fn emit_receipt(&mut self, conv_id: &Id16, delivered: &Id16, origin: &Key32) {
-        let Some(conv) = self.convs.get(conv_id) else { return };
+        let Some(conv) = self.convs.get(conv_id) else {
+            return;
+        };
         let mac = receipt::receipt_mac(&conv.receipt_key, delivered);
-        let payload = ReceiptPayload { delivered: *delivered, mac }.encode();
+        let payload = ReceiptPayload {
+            delivered: *delivered,
+            mac,
+        }
+        .encode();
         let mut bundle = Bundle {
             class: class::CONTROL,
             flags: 0,
@@ -3400,7 +3735,9 @@ impl NodeCore {
             payload,
             signature: Sig64::ZERO,
         };
-        bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+        bundle.signature = self
+            .identity
+            .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
         // Receipt publication must not roll back authenticated delivery just
         // because the local provider is full. Keep a bounded retry candidate;
         // `try_store_own` still gates SeenIndex/Created state on acceptance.
@@ -3416,7 +3753,9 @@ impl NodeCore {
 
     /// Class-0 receipt handling for carriers AND the origin (doc 05 §7).
     fn handle_receipt(&mut self, bundle: &Bundle, to_self: bool) {
-        let Ok(rp) = ReceiptPayload::decode(&bundle.payload) else { return };
+        let Ok(rp) = ReceiptPayload::decode(&bundle.payload) else {
+            return;
+        };
         // Exact-receipt purge at any carrier — but only when the receipt's
         // origin IS the delivered bundle's destination (forgery gate).
         if let Some(m) = self.store.meta(&rp.delivered) {
@@ -3431,7 +3770,8 @@ impl NodeCore {
             }
         }
         self.receipts.note_verified_receipt(&rp.delivered, self.now);
-        self.diag.log(rp.delivered, JourneyEvent::ReceiptSeen, self.now);
+        self.diag
+            .log(rp.delivered, JourneyEvent::ReceiptSeen, self.now);
 
         if !to_self {
             return;
@@ -3442,9 +3782,16 @@ impl NodeCore {
             .pending_first_contact
             .iter()
             .find_map(|(conv, first)| (*first == rp.delivered).then_some(*conv));
-        let Some(conv_id) = sent.map(|message| message.conv).or(pending_conv) else { return };
-        let Some(conv) = self.convs.get(&conv_id) else { return };
-        if !receipt::mac_eq(&rp.mac, &receipt::receipt_mac(&conv.receipt_key, &rp.delivered)) {
+        let Some(conv_id) = sent.map(|message| message.conv).or(pending_conv) else {
+            return;
+        };
+        let Some(conv) = self.convs.get(&conv_id) else {
+            return;
+        };
+        if !receipt::mac_eq(
+            &rp.mac,
+            &receipt::receipt_mac(&conv.receipt_key, &rp.delivered),
+        ) {
             return;
         }
         if self.pending_first_contact.get(&conv_id) == Some(&rp.delivered) {
@@ -3471,12 +3818,21 @@ impl NodeCore {
     /// bytes are pinned — an accepted MVP bound, handbook §4.5).
     fn enforce_quota(&mut self) {
         while self.store.total_bytes() > self.quota {
-            let pinned: HashSet<Id16> =
-                self.friends.values().flat_map(|s| s.buffered.iter().copied()).collect();
-            let metas: Vec<BundleMeta> =
-                self.store.all_meta().into_iter().filter(|m| !pinned.contains(&m.id)).collect();
+            let pinned: HashSet<Id16> = self
+                .friends
+                .values()
+                .flat_map(|s| s.buffered.iter().copied())
+                .collect();
+            let metas: Vec<BundleMeta> = self
+                .store
+                .all_meta()
+                .into_iter()
+                .filter(|m| !pinned.contains(&m.id))
+                .collect();
             let order = eviction_order(&metas, |id| self.receipts.signal(id), self.now);
-            let Some(victim) = order.first().copied() else { break };
+            let Some(victim) = order.first().copied() else {
+                break;
+            };
             if !self.store.remove(&victim) {
                 break;
             }
@@ -3502,9 +3858,15 @@ impl NodeCore {
     /// for its buffered set — used wherever store-driven removal (expiry)
     /// hands us only an id, not the size that was removed with it.
     fn resync_friend_quota(&mut self, dependent: &NodeId) {
-        let Some(state) = self.friends.get(dependent) else { return };
-        let used: u64 =
-            state.buffered.iter().filter_map(|id| self.store.meta(id)).map(|m| m.size as u64).sum();
+        let Some(state) = self.friends.get(dependent) else {
+            return;
+        };
+        let used: u64 = state
+            .buffered
+            .iter()
+            .filter_map(|id| self.store.meta(id))
+            .map(|m| m.size as u64)
+            .sum();
         if let Some(state) = self.friends.get_mut(dependent) {
             state.quota_used = used;
         }
@@ -3540,8 +3902,10 @@ impl NodeCore {
     /// the dependent side, it just means we no longer believe we have that
     /// patron; renewal is a fresh offer/ack (handshake flow step 5).
     fn prune_expired_friendships(&mut self, now_ms: u64) {
-        self.friends.retain(|_, s| now_ms.saturating_sub(s.since) < FRIENDSHIP_TTL_MS);
-        self.patrons.retain(|_, since| now_ms.saturating_sub(*since) < FRIENDSHIP_TTL_MS);
+        self.friends
+            .retain(|_, s| now_ms.saturating_sub(s.since) < FRIENDSHIP_TTL_MS);
+        self.patrons
+            .retain(|_, since| now_ms.saturating_sub(*since) < FRIENDSHIP_TTL_MS);
     }
 
     /// Advisory spray-suppression signal (doc 06 §7 MVP): does `peer` look
@@ -3558,7 +3922,9 @@ impl NodeCore {
                 }
             }
         }
-        self.proxy_hints.get(peer).is_some_and(|deps| deps.contains(dest))
+        self.proxy_hints
+            .get(peer)
+            .is_some_and(|deps| deps.contains(dest))
     }
 
     // ---------------------------------------------------- blob plane (§4.4) --
@@ -3571,7 +3937,9 @@ impl NodeCore {
             if meta.class != class::SYMBOL {
                 continue;
             }
-            let Some((_, bytes)) = self.store.get(&meta.id) else { continue };
+            let Some((_, bytes)) = self.store.get(&meta.id) else {
+                continue;
+            };
             // Snapshot checksums detect accidental corruption, not an
             // attacker who can rewrite the local image.  Re-apply the same
             // canonical/signature/ID and metadata binding used on wire before
@@ -3581,8 +3949,12 @@ impl NodeCore {
                 self.deindex_symbol(&meta.id);
                 continue;
             }
-            let Ok(bundle) = Bundle::decode_canonical(&bytes) else { continue };
-            let Some((root, sym_no)) = self.index_symbol_bundle(&bundle, meta.id) else { continue };
+            let Ok(bundle) = Bundle::decode_canonical(&bytes) else {
+                continue;
+            };
+            let Some((root, sym_no)) = self.index_symbol_bundle(&bundle, meta.id) else {
+                continue;
+            };
             // A valid bundle signature does not prove that a class-4 payload
             // is a symbol for the advertised Merkle root.  Do this check while
             // rebuilding the holder index so a tampered-but-re-signed local
@@ -3601,7 +3973,13 @@ impl NodeCore {
     /// `(root, sym_no)` on success.
     fn symbol_location(bundle: &Bundle) -> Option<(Id16, u16)> {
         let (root, block, sym, k, n) = bundle.exts.iter().find_map(|e| match *e {
-            Ext::SymbolInfo { root, block, sym, k, n } => Some((root, block, sym, k, n)),
+            Ext::SymbolInfo {
+                root,
+                block,
+                sym,
+                k,
+                n,
+            } => Some((root, block, sym, k, n)),
             _ => None,
         })?;
         if k as usize != RS_DATA_K
@@ -3619,7 +3997,12 @@ impl NodeCore {
     /// producers stage local indexes after `try_store_own` succeeds, while
     /// receive-side ingestion can retain its verify-then-deindex fail-safe.
     fn record_symbol(&mut self, root: Id16, sym_no: u16, id: Id16) {
-        if let Some(previous) = self.blob_index.get(&root).and_then(|idx| idx.get(&sym_no)).copied() {
+        if let Some(previous) = self
+            .blob_index
+            .get(&root)
+            .and_then(|idx| idx.get(&sym_no))
+            .copied()
+        {
             if previous != id && self.symbol_of.get(&previous) == Some(&(root, sym_no)) {
                 self.symbol_of.remove(&previous);
             }
@@ -3659,7 +4042,10 @@ impl NodeCore {
             // Decision D3 residual 2 GC rule: once an ABANDONED
             // assembly's last servable symbol is gone, drop the
             // assembly entry too.
-            if matches!(self.assemblies.get(&root).map(|a| a.state), Some(BlobState::Abandoned)) {
+            if matches!(
+                self.assemblies.get(&root).map(|a| a.state),
+                Some(BlobState::Abandoned)
+            ) {
                 self.assemblies.remove(&root);
             }
         }
@@ -3715,7 +4101,10 @@ impl NodeCore {
             }
         }
         for root in failed {
-            self.enqueue_event(Event::FileFailed { root, reason: FileFailReason::Abandoned });
+            self.enqueue_event(Event::FileFailed {
+                root,
+                reason: FileFailReason::Abandoned,
+            });
         }
         for root in collect_terminal {
             self.assemblies.remove(&root);
@@ -3729,7 +4118,13 @@ impl NodeCore {
     /// Until a destination-aware multi-holder index exists, a root whose
     /// durable symbols belong to another destination is rejected locally
     /// rather than silently reusing an unroutable inventory.
-    fn send_file(&mut self, peer: &NodeId, name: &str, mime: &str, data: &[u8]) -> Result<FileSend, SendError> {
+    fn send_file(
+        &mut self,
+        peer: &NodeId,
+        name: &str,
+        mime: &str,
+        data: &[u8],
+    ) -> Result<FileSend, SendError> {
         if data.len() as u64 > FILE_MAX {
             return Err(SendError::TooLarge);
         }
@@ -3748,7 +4143,9 @@ impl NodeCore {
         // must be side-effect free: otherwise ConversationPending or an
         // unknown peer would still consume local storage and quota.
         let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
-        let _peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        let _peer_exchange = self
+            .resolve_peer_exchange(peer)
+            .ok_or(SendError::UnknownPeer)?;
         let conv_id = conversation_id(&self.public, &peer_pub);
         if self.pending_first_contact.contains_key(&conv_id) {
             return Err(SendError::ConversationPending);
@@ -3775,7 +4172,10 @@ impl NodeCore {
         // Per-stripe systematic RS encode: symbols 0..k are the data itself.
         let mut all_symbols: Vec<Vec<u8>> = Vec::with_capacity(stripes as usize * RS_TOTAL_N);
         for stripe_bytes in padded.chunks(STRIPE_DATA_BYTES) {
-            let data_syms: Vec<Vec<u8>> = stripe_bytes.chunks(mmp_types::consts::SYMBOL_SIZE).map(<[u8]>::to_vec).collect();
+            let data_syms: Vec<Vec<u8>> = stripe_bytes
+                .chunks(mmp_types::consts::SYMBOL_SIZE)
+                .map(<[u8]>::to_vec)
+                .collect();
             all_symbols.extend(mmp_rs_code::encode(&data_syms, RS_TOTAL_N));
         }
         // Leaves = hash_block(symbol) for every symbol (data then parity
@@ -3791,7 +4191,8 @@ impl NodeCore {
         // A root-wide count is insufficient because SYMBOL bundles carry the
         // requested peer in their destination field.
         let total_symbols = stripes as usize * RS_TOTAL_N;
-        let already_complete = self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
+        let already_complete =
+            self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
 
         // Prepare the encrypted FILE_MANIFEST before admitting any symbol.
         // Its conversation and ratchet changes remain staged until the
@@ -3807,21 +4208,34 @@ impl NodeCore {
             full_hash,
             thumb_root: None,
         };
-        let mut manifest = FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
-        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
+        let mut manifest = FileManifest {
+            suite: 1,
+            sharer: self.public,
+            entries: vec![entry],
+            sig: Sig64::ZERO,
+        };
+        manifest.sig = self
+            .identity
+            .sign(SigDomain::Manifest, &manifest.signed_object());
         let manifest_payload = manifest.encode();
-        let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest_payload)?;
+        let manifest_candidate =
+            self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest_payload)?;
 
         let message_id = if !already_complete {
             let budget = origin_budget(self.utility.n_hat(self.now));
             let manifest_bytes = manifest_candidate.bundle.encode();
-            let manifest_meta = self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
+            let manifest_meta =
+                self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
             let mut symbol_candidates: Vec<PreparedFileSymbol> = Vec::with_capacity(total_symbols);
             for (sym_no, sym) in all_symbols.iter().enumerate() {
                 let block = (sym_no / RS_TOTAL_N) as u16;
                 let sym_in_stripe = (sym_no % RS_TOTAL_N) as u16;
                 let path = merkle_path(&leaves, sym_no).encode();
-                let payload = SymbolPayload { path, symbol: sym.clone() }.encode();
+                let payload = SymbolPayload {
+                    path,
+                    symbol: sym.clone(),
+                }
+                .encode();
                 let mut bundle = Bundle {
                     class: class::SYMBOL,
                     flags: 0,
@@ -3839,15 +4253,28 @@ impl NodeCore {
                     payload,
                     signature: Sig64::ZERO,
                 };
-                bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
-                debug_assert!(bundle.encode().len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
+                bundle.signature = self
+                    .identity
+                    .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+                debug_assert!(
+                    bundle.encode().len() <= MAX_BUNDLE,
+                    "symbol bundle sizing invariant"
+                );
                 let location = Self::symbol_location(&bundle);
                 let bytes = bundle.encode();
                 let meta = self.own_bundle_meta(&bundle, budget, &bytes)?;
-                symbol_candidates.push(PreparedFileSymbol { bundle, bytes, location, meta });
+                symbol_candidates.push(PreparedFileSymbol {
+                    bundle,
+                    bytes,
+                    location,
+                    meta,
+                });
             }
 
-            let mut metas: Vec<BundleMeta> = symbol_candidates.iter().map(|candidate| candidate.meta).collect();
+            let mut metas: Vec<BundleMeta> = symbol_candidates
+                .iter()
+                .map(|candidate| candidate.meta)
+                .collect();
             metas.push(manifest_meta);
             match self.store.try_reserve_batch_atomic(&metas) {
                 Ok(batch) => {
@@ -3880,16 +4307,25 @@ impl NodeCore {
                             self.record_symbol(root, sym_no, meta.id);
                         }
                     }
-                    self.seen.insert(&manifest_meta.id, manifest_meta.class, self.now);
-                    self.diag.log(manifest_meta.id, JourneyEvent::Created, self.now);
-                    self.apply_app_candidate(manifest_candidate.state, manifest_candidate.rng, manifest_meta.id)
+                    self.seen
+                        .insert(&manifest_meta.id, manifest_meta.class, self.now);
+                    self.diag
+                        .log(manifest_meta.id, JourneyEvent::Created, self.now);
+                    self.apply_app_candidate(
+                        manifest_candidate.state,
+                        manifest_candidate.rng,
+                        manifest_meta.id,
+                    )
                 }
                 Err(StoreReserveError::Unsupported) => {
                     // Legacy providers explicitly lacking the aggregate
                     // capability retain the existing accepted-prefix behavior.
                     // A provider that advertises the capability but rejects it
                     // must not be weakened into a sequence of single writes.
-                    for PreparedFileSymbol { bundle, location, .. } in symbol_candidates {
+                    for PreparedFileSymbol {
+                        bundle, location, ..
+                    } in symbol_candidates
+                    {
                         let id = self.try_store_own(bundle, budget)?;
                         if let Some((root, sym_no)) = location {
                             self.record_symbol(root, sym_no, id);
@@ -3907,8 +4343,14 @@ impl NodeCore {
             self.commit_app_candidate(manifest_candidate)?
         };
         self.record_sent(message_id, conv_id)?;
-        self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
-        Ok(FileSend { message_id, root: file_root })
+        self.enqueue_event(Event::DeliveryProgress {
+            id: message_id,
+            state: DeliveryState::Queued,
+        });
+        Ok(FileSend {
+            message_id,
+            root: file_root,
+        })
     }
 
     /// Reader-backed variant of [`NodeCore::send_file`].  The first pass is
@@ -3933,7 +4375,9 @@ impl NodeCore {
             return Err(SendError::PeerRevoked);
         }
         let peer_pub = self.resolve_peer_key(peer).ok_or(SendError::UnknownPeer)?;
-        let _peer_exchange = self.resolve_peer_exchange(peer).ok_or(SendError::UnknownPeer)?;
+        let _peer_exchange = self
+            .resolve_peer_exchange(peer)
+            .ok_or(SendError::UnknownPeer)?;
         let conv_id = conversation_id(&self.public, &peer_pub);
         if self.pending_first_contact.contains_key(&conv_id) {
             return Err(SendError::ConversationPending);
@@ -3942,11 +4386,15 @@ impl NodeCore {
             return Err(SendError::ResourceLimit);
         }
 
-        let size = reader.seek(SeekFrom::End(0)).map_err(|_| SendError::SourceIo)?;
+        let size = reader
+            .seek(SeekFrom::End(0))
+            .map_err(|_| SendError::SourceIo)?;
         if size > FILE_MAX || size > u32::MAX as u64 {
             return Err(SendError::TooLarge);
         }
-        reader.seek(SeekFrom::Start(0)).map_err(|_| SendError::SourceIo)?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .map_err(|_| SendError::SourceIo)?;
         let size_u32 = size as u32;
         let stripes = blob::stripes_for_size(size_u32);
         let total_symbols = stripes as usize * RS_TOTAL_N;
@@ -3978,7 +4426,8 @@ impl NodeCore {
         root_bytes.copy_from_slice(&root32[..16]);
         let file_root = Id16(root_bytes);
 
-        let already_complete = self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
+        let already_complete =
+            self.local_file_inventory_complete(&file_root, total_symbols, peer)?;
         let entry = FileEntry {
             name: name.as_bytes().to_vec(),
             mime: mime.as_bytes().to_vec(),
@@ -3989,9 +4438,17 @@ impl NodeCore {
             full_hash,
             thumb_root: None,
         };
-        let mut manifest = FileManifest { suite: 1, sharer: self.public, entries: vec![entry], sig: Sig64::ZERO };
-        manifest.sig = self.identity.sign(SigDomain::Manifest, &manifest.signed_object());
-        let manifest_candidate = self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
+        let mut manifest = FileManifest {
+            suite: 1,
+            sharer: self.public,
+            entries: vec![entry],
+            sig: Sig64::ZERO,
+        };
+        manifest.sig = self
+            .identity
+            .sign(SigDomain::Manifest, &manifest.signed_object());
+        let manifest_candidate =
+            self.prepare_app(peer, apptype::FILE_MANIFEST, &manifest.encode())?;
 
         let message_id = if already_complete {
             self.commit_app_candidate(manifest_candidate)?
@@ -4000,7 +4457,9 @@ impl NodeCore {
             // provider for aggregate capacity. Source reads and Merkle
             // consistency checks therefore remain side-effect free: a short
             // read or source mutation cannot leave a partial atomic batch.
-            reader.seek(SeekFrom::Start(0)).map_err(|_| SendError::SourceIo)?;
+            reader
+                .seek(SeekFrom::Start(0))
+                .map_err(|_| SendError::SourceIo)?;
             remaining = size as usize;
             let budget = origin_budget(self.utility.n_hat(self.now));
             let mut symbol_candidates: Vec<PreparedFileSymbol> = Vec::with_capacity(total_symbols);
@@ -4044,12 +4503,19 @@ impl NodeCore {
                         payload,
                         signature: Sig64::ZERO,
                     };
-                    bundle.signature = self.identity.sign(SigDomain::Bundle, &bundle.canonical_zeroed());
+                    bundle.signature = self
+                        .identity
+                        .sign(SigDomain::Bundle, &bundle.canonical_zeroed());
                     let bytes = bundle.encode();
                     debug_assert!(bytes.len() <= MAX_BUNDLE, "symbol bundle sizing invariant");
                     let location = Self::symbol_location(&bundle);
                     let meta = self.own_bundle_meta(&bundle, budget, &bytes)?;
-                    symbol_candidates.push(PreparedFileSymbol { bundle, bytes, location, meta });
+                    symbol_candidates.push(PreparedFileSymbol {
+                        bundle,
+                        bytes,
+                        location,
+                        meta,
+                    });
                 }
                 remaining -= take;
             }
@@ -4059,8 +4525,12 @@ impl NodeCore {
             // candidate conversation/ratchet state remains unpublished until
             // the provider reports a successful batch commit.
             let manifest_bytes = manifest_candidate.bundle.encode();
-            let manifest_meta = self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
-            let mut metas: Vec<BundleMeta> = symbol_candidates.iter().map(|candidate| candidate.meta).collect();
+            let manifest_meta =
+                self.own_bundle_meta(&manifest_candidate.bundle, budget, &manifest_bytes)?;
+            let mut metas: Vec<BundleMeta> = symbol_candidates
+                .iter()
+                .map(|candidate| candidate.meta)
+                .collect();
             metas.push(manifest_meta);
             match self.store.try_reserve_batch_atomic(&metas) {
                 Ok(batch) => {
@@ -4087,16 +4557,25 @@ impl NodeCore {
                             self.record_symbol(root, sym_no, meta.id);
                         }
                     }
-                    self.seen.insert(&manifest_meta.id, manifest_meta.class, self.now);
-                    self.diag.log(manifest_meta.id, JourneyEvent::Created, self.now);
-                    self.apply_app_candidate(manifest_candidate.state, manifest_candidate.rng, manifest_meta.id)
+                    self.seen
+                        .insert(&manifest_meta.id, manifest_meta.class, self.now);
+                    self.diag
+                        .log(manifest_meta.id, JourneyEvent::Created, self.now);
+                    self.apply_app_candidate(
+                        manifest_candidate.state,
+                        manifest_candidate.rng,
+                        manifest_meta.id,
+                    )
                 }
                 Err(StoreReserveError::Unsupported) => {
                     // Legacy providers retain the existing accepted-prefix
                     // behavior for capacity failures. An advertised provider
                     // that rejects reservation must not be weakened into
                     // single writes after any aggregate failure.
-                    for PreparedFileSymbol { bundle, location, .. } in symbol_candidates {
+                    for PreparedFileSymbol {
+                        bundle, location, ..
+                    } in symbol_candidates
+                    {
                         let id = self.try_store_own(bundle, budget)?;
                         if let Some((root, sym_no)) = location {
                             self.record_symbol(root, sym_no, id);
@@ -4111,8 +4590,14 @@ impl NodeCore {
         };
 
         self.record_sent(message_id, conv_id)?;
-        self.enqueue_event(Event::DeliveryProgress { id: message_id, state: DeliveryState::Queued });
-        Ok(FileSend { message_id, root: file_root })
+        self.enqueue_event(Event::DeliveryProgress {
+            id: message_id,
+            state: DeliveryState::Queued,
+        });
+        Ok(FileSend {
+            message_id,
+            root: file_root,
+        })
     }
 
     /// Return whether the local holder inventory is complete and compatible
@@ -4159,7 +4644,9 @@ impl NodeCore {
     /// failure (doc 16 §3.1 fail-safe — `MessageReceived` still fires from
     /// the caller either way).
     fn try_offer_file(&mut self, conv: &Id16, from: &NodeId, msg: &[u8]) {
-        let Ok(manifest) = FileManifest::decode(msg) else { return };
+        let Ok(manifest) = FileManifest::decode(msg) else {
+            return;
+        };
         if mmp_crypto::verify(
             SigDomain::Manifest,
             &manifest.sharer,
@@ -4182,7 +4669,11 @@ impl NodeCore {
             }
             self.offers.insert(
                 e.file_root,
-                FileOfferInfo { size: e.size, full_hash: e.full_hash, sharer: manifest.sharer },
+                FileOfferInfo {
+                    size: e.size,
+                    full_hash: e.full_hash,
+                    sharer: manifest.sharer,
+                },
             );
             offers.push(FileOffer {
                 name: e.name.clone(),
@@ -4212,9 +4703,17 @@ impl NodeCore {
                 return Ok(()); // idempotent
             }
         }
-        let Some(offer) = self.offers.get(root) else { return Err(FetchError::UnknownRoot) };
-        let mut assembly =
-            BlobAssembly::new(*root, offer.size, offer.full_hash, offer.sharer, dest.to_path_buf(), self.now);
+        let Some(offer) = self.offers.get(root) else {
+            return Err(FetchError::UnknownRoot);
+        };
+        let mut assembly = BlobAssembly::new(
+            *root,
+            offer.size,
+            offer.full_hash,
+            offer.sharer,
+            dest.to_path_buf(),
+            self.now,
+        );
 
         if let Some(idx) = self.blob_index.get(root).cloned() {
             for (sym_no, id) in idx {
@@ -4237,7 +4736,10 @@ impl NodeCore {
             if !matches!(a.state, BlobState::Assembled) {
                 a.state = BlobState::Abandoned;
                 a.terminal_at = Some(self.now);
-                self.enqueue_event(Event::FileFailed { root: *root, reason: FileFailReason::Abandoned });
+                self.enqueue_event(Event::FileFailed {
+                    root: *root,
+                    reason: FileFailReason::Abandoned,
+                });
             }
         }
     }
@@ -4312,7 +4814,9 @@ impl NodeCore {
     /// and pruned from both indices (doc 11 §8 uniform verify-before-serve).
     fn handle_symbol(&mut self, bundle: &Bundle) {
         let id = bundle.id();
-        let Some((root, sym_no)) = self.index_symbol_bundle(bundle, id) else { return };
+        let Some((root, sym_no)) = self.index_symbol_bundle(bundle, id) else {
+            return;
+        };
 
         // Verify every symbol before it becomes servable, even when no local
         // assembly currently requests it.  `index_symbol_bundle` runs for all
@@ -4331,8 +4835,12 @@ impl NodeCore {
             return;
         }
 
-        let Some(assembly) = self.assemblies.get(&root) else { return };
-        if !matches!(assembly.state, BlobState::Wanted | BlobState::Fetching) || assembly.have_bit(sym_no) {
+        let Some(assembly) = self.assemblies.get(&root) else {
+            return;
+        };
+        if !matches!(assembly.state, BlobState::Wanted | BlobState::Fetching)
+            || assembly.have_bit(sym_no)
+        {
             return;
         }
 
@@ -4351,7 +4859,9 @@ impl NodeCore {
     /// bound: one stripe, ≤64 KiB, ever held at once). Finalizes the
     /// assembly once every stripe is done.
     fn maybe_decode_stripe(&mut self, root: &Id16, stripe: u16) {
-        let Some(assembly) = self.assemblies.get(root) else { return };
+        let Some(assembly) = self.assemblies.get(root) else {
+            return;
+        };
         if assembly.stripe_done_bit(stripe) || assembly.stripe_have_count(stripe) < RS_DATA_K {
             return;
         }
@@ -4366,22 +4876,34 @@ impl NodeCore {
                 if !assembly.have_bit(sym_no) {
                     continue;
                 }
-                let Some(bid) = idx.get(&sym_no) else { continue };
-                let Some((_, bytes)) = self.store.get(bid) else { continue };
-                let Ok(b) = Bundle::decode_canonical(&bytes) else { continue };
-                let Ok(sp) = SymbolPayload::decode(&b.payload) else { continue };
+                let Some(bid) = idx.get(&sym_no) else {
+                    continue;
+                };
+                let Some((_, bytes)) = self.store.get(bid) else {
+                    continue;
+                };
+                let Ok(b) = Bundle::decode_canonical(&bytes) else {
+                    continue;
+                };
+                let Ok(sp) = SymbolPayload::decode(&b.payload) else {
+                    continue;
+                };
                 pairs.push((j as u8, sp.symbol));
             }
         }
         if pairs.len() < RS_DATA_K {
             return; // defensive: have-count said K but the store didn't yield K
         }
-        let Some(data_syms) = mmp_rs_code::decode(&pairs, RS_DATA_K) else { return };
+        let Some(data_syms) = mmp_rs_code::decode(&pairs, RS_DATA_K) else {
+            return;
+        };
         let mut concat = Vec::with_capacity(STRIPE_DATA_BYTES);
         for s in &data_syms {
             concat.extend_from_slice(s);
         }
-        let Some(assembly) = self.assemblies.get_mut(root) else { return };
+        let Some(assembly) = self.assemblies.get_mut(root) else {
+            return;
+        };
         if assembly.write_stripe(stripe, &concat).is_err() {
             return; // disk error: try again next time a symbol nudges this stripe
         }
@@ -4394,18 +4916,27 @@ impl NodeCore {
     /// Truncate/hash/compare, then rename-or-remove the `.part` file
     /// (decision D2 finalize) and emit the terminal event.
     fn finalize_assembly(&mut self, root: &Id16) {
-        let Some(assembly) = self.assemblies.get_mut(root) else { return };
+        let Some(assembly) = self.assemblies.get_mut(root) else {
+            return;
+        };
         let dest_path = assembly.dest_path.clone();
         let part_path = assembly.part_path();
         match assembly.finalize() {
             Ok(true) => {
                 let renamed = std::fs::rename(&part_path, &dest_path).is_ok();
                 if let Some(a) = self.assemblies.get_mut(root) {
-                    a.state = if renamed { BlobState::Assembled } else { BlobState::Abandoned };
+                    a.state = if renamed {
+                        BlobState::Assembled
+                    } else {
+                        BlobState::Abandoned
+                    };
                     a.terminal_at = Some(self.now);
                 }
                 if renamed {
-                    self.enqueue_event(Event::FileReady { root: *root, path: dest_path });
+                    self.enqueue_event(Event::FileReady {
+                        root: *root,
+                        path: dest_path,
+                    });
                 } else {
                     self.enqueue_event(Event::FileFailed {
                         root: *root,
@@ -4521,7 +5052,9 @@ fn stored_bundle_is_valid(meta: &BundleMeta, bytes: &[u8]) -> bool {
     if meta.size as usize != bytes.len() {
         return false;
     }
-    let Ok(bundle) = Bundle::decode_canonical(bytes) else { return false };
+    let Ok(bundle) = Bundle::decode_canonical(bytes) else {
+        return false;
+    };
     if bundle.id() != meta.id
         || bundle.class != meta.class
         || bundle.origin_node() != meta.origin
@@ -4530,12 +5063,22 @@ fn stored_bundle_is_valid(meta: &BundleMeta, bytes: &[u8]) -> bool {
     {
         return false;
     }
-    mmp_crypto::verify(SigDomain::Bundle, &bundle.origin, &bundle.canonical_zeroed(), &bundle.signature).is_ok()
+    mmp_crypto::verify(
+        SigDomain::Bundle,
+        &bundle.origin,
+        &bundle.canonical_zeroed(),
+        &bundle.signature,
+    )
+    .is_ok()
 }
 
 fn symbol_payload_verifies(bundle: &Bundle, root: &Id16, sym_no: u16) -> bool {
-    let Ok(sp) = SymbolPayload::decode(&bundle.payload) else { return false };
-    let Ok(path) = MerklePath::decode(&sp.path) else { return false };
+    let Ok(sp) = SymbolPayload::decode(&bundle.payload) else {
+        return false;
+    };
+    let Ok(path) = MerklePath::decode(&sp.path) else {
+        return false;
+    };
     let leaf = hash_block(&sp.symbol);
     match compute_root(&leaf, &path) {
         Ok(computed) => computed[..16] == root.0 && path.leaf_index() == u64::from(sym_no),
@@ -4586,7 +5129,8 @@ impl SessionHost for NodeCore {
         // Session is authenticated by construction here (doc 06 §6.3): fold
         // the peer's receipt buckets as suppression hints, never purge.
         for b in summary.receipt_buckets {
-            self.receipts.union_from_peer(b.bucket_epoch, &b.bloom, self.now);
+            self.receipts
+                .union_from_peer(b.bucket_epoch, &b.bloom, self.now);
         }
     }
 
@@ -4661,7 +5205,14 @@ impl SessionHost for NodeCore {
         bytes[LIFETIME_OFFSET..LIFETIME_OFFSET + 5].copy_from_slice(&remaining.to_le_bytes()[..5]);
         meta.slot = SlotState::HandoffPending;
         self.store.update_meta(meta);
-        self.diag.log(*id, JourneyEvent::HandedOff { peer: *peer, budget: grant }, self.now);
+        self.diag.log(
+            *id,
+            JourneyEvent::HandedOff {
+                peer: *peer,
+                budget: grant,
+            },
+            self.now,
+        );
         if meta.own_origin && self.sprayed.insert(*id) {
             if let Some(m) = self.sent.get_mut(id) {
                 if m.state == DeliveryState::Queued {
@@ -4712,7 +5263,13 @@ impl SessionHost for NodeCore {
                 // assembly actually exists.
                 if b.class == class::SYMBOL {
                     let info = b.exts.iter().find_map(|e| match *e {
-                        Ext::SymbolInfo { root, block, sym, k, n } => Some((root, block, sym, k, n)),
+                        Ext::SymbolInfo {
+                            root,
+                            block,
+                            sym,
+                            k,
+                            n,
+                        } => Some((root, block, sym, k, n)),
                         _ => None,
                     });
                     if let Some((root, block, sym, k, n)) = info {
@@ -4748,7 +5305,14 @@ impl SessionHost for NodeCore {
                 let wot = utility.contact(origin).map(|s| s.verified).unwrap_or(false);
                 buckets.admit(origin, (b.payload.len() + 124) as u32, now, wot)
             };
-            ingest(bytes, now, &node_id, &mut self.seen, &mut *self.store, &mut admission)
+            ingest(
+                bytes,
+                now,
+                &node_id,
+                &mut self.seen,
+                &mut *self.store,
+                &mut admission,
+            )
         };
         let _ = peer;
         let (to_self, bundle) = match (disposition, bundle) {
@@ -4917,7 +5481,10 @@ impl SessionHost for NodeCore {
             buffered: BTreeSet::new(),
         });
         state.since = offer.since; // renewal: refresh TTL, keep existing pins
-        self.enqueue_event(Event::FriendshipEstablished { peer: *peer, since: offer.since });
+        self.enqueue_event(Event::FriendshipEstablished {
+            peer: *peer,
+            since: offer.since,
+        });
         Some(FriendAckBody { countersig }.encode())
     }
 
@@ -4926,19 +5493,33 @@ impl SessionHost for NodeCore {
         // peer — `offered_since` also supplies the `since` value the ack's
         // countersig was made over (the ack body itself only carries the
         // signature, doc 04 §4.1 wire shape).
-        let Some(&since) = self.offered_since.get(peer) else { return };
-        let Some(&patron_key) = self.known_identities.get(peer) else { return };
-        let Ok(ack) = FriendAckBody::decode(body) else { return };
+        let Some(&since) = self.offered_since.get(peer) else {
+            return;
+        };
+        let Some(&patron_key) = self.known_identities.get(peer) else {
+            return;
+        };
+        let Ok(ack) = FriendAckBody::decode(body) else {
+            return;
+        };
         let preimage = friendship_signed_object(&self.public, &patron_key, since);
         if mmp_crypto::verify(SigDomain::Friend, &patron_key, &preimage, &ack.countersig).is_err() {
             return; // invalid countersig → ignore (handbook §4.5 step 4)
         }
         let seq = self.next_friendship_seq;
-        let body = Friendship { friend: patron_key, since, countersig: ack.countersig }.encode();
+        let body = Friendship {
+            friend: patron_key,
+            since,
+            countersig: ack.countersig,
+        }
+        .encode();
         // Persist the claim before consuming the offer.  A bounded or
         // failing provider must leave the handshake retryable rather than
         // acknowledging friendship in memory without a durable claim.
-        if self.try_publish_claim_now(field::FRIENDSHIP, seq, body).is_err() {
+        if self
+            .try_publish_claim_now(field::FRIENDSHIP, seq, body)
+            .is_err()
+        {
             return;
         }
         self.patrons.insert(*peer, since);
@@ -4949,7 +5530,9 @@ impl SessionHost for NodeCore {
     }
 
     fn on_proxy_summary(&mut self, peer: &NodeId, body: &[u8]) {
-        let Ok(summary) = ProxySummaryBody::decode(body) else { return };
+        let Ok(summary) = ProxySummaryBody::decode(body) else {
+            return;
+        };
         if !self.proxy_hints.contains_key(peer) && self.proxy_hints.len() >= MAX_PROXY_HINT_PEERS {
             if let Some(evict) = self.proxy_hints.keys().next().copied() {
                 self.proxy_hints.remove(&evict);
@@ -4980,9 +5563,11 @@ impl SessionHost for NodeCore {
             for id in &state.buffered {
                 bloom.insert(id, &INTERNAL_SALT);
             }
-            let wire_body =
-                ProxySummaryBody { dependent: *dependent, bloom: bloom.folded(BLOOM_SUMMARY_MAX) }
-                    .encode();
+            let wire_body = ProxySummaryBody {
+                dependent: *dependent,
+                bloom: bloom.folded(BLOOM_SUMMARY_MAX),
+            }
+            .encode();
             out.push(Frame::ProxySummary(wire_body));
         }
         out
@@ -5023,9 +5608,13 @@ impl SessionHost for NodeCore {
             .and_then(|last| roots.iter().position(|root| root > last))
             .unwrap_or(0);
         let count = roots.len().min(MAX_BLOB_HAVE_FRAMES_PER_CONTACT);
-        let selected: Vec<Id16> = (0..count).map(|offset| roots[(start + offset) % roots.len()]).collect();
+        let selected: Vec<Id16> = (0..count)
+            .map(|offset| roots[(start + offset) % roots.len()])
+            .collect();
         if let Some(last) = selected.last().copied() {
-            if self.blob_have_cursor.contains_key(peer) || self.blob_have_cursor.len() < MAX_BLOB_SERVE_PEERS {
+            if self.blob_have_cursor.contains_key(peer)
+                || self.blob_have_cursor.len() < MAX_BLOB_SERVE_PEERS
+            {
                 self.blob_have_cursor.insert(*peer, last);
             }
         }
@@ -5049,22 +5638,26 @@ impl SessionHost for NodeCore {
                     && node_id_of(&a.sharer) == *peer
             })
             .filter_map(|a| {
-                (0..a.stripes).find_map(|stripe| {
-                    if a.stripe_done_bit(stripe) {
-                        return None;
-                    }
-                    let mut bitmap = vec![0u8; MAX_BLOB_REQ_BITMAP_BYTES];
-                    for symbol in 0..RS_TOTAL_N {
-                        let sym_no = stripe
-                            .saturating_mul(RS_TOTAL_N as u16)
-                            .saturating_add(symbol as u16);
-                        if !a.have_bit(sym_no) {
-                            bitmap[symbol / 8] |= 1 << (symbol % 8);
+                (0..a.stripes)
+                    .find_map(|stripe| {
+                        if a.stripe_done_bit(stripe) {
+                            return None;
                         }
-                    }
-                    bitmap.iter().any(|byte| *byte != 0).then_some((stripe, bitmap))
-                })
-                .map(|(stripe, bitmap)| (a.root, stripe, bitmap))
+                        let mut bitmap = vec![0u8; MAX_BLOB_REQ_BITMAP_BYTES];
+                        for symbol in 0..RS_TOTAL_N {
+                            let sym_no = stripe
+                                .saturating_mul(RS_TOTAL_N as u16)
+                                .saturating_add(symbol as u16);
+                            if !a.have_bit(sym_no) {
+                                bitmap[symbol / 8] |= 1 << (symbol % 8);
+                            }
+                        }
+                        bitmap
+                            .iter()
+                            .any(|byte| *byte != 0)
+                            .then_some((stripe, bitmap))
+                    })
+                    .map(|(stripe, bitmap)| (a.root, stripe, bitmap))
             })
             .collect();
         requests.sort_unstable_by_key(|(root, _, _)| *root);
@@ -5078,15 +5671,21 @@ impl SessionHost for NodeCore {
             .map(|offset| requests[(request_start + offset) % requests.len()].clone())
             .collect();
         if let Some((last, _, _)) = selected_requests.last() {
-            if self.blob_req_cursor.contains_key(peer) || self.blob_req_cursor.len() < MAX_BLOB_SERVE_PEERS {
+            if self.blob_req_cursor.contains_key(peer)
+                || self.blob_req_cursor.len() < MAX_BLOB_SERVE_PEERS
+            {
                 self.blob_req_cursor.insert(*peer, *last);
             }
         }
-        out.extend(selected_requests.into_iter().map(|(root, block, bitmap)| Frame::BlobReq {
-            root,
-            block,
-            bitmap,
-        }));
+        out.extend(
+            selected_requests
+                .into_iter()
+                .map(|(root, block, bitmap)| Frame::BlobReq {
+                    root,
+                    block,
+                    bitmap,
+                }),
+        );
         out
     }
 }

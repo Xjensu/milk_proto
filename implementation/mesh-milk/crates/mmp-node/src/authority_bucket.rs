@@ -63,10 +63,11 @@ impl AuthorityBuckets {
             return false;
         }
         let capacity = u64::from(budget_per_h) * 1000;
-        let bucket = self
-            .map
-            .entry(*subject)
-            .or_insert(Bucket { level_milli: capacity, last_refill: now_ms, rate_per_h: budget_per_h });
+        let bucket = self.map.entry(*subject).or_insert(Bucket {
+            level_milli: capacity,
+            last_refill: now_ms,
+            rate_per_h: budget_per_h,
+        });
         if bucket.rate_per_h != budget_per_h {
             bucket.rate_per_h = budget_per_h;
             bucket.level_milli = bucket.level_milli.min(capacity);
@@ -74,9 +75,7 @@ impl AuthorityBuckets {
         // Refill: rate/h (admissions) → milli-admissions per ms, same formula
         // as OriginBuckets' bytes/h → milli-bytes (mmp-router/src/quota.rs).
         let elapsed = now_ms.saturating_sub(bucket.last_refill);
-        let refill = elapsed
-            .saturating_mul(u64::from(bucket.rate_per_h))
-            / 3600;
+        let refill = elapsed.saturating_mul(u64::from(bucket.rate_per_h)) / 3600;
         bucket.level_milli = bucket.level_milli.saturating_add(refill).min(capacity);
         bucket.last_refill = now_ms;
         if bucket.level_milli >= 1000 {
@@ -89,7 +88,8 @@ impl AuthorityBuckets {
 
     /// Drop idle buckets (bounded state — same discipline as `OriginBuckets`).
     pub fn compact(&mut self, now_ms: u64, idle_ms: u64) {
-        self.map.retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
+        self.map
+            .retain(|_, b| now_ms.saturating_sub(b.last_refill) < idle_ms);
     }
 
     /// Number of subjects with a live (not yet compacted) bucket.
@@ -113,8 +113,14 @@ mod tests {
         let subject = Key32([1; 32]);
         assert!(b.admit(&subject, 2, 0));
         assert!(b.admit(&subject, 2, 0));
-        assert!(!b.admit(&subject, 2, 0), "third admission within the same instant must be refused");
-        assert!(b.admit(&subject, 2, 3_600_000), "an hour later, refilled to budget");
+        assert!(
+            !b.admit(&subject, 2, 0),
+            "third admission within the same instant must be refused"
+        );
+        assert!(
+            b.admit(&subject, 2, 3_600_000),
+            "an hour later, refilled to budget"
+        );
     }
 
     #[test]
@@ -124,7 +130,10 @@ mod tests {
         let s2 = Key32([2; 32]);
         assert!(b.admit(&s1, 1, 0));
         assert!(!b.admit(&s1, 1, 0));
-        assert!(b.admit(&s2, 1, 0), "s2's bucket is unaffected by s1 exhausting theirs");
+        assert!(
+            b.admit(&s2, 1, 0),
+            "s2's bucket is unaffected by s1 exhausting theirs"
+        );
     }
 
     #[test]

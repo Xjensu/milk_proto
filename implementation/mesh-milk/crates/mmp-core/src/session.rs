@@ -55,12 +55,20 @@ fn frame_wire_widths_valid(frame: &Frame) -> bool {
                 && summary.claim_digest.len() <= u8::MAX as usize
                 && summary.group_hints.len() <= u8::MAX as usize
                 && summary.want_heads.len() <= u8::MAX as usize
-                && summary.receipt_buckets.iter().all(|bucket| bucket.bloom.len() <= u16::MAX as usize)
-                && summary.want_heads.iter().all(|heads| heads.heads.len() <= u8::MAX as usize)
+                && summary
+                    .receipt_buckets
+                    .iter()
+                    .all(|bucket| bucket.bloom.len() <= u16::MAX as usize)
+                && summary
+                    .want_heads
+                    .iter()
+                    .all(|heads| heads.heads.len() <= u8::MAX as usize)
         }
         Frame::ReconRange { ranges, .. } => ranges.len() <= u8::MAX as usize,
         Frame::ReconIds { ids, .. } | Frame::Want(ids) => ids.len() <= u16::MAX as usize,
-        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => bitmap.len() <= u16::MAX as usize,
+        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => {
+            bitmap.len() <= u16::MAX as usize
+        }
         Frame::Error { detail, .. } => detail.len() <= 256,
         _ => true,
     };
@@ -112,7 +120,9 @@ fn frame_payload_len(frame: &Frame) -> Option<usize> {
         Frame::ReconIds { ids, .. } => add(1 + 16 + 16 + 2, mul(ids.len(), 16)?),
         Frame::Want(ids) => add(2, mul(ids.len(), 16)?),
         Frame::Budget { .. } => Some(16 + 1),
-        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => add(16 + 2 + 2, bitmap.len()),
+        Frame::BlobReq { bitmap, .. } | Frame::BlobHave { bitmap, .. } => {
+            add(16 + 2 + 2, bitmap.len())
+        }
         Frame::Error { detail, .. } => add(1 + 2, detail.len()),
         Frame::Close => Some(0),
     }
@@ -553,7 +563,10 @@ impl SessionEngine {
             // Both sides send ID_PROOF immediately (doc 08 §3.2).
             let chan = self.chan.as_ref().expect("just set");
             let sig = chan.make_id_proof(identity);
-            self.send_frame(&Frame::IdProof { identity: identity.public(), sig });
+            self.send_frame(&Frame::IdProof {
+                identity: identity.public(),
+                sig,
+            });
             self.sent_proof = true;
         }
     }
@@ -586,7 +599,13 @@ impl SessionEngine {
         }
 
         match (self.phase, frame) {
-            (Phase::Binding, Frame::IdProof { identity: claimed, sig }) => {
+            (
+                Phase::Binding,
+                Frame::IdProof {
+                    identity: claimed,
+                    sig,
+                },
+            ) => {
                 let chan = self.chan.as_ref().expect("binding implies channel");
                 // The claimed identity must be the one carried in the handshake
                 // payload, and the proof must verify against it.
@@ -604,7 +623,10 @@ impl SessionEngine {
                 }
                 self.peer_node = Some(peer_node);
                 self.phase = Phase::Established;
-                self.events.push_back(SessionEvent::Established { peer: peer_node, identity: claimed });
+                self.events.push_back(SessionEvent::Established {
+                    peer: peer_node,
+                    identity: claimed,
+                });
                 // Phase 2: SUMMARY first — maximizes value of short contacts
                 // (doc 03 §5.2).
                 let summary = host.summary(&peer_node);
@@ -643,13 +665,22 @@ impl SessionEngine {
                 self.flush_pending_frames();
                 self.flush_pending_handoffs(host);
             }
-            Frame::ReconInit { domain, range, .. } if self.accepts_recon_init(domain) && valid_range(&range) => {
+            Frame::ReconInit { domain, range, .. }
+                if self.accepts_recon_init(domain) && valid_range(&range) =>
+            {
                 let domain = domain & !DOMAIN_REPLY_FLAG;
-                if self.recon.as_ref().is_none_or(|recon| recon.domain != domain) {
+                if self
+                    .recon
+                    .as_ref()
+                    .is_none_or(|recon| recon.domain != domain)
+                {
                     self.recon = Some(Reconciler::new(domain));
                 }
                 let (replies, exhausted) = {
-                    let recon = self.recon.as_mut().expect("accepted init creates reconciler");
+                    let recon = self
+                        .recon
+                        .as_mut()
+                        .expect("accepted init creates reconciler");
                     let replies = recon.on_range(&range, false, host.ids(&peer));
                     (replies, recon.resource_exhausted())
                 };
@@ -660,7 +691,9 @@ impl SessionEngine {
                 self.send_frames(replies);
             }
             Frame::ReconRange { domain, ranges }
-                if self.active_recon_matches(domain) && !ranges.is_empty() && ranges.iter().all(valid_range) =>
+                if self.active_recon_matches(domain)
+                    && !ranges.is_empty()
+                    && ranges.iter().all(valid_range) =>
             {
                 let is_reply = domain & DOMAIN_REPLY_FLAG != 0;
                 let mut replies = Vec::new();
@@ -679,11 +712,15 @@ impl SessionEngine {
                 self.drain_wants();
                 self.maybe_advance_domain(host);
             }
-            Frame::ReconIds { domain, lo, hi, ids }
-                if self.active_recon_matches(domain)
-                    && domain & DOMAIN_REPLY_FLAG == 0
-                    && lo <= hi
-                    && ids.iter().all(|id| *id >= lo && *id <= hi) =>
+            Frame::ReconIds {
+                domain,
+                lo,
+                hi,
+                ids,
+            } if self.active_recon_matches(domain)
+                && domain & DOMAIN_REPLY_FLAG == 0
+                && lo <= hi
+                && ids.iter().all(|id| *id >= lo && *id <= hi) =>
             {
                 let (replies, exhausted) = {
                     let recon = self.recon.as_mut().expect("active domain guard");
@@ -709,7 +746,9 @@ impl SessionEngine {
             }
             Frame::Bundle(bytes) => {
                 self.pending_budget = true;
-                self.pending_bundle_id = Bundle::decode_canonical(&bytes).ok().map(|bundle| bundle.id());
+                self.pending_bundle_id = Bundle::decode_canonical(&bytes)
+                    .ok()
+                    .map(|bundle| bundle.id());
                 host.on_bundle(&peer, &bytes);
                 self.pending_bundle_admitted = self
                     .pending_bundle_id
@@ -732,13 +771,21 @@ impl SessionEngine {
                     host.on_budget(&peer, &id, granted.min(L_MAX));
                 }
             }
-            Frame::BlobReq { root, block, bitmap } => {
+            Frame::BlobReq {
+                root,
+                block,
+                bitmap,
+            } => {
                 let mut ids = host.on_blob_req(&peer, &root, block, &bitmap);
                 host.order_handoffs(&peer, &mut ids);
                 self.queue_handoffs(ids);
                 self.flush_pending_handoffs(host);
             }
-            Frame::BlobHave { root, block, bitmap } => {
+            Frame::BlobHave {
+                root,
+                block,
+                bitmap,
+            } => {
                 let mut ids = host.on_blob_have(&peer, &root, block, &bitmap);
                 host.order_handoffs(&peer, &mut ids);
                 self.queue_handoffs(ids);
@@ -767,7 +814,10 @@ impl SessionEngine {
         if current.domain == domain {
             return !current.is_done();
         }
-        let Some(current_index) = DOMAINS.iter().position(|candidate| *candidate == current.domain) else {
+        let Some(current_index) = DOMAINS
+            .iter()
+            .position(|candidate| *candidate == current.domain)
+        else {
             return false;
         };
         DOMAINS.get(current_index + 1).copied() == Some(domain) && current.is_done()
@@ -820,7 +870,9 @@ impl SessionEngine {
 
     /// Move accumulated RBSR `missing` IDs into WANT frames.
     fn drain_wants(&mut self) {
-        let Some(recon) = self.recon.as_mut() else { return };
+        let Some(recon) = self.recon.as_mut() else {
+            return;
+        };
         if recon.missing.is_empty() {
             return;
         }
@@ -853,7 +905,9 @@ impl SessionEngine {
     fn flush_pending_handoffs<H: SessionHost>(&mut self, host: &mut H) {
         let Some(peer) = self.peer_node else { return };
         while self.phase != Phase::Closed && self.tx_credits >= 2 {
-            let Some(id) = self.pending_handoffs.pop_front() else { break };
+            let Some(id) = self.pending_handoffs.pop_front() else {
+                break;
+            };
             if let Some((bytes, granted)) = host.load_for_handoff(&peer, &id) {
                 self.send_frame(&Frame::Bundle(bytes));
                 // BUDGET immediately follows its BUNDLE (doc 10 §2.5).
@@ -895,7 +949,14 @@ impl SessionEngine {
             self.protocol_error(errcode::PROTOCOL);
             return;
         }
-        let control = matches!(f, Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close);
+        let control = matches!(
+            f,
+            Frame::Hs(_)
+                | Frame::IdProof { .. }
+                | Frame::Credit(_)
+                | Frame::Error { .. }
+                | Frame::Close
+        );
         if self.out.len() >= MAX_OUT_FRAMES {
             self.output_overflow();
             return;
@@ -972,10 +1033,16 @@ impl SessionEngine {
 
     fn flush_pending_frames(&mut self) {
         while self.phase != Phase::Closed && self.tx_credits > 0 {
-            let Some(frame) = self.pending_out.pop_front() else { break };
+            let Some(frame) = self.pending_out.pop_front() else {
+                break;
+            };
             let control = matches!(
                 &frame,
-                Frame::Hs(_) | Frame::IdProof { .. } | Frame::Credit(_) | Frame::Error { .. } | Frame::Close
+                Frame::Hs(_)
+                    | Frame::IdProof { .. }
+                    | Frame::Credit(_)
+                    | Frame::Error { .. }
+                    | Frame::Close
             );
             self.emit_frame(&frame, control);
         }
@@ -1012,7 +1079,10 @@ impl SessionEngine {
     }
 
     fn protocol_error(&mut self, code: u8) {
-        self.send_frame(&Frame::Error { code, detail: Vec::new() });
+        self.send_frame(&Frame::Error {
+            code,
+            detail: Vec::new(),
+        });
         self.send_frame(&Frame::Close);
         self.finish_closed();
     }
@@ -1037,11 +1107,13 @@ impl SessionEngine {
 #[cfg(test)]
 mod wire_budget_tests {
     use super::{
-        envelope_payload_within_cap, frame_payload_within_cap, frame_wire_widths_valid, valid_recon_domain, Phase,
-        SessionEngine, SessionEvent,
+        envelope_payload_within_cap, frame_payload_within_cap, frame_wire_widths_valid,
+        valid_recon_domain, Phase, SessionEngine, SessionEvent,
     };
     use mmp_types::consts::MAX_FRAME_PAYLOAD;
-    use mmp_types::frame::{read_envelope, Frame, Hello, Range, MAX_ENVELOPE_PAYLOAD, FT_BUNDLE, FT_FRIEND_OFFER};
+    use mmp_types::frame::{
+        read_envelope, Frame, Hello, Range, FT_BUNDLE, FT_FRIEND_OFFER, MAX_ENVELOPE_PAYLOAD,
+    };
     use mmp_types::ids::Id16;
     use mmp_types::WireError;
 
@@ -1070,14 +1142,25 @@ mod wire_budget_tests {
     #[test]
     fn receive_caps_reject_aggregate_plaintext_before_frame_decode() {
         let payload = vec![0u8; MAX_FRAME_PAYLOAD + 1];
-        assert_eq!(Frame::decode_payload(FT_FRIEND_OFFER, &payload), Err(WireError::Oversize));
+        assert_eq!(
+            Frame::decode_payload(FT_FRIEND_OFFER, &payload),
+            Err(WireError::Oversize)
+        );
     }
 
     #[test]
     fn outbound_encoder_width_guard_rejects_truncating_lengths() {
         let ranges = Frame::ReconRange {
             domain: 0,
-            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 256],
+            ranges: vec![
+                Range {
+                    lo: Id16::MIN,
+                    hi: Id16::MAX,
+                    count: 0,
+                    fp: 0
+                };
+                256
+            ],
         };
         assert!(!frame_wire_widths_valid(&ranges));
 
@@ -1094,7 +1177,10 @@ mod wire_budget_tests {
             block: 0,
             bitmap: vec![0u8; u16::MAX as usize + 1],
         }));
-        assert!(!frame_wire_widths_valid(&Frame::Error { code: 1, detail: vec![0u8; 257] }));
+        assert!(!frame_wire_widths_valid(&Frame::Error {
+            code: 1,
+            detail: vec![0u8; 257]
+        }));
     }
 
     #[test]
@@ -1111,20 +1197,43 @@ mod wire_budget_tests {
         }));
         assert!(!frame_wire_widths_valid(&Frame::ReconRange {
             domain: 0,
-            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 95],
+            ranges: vec![
+                Range {
+                    lo: Id16::MIN,
+                    hi: Id16::MAX,
+                    count: 0,
+                    fp: 0
+                };
+                95
+            ],
         }));
     }
 
     #[test]
     fn outbound_encoder_width_guard_closes_before_queueing_truncated_frame() {
         let local = mmp_crypto::Identity::from_seed(&[7u8; 32]);
-        let hello = Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 };
+        let hello = Hello {
+            ver: 1,
+            suites: vec![0x01],
+            tier: 2,
+            flags: 0,
+            credits: 8,
+            psm: 0,
+        };
         let mut session = SessionEngine::responder(&local, &hello, 0).unwrap();
         session.phase = Phase::Established;
         session.tx_credits = 0;
         session.send_frame(&Frame::ReconRange {
             domain: 0,
-            ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }; 256],
+            ranges: vec![
+                Range {
+                    lo: Id16::MIN,
+                    hi: Id16::MAX,
+                    count: 0,
+                    fp: 0
+                };
+                256
+            ],
         });
 
         assert_eq!(session.phase, Phase::Closed);
@@ -1138,7 +1247,10 @@ mod wire_budget_tests {
         for domain in 0..4 {
             assert!(valid_recon_domain(domain, false));
             assert!(valid_recon_domain(domain | super::DOMAIN_REPLY_FLAG, true));
-            assert!(!valid_recon_domain(domain | super::DOMAIN_REPLY_FLAG, false));
+            assert!(!valid_recon_domain(
+                domain | super::DOMAIN_REPLY_FLAG,
+                false
+            ));
         }
         assert!(!valid_recon_domain(4, false));
         assert!(!valid_recon_domain(4 | super::DOMAIN_REPLY_FLAG, true));
@@ -1160,7 +1272,11 @@ mod rx_bound_tests {
 
     impl IdSource for EmptyIds {
         fn ids_in(&mut self, _domain: u8, _lo: &Id16, _hi: &Id16) -> Vec<Id16> {
-            self.ids.iter().filter(|id| **id >= *_lo && **id <= *_hi).copied().collect()
+            self.ids
+                .iter()
+                .filter(|id| **id >= *_lo && **id <= *_hi)
+                .copied()
+                .collect()
         }
 
         fn has(&mut self, id: &Id16) -> bool {
@@ -1225,7 +1341,14 @@ mod rx_bound_tests {
     }
 
     fn hello() -> Hello {
-        Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
+        Hello {
+            ver: 1,
+            suites: vec![0x01],
+            tier: 2,
+            flags: 0,
+            credits: 8,
+            psm: 0,
+        }
     }
 
     fn identity(seed: u8) -> Identity {
@@ -1266,13 +1389,22 @@ mod rx_bound_tests {
         let a = SessionEngine::initiator(&initiator, &hello, 1000).unwrap();
         let mut b = SessionEngine::responder(&responder, &hello, 1000).unwrap();
 
-        assert!(!a.accepts_recon_init(0), "only the negotiated initiator may open a domain");
+        assert!(
+            !a.accepts_recon_init(0),
+            "only the negotiated initiator may open a domain"
+        );
         assert!(b.accepts_recon_init(0));
         b.recon = Some(Reconciler::new(0));
         b.recon.as_mut().expect("reconciler installed").open = 1;
-        assert!(!b.accepts_recon_init(1), "a later domain cannot replace an unresolved domain");
+        assert!(
+            !b.accepts_recon_init(1),
+            "a later domain cannot replace an unresolved domain"
+        );
         b.recon.as_mut().expect("reconciler installed").open = 0;
-        assert!(b.accepts_recon_init(1), "the next domain is accepted after completion");
+        assert!(
+            b.accepts_recon_init(1),
+            "the next domain is accepted after completion"
+        );
     }
 
     #[test]
@@ -1295,7 +1427,12 @@ mod rx_bound_tests {
             Frame::ReconInit {
                 domain: DOMAINS[3],
                 window: 4,
-                range: Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 },
+                range: Range {
+                    lo: Id16::MIN,
+                    hi: Id16::MAX,
+                    count: 0,
+                    fp: 0,
+                },
             },
             &mut host,
         );
@@ -1316,31 +1453,57 @@ mod rx_bound_tests {
         session.peer_node = Some(peer.node_id());
 
         let mut recon = Reconciler::new(DOMAINS[0]);
-        let Frame::ReconInit { range: full, .. } = recon.init_frame(host.ids(&peer.node_id())) else {
+        let Frame::ReconInit { range: full, .. } = recon.init_frame(host.ids(&peer.node_id()))
+        else {
             panic!("the initial frame must be a range");
         };
         session.recon = Some(recon);
 
-        let partial = Range { lo: local_id, hi: local_id, count: 0, fp: crate::fingerprint(&[]) };
+        let partial = Range {
+            lo: local_id,
+            hi: local_id,
+            count: 0,
+            fp: crate::fingerprint(&[]),
+        };
         session.on_established(
-            Frame::ReconRange { domain: DOMAINS[0], ranges: vec![partial] },
+            Frame::ReconRange {
+                domain: DOMAINS[0],
+                ranges: vec![partial],
+            },
             &mut host,
         );
-        assert_eq!(session.domain_cursor, 0, "a partial child must not advance the domain");
+        assert_eq!(
+            session.domain_cursor, 0,
+            "a partial child must not advance the domain"
+        );
         assert_eq!(session.recon.as_ref().expect("reconciler").open, 2);
 
         session.on_established(
-            Frame::ReconIds { domain: DOMAINS[0], lo: local_id, hi: local_id, ids: Vec::new() },
+            Frame::ReconIds {
+                domain: DOMAINS[0],
+                lo: local_id,
+                hi: local_id,
+                ids: Vec::new(),
+            },
             &mut host,
         );
-        assert_eq!(session.domain_cursor, 0, "the parent remains incomplete after one terminal child");
+        assert_eq!(
+            session.domain_cursor, 0,
+            "the parent remains incomplete after one terminal child"
+        );
         assert_eq!(session.recon.as_ref().expect("reconciler").open, 1);
 
         session.on_established(
-            Frame::ReconRange { domain: DOMAINS[0] | DOMAIN_REPLY_FLAG, ranges: vec![full] },
+            Frame::ReconRange {
+                domain: DOMAINS[0] | DOMAIN_REPLY_FLAG,
+                ranges: vec![full],
+            },
             &mut host,
         );
-        assert_eq!(session.domain_cursor, 1, "the next domain starts only after the child and parent resolve");
+        assert_eq!(
+            session.domain_cursor, 1,
+            "the next domain starts only after the child and parent resolve"
+        );
     }
 
     #[test]
@@ -1375,7 +1538,11 @@ mod rx_bound_tests {
 
         assert_eq!(a.phase, Phase::Established);
         assert_eq!(b.phase, Phase::Established);
-        assert_eq!(a.domain_cursor, DOMAINS.len() - 1, "all domains should be reached");
+        assert_eq!(
+            a.domain_cursor,
+            DOMAINS.len() - 1,
+            "all domains should be reached"
+        );
         assert!(a.final_wants_sent);
     }
 
@@ -1383,11 +1550,13 @@ mod rx_bound_tests {
     fn rbsr_resource_exhaustion_closes_the_session() {
         let local = identity(11);
         let peer = identity(12);
-        let ids: Vec<Id16> = (0..25).map(|value| {
-            let mut bytes = [0x80; 16];
-            bytes[14..].copy_from_slice(&(value as u16).to_be_bytes());
-            Id16(bytes)
-        }).collect();
+        let ids: Vec<Id16> = (0..25)
+            .map(|value| {
+                let mut bytes = [0x80; 16];
+                bytes[14..].copy_from_slice(&(value as u16).to_be_bytes());
+                Id16(bytes)
+            })
+            .collect();
 
         // Valid-size descriptors with unique bounds force repeated child
         // splits. The reconciler must reject the bounded-resource violation
@@ -1397,7 +1566,12 @@ mod rx_bound_tests {
         for value in 0..2_000u16 {
             let mut hi = [0xff; 16];
             hi[14..].copy_from_slice(&value.to_be_bytes());
-            let range = Range { lo: Id16::MIN, hi: Id16(hi), count: 0, fp: 0 };
+            let range = Range {
+                lo: Id16::MIN,
+                hi: Id16(hi),
+                count: 0,
+                fp: 0,
+            };
             reconciler.on_range(&range, false, &mut source.ids);
             if reconciler.resource_exhausted() {
                 break;
@@ -1413,7 +1587,12 @@ mod rx_bound_tests {
         session.on_established(
             Frame::ReconRange {
                 domain: DOMAINS[0],
-                ranges: vec![Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 }],
+                ranges: vec![Range {
+                    lo: Id16::MIN,
+                    hi: Id16::MAX,
+                    count: 0,
+                    fp: 0,
+                }],
             },
             &mut host,
         );
@@ -1479,12 +1658,23 @@ mod rx_bound_tests {
 
         // A plaintext ID_PROOF envelope is not a valid post-handshake record;
         // the receiver must attempt Noise AEAD first and close on failure.
-        let sig = a.chan.as_ref().expect("Noise channel exists").make_id_proof(&ia);
-        let plaintext = Frame::IdProof { identity: ia.public(), sig }.encode();
+        let sig = a
+            .chan
+            .as_ref()
+            .expect("Noise channel exists")
+            .make_id_proof(&ia);
+        let plaintext = Frame::IdProof {
+            identity: ia.public(),
+            sig,
+        }
+        .encode();
         assert_eq!(plaintext.get(2), Some(&FT_ID_PROOF));
         b.on_wire(&plaintext, 1000, &ib, &mut hb);
         assert_eq!(b.phase, Phase::Closed);
-        assert!(!b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+        assert!(!b
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Established { .. })));
 
         // The actual queued proof is encrypted by the Noise transport and is
         // accepted on a fresh Binding pair.
@@ -1493,11 +1683,16 @@ mod rx_bound_tests {
         let mut ha = host();
         let mut hb = host();
         drive_to_binding(&mut a, &mut b, &ia, &ib, &mut ha, &mut hb);
-        let proof_a = a.poll_out().expect("initiator must queue encrypted ID_PROOF");
+        let proof_a = a
+            .poll_out()
+            .expect("initiator must queue encrypted ID_PROOF");
         assert_eq!(proof_a.get(2), Some(&FT_ID_PROOF));
         b.on_wire(&proof_a, 1000, &ib, &mut hb);
         assert_eq!(b.phase, Phase::Established);
-        assert!(b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+        assert!(b
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Established { .. })));
     }
 
     #[test]
@@ -1519,7 +1714,10 @@ mod rx_bound_tests {
         b.on_wire(&summary, 1000, &ib, &mut hb);
 
         assert_eq!(b.phase, Phase::Closed);
-        assert!(!b.events.iter().any(|event| matches!(event, SessionEvent::Established { .. })));
+        assert!(!b
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Established { .. })));
     }
 
     #[test]
@@ -1551,12 +1749,18 @@ mod rx_bound_tests {
 
         a.tx_credits = FRAME_CREDIT_WINDOW;
         b.rx_credits = FRAME_CREDIT_WINDOW;
-        a.send_frame(&Frame::Budget { id: Id16([0x77; 16]), granted: 1 });
+        a.send_frame(&Frame::Budget {
+            id: Id16([0x77; 16]),
+            granted: 1,
+        });
         let orphan = a.poll_out().expect("orphan BUDGET");
         b.on_wire(&orphan, 2000, &ib, &mut hb);
 
         assert_eq!(b.phase, Phase::Closed);
-        assert!(b.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+        assert!(b
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Closed)));
     }
 
     fn admitted_bundle_fixture() -> (Vec<u8>, Id16) {
@@ -1613,7 +1817,10 @@ mod rx_bound_tests {
         b.on_wire(&budget_wire, 2000, &ib, &mut hb);
 
         assert_eq!(b.phase, Phase::Established);
-        assert_eq!(hb.budget_calls, 0, "a dropped bundle cannot receive a budget grant");
+        assert_eq!(
+            hb.budget_calls, 0,
+            "a dropped bundle cannot receive a budget grant"
+        );
     }
 
     #[test]
@@ -1653,7 +1860,11 @@ mod rx_bound_tests {
         b.on_wire(&bundle_wire, 2000, &ib, &mut hb);
         b.on_wire(&budget_wire, 2000, &ib, &mut hb);
 
-        assert_eq!(b.phase, Phase::Established, "invalid zero grant is not a session error");
+        assert_eq!(
+            b.phase,
+            Phase::Established,
+            "invalid zero grant is not a session error"
+        );
         assert_eq!(hb.budget_calls, 0, "a zero grant must not be adopted");
     }
 
@@ -1719,7 +1930,10 @@ mod rx_bound_tests {
 
         assert_eq!(a.phase, Phase::Closed, "output saturation must fail closed");
         assert!(a.out.len() <= MAX_OUT_FRAMES);
-        assert!(a.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+        assert!(a
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Closed)));
     }
 
     #[test]
@@ -1926,7 +2140,10 @@ mod rx_bound_tests {
         while let Some(bytes) = b.poll_out() {
             a.on_wire(&bytes, 2000, &ia, &mut ha);
         }
-        assert!(a.tx_credits >= 6, "reserve replenishment must arrive before zero");
+        assert!(
+            a.tx_credits >= 6,
+            "reserve replenishment must arrive before zero"
+        );
     }
 
     #[test]
@@ -1963,7 +2180,10 @@ mod rx_bound_tests {
         a.tx_credits = 1;
         a.send_frame(&Frame::FriendOffer(vec![0xa5; MAX_FRAME_PAYLOAD - 16]));
         let at_cap = a.poll_out().expect("4080-byte plaintext fits one envelope");
-        assert_eq!(u16::from_le_bytes([at_cap[0], at_cap[1]]) as usize, MAX_ENVELOPE_PAYLOAD);
+        assert_eq!(
+            u16::from_le_bytes([at_cap[0], at_cap[1]]) as usize,
+            MAX_ENVELOPE_PAYLOAD
+        );
         b.on_wire(&at_cap, 2000, &ib, &mut hb);
         assert_eq!(b.phase, Phase::Established);
 
@@ -1973,7 +2193,10 @@ mod rx_bound_tests {
         a.tx_credits = 1;
         a.send_frame(&Frame::FriendOffer(vec![0xa5; MAX_FRAME_PAYLOAD - 15]));
         assert_eq!(a.phase, Phase::Closed);
-        assert!(a.events.iter().any(|event| matches!(event, SessionEvent::Closed)));
+        assert!(a
+            .events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::Closed)));
     }
 
     #[test]

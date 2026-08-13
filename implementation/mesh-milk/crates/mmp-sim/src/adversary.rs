@@ -40,7 +40,14 @@ impl Adversary {
             // Mirrors `mmp_node::Node::new`'s HELLO shape (doc 10 §2.1) —
             // nothing about the attacks below depends on it being anything
             // other than a well-formed HELLO.
-            hello: Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 },
+            hello: Hello {
+                ver: 1,
+                suites: vec![0x01],
+                tier: 2,
+                flags: 0,
+                credits: 8,
+                psm: 0,
+            },
         }
     }
 
@@ -74,7 +81,15 @@ impl Adversary {
         flags: u8,
         payload: Vec<u8>,
     ) -> Bundle {
-        signed_bundle(&self.identity, class, dest, priority, lifetime_ms, flags, payload)
+        signed_bundle(
+            &self.identity,
+            class,
+            dest,
+            priority,
+            lifetime_ms,
+            flags,
+            payload,
+        )
     }
 
     /// Open a fresh session as the dialing party (initiator). Every scenario
@@ -104,7 +119,13 @@ impl Adversary {
 }
 
 fn signed_claim(identity: &Identity, field: u8, seq: u32, body: Vec<u8>) -> Claim {
-    let mut c = Claim { owner: identity.public(), field, seq, body, sig: Sig64::ZERO };
+    let mut c = Claim {
+        owner: identity.public(),
+        field,
+        seq,
+        body,
+        sig: Sig64::ZERO,
+    };
     c.sig = identity.sign(SigDomain::Claim, &c.signed_object());
     c
 }
@@ -198,15 +219,23 @@ impl AdversarySession {
             self.on_hs(payload);
             return;
         }
-        let Some(chan) = self.chan.as_mut() else { return };
-        let Ok(plain) = chan.decrypt(payload) else { return };
-        let Ok(frame) = Frame::decode_payload(typ, &plain) else { return };
+        let Some(chan) = self.chan.as_mut() else {
+            return;
+        };
+        let Ok(plain) = chan.decrypt(payload) else {
+            return;
+        };
+        let Ok(frame) = Frame::decode_payload(typ, &plain) else {
+            return;
+        };
         self.on_frame(frame);
     }
 
     fn on_hs(&mut self, payload: &[u8]) {
         let Some(hs) = self.hs.as_mut() else { return };
-        let Ok(outcome) = hs.advance(payload) else { return };
+        let Ok(outcome) = hs.advance(payload) else {
+            return;
+        };
         if let Some(reply) = outcome.reply {
             if let Ok(envelope) = try_write_envelope(FT_HS, &reply) {
                 self.out.push_back(envelope);
@@ -216,8 +245,15 @@ impl AdversarySession {
             self.hs = None;
             self.chan = Some(chan);
             if !self.sent_id_proof {
-                let sig = self.chan.as_ref().expect("just set").make_id_proof(&self.identity);
-                self.send(Frame::IdProof { identity: self.identity.public(), sig });
+                let sig = self
+                    .chan
+                    .as_ref()
+                    .expect("just set")
+                    .make_id_proof(&self.identity);
+                self.send(Frame::IdProof {
+                    identity: self.identity.public(),
+                    sig,
+                });
                 self.sent_id_proof = true;
             }
         }
@@ -242,8 +278,12 @@ impl AdversarySession {
     /// before the channel exists — a scripting error in a test, not a
     /// protocol case worth modeling.
     pub fn send(&mut self, frame: Frame) {
-        let Ok(payload) = frame.try_encode_payload() else { return };
-        let Some(chan) = self.chan.as_mut() else { return };
+        let Ok(payload) = frame.try_encode_payload() else {
+            return;
+        };
+        let Some(chan) = self.chan.as_mut() else {
+            return;
+        };
         if let Ok(ct) = chan.encrypt(&payload) {
             if let Ok(envelope) = try_write_envelope(frame.typ(), &ct) {
                 self.out.push_back(envelope);
@@ -273,7 +313,11 @@ pub fn adversary_contact(
     mut on_established: impl FnMut(&mut AdversarySession),
 ) {
     victim.tick(now_ms);
-    victim.on_tal_event(TalEvent::LinkUp { link, initiator: false, quality: LinkQuality::default() });
+    victim.on_tal_event(TalEvent::LinkUp {
+        link,
+        initiator: false,
+        quality: LinkQuality::default(),
+    });
     let mut fired = false;
     for _ in 0..300 {
         let mut quiet = true;

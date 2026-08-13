@@ -73,7 +73,12 @@ impl DiagLog {
     /// A fresh, empty log; `enabled` gates whether `log` actually records
     /// anything (the `clamps`/`drops` counters always accrue either way).
     pub fn new(enabled: bool) -> DiagLog {
-        DiagLog { enabled, records: Vec::new(), clamps: 0, drops: 0 }
+        DiagLog {
+            enabled,
+            records: Vec::new(),
+            clamps: 0,
+            drops: 0,
+        }
     }
 
     /// Stop recording new journey events while retaining records already
@@ -135,6 +140,9 @@ mod tests {
 
         assert_eq!(log.records().len(), MAX_RECORDS);
         assert_eq!(log.records().first().map(|record| record.ts), Some(0));
-        assert_eq!(log.records().last().map(|record| record.ts), Some((MAX_RECORDS - 1) as u64));
+        assert_eq!(
+            log.records().last().map(|record| record.ts),
+            Some((MAX_RECORDS - 1) as u64)
+        );
     }
 }

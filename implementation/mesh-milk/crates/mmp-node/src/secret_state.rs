@@ -7,11 +7,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use mmp_core::ConversationDag;
 use mmp_crypto::prekey::PrekeyStore;
 use mmp_crypto::prekey::PREKEY_NONE;
-use mmp_crypto::snapshot::MAX_PLAINTEXT_BYTES;
 use mmp_crypto::ratchet::{RecvChain, SendChain};
-use mmp_core::ConversationDag;
+use mmp_crypto::snapshot::MAX_PLAINTEXT_BYTES;
 use mmp_types::ids::{Id16, Key32};
 use zeroize::Zeroizing;
 
@@ -54,7 +54,10 @@ pub(crate) fn encode(core: &NodeCore) -> Result<Zeroizing<Vec<u8>>, SecretStateE
     {
         return Err(SecretStateError::Invalid);
     }
-    let prekeys = core.prekeys.snapshot_state().map_err(|_| SecretStateError::Invalid)?;
+    let prekeys = core
+        .prekeys
+        .snapshot_state()
+        .map_err(|_| SecretStateError::Invalid)?;
     let mut out = Vec::with_capacity(HEADER_LEN);
     out.extend_from_slice(&MAGIC);
     out.push(VERSION);
@@ -69,8 +72,14 @@ pub(crate) fn encode(core: &NodeCore) -> Result<Zeroizing<Vec<u8>>, SecretStateE
     conv_ids.sort_unstable();
     for id in conv_ids {
         let conv = core.convs.get(&id).ok_or(SecretStateError::Invalid)?;
-        let send = conv.send.snapshot().map_err(|_| SecretStateError::Invalid)?;
-        let recv = conv.recv.snapshot().map_err(|_| SecretStateError::Invalid)?;
+        let send = conv
+            .send
+            .snapshot()
+            .map_err(|_| SecretStateError::Invalid)?;
+        let recv = conv
+            .recv
+            .snapshot()
+            .map_err(|_| SecretStateError::Invalid)?;
         let dag = conv.dag.snapshot().map_err(|_| SecretStateError::Invalid)?;
         put_id(&mut out, &id);
         out.extend_from_slice(&conv.peer.0);
@@ -186,7 +195,13 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         let send = SendChain::restore(send_bytes).map_err(|_| SecretStateError::Invalid)?;
         let recv = RecvChain::restore(recv_bytes).map_err(|_| SecretStateError::Invalid)?;
         let dag = ConversationDag::restore(dag_bytes).map_err(|_| SecretStateError::Invalid)?;
-        if convs.insert(id, Conv::from_parts(id, peer, *receipt_key, send, recv, dag)).is_some() {
+        if convs
+            .insert(
+                id,
+                Conv::from_parts(id, peer, *receipt_key, send, recv, dag),
+            )
+            .is_some()
+        {
             return Err(SecretStateError::Invalid);
         }
         previous_conv = Some(id);
@@ -214,7 +229,11 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         }
         let eph = Key32(read_array(bytes, &mut pos)?);
         let prekey = read_u16(bytes, &mut pos)?;
-        if prekey == PREKEY_NONE || eph.0 == [0; 32] || !convs.contains_key(&id) || pending_async.insert(id, (eph, prekey)).is_some() {
+        if prekey == PREKEY_NONE
+            || eph.0 == [0; 32]
+            || !convs.contains_key(&id)
+            || pending_async.insert(id, (eph, prekey)).is_some()
+        {
             return Err(SecretStateError::Invalid);
         }
         previous_pending = Some(id);
@@ -249,21 +268,39 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<RestoredState, SecretStateError> {
         previous_sent = Some(id);
     }
 
-    let prekey_end = pos.checked_add(prekeys_len).ok_or(SecretStateError::Invalid)?;
+    let prekey_end = pos
+        .checked_add(prekeys_len)
+        .ok_or(SecretStateError::Invalid)?;
     if prekey_end != bytes.len() {
         return Err(SecretStateError::Invalid);
     }
-    let prekeys = PrekeyStore::restore_state(&bytes[pos..prekey_end]).map_err(|_| SecretStateError::Invalid)?;
+    let prekeys = PrekeyStore::restore_state(&bytes[pos..prekey_end])
+        .map_err(|_| SecretStateError::Invalid)?;
     for (conv, first) in &pending_first_contact {
         let message = sent.get(first).ok_or(SecretStateError::Invalid)?;
-        if message.conv != *conv || matches!(message.state, DeliveryState::Delivered | DeliveryState::Expired) {
+        if message.conv != *conv
+            || matches!(
+                message.state,
+                DeliveryState::Delivered | DeliveryState::Expired
+            )
+        {
             return Err(SecretStateError::Invalid);
         }
     }
-    if pending_async.keys().any(|conv| pending_first_contact.contains_key(conv)) {
+    if pending_async
+        .keys()
+        .any(|conv| pending_first_contact.contains_key(conv))
+    {
         return Err(SecretStateError::Invalid);
     }
-    Ok(RestoredState { convs, established_convs, prekeys, pending_async, pending_first_contact, sent })
+    Ok(RestoredState {
+        convs,
+        established_convs,
+        prekeys,
+        pending_async,
+        pending_first_contact,
+        sent,
+    })
 }
 
 fn put_id(out: &mut Vec<u8>, id: &Id16) {
@@ -271,12 +308,20 @@ fn put_id(out: &mut Vec<u8>, id: &Id16) {
 }
 
 fn put_u16(out: &mut Vec<u8>, value: usize) -> Result<(), SecretStateError> {
-    out.extend_from_slice(&u16::try_from(value).map_err(|_| SecretStateError::Invalid)?.to_le_bytes());
+    out.extend_from_slice(
+        &u16::try_from(value)
+            .map_err(|_| SecretStateError::Invalid)?
+            .to_le_bytes(),
+    );
     Ok(())
 }
 
 fn put_u32(out: &mut Vec<u8>, value: usize) -> Result<(), SecretStateError> {
-    out.extend_from_slice(&u32::try_from(value).map_err(|_| SecretStateError::Invalid)?.to_le_bytes());
+    out.extend_from_slice(
+        &u32::try_from(value)
+            .map_err(|_| SecretStateError::Invalid)?
+            .to_le_bytes(),
+    );
     Ok(())
 }
 
@@ -292,14 +337,26 @@ fn read_byte(bytes: &[u8], pos: &mut usize) -> Result<u8, SecretStateError> {
 
 fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16, SecretStateError> {
     let end = pos.checked_add(2).ok_or(SecretStateError::Invalid)?;
-    let value = u16::from_le_bytes(bytes.get(*pos..end).ok_or(SecretStateError::Invalid)?.try_into().map_err(|_| SecretStateError::Invalid)?);
+    let value = u16::from_le_bytes(
+        bytes
+            .get(*pos..end)
+            .ok_or(SecretStateError::Invalid)?
+            .try_into()
+            .map_err(|_| SecretStateError::Invalid)?,
+    );
     *pos = end;
     Ok(value)
 }
 
 fn read_u32(bytes: &[u8], pos: &mut usize) -> Result<u32, SecretStateError> {
     let end = pos.checked_add(4).ok_or(SecretStateError::Invalid)?;
-    let value = u32::from_le_bytes(bytes.get(*pos..end).ok_or(SecretStateError::Invalid)?.try_into().map_err(|_| SecretStateError::Invalid)?);
+    let value = u32::from_le_bytes(
+        bytes
+            .get(*pos..end)
+            .ok_or(SecretStateError::Invalid)?
+            .try_into()
+            .map_err(|_| SecretStateError::Invalid)?,
+    );
     *pos = end;
     Ok(value)
 }
@@ -349,8 +406,8 @@ fn byte_to_state(value: u8) -> Result<DeliveryState, SecretStateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mmp_core::MemStore;
     use crate::{Node, Tier};
+    use mmp_core::MemStore;
 
     fn introduce(a: &mut Node, b: &mut Node) {
         for claim in a.own_claims() {
@@ -366,13 +423,25 @@ mod tests {
         let mut original = Node::new([81; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([82; 32], Box::new(MemStore::new()), Tier::Relay);
         introduce(&mut original, &mut peer);
-        let message = original.send_text(&peer.node_id(), "persist me").expect("first send");
-        let snapshot = original.secret_state_snapshot().expect("aggregate snapshot");
+        let message = original
+            .send_text(&peer.node_id(), "persist me")
+            .expect("first send");
+        let snapshot = original
+            .secret_state_snapshot()
+            .expect("aggregate snapshot");
 
         let mut restored = Node::new([81; 32], Box::new(MemStore::new()), Tier::Relay);
-        restored.restore_secret_state(&snapshot).expect("aggregate restore");
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), snapshot.as_slice());
-        assert_eq!(restored.message_state(&message), Some(DeliveryState::Queued));
+        restored
+            .restore_secret_state(&snapshot)
+            .expect("aggregate restore");
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            snapshot.as_slice()
+        );
+        assert_eq!(
+            restored.message_state(&message),
+            Some(DeliveryState::Queued)
+        );
     }
 
     #[test]
@@ -387,8 +456,14 @@ mod tests {
         let before = restored.secret_state_snapshot().unwrap();
         let mut malformed = snapshot.to_vec();
         malformed.push(0);
-        assert_eq!(restored.restore_secret_state(&malformed), Err(SecretStateError::Invalid));
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.restore_secret_state(&malformed),
+            Err(SecretStateError::Invalid)
+        );
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
 
         // A structurally valid aggregate must still bind every conversation
         // map key to the local identity and its peer.  The raw aggregate seam
@@ -396,15 +471,24 @@ mod tests {
         // prevents a misbound ratchet from entering live state.
         let mut misbound = snapshot.to_vec();
         misbound[HEADER_LEN] ^= 1;
-        assert_eq!(restored.restore_secret_state(&misbound), Err(SecretStateError::Invalid));
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.restore_secret_state(&misbound),
+            Err(SecretStateError::Invalid)
+        );
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
 
         restored.on_tal_event(mmp_tal::TalEvent::LinkUp {
             link: 7,
             initiator: true,
             quality: Default::default(),
         });
-        assert_eq!(restored.restore_secret_state(&snapshot), Err(SecretStateError::Busy));
+        assert_eq!(
+            restored.restore_secret_state(&snapshot),
+            Err(SecretStateError::Busy)
+        );
     }
 
     #[test]
@@ -412,8 +496,12 @@ mod tests {
         let mut original = Node::new([87; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([88; 32], Box::new(MemStore::new()), Tier::Relay);
         introduce(&mut original, &mut peer);
-        original.send_text(&peer.node_id(), "truncate").expect("first send");
-        let snapshot = original.secret_state_snapshot().expect("aggregate snapshot");
+        original
+            .send_text(&peer.node_id(), "truncate")
+            .expect("first send");
+        let snapshot = original
+            .secret_state_snapshot()
+            .expect("aggregate snapshot");
 
         let mut restored = Node::new([87; 32], Box::new(MemStore::new()), Tier::Relay);
         let before = restored.secret_state_snapshot().expect("empty snapshot");
@@ -436,16 +524,23 @@ mod tests {
         let mut original = Node::new([85; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([86; 32], Box::new(MemStore::new()), Tier::Relay);
         introduce(&mut original, &mut peer);
-        original.send_text(&peer.node_id(), "pending").expect("first contact");
-        let snapshot = original.secret_state_snapshot().expect("aggregate snapshot");
+        original
+            .send_text(&peer.node_id(), "pending")
+            .expect("first contact");
+        let snapshot = original
+            .secret_state_snapshot()
+            .expect("aggregate snapshot");
 
         let mut malformed = snapshot.to_vec();
         let mut pos = HEADER_LEN;
         let mut header_pos = MAGIC.len() + 1;
         let conv_count = read_u16(&malformed, &mut header_pos).expect("conv count") as usize;
-        let established_count = read_u16(&malformed, &mut header_pos).expect("established count") as usize;
-        let pending_async_count = read_u16(&malformed, &mut header_pos).expect("pending async count") as usize;
-        let pending_first_count = read_u16(&malformed, &mut header_pos).expect("pending first count") as usize;
+        let established_count =
+            read_u16(&malformed, &mut header_pos).expect("established count") as usize;
+        let pending_async_count =
+            read_u16(&malformed, &mut header_pos).expect("pending async count") as usize;
+        let pending_first_count =
+            read_u16(&malformed, &mut header_pos).expect("pending first count") as usize;
         assert_eq!(conv_count, 1);
         assert_eq!(pending_first_count, 1);
         let _sent_count = read_u32(&malformed, &mut header_pos).expect("sent count");

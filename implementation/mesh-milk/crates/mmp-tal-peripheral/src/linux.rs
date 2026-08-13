@@ -50,14 +50,14 @@ use tokio::time::{timeout, Duration};
 
 use crate::event_queue::{ControlEnqueueError, DataEnqueueError, EventSender, StreamStamp};
 use crate::framing;
+use crate::lifecycle::{
+    acquire_event_gate_if_running, acquire_write_gate_bounded, AttachReject, AttachResult,
+    LinkLifecycle, StreamSide, StreamToken,
+};
 use crate::{
     bounded_notify, ensure_not_shutting_down, event_channel, mint_link_id, validate_beacon, LinkId,
     LinkQuality, NotifyWaitTimeout, PeriphError, TalEvent, DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
     DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
-};
-use crate::lifecycle::{
-    acquire_event_gate_if_running, acquire_write_gate_bounded, AttachReject, AttachResult,
-    LinkLifecycle, StreamSide, StreamToken,
 };
 
 /// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
@@ -264,7 +264,9 @@ impl PeripheralRole {
             if generation.is_some() {
                 links.states.remove(&link);
             }
-            let Some(generation) = generation else { return Err(PeriphError::UnknownLink) };
+            let Some(generation) = generation else {
+                return Err(PeriphError::UnknownLink);
+            };
             self.tx.retire_link(link);
             let _ = try_link_down(&self.tx, link, generation);
             write_gate
@@ -488,13 +490,26 @@ async fn ensure_link_up(
     request: LinkUpRequest,
     shutting_down: &AtomicBool,
 ) -> Option<AttachResult> {
-    let LinkUpRequest { link, att_mtu, side, endpoint, writer } = request;
+    let LinkUpRequest {
+        link,
+        att_mtu,
+        side,
+        endpoint,
+        writer,
+    } = request;
     let chunk_size = framing::chunk_size_for_mtu(att_mtu);
     let link_table = links.clone();
-    let old_write_gate = links.lock().await.states.get(&link).map(|state| state.write_gate.clone());
+    let old_write_gate = links
+        .lock()
+        .await
+        .states
+        .get(&link)
+        .map(|state| state.write_gate.clone());
     let had_old_write_gate = old_write_gate.is_some();
     let _old_write_guard = match old_write_gate {
-        Some(gate) => timeout(Duration::from_millis(250), gate.lock_owned()).await.ok(),
+        Some(gate) => timeout(Duration::from_millis(250), gate.lock_owned())
+            .await
+            .ok(),
         None => None,
     };
     if had_old_write_gate && _old_write_guard.is_none() {
@@ -507,7 +522,11 @@ async fn ensure_link_up(
     let mut links = links.lock().await;
     let attach = match links.lifecycle.attach(link, side, endpoint) {
         Ok(attach) => attach,
-        Err(AttachReject::DuplicateEndpoint | AttachReject::RetiredEndpoint | AttachReject::GenerationExhausted) => return None,
+        Err(
+            AttachReject::DuplicateEndpoint
+            | AttachReject::RetiredEndpoint
+            | AttachReject::GenerationExhausted,
+        ) => return None,
         Err(AttachReject::RetiredCapacity) => {
             // A live link that exhausted the stale-endpoint quarantine cannot
             // safely admit another callback. Quarantine it atomically rather
@@ -573,10 +592,19 @@ async fn ensure_link_up(
         tx.set_streams(link, streams);
     }
     if attach.link_was_new || attach.restarted {
-        let quality =
-            LinkQuality { mtu: (chunk_size + framing::ATT_HEADER) as u16, ..LinkQuality::default() };
+        let quality = LinkQuality {
+            mtu: (chunk_size + framing::ATT_HEADER) as u16,
+            ..LinkQuality::default()
+        };
         if tx
-            .try_control(TalEvent::LinkUp { link, initiator: false, quality }, attach.token.generation)
+            .try_control(
+                TalEvent::LinkUp {
+                    link,
+                    initiator: false,
+                    quality,
+                },
+                attach.token.generation,
+            )
             .is_err()
         {
             retire_current_link(&link_table, tx, attach.token).await;
@@ -637,7 +665,10 @@ async fn emit_data_if_current(
     let result = tx.try_stream_data(
         token.link,
         stream_stamp(token),
-        TalEvent::LinkData { link: token.link, bytes },
+        TalEvent::LinkData {
+            link: token.link,
+            bytes,
+        },
     );
     drop(_event_guard);
     match result {
@@ -666,7 +697,9 @@ async fn link_down_if_current(
         if !links.lifecycle.close_if_current(token) {
             return;
         }
-        let Some(state) = links.states.remove(&token.link) else { return };
+        let Some(state) = links.states.remove(&token.link) else {
+            return;
+        };
         tx.retire_link(token.link);
         // Control saturation is fail-closed: the logical link is already gone,
         // and no stale data can be admitted even if the host is not draining.
@@ -699,7 +732,9 @@ fn stream_stamp(token: StreamToken) -> StreamStamp {
 }
 
 fn service_uuid() -> Uuid {
-    DEV_SERVICE_UUID.parse().expect("DEV_SERVICE_UUID is a valid UUID literal")
+    DEV_SERVICE_UUID
+        .parse()
+        .expect("DEV_SERVICE_UUID is a valid UUID literal")
 }
 
 fn central_tx_uuid() -> Uuid {

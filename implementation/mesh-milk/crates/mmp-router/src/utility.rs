@@ -89,7 +89,11 @@ impl UtilityState {
     /// `P ← P + (1−P)·P_init`, plus ContactGraph stats and the N̂ window.
     pub fn note_contact(&mut self, peer: &NodeId, duration_ms: u64, now_ms: u64) {
         let p = self.aged_p(peer, now_ms);
-        let entry = Predict { p: p + (1.0 - p) * P_INIT, updated: now_ms, last_used: now_ms };
+        let entry = Predict {
+            p: p + (1.0 - p) * P_INIT,
+            updated: now_ms,
+            last_used: now_ms,
+        };
         self.p_table.insert(*peer, entry);
         self.lru_evict_p();
 
@@ -166,7 +170,9 @@ impl UtilityState {
 
     /// Social tie ∈ [0,1] from the local ContactGraph only.
     fn tie(&self, dest: &NodeId, now_ms: u64) -> f32 {
-        let Some(s) = self.contacts.get(dest) else { return 0.0 };
+        let Some(s) = self.contacts.get(dest) else {
+            return 0.0;
+        };
         // Frequency (saturates at ~16 encounters), recency (fades over a week),
         // and a verified-contact bonus — all locally measured or consented.
         // A verified-but-never-encountered contact (QR bootstrap) has no radio
@@ -201,7 +207,11 @@ impl UtilityState {
 
     fn lru_evict_p(&mut self) {
         while self.p_table.len() > P_TABLE_CAP {
-            if let Some(victim) = self.p_table.iter().min_by_key(|(_, e)| e.last_used).map(|(n, _)| *n)
+            if let Some(victim) = self
+                .p_table
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(n, _)| *n)
             {
                 self.p_table.remove(&victim);
             }
@@ -215,17 +225,24 @@ impl UtilityState {
         let resolved: BTreeSet<&NodeId> = self.resolved_seen.iter().map(|(_, n)| n).collect();
         let ephems: BTreeSet<&[u8; 8]> = self.ephem_seen.iter().map(|(_, e)| e).collect();
         let raw = resolved.len() as f32 + EPHEM_DISCOUNT * ephems.len() as f32;
-        let elapsed_days =
-            now_ms.saturating_sub(self.n_hat_updated) as f32 / DAY_MS as f32;
+        let elapsed_days = now_ms.saturating_sub(self.n_hat_updated) as f32 / DAY_MS as f32;
         let alpha = (EWMA_ALPHA_PER_DAY * elapsed_days).clamp(0.05, 1.0);
-        self.n_hat = if self.n_hat == 0.0 { raw } else { self.n_hat + alpha * (raw - self.n_hat) };
+        self.n_hat = if self.n_hat == 0.0 {
+            raw
+        } else {
+            self.n_hat + alpha * (raw - self.n_hat)
+        };
         self.n_hat_updated = now_ms;
         self.n_hat
     }
 
     fn trim_windows(&mut self, now_ms: u64) {
         let horizon = now_ms.saturating_sub(DAY_MS);
-        while self.resolved_seen.front().is_some_and(|(t, _)| *t < horizon) {
+        while self
+            .resolved_seen
+            .front()
+            .is_some_and(|(t, _)| *t < horizon)
+        {
             self.resolved_seen.pop_front();
         }
         while self.ephem_seen.front().is_some_and(|(t, _)| *t < horizon) {

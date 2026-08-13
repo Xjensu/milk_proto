@@ -86,7 +86,13 @@ impl Ext {
                 }
             }
             Ext::GroupEpoch(e) => out.put_u16(*e),
-            Ext::SymbolInfo { root, block, sym, k, n } => {
+            Ext::SymbolInfo {
+                root,
+                block,
+                sym,
+                k,
+                n,
+            } => {
                 out.extend_from_slice(&root.0);
                 out.put_u16(*block);
                 out.put_u16(*sym);
@@ -104,7 +110,10 @@ pub fn encode_exts(exts: &[Ext], out: &mut Vec<u8>) {
     let mut prev: i32 = -1;
     for ext in exts {
         let typ = ext.typ();
-        debug_assert!(i32::from(typ) > prev, "extensions must be strictly ascending");
+        debug_assert!(
+            i32::from(typ) > prev,
+            "extensions must be strictly ascending"
+        );
         prev = i32::from(typ);
         out.push(typ);
         let len_at = out.len();
@@ -172,6 +181,9 @@ fn decode_one(typ: u8, val: &[u8]) -> Result<Ext, WireError> {
         }
         TLV_PADDING => Ok(Ext::Padding(val.to_vec())),
         t if t < 0x80 => Err(WireError::TlvUnknownCritical),
-        t => Ok(Ext::Optional { typ: t, val: val.to_vec() }),
+        t => Ok(Ext::Optional {
+            typ: t,
+            val: val.to_vec(),
+        }),
     }
 }

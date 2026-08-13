@@ -146,7 +146,10 @@ pub fn evaluate(candidates: &[EwsCandidate], limits: EwsLimits) -> Result<EwsPla
         if !base_gain_per_cost.is_finite() {
             return Err(EwsError::SummaryOverflow);
         }
-        ranked.push(RankedCandidate { candidate, base_gain_per_cost });
+        ranked.push(RankedCandidate {
+            candidate,
+            base_gain_per_cost,
+        });
     }
 
     ranked.sort_by(|left, right| {
@@ -262,28 +265,63 @@ mod tests {
 
     #[test]
     fn ews_orders_candidates_deterministically_and_reports_marginal_gain() {
-        let limits = EwsLimits { cost_budget: 10.0, max_copies: 3, min_marginal_gain_per_cost: 0.0 };
+        let limits = EwsLimits {
+            cost_budget: 10.0,
+            max_copies: 3,
+            min_marginal_gain_per_cost: 0.0,
+        };
         let first = evaluate(
             &[
-                EwsCandidate { carrier_id: 3, delivery_probability: 0.5, cost: 2.0 },
-                EwsCandidate { carrier_id: 2, delivery_probability: 0.4, cost: 1.0 },
-                EwsCandidate { carrier_id: 1, delivery_probability: 0.4, cost: 1.0 },
+                EwsCandidate {
+                    carrier_id: 3,
+                    delivery_probability: 0.5,
+                    cost: 2.0,
+                },
+                EwsCandidate {
+                    carrier_id: 2,
+                    delivery_probability: 0.4,
+                    cost: 1.0,
+                },
+                EwsCandidate {
+                    carrier_id: 1,
+                    delivery_probability: 0.4,
+                    cost: 1.0,
+                },
             ],
             limits,
         )
         .unwrap();
         let second = evaluate(
             &[
-                EwsCandidate { carrier_id: 1, delivery_probability: 0.4, cost: 1.0 },
-                EwsCandidate { carrier_id: 3, delivery_probability: 0.5, cost: 2.0 },
-                EwsCandidate { carrier_id: 2, delivery_probability: 0.4, cost: 1.0 },
+                EwsCandidate {
+                    carrier_id: 1,
+                    delivery_probability: 0.4,
+                    cost: 1.0,
+                },
+                EwsCandidate {
+                    carrier_id: 3,
+                    delivery_probability: 0.5,
+                    cost: 2.0,
+                },
+                EwsCandidate {
+                    carrier_id: 2,
+                    delivery_probability: 0.4,
+                    cost: 1.0,
+                },
             ],
             limits,
         )
         .unwrap();
 
         assert_eq!(first, second);
-        assert_eq!(first.decisions.iter().map(|decision| decision.carrier_id).collect::<Vec<_>>(), vec![1, 2, 3]);
+        assert_eq!(
+            first
+                .decisions
+                .iter()
+                .map(|decision| decision.carrier_id)
+                .collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
         assert_eq!(first.selected_candidates, 3);
         assert!((first.decisions[0].marginal_delivery_gain - 0.4).abs() < 1e-12);
         assert!((first.decisions[1].marginal_delivery_gain - 0.24).abs() < 1e-12);
@@ -295,11 +333,27 @@ mod tests {
     fn ews_records_budget_rejection_and_keeps_local_copy_bound() {
         let plan = evaluate(
             &[
-                EwsCandidate { carrier_id: 10, delivery_probability: 0.8, cost: 1.5 },
-                EwsCandidate { carrier_id: 11, delivery_probability: 0.7, cost: 0.6 },
-                EwsCandidate { carrier_id: 12, delivery_probability: 0.9, cost: 1.0 },
+                EwsCandidate {
+                    carrier_id: 10,
+                    delivery_probability: 0.8,
+                    cost: 1.5,
+                },
+                EwsCandidate {
+                    carrier_id: 11,
+                    delivery_probability: 0.7,
+                    cost: 0.6,
+                },
+                EwsCandidate {
+                    carrier_id: 12,
+                    delivery_probability: 0.9,
+                    cost: 1.0,
+                },
             ],
-            EwsLimits { cost_budget: 2.0, max_copies: 3, min_marginal_gain_per_cost: 0.0 },
+            EwsLimits {
+                cost_budget: 2.0,
+                max_copies: 3,
+                min_marginal_gain_per_cost: 0.0,
+            },
         )
         .unwrap();
 
@@ -308,7 +362,10 @@ mod tests {
         assert!((plan.delivery_probability - 0.97).abs() < 1e-12);
         assert_eq!(plan.decisions[2].carrier_id, 10);
         assert!(!plan.decisions[2].accepted);
-        assert_eq!(plan.decisions[2].rejection, Some(EwsRejectionReason::Budget));
+        assert_eq!(
+            plan.decisions[2].rejection,
+            Some(EwsRejectionReason::Budget)
+        );
         // This bound applies to this local plan only; it is not a global
         // security guarantee about what remote relays may replicate.
         assert!(plan.selected_candidates <= 3);
@@ -321,10 +378,22 @@ mod tests {
         // later, lower-ranked carrier may still fit and improve delivery.
         let plan = evaluate(
             &[
-                EwsCandidate { carrier_id: 7, delivery_probability: 0.9, cost: 2.0 },
-                EwsCandidate { carrier_id: 8, delivery_probability: 0.4, cost: 1.0 },
+                EwsCandidate {
+                    carrier_id: 7,
+                    delivery_probability: 0.9,
+                    cost: 2.0,
+                },
+                EwsCandidate {
+                    carrier_id: 8,
+                    delivery_probability: 0.4,
+                    cost: 1.0,
+                },
             ],
-            EwsLimits { cost_budget: 1.0, max_copies: 2, min_marginal_gain_per_cost: 0.0 },
+            EwsLimits {
+                cost_budget: 1.0,
+                max_copies: 2,
+                min_marginal_gain_per_cost: 0.0,
+            },
         )
         .unwrap();
 
@@ -350,35 +419,80 @@ mod tests {
 
     #[test]
     fn ews_rejects_invalid_inputs_and_derived_overflow() {
-        let limits = EwsLimits { cost_budget: 1.0, max_copies: 1, min_marginal_gain_per_cost: 0.0 };
+        let limits = EwsLimits {
+            cost_budget: 1.0,
+            max_copies: 1,
+            min_marginal_gain_per_cost: 0.0,
+        };
         assert_eq!(
-            evaluate(&[EwsCandidate { carrier_id: 1, delivery_probability: f64::NAN, cost: 1.0 }], limits),
+            evaluate(
+                &[EwsCandidate {
+                    carrier_id: 1,
+                    delivery_probability: f64::NAN,
+                    cost: 1.0
+                }],
+                limits
+            ),
             Err(EwsError::NonFiniteProbability)
         );
         assert_eq!(
-            evaluate(&[EwsCandidate { carrier_id: 1, delivery_probability: 1.1, cost: 1.0 }], limits),
+            evaluate(
+                &[EwsCandidate {
+                    carrier_id: 1,
+                    delivery_probability: 1.1,
+                    cost: 1.0
+                }],
+                limits
+            ),
             Err(EwsError::ProbabilityOutOfRange)
         );
         assert_eq!(
             evaluate(
                 &[
-                    EwsCandidate { carrier_id: 1, delivery_probability: 0.5, cost: 1.0 },
-                    EwsCandidate { carrier_id: 1, delivery_probability: 0.4, cost: 1.0 },
+                    EwsCandidate {
+                        carrier_id: 1,
+                        delivery_probability: 0.5,
+                        cost: 1.0
+                    },
+                    EwsCandidate {
+                        carrier_id: 1,
+                        delivery_probability: 0.4,
+                        cost: 1.0
+                    },
                 ],
                 limits,
             ),
             Err(EwsError::DuplicateCarrier)
         );
         assert_eq!(
-            evaluate(&[EwsCandidate { carrier_id: 1, delivery_probability: 1.0, cost: f64::from_bits(1) }], limits),
+            evaluate(
+                &[EwsCandidate {
+                    carrier_id: 1,
+                    delivery_probability: 1.0,
+                    cost: f64::from_bits(1)
+                }],
+                limits
+            ),
             Err(EwsError::SummaryOverflow)
         );
         assert_eq!(
-            evaluate(&[], EwsLimits { cost_budget: -1.0, ..limits }),
+            evaluate(
+                &[],
+                EwsLimits {
+                    cost_budget: -1.0,
+                    ..limits
+                }
+            ),
             Err(EwsError::InvalidBudget)
         );
         assert_eq!(
-            evaluate(&[], EwsLimits { min_marginal_gain_per_cost: f64::NAN, ..limits }),
+            evaluate(
+                &[],
+                EwsLimits {
+                    min_marginal_gain_per_cost: f64::NAN,
+                    ..limits
+                }
+            ),
             Err(EwsError::InvalidThreshold)
         );
     }

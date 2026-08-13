@@ -69,7 +69,12 @@ pub struct SendChain {
 impl SendChain {
     /// Start a send chain at (`ck`, `epoch`), index 0.
     pub fn new(ck: [u8; 32], epoch: u16) -> SendChain {
-        SendChain { ck, exhausted: false, epoch, next_index: 0 }
+        SendChain {
+            ck,
+            exhausted: false,
+            epoch,
+            next_index: 0,
+        }
     }
 
     /// Yields (message key, epoch, index) and advances — the spent CK is erased.
@@ -128,7 +133,8 @@ impl SendChain {
     /// Bump the epoch at live contact (doc 08 §5.2): folds `session_material`
     /// into the chain key, resets the index to 0, and increments `epoch`.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
-        self.try_bump_epoch(session_material).expect("ratchet epoch exhausted");
+        self.try_bump_epoch(session_material)
+            .expect("ratchet epoch exhausted");
     }
 
     /// Fallible form of [`SendChain::bump_epoch`]. Epoch exhaustion must not
@@ -179,7 +185,12 @@ impl SendChain {
         }
         let mut ck = Zeroizing::new([0u8; 32]);
         ck.copy_from_slice(&bytes[1..33]);
-        Ok(SendChain { ck: *ck, exhausted: false, epoch, next_index })
+        Ok(SendChain {
+            ck: *ck,
+            exhausted: false,
+            epoch,
+            next_index,
+        })
     }
 }
 
@@ -198,7 +209,14 @@ impl RecvChain {
     /// Start a receive chain at (`ck`, `epoch`), index 0, tolerating up to
     /// `window` messages of reordering ahead of the expected index.
     pub fn new(ck: [u8; 32], epoch: u16, window: u32) -> RecvChain {
-        RecvChain { ck, exhausted: false, epoch, next_index: 0, window, skipped: BTreeMap::new() }
+        RecvChain {
+            ck,
+            exhausted: false,
+            epoch,
+            next_index: 0,
+            window,
+            skipped: BTreeMap::new(),
+        }
     }
 
     /// Message key for (epoch, index). Old-epoch or already-consumed keys only
@@ -282,7 +300,8 @@ impl RecvChain {
     /// Bump the epoch at live contact (doc 08 §5.2), mirroring
     /// [`SendChain::bump_epoch`] on the receive side.
     pub fn bump_epoch(&mut self, session_material: &[u8; 32]) {
-        self.try_bump_epoch(session_material).expect("ratchet epoch exhausted");
+        self.try_bump_epoch(session_material)
+            .expect("ratchet epoch exhausted");
     }
 
     /// Fallible form of [`RecvChain::bump_epoch`]. Epoch exhaustion must not
@@ -362,8 +381,12 @@ impl RecvChain {
         {
             return Err(snapshot_error());
         }
-        let records_len = count.checked_mul(SKIPPED_RECORD_LEN).ok_or_else(snapshot_error)?;
-        let expected_len = RECV_SNAPSHOT_HEADER_LEN.checked_add(records_len).ok_or_else(snapshot_error)?;
+        let records_len = count
+            .checked_mul(SKIPPED_RECORD_LEN)
+            .ok_or_else(snapshot_error)?;
+        let expected_len = RECV_SNAPSHOT_HEADER_LEN
+            .checked_add(records_len)
+            .ok_or_else(snapshot_error)?;
         if bytes.len() != expected_len {
             return Err(snapshot_error());
         }
@@ -402,7 +425,14 @@ impl RecvChain {
         if pos != bytes.len() {
             return Err(snapshot_error());
         }
-        Ok(RecvChain { ck: *ck, exhausted: false, epoch, next_index, window, skipped })
+        Ok(RecvChain {
+            ck: *ck,
+            exhausted: false,
+            epoch,
+            next_index,
+            window,
+            skipped,
+        })
     }
 
     fn store_skipped(&mut self, epoch: u16, index: u32, key: [u8; 32]) {

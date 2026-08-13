@@ -35,7 +35,12 @@ pub struct GroupState {
 }
 
 impl GroupState {
-    pub fn create(rng: &mut impl CryptoRngCore, gid: Id16, me: NodeId, is_admin: bool) -> GroupState {
+    pub fn create(
+        rng: &mut impl CryptoRngCore,
+        gid: Id16,
+        me: NodeId,
+        is_admin: bool,
+    ) -> GroupState {
         let epoch = 1;
         let mut members = OrSet::new();
         members.apply(&MembershipOp::Add { member: me, tag: 1 });
@@ -94,8 +99,10 @@ impl GroupState {
         if self.dists.contains_key(&(member, dist.epoch)) {
             return false;
         }
-        self.remotes
-            .insert((member, dist.epoch), RemoteSenderKey::from_dist(dist, RATCHET_WINDOW));
+        self.remotes.insert(
+            (member, dist.epoch),
+            RemoteSenderKey::from_dist(dist, RATCHET_WINDOW),
+        );
         self.dists.insert((member, dist.epoch), dist.clone());
         true
     }
@@ -228,21 +235,39 @@ mod tests {
     #[test]
     fn restored_group_requires_one_local_key_regossip() {
         let mut rng = StdRng::seed_from_u64(2);
-        let original = GroupState::create(&mut rng, mmp_types::ids::Id16([7; 16]), mmp_types::ids::Id16([8; 16]), true);
+        let original = GroupState::create(
+            &mut rng,
+            mmp_types::ids::Id16([7; 16]),
+            mmp_types::ids::Id16([8; 16]),
+            true,
+        );
         let encoded = original.encode();
         let expected_len = 31 + original.members.encode().len();
-        assert_eq!(encoded.len(), expected_len, "group snapshot contains metadata only");
+        assert_eq!(
+            encoded.len(),
+            expected_len,
+            "group snapshot contains metadata only"
+        );
 
         let original_dist = original.local.dist().clone();
         let mut restored = GroupState::decode(&mut rng, &encoded).expect("valid group snapshot");
         assert!(restored.needs_distribution());
         assert!(restored.remotes.is_empty());
         assert!(restored.dists.is_empty());
-        assert_ne!(restored.local.dist(), &original_dist, "restore must mint a fresh chain and signing key");
+        assert_ne!(
+            restored.local.dist(),
+            &original_dist,
+            "restore must mint a fresh chain and signing key"
+        );
 
-        let first = restored.local.encrypt(restored.members.members()[0], &[], b"first");
+        let first = restored
+            .local
+            .encrypt(restored.members.members()[0], &[], b"first");
         assert_eq!(first.epoch, restored.epoch);
-        assert_eq!(first.chain_index, 0, "fresh local chain starts at index zero");
+        assert_eq!(
+            first.chain_index, 0,
+            "fresh local chain starts at index zero"
+        );
     }
 
     #[test]
@@ -269,12 +294,18 @@ mod tests {
         let me = mmp_types::ids::Id16([11; 16]);
         let member = mmp_types::ids::Id16([12; 16]);
         let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([13; 16]), me, true);
-        group.add_member(member).expect("fresh group has tag capacity");
+        group
+            .add_member(member)
+            .expect("fresh group has tag capacity");
         group.epoch = u16::MAX;
         let before = group.members.encode();
         assert!(group.remove_member(&mut rng, &member).is_none());
         assert_eq!(group.epoch, u16::MAX);
-        assert_eq!(group.members.encode(), before, "failed rotation must not mutate membership");
+        assert_eq!(
+            group.members.encode(),
+            before,
+            "failed rotation must not mutate membership"
+        );
     }
 
     #[test]
@@ -299,7 +330,9 @@ mod tests {
         let me = mmp_types::ids::Id16([31; 16]);
         let member = mmp_types::ids::Id16([32; 16]);
         let mut group = GroupState::create(&mut rng, mmp_types::ids::Id16([33; 16]), me, true);
-        group.add_member(member).expect("fresh group has tag capacity");
+        group
+            .add_member(member)
+            .expect("fresh group has tag capacity");
         let mut encoded = group.encode();
         // Bootstrap uses tag 1 and the added member uses tag 2; next_tag is
         // normally 3. Rewinding it to 2 would reuse an existing tag.
@@ -317,6 +350,10 @@ mod tests {
         let before = group.members.encode();
         assert!(!group.can_add_member());
         assert!(group.add_member(member).is_none());
-        assert_eq!(group.members.encode(), before, "failed allocation must not mutate membership");
+        assert_eq!(
+            group.members.encode(),
+            before,
+            "failed allocation must not mutate membership"
+        );
     }
 }

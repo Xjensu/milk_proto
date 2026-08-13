@@ -88,11 +88,11 @@ pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
 use mmp_types::beacon::BEACON_LEN;
 use mmp_types::consts::EPHEM_SLOT_MS;
 
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod event_queue;
 pub mod framing;
 #[cfg(any(target_os = "linux", test))]
 pub(crate) mod lifecycle;
-#[cfg(any(target_os = "linux", test))]
-pub(crate) mod event_queue;
 
 /// Bounded ingress sizing shared with the central TAL.
 ///
@@ -180,7 +180,10 @@ impl fmt::Display for PeriphError {
             PeriphError::UnknownLink => write!(f, "unknown link"),
             PeriphError::NotSubscribed => write!(f, "central has not subscribed to notifications"),
             PeriphError::InvalidBeaconLength { expected, actual } => {
-                write!(f, "invalid beacon length: expected {expected} bytes, got {actual}")
+                write!(
+                    f,
+                    "invalid beacon length: expected {expected} bytes, got {actual}"
+                )
             }
             PeriphError::ShuttingDown => write!(f, "peripheral is shutting down"),
             PeriphError::NotifyTimeout => write!(f, "notification timed out"),
@@ -224,7 +227,10 @@ pub(crate) fn validate_beacon(beacon: &[u8]) -> Result<(), PeriphError> {
     if beacon.len() == BEACON_LEN {
         Ok(())
     } else {
-        Err(PeriphError::InvalidBeaconLength { expected: BEACON_LEN, actual: beacon.len() })
+        Err(PeriphError::InvalidBeaconLength {
+            expected: BEACON_LEN,
+            actual: beacon.len(),
+        })
     }
 }
 
@@ -233,7 +239,11 @@ pub(crate) fn validate_beacon(beacon: &[u8]) -> Result<(), PeriphError> {
 /// asynchronous advertisement registration.
 #[cfg(any(target_os = "linux", test))]
 pub(crate) fn ensure_not_shutting_down(shutting_down: bool) -> Result<(), PeriphError> {
-    if shutting_down { Err(PeriphError::ShuttingDown) } else { Ok(()) }
+    if shutting_down {
+        Err(PeriphError::ShuttingDown)
+    } else {
+        Ok(())
+    }
 }
 
 impl std::error::Error for PeriphError {
@@ -277,7 +287,11 @@ pub fn readvertise_due(last_advertised_ms: u64, now_ms: u64) -> bool {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
     let digest = blake3::hash(format!("{id:?}").as_bytes());
-    u64::from_le_bytes(digest.as_bytes()[..8].try_into().expect("blake3 digest is 32 bytes"))
+    u64::from_le_bytes(
+        digest.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 digest is 32 bytes"),
+    )
 }
 
 #[cfg(test)]
@@ -293,18 +307,25 @@ mod tests {
             DEV_CENTRAL_TX_CHARACTERISTIC_UUID,
             DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
         ] {
-            s.parse::<uuid::Uuid>().expect("dev UUID constant must parse");
+            s.parse::<uuid::Uuid>()
+                .expect("dev UUID constant must parse");
         }
     }
 
     #[test]
     fn mint_link_id_is_deterministic_for_the_same_peer() {
-        assert_eq!(mint_link_id(&"aa:bb:cc:dd:ee:ff"), mint_link_id(&"aa:bb:cc:dd:ee:ff"));
+        assert_eq!(
+            mint_link_id(&"aa:bb:cc:dd:ee:ff"),
+            mint_link_id(&"aa:bb:cc:dd:ee:ff")
+        );
     }
 
     #[test]
     fn mint_link_id_differs_across_distinct_peers() {
-        assert_ne!(mint_link_id(&"aa:bb:cc:dd:ee:ff"), mint_link_id(&"aa:bb:cc:dd:ee:00"));
+        assert_ne!(
+            mint_link_id(&"aa:bb:cc:dd:ee:ff"),
+            mint_link_id(&"aa:bb:cc:dd:ee:00")
+        );
     }
 
     /// Recipe pin: blake3 of the Debug string, first 8 bytes LE. If either
@@ -347,7 +368,10 @@ mod tests {
     #[test]
     fn shutdown_fence_rejects_advertisement_admission() {
         assert!(ensure_not_shutting_down(false).is_ok());
-        assert!(matches!(ensure_not_shutting_down(true), Err(PeriphError::ShuttingDown)));
+        assert!(matches!(
+            ensure_not_shutting_down(true),
+            Err(PeriphError::ShuttingDown)
+        ));
     }
 
     #[test]

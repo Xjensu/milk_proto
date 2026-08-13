@@ -13,7 +13,13 @@ use crate::error::CryptoError;
 pub fn seal(key: &[u8; 32], ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
-        .encrypt(&Nonce::default(), Payload { msg: plaintext, aad: ad })
+        .encrypt(
+            &Nonce::default(),
+            Payload {
+                msg: plaintext,
+                aad: ad,
+            },
+        )
         .expect("chacha20poly1305 encrypt is infallible for in-memory buffers")
 }
 
@@ -22,7 +28,13 @@ pub fn seal(key: &[u8; 32], ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
 pub fn open(key: &[u8; 32], ad: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let cipher = ChaCha20Poly1305::new(key.into());
     cipher
-        .decrypt(&Nonce::default(), Payload { msg: ciphertext, aad: ad })
+        .decrypt(
+            &Nonce::default(),
+            Payload {
+                msg: ciphertext,
+                aad: ad,
+            },
+        )
         .map_err(|_| CryptoError::Aead)
 }
 

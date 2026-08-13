@@ -47,6 +47,12 @@ There is no callback re-entrancy, no threading contract beyond "one caller at a 
 
 ### The event stream is the app
 
+Native bindings expose the coarse `FfiError` enum, including `ConversationPending`: after a
+first-contact asynchronous send, wait for the authenticated receipt (or a corresponding
+`DeliveryProgress` event) before retrying another direct body for that peer. This is a normal
+conversation-establishment state, not a malformed argument or a reason to create duplicate
+bundles.
+
 Every screen is a projection of `poll_event()` (see HANDOFF_MOBILE §2 for the full UI-duty table):
 
 | Event | Meaning | Minimum UI duty |
@@ -57,9 +63,12 @@ Every screen is a projection of `poll_event()` (see HANDOFF_MOBILE §2 for the f
 | `DeliveryProgress{id, state}` | Queued → InMesh → Delivered / Expired | status glyphs (HANDOFF_MOBILE §3) |
 | `ClaimUpdated{owner, field}` | nickname/avatar/key claim adopted | refresh profile |
 | `CompromiseWarning{owner}` | equal-seq conflicting claims — possible key compromise | **normative**: non-dismissable banner (doc 07 §6.4) |
+| `PeerRevoked{peer, successor}` | identity tombstone adopted; successor is an optional 32-byte public key | refuse new sessions and offer explicit trust-successor UX |
 | `ContactSeen / Established{peer}` | live mesh activity | "nearby" indicators, mesh screen |
-| `GroupInvite / GroupMessage / GroupEpochChanged` | group plane | show "removal applies as the network reconverges" (doc 06 §8.6) |
+| `GroupInvite / GroupMessage / GroupEpochChanged` | group plane (`GroupMessage` includes `apptype`) | show "removal applies as the network reconverges" (doc 06 §8.6) |
 | `TierChanged{tier}` | relay ladder moved | mesh status chip |
+| `Announcement{id, scope, annType, notAfter, text, from, official, effectivePriority, scopeNameHint}` | subscribed class-5 announcement | render only after applying `effectivePriority`; `scopeNameHint` is display-only |
+| `FileOffered / FileReady / FileFailed` | verified file offer, completed pull, or abandoned/hash-failed assembly | offer explicit pull; never auto-fetch a full file |
 
 ## 3. Building the core
 
@@ -126,23 +135,53 @@ MmpNode(seed: bytes32, tier: Tier, storePath: string?)
   .ownClaims() -> List<bytes>       // for QR verification / bootstrap exchange
   .ingestClaim(claim: bytes, verified: bool)
   .setNickname(name: string, seq: u32)
+  .nicknameOf(peer: bytes16) -> string?            // locally verified display nickname
+  .revokeIdentity(reason: u8) -> bytes
   .tryRevokeIdentity(reason: u8) -> bytes                    // throws FfiError; preferred checked form
+  .revokeIdentityWithSuccessor(reason: u8, successor: bytes32, countersig: bytes64) -> bytes
+                                                               // throws FfiError
   .sendText(peer: bytes16, text: string) -> bytes16          // BundleID to track
+  .sendBody(peer: bytes16, apptype: u8, payload: bytes) -> bytes16
+  .messageState(id: bytes16) -> FfiDeliveryState?
   .createGroup() -> bytes16
   .groupInvite(gid, peer) / .groupSend(gid, text) / .groupRemove(gid, member) -> u16 (new epoch)
+  .groupSendBody(gid, apptype: u8, payload: bytes) -> bytes16
+  .groupMembers(gid) -> List<bytes16>
+  .requestFriendship(peerPublicKey: bytes32) / .allowFriendshipFrom(peerPublicKey: bytes32)
+  .setWallClock(unixS: u32)
+  .pinAuthorityRoot(scope: bytes16, issuer: bytes32)
+  .subscribeScope(scopeName: string) -> bytes16
+  .unsubscribeScope(scope: bytes16)
+  .mintAuthCert(suite, subject, scope, caps, priorityBudget, notAfter) -> bytes
+  .publishAnnouncement(scope, annType, priority, text, cert?) -> bytes16
   .beacon(nowMs: u64) -> bytes24    // advertise this payload
   .onBeacon(payload: bytes, rssi: i8) // scanned advertisement in; folds into
                                      // the N̂ population estimate (contact
                                      // radar / dial gating) — no nowMs, time
                                      // is driven by tick()
   .linkUp(link: u64, initiator: bool)
+  .linkUpWithQuality(link: u64, initiator: bool, quality: FfiLinkQuality)
   .linkData(link: u64, bytes: bytes)
   .linkDown(link: u64)
   .pollSend() -> Option<(u64, bytes)>
+  .pollSendBatch(maxItems: u32) -> List<OutFrame>       // FIFO, hard cap 64
+  .pollClose() -> Option<u64>                           // host closes link, then linkDown
+  .pollCloseBatch(maxItems: u32) -> List<u64>
   .pollEvent() -> Option<Event>     // tagged enum, per §2 table
+  .pollEventBatch(maxItems: u32) -> List<Event>          // FIFO, hard cap 64
+  .closeActionsDropped() -> u64
+  .eventQueueDropped() -> u64
   .tick(nowMs: u64)                 // also drives the periodic persist when storePath is set
   .setTier(tier)
+  .enableDiagnostics() / .disableDiagnostics()
+  .status() -> FfiNodeStatus / .capabilities() -> FfiCapabilities
+  .metrics() -> FfiMetrics / .betaSnapshot() -> FfiBetaSnapshot
+  .diagDump() -> string
   .block(peer: bytes16)
+  .sendFile(peer, name, mime, data: bytes) -> FfiFileSend
+  .fetchFile(root: bytes16, dest: string)
+  .cancelFetch(root: bytes16)
+  .fileProgress(root: bytes16) -> FfiFileProgress?
   .storeLen() -> u64                // bundles currently held in the store
   .flush()                          // force an immediate persist; call from the platform's
                                      // on-background lifecycle hook (Android onStop / iOS

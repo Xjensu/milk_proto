@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use mmp_crypto::Identity;
 use mmp_types::bundle::{class, zero_lifetime, Bundle, LIFETIME_OFFSET};
 use mmp_types::claim::Claim;
-use mmp_types::consts::{class_max_lifetime_ms, BLOOM_CAPACITY, L_MAX, LIFETIME_MESSAGE_MS};
+use mmp_types::consts::{class_max_lifetime_ms, BLOOM_CAPACITY, LIFETIME_MESSAGE_MS, L_MAX};
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{Hello, Summary};
 use mmp_types::ids::{Id16, Key32, NodeId, Sig64};
@@ -21,9 +21,7 @@ use crate::rbsr::{fingerprint, IdSource, Reconciler};
 use crate::receiptfilter::{ReceiptFilter, SuppressSignal, EXACT_RECEIPT_CAP};
 use crate::seen::SeenIndex;
 use crate::session::{SessionEngine, SessionEvent, SessionHost};
-use crate::store::{
-    BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome,
-};
+use crate::store::{BundleMeta, BundleStore, MemStore, SlotState, StorePutError, StorePutOutcome};
 
 fn identity(seed: u8) -> Identity {
     Identity::from_seed(&[seed; 32])
@@ -119,9 +117,18 @@ impl BundleStore for RejectStore {
 fn default_try_put_reports_insert_and_replacement() {
     let id = Id16([1; 16]);
     let mut store = MemStore::new();
-    assert_eq!(store.try_put(test_meta(id), b"one"), Ok(StorePutOutcome::Inserted));
-    assert_eq!(store.try_put(test_meta(id), b"two"), Ok(StorePutOutcome::Replaced));
-    assert_eq!(store.get(&id).map(|(_, bytes)| bytes), Some(b"two".to_vec()));
+    assert_eq!(
+        store.try_put(test_meta(id), b"one"),
+        Ok(StorePutOutcome::Inserted)
+    );
+    assert_eq!(
+        store.try_put(test_meta(id), b"two"),
+        Ok(StorePutOutcome::Replaced)
+    );
+    assert_eq!(
+        store.get(&id).map(|(_, bytes)| bytes),
+        Some(b"two".to_vec())
+    );
 }
 
 #[test]
@@ -170,7 +177,8 @@ fn ingest_stores_verified_and_drops_bad_signature() {
     let (d, _) = ingest(&bad, 1000, &me, &mut seen, &mut store, &mut accept_all);
     assert!(matches!(
         d,
-        Disposition::Dropped(DropReason::BadSignature) | Disposition::Dropped(DropReason::NonCanonical)
+        Disposition::Dropped(DropReason::BadSignature)
+            | Disposition::Dropped(DropReason::NonCanonical)
     ));
     assert_eq!(store.len(), 1);
 }
@@ -191,13 +199,27 @@ fn seen_index_defeats_lifetime_resurrection() {
     let mut resurrected = bytes.clone();
     resurrected[LIFETIME_OFFSET..LIFETIME_OFFSET + 5]
         .copy_from_slice(&class_max_lifetime_ms(class::DIRECT).to_le_bytes()[..5]);
-    let (d, _) = ingest(&resurrected, 2000, &me, &mut seen, &mut store, &mut accept_all);
+    let (d, _) = ingest(
+        &resurrected,
+        2000,
+        &me,
+        &mut seen,
+        &mut store,
+        &mut accept_all,
+    );
     assert_eq!(d, Disposition::Duplicate);
 
     // And the SeenIndex entry persists from FIRST sight even after the store
     // dropped the bundle.
     store.remove(&b.id());
-    let (d, _) = ingest(&resurrected, 3000, &me, &mut seen, &mut store, &mut accept_all);
+    let (d, _) = ingest(
+        &resurrected,
+        3000,
+        &me,
+        &mut seen,
+        &mut store,
+        &mut accept_all,
+    );
     assert_eq!(d, Disposition::Duplicate);
 }
 
@@ -210,7 +232,14 @@ fn lifetime_clamped_on_receive() {
     let mut b = make_bundle(&alice, Id16([7; 16]), b"zombie");
     b.lifetime_ms = (1u64 << 40) - 1; // absurd claimed lifetime
     b.signature = alice.sign(SigDomain::Bundle, &b.canonical_zeroed());
-    let (d, _) = ingest(&b.encode(), 1000, &me, &mut seen, &mut store, &mut accept_all);
+    let (d, _) = ingest(
+        &b.encode(),
+        1000,
+        &me,
+        &mut seen,
+        &mut store,
+        &mut accept_all,
+    );
     assert!(matches!(d, Disposition::Stored { .. }));
     let meta = store.meta(&b.id()).unwrap();
     assert_eq!(meta.expires_at, 1000 + class_max_lifetime_ms(class::DIRECT));
@@ -322,10 +351,16 @@ fn seen_index_decode_rejects_truncated_and_trailing_bytes() {
     seen.insert(&Id16([1; 16]), class::DIRECT, 1000);
     let bytes = seen.encode();
 
-    assert!(SeenIndex::decode(&bytes[..bytes.len() - 1]).is_none(), "truncated tail must not decode");
+    assert!(
+        SeenIndex::decode(&bytes[..bytes.len() - 1]).is_none(),
+        "truncated tail must not decode"
+    );
     let mut trailing = bytes.clone();
     trailing.push(0);
-    assert!(SeenIndex::decode(&trailing).is_none(), "trailing bytes must not decode");
+    assert!(
+        SeenIndex::decode(&trailing).is_none(),
+        "trailing bytes must not decode"
+    );
 }
 
 /// Mirrors `seen_index_survives_encode_decode_roundtrip` for `ReceiptFilter`:
@@ -358,10 +393,16 @@ fn receipt_filter_decode_rejects_truncated_and_trailing_bytes() {
     rf.note_verified_receipt(&Id16([1; 16]), 5000);
     let bytes = rf.encode();
 
-    assert!(ReceiptFilter::decode(&bytes[..bytes.len() - 1]).is_none(), "truncated tail must not decode");
+    assert!(
+        ReceiptFilter::decode(&bytes[..bytes.len() - 1]).is_none(),
+        "truncated tail must not decode"
+    );
     let mut trailing = bytes.clone();
     trailing.push(0);
-    assert!(ReceiptFilter::decode(&trailing).is_none(), "trailing bytes must not decode");
+    assert!(
+        ReceiptFilter::decode(&trailing).is_none(),
+        "trailing bytes must not decode"
+    );
 }
 
 #[test]
@@ -431,7 +472,10 @@ fn claims_lww_merge_is_deterministic_and_flags_conflicts() {
     s2.merge(a.clone(), 0, false);
     let _ = s2.merge(b.clone(), 0, false);
     let n = mmp_types::node_id_of(&alice.public());
-    assert_eq!(s1.get(&n, 0x01).unwrap().body, s2.get(&n, 0x01).unwrap().body);
+    assert_eq!(
+        s1.get(&n, 0x01).unwrap().body,
+        s2.get(&n, 0x01).unwrap().body
+    );
     assert!(matches!(r1, ClaimMerge::Conflict { .. }));
     // Idempotence: re-merging the currently adopted claim is Stale.
     let adopted = s1.get(&n, 0x01).unwrap().clone();
@@ -443,10 +487,19 @@ fn orset_converges_and_compacts() {
     let m1 = Id16([1; 16]);
     let m2 = Id16([2; 16]);
     let ops = [
-        MembershipOp::Add { member: m1, tag: 10 },
-        MembershipOp::Add { member: m2, tag: 20 },
+        MembershipOp::Add {
+            member: m1,
+            tag: 10,
+        },
+        MembershipOp::Add {
+            member: m2,
+            tag: 20,
+        },
         MembershipOp::Remove { tags: vec![10] },
-        MembershipOp::Add { member: m1, tag: 11 }, // concurrent re-add: add-wins
+        MembershipOp::Add {
+            member: m1,
+            tag: 11,
+        }, // concurrent re-add: add-wins
     ];
     // Any permutation converges.
     let mut sets: Vec<OrSet> = Vec::new();
@@ -479,7 +532,11 @@ struct VecSource {
 
 impl IdSource for VecSource {
     fn ids_in(&mut self, _domain: u8, lo: &Id16, hi: &Id16) -> Vec<Id16> {
-        self.ids.iter().filter(|id| **id >= *lo && **id <= *hi).copied().collect()
+        self.ids
+            .iter()
+            .filter(|id| **id >= *lo && **id <= *hi)
+            .copied()
+            .collect()
     }
     fn has(&mut self, id: &Id16) -> bool {
         self.ids.binary_search(id).is_ok()
@@ -505,7 +562,10 @@ fn reconcile(a_ids: Vec<Id16>, b_ids: Vec<Id16>) -> (BTreeSet<Id16>, BTreeSet<Id
                 Frame::ReconInit { range, .. } => b.on_range(&range, false, &mut b_src),
                 Frame::ReconRange { domain, ranges } => {
                     let is_reply = domain & 0x80 != 0;
-                    ranges.iter().flat_map(|r| b.on_range(r, is_reply, &mut b_src)).collect()
+                    ranges
+                        .iter()
+                        .flat_map(|r| b.on_range(r, is_reply, &mut b_src))
+                        .collect()
                 }
                 Frame::ReconIds { lo, hi, ids, .. } => b.on_ids(&lo, &hi, &ids, &mut b_src),
                 _ => unreachable!(),
@@ -518,7 +578,10 @@ fn reconcile(a_ids: Vec<Id16>, b_ids: Vec<Id16>) -> (BTreeSet<Id16>, BTreeSet<Id
                 Frame::ReconInit { range, .. } => a.on_range(&range, false, &mut a_src),
                 Frame::ReconRange { domain, ranges } => {
                     let is_reply = domain & 0x80 != 0;
-                    ranges.iter().flat_map(|r| a.on_range(r, is_reply, &mut a_src)).collect()
+                    ranges
+                        .iter()
+                        .flat_map(|r| a.on_range(r, is_reply, &mut a_src))
+                        .collect()
                 }
                 Frame::ReconIds { lo, hi, ids, .. } => a.on_ids(&lo, &hi, &ids, &mut a_src),
                 _ => unreachable!(),
@@ -528,8 +591,14 @@ fn reconcile(a_ids: Vec<Id16>, b_ids: Vec<Id16>) -> (BTreeSet<Id16>, BTreeSet<Id
         to_a = next_a;
         to_b = next_b;
     }
-    assert!(a.is_done(), "initiator reconciler must resolve every outstanding range");
-    assert!(b.is_done(), "responder reconciler must resolve every outstanding range");
+    assert!(
+        a.is_done(),
+        "initiator reconciler must resolve every outstanding range"
+    );
+    assert!(
+        b.is_done(),
+        "responder reconciler must resolve every outstanding range"
+    );
     (a.missing.clone(), b.missing.clone(), rounds)
 }
 
@@ -599,24 +668,47 @@ fn fingerprint_is_order_and_content_sensitive() {
 fn rbsr_ignores_unmatched_echo_without_closing_domain() {
     use mmp_types::frame::{Frame, Range};
 
-    let mut src = VecSource { ids: rand_ids(10, 99) };
+    let mut src = VecSource {
+        ids: rand_ids(10, 99),
+    };
     let mut recon = Reconciler::new(3);
     let init = recon.init_frame(&mut src);
     assert_eq!(recon.open, 1);
 
     let local_id = src.ids[0];
-    let partial = Range { lo: local_id, hi: local_id, count: 0, fp: fingerprint(&[]) };
+    let partial = Range {
+        lo: local_id,
+        hi: local_id,
+        count: 0,
+        fp: fingerprint(&[]),
+    };
     let response = recon.on_range(&partial, false, &mut src);
     assert!(matches!(response.first(), Some(Frame::ReconIds { .. })));
-    assert_eq!(recon.open, 2, "a nested terminal response must remain outstanding");
+    assert_eq!(
+        recon.open, 2,
+        "a nested terminal response must remain outstanding"
+    );
     recon.on_ids(&local_id, &local_id, &[], &mut src);
-    assert_eq!(recon.open, 1, "the terminal child resolves only after the peer answers");
+    assert_eq!(
+        recon.open, 1,
+        "the terminal child resolves only after the peer answers"
+    );
 
-    let forged = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: 0 };
+    let forged = Range {
+        lo: Id16::MIN,
+        hi: Id16::MAX,
+        count: 0,
+        fp: 0,
+    };
     assert!(recon.on_range(&forged, true, &mut src).is_empty());
-    assert_eq!(recon.open, 1, "a forged echo must not resolve a different request");
+    assert_eq!(
+        recon.open, 1,
+        "a forged echo must not resolve a different request"
+    );
 
-    let Frame::ReconInit { range, .. } = init else { panic!("init must be a range") };
+    let Frame::ReconInit { range, .. } = init else {
+        panic!("init must be a range")
+    };
     recon.on_range(&range, true, &mut src);
     assert!(recon.is_done());
 }
@@ -626,9 +718,16 @@ fn rbsr_large_local_small_remote_does_not_emit_oversized_ids() {
     use mmp_types::consts::MAX_FRAME_PAYLOAD;
     use mmp_types::frame::{Frame, Range};
 
-    let mut src = VecSource { ids: rand_ids(500, 123) };
+    let mut src = VecSource {
+        ids: rand_ids(500, 123),
+    };
     let mut recon = Reconciler::new(3);
-    let request = Range { lo: Id16::MIN, hi: Id16::MAX, count: 0, fp: fingerprint(&[]) };
+    let request = Range {
+        lo: Id16::MIN,
+        hi: Id16::MAX,
+        count: 0,
+        fp: fingerprint(&[]),
+    };
     let frames = recon.on_range(&request, false, &mut src);
 
     assert_eq!(frames.len(), 1);
@@ -637,7 +736,10 @@ fn rbsr_large_local_small_remote_does_not_emit_oversized_ids() {
     };
     assert!(!ranges.is_empty());
     assert!(frames[0].encode_payload().len() <= MAX_FRAME_PAYLOAD);
-    assert!(recon.open > 0, "split ranges remain pending until their leaves resolve");
+    assert!(
+        recon.open > 0,
+        "split ranges remain pending until their leaves resolve"
+    );
 }
 
 // -------------------------------------------------------- session e2e ------
@@ -659,7 +761,11 @@ struct HostSource {
 
 impl IdSource for HostSource {
     fn ids_in(&mut self, _domain: u8, lo: &Id16, hi: &Id16) -> Vec<Id16> {
-        self.ids.iter().filter(|id| **id >= *lo && **id <= *hi).copied().collect()
+        self.ids
+            .iter()
+            .filter(|id| **id >= *lo && **id <= *hi)
+            .copied()
+            .collect()
     }
     fn has(&mut self, id: &Id16) -> bool {
         self.ids.binary_search(id).is_ok()
@@ -728,8 +834,14 @@ impl SessionHost for TestHost {
     }
     fn on_bundle(&mut self, _peer: &NodeId, bytes: &[u8]) {
         let node = self.node;
-        let (d, b) =
-            ingest(bytes, self.now, &node, &mut self.seen, &mut self.store, &mut accept_all);
+        let (d, b) = ingest(
+            bytes,
+            self.now,
+            &node,
+            &mut self.seen,
+            &mut self.store,
+            &mut accept_all,
+        );
         if let (Disposition::Stored { .. }, Some(b)) = (d, b) {
             self.received.push(b.id());
             self.refresh();
@@ -739,7 +851,10 @@ impl SessionHost for TestHost {
         self.store.meta(id).is_some()
     }
     fn on_budget(&mut self, _peer: &NodeId, id: &Id16, granted: u8) {
-        assert!(granted <= L_MAX, "engine must clamp before the host sees it");
+        assert!(
+            granted <= L_MAX,
+            "engine must clamp before the host sees it"
+        );
         self.budgets.push((*id, granted));
         if let Some(mut meta) = self.store.meta(id) {
             meta.budget = granted.min(L_MAX);
@@ -755,11 +870,25 @@ impl SessionHost for TestHost {
 }
 
 fn hello() -> Hello {
-    Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 }
+    Hello {
+        ver: 1,
+        suites: vec![0x01],
+        tier: 2,
+        flags: 0,
+        credits: 8,
+        psm: 0,
+    }
 }
 
 fn hello_with_suites(suites: Vec<u8>) -> Hello {
-    Hello { ver: 1, suites, tier: 2, flags: 0, credits: 8, psm: 0 }
+    Hello {
+        ver: 1,
+        suites,
+        tier: 2,
+        flags: 0,
+        credits: 8,
+        psm: 0,
+    }
 }
 
 /// Pump both engines until quiescent; returns pumped byte count.
@@ -862,5 +991,7 @@ fn handshake_refuses_peer_with_no_common_cipher_suite() {
 
     assert_eq!(b.phase(), crate::session::Phase::Closed);
     let ev_b: Vec<_> = core::iter::from_fn(|| b.poll_event()).collect();
-    assert!(!ev_b.iter().any(|e| matches!(e, SessionEvent::Established { .. })));
+    assert!(!ev_b
+        .iter()
+        .any(|e| matches!(e, SessionEvent::Established { .. })));
 }

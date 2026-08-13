@@ -130,7 +130,9 @@ impl BlobAssembly {
     /// How many of a stripe's `RS_TOTAL_N` symbol slots are verified-have.
     pub(crate) fn stripe_have_count(&self, stripe: u16) -> usize {
         let base = stripe as usize * RS_TOTAL_N;
-        (0..RS_TOTAL_N).filter(|&j| self.have_bit((base + j) as u16)).count()
+        (0..RS_TOTAL_N)
+            .filter(|&j| self.have_bit((base + j) as u16))
+            .count()
     }
 
     pub(crate) fn stripe_done_bit(&self, stripe: u16) -> bool {
@@ -156,7 +158,11 @@ impl BlobAssembly {
     /// incremental-write target (decision D2), renamed to `dest_path` only
     /// once the whole-file BLAKE3 check passes.
     pub(crate) fn part_path(&self) -> PathBuf {
-        let mut name = self.dest_path.file_name().map(|n| n.to_os_string()).unwrap_or_default();
+        let mut name = self
+            .dest_path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_default();
         name.push(".part");
         self.dest_path.with_file_name(name)
     }

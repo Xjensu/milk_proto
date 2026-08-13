@@ -10,6 +10,10 @@ use crate::beacon::Beacon;
 use crate::bundle::*;
 use crate::claim::{Claim, PrekeyBatch};
 use crate::frame::*;
+use crate::group_control::{
+    AddTag, AdminKey, AnchorAck, BootstrapDistribution, BootstrapInvite, EpochAnchor,
+    EpochAnchorSignature, GroupControlBatch, SenderKeyDist, SenderKeyGrant, SignedMembershipOp,
+};
 use crate::ids::{Id16, Key32, Sig64};
 use crate::manifest::{FileEntry, FileManifest};
 use crate::payload::*;
@@ -24,7 +28,10 @@ fn sample_bundle() -> Bundle {
         dest: Id16([9; 16]),
         lifetime_ms: 259_200_000,
         priority: 1,
-        exts: vec![Ext::Parents(vec![Id16([1; 16]), Id16([2; 16])]), Ext::GroupEpoch(3)],
+        exts: vec![
+            Ext::Parents(vec![Id16([1; 16]), Id16([2; 16])]),
+            Ext::GroupEpoch(3),
+        ],
         payload: vec![0xAA; 100],
         signature: Sig64([0x55; 64]),
     }
@@ -81,59 +88,121 @@ fn tlv_out_of_order_rejected() {
 
 #[test]
 fn unknown_critical_tlv_rejected() {
-    let b = Bundle { exts: vec![], flags: 0, ..sample_bundle() };
+    let b = Bundle {
+        exts: vec![],
+        flags: 0,
+        ..sample_bundle()
+    };
     let mut bytes = b.encode();
     // Splice a TLV 0x05 (unknown critical) of length 0 into the ext region.
     let ins = [0x05u8, 0, 0];
     bytes.splice(58..58, ins);
     let new_ext_len = 3u16.to_le_bytes();
     bytes[56..58].copy_from_slice(&new_ext_len);
-    assert_eq!(Bundle::decode_canonical(&bytes), Err(WireError::TlvUnknownCritical));
+    assert_eq!(
+        Bundle::decode_canonical(&bytes),
+        Err(WireError::TlvUnknownCritical)
+    );
 }
 
 #[test]
 fn reserved_flag_bits_rejected() {
-    let b = Bundle { flags: 0, exts: vec![], ..sample_bundle() };
+    let b = Bundle {
+        flags: 0,
+        exts: vec![],
+        ..sample_bundle()
+    };
     let mut bytes = b.encode();
     bytes[1] = 0x80;
-    assert_eq!(Bundle::decode_canonical(&bytes), Err(WireError::ReservedBits));
+    assert_eq!(
+        Bundle::decode_canonical(&bytes),
+        Err(WireError::ReservedBits)
+    );
 }
 
 #[test]
 fn parents_flag_must_mirror_tlv() {
-    let b = Bundle { flags: 0, ..sample_bundle() }; // TLV present, flag absent
+    let b = Bundle {
+        flags: 0,
+        ..sample_bundle()
+    }; // TLV present, flag absent
     let bytes = b.encode();
-    assert_eq!(Bundle::decode_canonical(&bytes), Err(WireError::BadValue("has_parents flag")));
+    assert_eq!(
+        Bundle::decode_canonical(&bytes),
+        Err(WireError::BadValue("has_parents flag"))
+    );
 }
 
 #[test]
 fn frames_roundtrip() {
     let frames = vec![
         Frame::Hs(vec![1, 2, 3]),
-        Frame::IdProof { identity: Key32([1; 32]), sig: Sig64([2; 64]) },
+        Frame::IdProof {
+            identity: Key32([1; 32]),
+            sig: Sig64([2; 64]),
+        },
         Frame::Credit(8),
         Frame::Summary(Summary {
-            receipt_buckets: vec![SummaryBucket { bucket_epoch: 7, bloom: vec![1, 2] }],
-            claim_digest: vec![ClaimDigestEntry { node_prefix: 5, field: 1, seq: 9 }],
+            receipt_buckets: vec![SummaryBucket {
+                bucket_epoch: 7,
+                bloom: vec![1, 2],
+            }],
+            claim_digest: vec![ClaimDigestEntry {
+                node_prefix: 5,
+                field: 1,
+                seq: 9,
+            }],
             group_hints: vec![Id16([3; 16])],
-            want_heads: vec![WantHeads { conv: Id16([4; 16]), heads: vec![Id16([5; 16])] }],
+            want_heads: vec![WantHeads {
+                conv: Id16([4; 16]),
+                heads: vec![Id16([5; 16])],
+            }],
         }),
         Frame::ReconInit {
             domain: 0,
             window: 1,
-            range: Range { lo: Id16::MIN, hi: Id16::MAX, count: 42, fp: 0xdead_beef },
+            range: Range {
+                lo: Id16::MIN,
+                hi: Id16::MAX,
+                count: 42,
+                fp: 0xdead_beef,
+            },
         },
         Frame::ReconRange {
             domain: 3,
-            ranges: vec![Range { lo: Id16([1; 16]), hi: Id16([2; 16]), count: 1, fp: 2 }],
+            ranges: vec![Range {
+                lo: Id16([1; 16]),
+                hi: Id16([2; 16]),
+                count: 1,
+                fp: 2,
+            }],
         },
-        Frame::ReconIds { domain: 1, lo: Id16::MIN, hi: Id16::MAX, ids: vec![Id16([6; 16])] },
+        Frame::ReconIds {
+            domain: 1,
+            lo: Id16::MIN,
+            hi: Id16::MAX,
+            ids: vec![Id16([6; 16])],
+        },
         Frame::Want(vec![Id16([7; 16])]),
         Frame::Bundle(vec![0xAB; 40]),
-        Frame::Budget { id: Id16([8; 16]), granted: 16 },
-        Frame::BlobReq { root: Id16([9; 16]), block: 2, bitmap: vec![0xFF] },
-        Frame::BlobHave { root: Id16([9; 16]), block: 2, bitmap: vec![0x0F] },
-        Frame::Error { code: errcode::UNSUPPORTED, detail: vec![] },
+        Frame::Budget {
+            id: Id16([8; 16]),
+            granted: 16,
+        },
+        Frame::BlobReq {
+            root: Id16([9; 16]),
+            block: 2,
+            bitmap: vec![0xFF],
+        },
+        Frame::BlobHave {
+            root: Id16([9; 16]),
+            block: 2,
+            bitmap: vec![0x0F],
+        },
+        Frame::Error {
+            code: errcode::UNSUPPORTED,
+            detail: vec![],
+        },
         Frame::Close,
     ];
     for f in frames {
@@ -146,14 +215,24 @@ fn frames_roundtrip() {
 
 #[test]
 fn friend_frame_bodies_roundtrip() {
-    let offer = FriendOfferBody { since: 1_700_000_000 };
+    let offer = FriendOfferBody {
+        since: 1_700_000_000,
+    };
     assert_eq!(FriendOfferBody::decode(&offer.encode()).unwrap(), offer);
 
-    let ack = FriendAckBody { countersig: Sig64([9; 64]) };
+    let ack = FriendAckBody {
+        countersig: Sig64([9; 64]),
+    };
     assert_eq!(FriendAckBody::decode(&ack.encode()).unwrap(), ack);
 
-    let summary = ProxySummaryBody { dependent: Id16([4; 16]), bloom: vec![1, 2, 3] };
-    assert_eq!(ProxySummaryBody::decode(&summary.encode()).unwrap(), summary);
+    let summary = ProxySummaryBody {
+        dependent: Id16([4; 16]),
+        bloom: vec![1, 2, 3],
+    };
+    assert_eq!(
+        ProxySummaryBody::decode(&summary.encode()).unwrap(),
+        summary
+    );
 }
 
 #[test]
@@ -162,11 +241,18 @@ fn friend_frame_bodies_reject_trailing_bytes() {
     bytes.push(0);
     assert_eq!(FriendOfferBody::decode(&bytes), Err(WireError::Trailing));
 
-    let mut bytes = FriendAckBody { countersig: Sig64::ZERO }.encode();
+    let mut bytes = FriendAckBody {
+        countersig: Sig64::ZERO,
+    }
+    .encode();
     bytes.push(0);
     assert_eq!(FriendAckBody::decode(&bytes), Err(WireError::Trailing));
 
-    let mut bytes = ProxySummaryBody { dependent: Id16([1; 16]), bloom: vec![] }.encode();
+    let mut bytes = ProxySummaryBody {
+        dependent: Id16([1; 16]),
+        bloom: vec![],
+    }
+    .encode();
     bytes.push(0);
     assert_eq!(ProxySummaryBody::decode(&bytes), Err(WireError::Trailing));
 }
@@ -220,7 +306,12 @@ fn claim_and_prekey_roundtrip() {
 
 #[test]
 fn payload_schemas_roundtrip() {
-    let d = DirectPayload { conv: Id16([1; 16]), epoch: 2, index: 3, ct: vec![4; 20] };
+    let d = DirectPayload {
+        conv: Id16([1; 16]),
+        epoch: 2,
+        index: 3,
+        ct: vec![4; 20],
+    };
     assert_eq!(DirectPayload::decode(&d.encode()).unwrap(), d);
     let a = AsyncPayload::Prekey {
         prekey_id: 5,
@@ -238,7 +329,10 @@ fn payload_schemas_roundtrip() {
         member_sig: Sig64([9; 64]),
     };
     assert_eq!(GroupPayload::decode(&g.encode()).unwrap(), g);
-    let rp = ReceiptPayload { delivered: Id16([3; 16]), mac: [0xCD; 16] };
+    let rp = ReceiptPayload {
+        delivered: Id16([3; 16]),
+        mac: [0xCD; 16],
+    };
     assert_eq!(ReceiptPayload::decode(&rp.encode()).unwrap(), rp);
 }
 
@@ -246,7 +340,10 @@ fn payload_schemas_roundtrip() {
 /// EXACT match (`2 + path_len + SYMBOL_SIZE`), not merely "at least".
 #[test]
 fn symbol_payload_roundtrip_and_strict_length() {
-    let sp = SymbolPayload { path: vec![0xAB; 40], symbol: vec![0x11; crate::consts::SYMBOL_SIZE] };
+    let sp = SymbolPayload {
+        path: vec![0xAB; 40],
+        symbol: vec![0x11; crate::consts::SYMBOL_SIZE],
+    };
     let wire = sp.encode();
     assert_eq!(wire.len(), 2 + 40 + crate::consts::SYMBOL_SIZE);
     assert_eq!(SymbolPayload::decode(&wire).unwrap(), sp);
@@ -288,6 +385,204 @@ fn manifest_roundtrip_and_caps() {
     let mut bad = wire.clone();
     bad[33] = 0;
     assert!(FileManifest::decode(&bad).is_err());
+}
+
+#[test]
+fn group_control_admin_tag_and_add_roundtrip() {
+    let admin_pk = Key32([7; 32]);
+    let admin = AdminKey {
+        admin_node_id: crate::node_id_of(&admin_pk),
+        admin_identity_pubkey: admin_pk,
+    };
+    assert_eq!(AdminKey::decode(&admin.encode()).unwrap(), admin);
+    let tag = AddTag {
+        admin_slot: 0,
+        counter: 1,
+    };
+    assert_eq!(AddTag::decode(&tag.encode()).unwrap(), tag);
+
+    let mut op = SignedMembershipOp {
+        version: 1,
+        gid: Id16([3; 16]),
+        base_epoch: 1,
+        op_id: Id16::MIN,
+        kind: 0,
+        member: Id16([9; 16]),
+        tag,
+        remove_tags: vec![],
+        signer_pubkey: admin_pk,
+        signature: Sig64::ZERO,
+    };
+    op.op_id = op.compute_op_id();
+    assert_eq!(SignedMembershipOp::decode(&op.encode()).unwrap(), op);
+    let mut trailing = op.encode();
+    trailing.push(0);
+    assert_eq!(
+        SignedMembershipOp::decode(&trailing),
+        Err(WireError::Trailing)
+    );
+}
+
+#[test]
+fn group_control_grant_roundtrip_and_binding_object() {
+    let grant = SenderKeyGrant {
+        gid: Id16([1; 16]),
+        epoch: 2,
+        member: crate::node_id_of(&Key32([4; 32])),
+        member_identity_pubkey: Key32([4; 32]),
+        sig_pub: Key32([5; 32]),
+        anchor_hash: [6; 32],
+        issuer_pubkey: Key32([7; 32]),
+        signature: Sig64::ZERO,
+    };
+    assert_eq!(SenderKeyGrant::decode(&grant.encode()).unwrap(), grant);
+    assert_eq!(grant.signed_object().len(), 16 + 2 + 16 + 32 + 32 + 32 + 32);
+}
+
+#[test]
+fn group_control_domain_tags_are_prefix_free() {
+    use crate::domain::SigDomain;
+    let domains = [
+        SigDomain::GroupControl,
+        SigDomain::GroupGrant,
+        SigDomain::GroupBootstrap,
+    ];
+    for (i, a) in domains.iter().enumerate() {
+        assert!(a.tag().ends_with(&[1]));
+        for (j, b) in domains.iter().enumerate() {
+            if i != j {
+                assert_ne!(a.tag(), b.tag());
+            }
+        }
+    }
+}
+
+#[test]
+fn group_control_extended_anchor_and_ack_roundtrip() {
+    let anchor = EpochAnchor {
+        gid: Id16([8; 16]),
+        epoch: 3,
+        state_root: [1; 32],
+        previous_anchor_hash: [2; 32],
+        control_frontier_hash: [3; 32],
+        coordinator_slot: 0,
+    };
+    assert_eq!(EpochAnchor::decode(&anchor.encode()).unwrap(), anchor);
+    let signed = EpochAnchorSignature {
+        anchor,
+        signer_slot: 0,
+        signer_pubkey: Key32([9; 32]),
+        signature: Sig64::ZERO,
+    };
+    assert_eq!(
+        EpochAnchorSignature::decode(&signed.encode()).unwrap(),
+        signed
+    );
+    let ack = AnchorAck {
+        anchor,
+        signer_slot: 1,
+        signer_pubkey: Key32([10; 32]),
+        signature: Sig64::ZERO,
+    };
+    assert_eq!(AnchorAck::decode(&ack.encode()).unwrap(), ack);
+}
+
+#[test]
+fn group_control_batch_roundtrip() {
+    let signer = Key32([7; 32]);
+    let mut op = SignedMembershipOp {
+        version: 1,
+        gid: Id16([3; 16]),
+        base_epoch: 1,
+        op_id: Id16::MIN,
+        kind: 0,
+        member: Id16([9; 16]),
+        tag: AddTag {
+            admin_slot: 2,
+            counter: 4,
+        },
+        remove_tags: Vec::new(),
+        signer_pubkey: signer,
+        signature: Sig64::ZERO,
+    };
+    op.op_id = op.compute_op_id();
+    let batch = GroupControlBatch {
+        version: 1,
+        gid: op.gid,
+        base_anchor_hash: [4; 32],
+        op_seq: 1,
+        operations: vec![op],
+        signer_slot: 2,
+        signature: Sig64::ZERO,
+    };
+    assert_eq!(GroupControlBatch::decode(&batch.encode()).unwrap(), batch);
+}
+
+#[test]
+fn group_welcome_rejects_wrong_distribution_binding() {
+    let admin_pk = Key32([7; 32]);
+    let recipient_pk = Key32([4; 32]);
+    let recipient = crate::node_id_of(&recipient_pk);
+    let mut add = SignedMembershipOp {
+        version: 1,
+        gid: Id16([3; 16]),
+        base_epoch: 1,
+        op_id: Id16::MIN,
+        kind: 0,
+        member: recipient,
+        tag: AddTag {
+            admin_slot: 0,
+            counter: 1,
+        },
+        remove_tags: Vec::new(),
+        signer_pubkey: admin_pk,
+        signature: Sig64::ZERO,
+    };
+    add.op_id = add.compute_op_id();
+    let anchor = EpochAnchor {
+        gid: add.gid,
+        epoch: 1,
+        state_root: [1; 32],
+        previous_anchor_hash: [0; 32],
+        control_frontier_hash: [2; 32],
+        coordinator_slot: 0,
+    };
+    let grant = SenderKeyGrant {
+        gid: add.gid,
+        epoch: 1,
+        member: recipient,
+        member_identity_pubkey: recipient_pk,
+        sig_pub: Key32([5; 32]),
+        anchor_hash: [9; 32],
+        issuer_pubkey: admin_pk,
+        signature: Sig64::ZERO,
+    };
+    let dist = SenderKeyDist {
+        gid: add.gid,
+        epoch: 1,
+        chain_seed: [6; 32],
+        sig_pub: grant.sig_pub,
+    };
+    let invite = BootstrapInvite {
+        version: 1,
+        recipient_node_id: recipient,
+        gid: add.gid,
+        epoch: 1,
+        admins: vec![AdminKey {
+            admin_node_id: crate::node_id_of(&admin_pk),
+            admin_identity_pubkey: admin_pk,
+        }],
+        initial_add: add,
+        anchor: EpochAnchorSignature {
+            anchor,
+            signer_slot: 0,
+            signer_pubkey: admin_pk,
+            signature: Sig64::ZERO,
+        },
+        distributions: vec![BootstrapDistribution { grant, dist }],
+        bootstrap_nonce: Id16([11; 16]),
+    };
+    assert!(BootstrapInvite::decode(&invite.encode()).is_err());
 }
 
 mod props {

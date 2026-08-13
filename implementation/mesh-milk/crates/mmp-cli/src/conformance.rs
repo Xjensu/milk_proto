@@ -184,16 +184,24 @@ fn json_array_strings(json: &str, key: &str) -> Vec<String> {
 }
 
 fn decode_hex(field: &str, value: &str) -> Vec<u8> {
-    assert!(value.len().is_multiple_of(2), "{field} hex value has odd length");
+    assert!(
+        value.len().is_multiple_of(2),
+        "{field} hex value has odd length"
+    );
     let mut out = Vec::with_capacity(value.len() / 2);
     for (index, pair) in value.as_bytes().chunks_exact(2).enumerate() {
-        let hi = hex_nibble(pair[0]).unwrap_or_else(|| panic!("invalid {field} hex at byte {index}"));
-        let lo = hex_nibble(pair[1]).unwrap_or_else(|| panic!("invalid {field} hex at byte {index}"));
+        let hi =
+            hex_nibble(pair[0]).unwrap_or_else(|| panic!("invalid {field} hex at byte {index}"));
+        let lo =
+            hex_nibble(pair[1]).unwrap_or_else(|| panic!("invalid {field} hex at byte {index}"));
         out.push((hi << 4) | lo);
     }
     // Empty payloads are valid for the CLOSE frame; all other empty fields in
     // the current artifacts remain a likely generator error.
-    assert!(!value.is_empty() || field == "empty" || field == "payload", "empty hex field {field}");
+    assert!(
+        !value.is_empty() || field == "empty" || field == "payload",
+        "empty hex field {field}"
+    );
     out
 }
 
@@ -255,7 +263,10 @@ impl<'a> PayloadReader<'a> {
     }
 
     fn take(&mut self, length: usize) -> Result<&'a [u8], &'static str> {
-        let end = self.offset.checked_add(length).ok_or("payload length overflow")?;
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or("payload length overflow")?;
         if end > self.bytes.len() {
             return Err("payload truncated");
         }
@@ -523,10 +534,14 @@ fn validate_tlvs_independent(bytes: &[u8]) -> Result<(), &'static str> {
             return Err("TLV order/duplicate");
         }
         previous = Some(typ);
-        let len_bytes = bytes.get(cursor..cursor + 2).ok_or("truncated TLV length")?;
+        let len_bytes = bytes
+            .get(cursor..cursor + 2)
+            .ok_or("truncated TLV length")?;
         let len = u16::from_le_bytes([len_bytes[0], len_bytes[1]]) as usize;
         cursor += 2;
-        let value = bytes.get(cursor..cursor + len).ok_or("truncated TLV value")?;
+        let value = bytes
+            .get(cursor..cursor + len)
+            .ok_or("truncated TLV value")?;
         cursor += len;
         // The critical registry has fixed (or bounded, for PARENTS) value
         // widths.  Checking only the type/order here would leave a malformed
@@ -567,10 +582,9 @@ struct BundleView<'a> {
 
 fn decode_u40(bytes: &[u8]) -> u64 {
     assert_eq!(bytes.len(), 5);
-    bytes
-        .iter()
-        .enumerate()
-        .fold(0u64, |value, (shift, byte)| value | u64::from(*byte) << (shift * 8))
+    bytes.iter().enumerate().fold(0u64, |value, (shift, byte)| {
+        value | u64::from(*byte) << (shift * 8)
+    })
 }
 
 #[test]
@@ -582,9 +596,15 @@ fn committed_vector_inventory_is_explicit_and_complete() {
         .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
         .collect();
     actual.sort();
-    let mut expected = VECTOR_NAMES.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>();
+    let mut expected = VECTOR_NAMES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
     expected.sort();
-    assert_eq!(actual, expected, "update VECTOR_NAMES when a vector is added/removed");
+    assert_eq!(
+        actual, expected,
+        "update VECTOR_NAMES when a vector is added/removed"
+    );
 }
 
 #[test]
@@ -601,15 +621,23 @@ fn coverage_manifest_maps_every_committed_vector() {
     assert_eq!(artifacts.len(), 38);
     assert_eq!(sources.len(), 38);
     assert_eq!(evidence.len(), 38);
-    assert!(sources.iter().all(|source| source.starts_with("specification/")));
+    assert!(sources
+        .iter()
+        .all(|source| source.starts_with("specification/")));
     assert!(evidence.iter().all(|entry| !entry.is_empty()));
 
     let mut actual = artifacts;
     actual.sort();
     actual.dedup();
-    let mut expected = VECTOR_NAMES.iter().map(|name| (*name).to_owned()).collect::<Vec<_>>();
+    let mut expected = VECTOR_NAMES
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
     expected.sort();
-    assert_eq!(actual, expected, "coverage manifest must map every committed vector");
+    assert_eq!(
+        actual, expected,
+        "coverage manifest must map every committed vector"
+    );
 
     let mut unique_ids = ids.clone();
     unique_ids.sort();
@@ -643,15 +671,23 @@ fn coverage_manifest_lists_each_registered_frame_requirement() {
         "frame.type.0x7f.close.v1",
     ];
     for requirement in required {
-        assert!(ids.iter().any(|id| id == requirement), "coverage manifest is missing {requirement}");
+        assert!(
+            ids.iter().any(|id| id == requirement),
+            "coverage manifest is missing {requirement}"
+        );
     }
     for (id, artifact) in ids.iter().zip(&artifacts) {
         if id.starts_with("frame.type.") {
-            assert_eq!(artifact, "frames.json", "{id} must consume the complete frame inventory");
+            assert_eq!(
+                artifact, "frames.json",
+                "{id} must consume the complete frame inventory"
+            );
         }
     }
     assert_eq!(
-        ids.iter().filter(|id| id.starts_with("frame.type.")).count(),
+        ids.iter()
+            .filter(|id| id.starts_with("frame.type."))
+            .count(),
         required.len(),
         "frame requirement IDs must be one-to-one with the registered frame table"
     );
@@ -664,8 +700,14 @@ fn coverage_manifest_lists_required_canonical_negative_cases() {
     let artifacts = json_all_strings(&json, "artifact");
     assert_eq!(ids.len(), artifacts.len());
     for (requirement, artifact) in [
-        ("negative.bundle.reserved-bits.v1", "reserved_bits_negative.json"),
-        ("negative.tlv.unknown-critical.v1", "bundle_tlv_negative.json"),
+        (
+            "negative.bundle.reserved-bits.v1",
+            "reserved_bits_negative.json",
+        ),
+        (
+            "negative.tlv.unknown-critical.v1",
+            "bundle_tlv_negative.json",
+        ),
         ("negative.tlv.out-of-order.v1", "bundle_tlv_negative.json"),
         ("negative.tlv.duplicate.v1", "bundle_tlv_negative.json"),
     ] {
@@ -673,7 +715,10 @@ fn coverage_manifest_lists_required_canonical_negative_cases() {
             .iter()
             .position(|id| id == requirement)
             .unwrap_or_else(|| panic!("coverage manifest is missing {requirement}"));
-        assert_eq!(artifacts[index], artifact, "{requirement} must map to {artifact}");
+        assert_eq!(
+            artifacts[index], artifact,
+            "{requirement} must map to {artifact}"
+        );
     }
 }
 
@@ -687,7 +732,10 @@ fn envelope_vector_is_accepted_by_independent_reader() {
     assert_eq!(u64::from(actual_type), frame_type);
     assert_eq!(actual_payload, payload);
     assert_eq!(wire.len(), 3 + payload.len());
-    assert_eq!(u16::from_le_bytes([wire[0], wire[1]]) as usize, payload.len());
+    assert_eq!(
+        u16::from_le_bytes([wire[0], wire[1]]) as usize,
+        payload.len()
+    );
 }
 
 #[test]
@@ -699,7 +747,10 @@ fn hex_decoder_uses_the_value_not_the_field_name() {
 fn envelope_reader_rejects_truncation_and_trailing_bytes() {
     let json = vector("envelope.json");
     let wire = parse_hex(&json, "wire");
-    assert_eq!(read_envelope_independent(&wire[..2]), Err("truncated envelope header"));
+    assert_eq!(
+        read_envelope_independent(&wire[..2]),
+        Err("truncated envelope header")
+    );
     assert_eq!(
         read_envelope_independent(&wire[..wire.len() - 1]),
         Err("envelope has a truncated or trailing byte")
@@ -728,9 +779,15 @@ fn oversized_envelope_vector_records_normative_and_runtime_cap() {
     for (index, wire_hex) in wires.iter().enumerate() {
         let wire = decode_hex("wire", wire_hex);
         assert_eq!(wire.len(), 3 + payload_lengths[index] as usize);
-        assert_eq!(u16::from_le_bytes([wire[0], wire[1]]) as usize, payload_lengths[index] as usize);
+        assert_eq!(
+            u16::from_le_bytes([wire[0], wire[1]]) as usize,
+            payload_lengths[index] as usize
+        );
         assert_eq!(wire[2], mmp_types::frame::FT_BUNDLE);
-        assert_eq!(read_envelope_normative(&wire), Err("payload exceeds doc 10 logical cap"));
+        assert_eq!(
+            read_envelope_normative(&wire),
+            Err("payload exceeds doc 10 logical cap")
+        );
         // The independent structural reader accepts both byte streams; the
         // production reader must reject them at the frozen cap boundary.
         assert!(read_envelope_independent(&wire).is_ok());
@@ -756,7 +813,10 @@ fn hello_vector_is_accepted_by_independent_reader() {
     assert_eq!(&wire[3..3 + suite_len], suites.as_slice());
     let tier_offset = 3 + suite_len;
     assert_eq!(wire[tier_offset], expected_tier);
-    assert_eq!(u16::from_le_bytes([wire[tier_offset + 1], wire[tier_offset + 2]]), expected_flags);
+    assert_eq!(
+        u16::from_le_bytes([wire[tier_offset + 1], wire[tier_offset + 2]]),
+        expected_flags
+    );
     assert_eq!(wire[tier_offset + 3], expected_credits);
     assert_eq!(
         u16::from_le_bytes([wire[tier_offset + 4], wire[tier_offset + 5]]),
@@ -773,21 +833,36 @@ fn beacon_vector_is_accepted_by_independent_fixed_reader() {
     assert_eq!(view.ver, json_u64(&json, "ver") as u8);
     assert_eq!(view.tier, json_u64(&json, "tier") as u8);
     assert_eq!(view.battery, json_u64(&json, "battery") as u8);
-    assert_eq!(view.ephem_id, decode_hex("ephem_id", json_string(&json, "ephem_id")));
+    assert_eq!(
+        view.ephem_id,
+        decode_hex("ephem_id", json_string(&json, "ephem_id"))
+    );
     assert_eq!(view.busy, json_bool(&json, "busy"));
     assert_eq!(view.epoch, json_u64(&json, "epoch") as u8);
     assert_eq!(view.frag_structure, json_u64(&json, "frag_structure") as u8);
     assert_eq!(view.frag_offset, json_u64(&json, "frag_offset") as u16);
-    assert_eq!(view.fragment, decode_hex("fragment", json_string(&json, "fragment")));
+    assert_eq!(
+        view.fragment,
+        decode_hex("fragment", json_string(&json, "fragment"))
+    );
     assert_eq!(wire.len(), 24, "beacon must remain fixed-size");
 
-    assert_eq!(read_beacon_independent(&wire[..23]), Err("beacon truncated"));
+    assert_eq!(
+        read_beacon_independent(&wire[..23]),
+        Err("beacon truncated")
+    );
     let mut trailing = wire.clone();
     trailing.push(0);
-    assert_eq!(read_beacon_independent(&trailing), Err("beacon has trailing bytes"));
+    assert_eq!(
+        read_beacon_independent(&trailing),
+        Err("beacon has trailing bytes")
+    );
     let mut wrong_version = wire;
     wrong_version[0] = 0x29;
-    assert_eq!(read_beacon_independent(&wrong_version), Err("beacon version is not 1"));
+    assert_eq!(
+        read_beacon_independent(&wrong_version),
+        Err("beacon version is not 1")
+    );
 }
 
 #[test]
@@ -847,7 +922,10 @@ fn reserved_bits_negative_vector_is_rejected_by_independent_bundle_reader() {
     let json = vector("reserved_bits_negative.json");
     let wire = parse_hex(&json, "wire");
     assert_eq!(json_u64(&json, "reserved_mask"), 0x80);
-    assert_eq!(json_string(&json, "expected_error"), "reserved bundle flags are set");
+    assert_eq!(
+        json_string(&json, "expected_error"),
+        "reserved bundle flags are set"
+    );
     assert_ne!(wire[1] & 0x80, 0, "fixture must set a reserved bundle flag");
     assert!(matches!(
         read_bundle_independent(&wire),
@@ -861,19 +939,37 @@ fn malformed_tlv_vectors_are_rejected_by_independent_rules() {
     let names = json_all_strings(&json, "name");
     let wires = json_all_strings(&json, "wire");
     let expected = json_all_strings(&json, "expected_error");
-    assert_eq!(names, vec!["unknown_critical_tlv", "out_of_order_tlvs", "duplicate_tlv_type"]);
-    assert_eq!(expected, vec!["unknown critical TLV", "TLV order/duplicate", "TLV order/duplicate"]);
+    assert_eq!(
+        names,
+        vec![
+            "unknown_critical_tlv",
+            "out_of_order_tlvs",
+            "duplicate_tlv_type"
+        ]
+    );
+    assert_eq!(
+        expected,
+        vec![
+            "unknown critical TLV",
+            "TLV order/duplicate",
+            "TLV order/duplicate"
+        ]
+    );
     assert_eq!(wires.len(), 3);
 
     for (index, wire_hex) in wires.iter().enumerate() {
         let wire = decode_hex("wire", wire_hex);
-        let view = read_bundle_independent(&wire).expect("malformed TLV bytes retain a valid outer layout");
+        let view = read_bundle_independent(&wire)
+            .expect("malformed TLV bytes retain a valid outer layout");
         let expected_error = match index {
             0 => "unknown critical TLV",
             1 | 2 => "TLV order/duplicate",
             _ => unreachable!("vector has exactly three malformed TLV cases"),
         };
-        assert_eq!(validate_tlvs_independent(view.extensions), Err(expected_error));
+        assert_eq!(
+            validate_tlvs_independent(view.extensions),
+            Err(expected_error)
+        );
     }
 }
 
@@ -890,10 +986,22 @@ fn independent_tlv_reader_rejects_known_type_length_mismatches() {
     // PARENTS is 1–4 BundleIDs; GROUP_EPOCH and SYMBOL_INFO are fixed-width
     // critical types.  These malformed streams retain valid TLV framing so a
     // length-only implementation cannot accidentally accept them.
-    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 15])), Err("known TLV has invalid length"));
-    assert_eq!(validate_tlvs_independent(&tlv(0x01, &[0; 80])), Err("known TLV has invalid length"));
-    assert_eq!(validate_tlvs_independent(&tlv(0x02, &[0])), Err("known TLV has invalid length"));
-    assert_eq!(validate_tlvs_independent(&tlv(0x03, &[0; 21])), Err("known TLV has invalid length"));
+    assert_eq!(
+        validate_tlvs_independent(&tlv(0x01, &[0; 15])),
+        Err("known TLV has invalid length")
+    );
+    assert_eq!(
+        validate_tlvs_independent(&tlv(0x01, &[0; 80])),
+        Err("known TLV has invalid length")
+    );
+    assert_eq!(
+        validate_tlvs_independent(&tlv(0x02, &[0])),
+        Err("known TLV has invalid length")
+    );
+    assert_eq!(
+        validate_tlvs_independent(&tlv(0x03, &[0; 21])),
+        Err("known TLV has invalid length")
+    );
 
     // Boundary-positive checks ensure the new guard does not reject valid
     // encodings: one parent and the largest four-parent list.
@@ -916,22 +1024,28 @@ fn noncanonical_s_vector_pins_little_endian_s_plus_l() {
     assert_eq!(noncanonical_s.len(), 32);
     assert_eq!(&valid_signature[32..], valid_s.as_slice());
     assert_eq!(&noncanonical_signature[32..], noncanonical_s.as_slice());
-    assert_eq!(&valid_signature[..32], &noncanonical_signature[..32], "S+L must preserve R");
+    assert_eq!(
+        &valid_signature[..32],
+        &noncanonical_signature[..32],
+        "S+L must preserve R"
+    );
     assert_eq!(json_string(&json, "expected_valid"), "accept");
     assert_eq!(json_string(&json, "expected_noncanonical"), "reject");
 
     // Recompute S+L independently from the artifact.  This is deliberately
     // a tiny byte-level check rather than a call to the production verifier.
     const L_LE: [u8; 32] = [
-        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
-        0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+        0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde,
+        0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x10,
     ];
     let mut carry = 0u16;
     for index in 0..32 {
         let sum = valid_s[index] as u16 + L_LE[index] as u16 + carry;
-        assert_eq!(sum as u8, noncanonical_s[index], "S+L differs at byte {index}");
+        assert_eq!(
+            sum as u8, noncanonical_s[index],
+            "S+L differs at byte {index}"
+        );
         carry = sum >> 8;
     }
     assert_eq!(carry, 0, "S+L must fit in the 256-bit signature scalar");
@@ -977,22 +1091,58 @@ fn grouped_bundle_vector_covers_classes_zero_through_five() {
         let expected_origin = decode_hex("origin_pubkey", &origins[index]);
         let expected_dest = decode_hex("dest", &dests[index]);
         let expected_signature = decode_hex("signature", &signatures[index]);
-        assert_eq!(payload.len(), payload_lengths[index] as usize, "{} payload length", names[index]);
-        let view = read_bundle_independent(&wire).expect("grouped bundle must satisfy independent layout reader");
+        assert_eq!(
+            payload.len(),
+            payload_lengths[index] as usize,
+            "{} payload length",
+            names[index]
+        );
+        let view = read_bundle_independent(&wire)
+            .expect("grouped bundle must satisfy independent layout reader");
         validate_tlvs_independent(view.extensions)
             .unwrap_or_else(|error| panic!("{} extensions rejected: {error}", names[index]));
-        assert_eq!(u64::from(view.class), classes[index], "{} class", names[index]);
+        assert_eq!(
+            u64::from(view.class),
+            classes[index],
+            "{} class",
+            names[index]
+        );
         assert_eq!(view.payload, payload, "{} payload bytes", names[index]);
-        assert_eq!(view.canonical, expected_canonical, "{} canonical bytes", names[index]);
-        assert_eq!(view.origin, expected_origin, "{} origin binding", names[index]);
+        assert_eq!(
+            view.canonical, expected_canonical,
+            "{} canonical bytes",
+            names[index]
+        );
+        assert_eq!(
+            view.origin, expected_origin,
+            "{} origin binding",
+            names[index]
+        );
         assert_eq!(view.dest, expected_dest, "{} destination", names[index]);
-        assert_eq!(view.signature, expected_signature, "{} outer signature", names[index]);
+        assert_eq!(
+            view.signature, expected_signature,
+            "{} outer signature",
+            names[index]
+        );
         assert_eq!(view.flags & !0b111, 0, "{} reserved flags", names[index]);
         assert!(view.priority <= 3, "{} priority", names[index]);
-        assert_eq!(view.extensions.len(), u16::from_le_bytes([wire[56], wire[57]]) as usize);
-        assert_eq!(view.canonical.len(), wire.len() - 64, "{} canonical size", names[index]);
+        assert_eq!(
+            view.extensions.len(),
+            u16::from_le_bytes([wire[56], wire[57]]) as usize
+        );
+        assert_eq!(
+            view.canonical.len(),
+            wire.len() - 64,
+            "{} canonical size",
+            names[index]
+        );
         let digest = blake3::hash(&view.canonical);
-        assert_eq!(&digest.as_bytes()[..16], expected_id, "{} content address", names[index]);
+        assert_eq!(
+            &digest.as_bytes()[..16],
+            expected_id,
+            "{} content address",
+            names[index]
+        );
     }
 }
 
@@ -1052,8 +1202,20 @@ fn cross_domain_matrix_has_all_registered_pairs_and_expected_results() {
             assert_eq!(results[index], expected, "matrix cell ({row},{column})");
         }
     }
-    assert_eq!(results.iter().filter(|value| value.as_str() == "accept").count(), 9);
-    assert_eq!(results.iter().filter(|value| value.as_str() == "reject").count(), 72);
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| value.as_str() == "accept")
+            .count(),
+        9
+    );
+    assert_eq!(
+        results
+            .iter()
+            .filter(|value| value.as_str() == "reject")
+            .count(),
+        72
+    );
 }
 
 #[test]
@@ -1110,7 +1272,10 @@ fn committed_cross_domain_signatures_match_declared_verdicts() {
             )
             .is_ok();
             let declared = results[index].as_str() == "accept";
-            assert_eq!(accepted, declared, "committed matrix verdict drifted at ({row},{column})");
+            assert_eq!(
+                accepted, declared,
+                "committed matrix verdict drifted at ({row},{column})"
+            );
         }
     }
 }
@@ -1151,17 +1316,46 @@ fn frame_inventory_has_all_registered_types_and_valid_envelopes() {
     ];
     let mut seen = [false; 256];
     for (index, expected_type) in expected_types.iter().enumerate() {
-        assert_eq!(types[index], u64::from(*expected_type), "frame {} tag drifted", names[index]);
-        assert!(!seen[*expected_type as usize], "duplicate frame type {}", expected_type);
+        assert_eq!(
+            types[index],
+            u64::from(*expected_type),
+            "frame {} tag drifted",
+            names[index]
+        );
+        assert!(
+            !seen[*expected_type as usize],
+            "duplicate frame type {}",
+            expected_type
+        );
         seen[*expected_type as usize] = true;
 
         let payload = decode_hex("payload", &payloads[index]);
         let wire = decode_hex("wire", &wires[index]);
-        assert_eq!(wire.len(), payload.len() + 3, "frame {} envelope length mismatch", names[index]);
-        assert_eq!(u16::from_le_bytes([wire[0], wire[1]]) as usize, payload.len());
-        assert_eq!(wire[2], *expected_type, "frame {} envelope tag mismatch", names[index]);
-        assert_eq!(&wire[3..], payload.as_slice(), "frame {} payload mismatch", names[index]);
-        assert_eq!(read_envelope_independent(&wire).unwrap(), (*expected_type, payload.as_slice()));
+        assert_eq!(
+            wire.len(),
+            payload.len() + 3,
+            "frame {} envelope length mismatch",
+            names[index]
+        );
+        assert_eq!(
+            u16::from_le_bytes([wire[0], wire[1]]) as usize,
+            payload.len()
+        );
+        assert_eq!(
+            wire[2], *expected_type,
+            "frame {} envelope tag mismatch",
+            names[index]
+        );
+        assert_eq!(
+            &wire[3..],
+            payload.as_slice(),
+            "frame {} payload mismatch",
+            names[index]
+        );
+        assert_eq!(
+            read_envelope_independent(&wire).unwrap(),
+            (*expected_type, payload.as_slice())
+        );
     }
 }
 
@@ -1202,7 +1396,11 @@ fn frame_inventory_payloads_match_independent_registered_grammars() {
 
     for index in 0..count {
         let typ = types[index] as u8;
-        assert_eq!(typ, expected_types[index], "frame {} type drifted", names[index]);
+        assert_eq!(
+            typ, expected_types[index],
+            "frame {} type drifted",
+            names[index]
+        );
         let payload = decode_hex("payload", &payloads[index]);
         read_frame_payload_independent(typ, &payload)
             .unwrap_or_else(|error| panic!("frame {} payload rejected: {error}", names[index]));
@@ -1243,7 +1441,10 @@ fn rbsr_fingerprint_vector_matches_independent_reader() {
     // this specification-derived check instead of updating both paths.
     let json = vector("rbsr_fingerprint.json");
     let id_hex = json_array_strings(&json, "ids");
-    assert!(!id_hex.is_empty(), "RBSR vector must contain at least one ID");
+    assert!(
+        !id_hex.is_empty(),
+        "RBSR vector must contain at least one ID"
+    );
 
     let mut xor_fold = [0u8; 16];
     for (index, encoded) in id_hex.iter().enumerate() {
@@ -1262,5 +1463,8 @@ fn rbsr_fingerprint_vector_matches_independent_reader() {
     let expected_bytes = decode_hex("fingerprint_hex", json_string(&json, "fingerprint_hex"));
     assert_eq!(fingerprint_bytes, expected_bytes.as_slice());
     let expected_u64 = json_u64(&json, "fingerprint_u64");
-    assert_eq!(u64::from_le_bytes(fingerprint_bytes.try_into().unwrap()), expected_u64);
+    assert_eq!(
+        u64::from_le_bytes(fingerprint_bytes.try_into().unwrap()),
+        expected_u64
+    );
 }

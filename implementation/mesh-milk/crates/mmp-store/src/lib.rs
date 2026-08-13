@@ -32,15 +32,15 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use mmp_core::store::{
-    BundleMeta, BundleStore, MemStore, SlotState, StoreBatchEntry, StoreBatchError,
-    StoreBatchReservation, StoreBatchReservationKey, StoreCommitError, StorePutError,
-    StorePutOutcome, StoreReservation, StoreReservationKey, StoreAbortError, StoreReserveError,
+    BundleMeta, BundleStore, MemStore, SlotState, StoreAbortError, StoreBatchEntry,
+    StoreBatchError, StoreBatchReservation, StoreBatchReservationKey, StoreCommitError,
+    StorePutError, StorePutOutcome, StoreReservation, StoreReservationKey, StoreReserveError,
 };
 use mmp_core::{ReceiptFilter, SeenIndex};
 use mmp_crypto::verify;
 use mmp_types::bundle::{class, prio};
-use mmp_types::consts::{class_max_lifetime_ms, L_MAX};
 use mmp_types::claim::Claim;
+use mmp_types::consts::{class_max_lifetime_ms, L_MAX};
 use mmp_types::domain::SigDomain;
 use mmp_types::ids::Id16;
 
@@ -254,12 +254,20 @@ impl SnapshotStore {
             // that reads potentially corrupted/truncated disk bytes, and the
             // handbook §0 policy is that no panic must be reachable from wire
             // or disk data, even where a bound is currently provably safe.
-            let Some(len_bytes) = bytes.get(pos..length_end) else { break };
-            let Ok(len_bytes) = <[u8; 4]>::try_from(len_bytes) else { break };
+            let Some(len_bytes) = bytes.get(pos..length_end) else {
+                break;
+            };
+            let Ok(len_bytes) = <[u8; 4]>::try_from(len_bytes) else {
+                break;
+            };
             let len = u32::from_le_bytes(len_bytes) as usize;
             pos = length_end;
-            let Some(record_end) = pos.checked_add(len) else { break };
-            let Some(checksum_end) = record_end.checked_add(32) else { break };
+            let Some(record_end) = pos.checked_add(len) else {
+                break;
+            };
+            let Some(checksum_end) = record_end.checked_add(32) else {
+                break;
+            };
             if checksum_end > bytes.len() {
                 break; // truncated tail: crash mid-write — drop it
             }
@@ -269,7 +277,9 @@ impl SnapshotStore {
             if blake3::hash(record).as_bytes() != sum {
                 continue; // corrupt record: drop-and-redownload
             }
-            let Some((&kind, payload)) = record.split_first() else { continue };
+            let Some((&kind, payload)) = record.split_first() else {
+                continue;
+            };
             match kind {
                 RECORD_BUNDLE => {
                     if let Some((meta, body)) = decode_record(payload) {
@@ -290,8 +300,13 @@ impl SnapshotStore {
                         // is dropped on load exactly like a corrupt record —
                         // verify-before-trust is unconditional (golden rule 4
                         // applied here to claims, not just bundles).
-                        if verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig)
-                            .is_ok()
+                        if verify(
+                            SigDomain::Claim,
+                            &claim.owner,
+                            &claim.signed_object(),
+                            &claim.sig,
+                        )
+                        .is_ok()
                         {
                             self.claims.push(claim);
                         }
@@ -475,16 +490,22 @@ impl SnapshotStore {
         total = total.checked_add(bundle_record_size(body.len())?)?;
 
         for claim in &self.claims {
-            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(claim.encode().len())?,
+            )?)?;
         }
         for blob in &self.group_blobs {
             total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
         }
         if let Some(seen) = &self.seen_index {
-            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(seen.encode().len())?,
+            )?)?;
         }
         if let Some(filter) = &self.receipt_filter {
-            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(filter.encode().len())?,
+            )?)?;
         }
         if let Some(authority) = &self.authority {
             total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
@@ -509,16 +530,22 @@ impl SnapshotStore {
         }
 
         for claim in &self.claims {
-            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(claim.encode().len())?,
+            )?)?;
         }
         for blob in &self.group_blobs {
             total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
         }
         if let Some(seen) = &self.seen_index {
-            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(seen.encode().len())?,
+            )?)?;
         }
         if let Some(filter) = &self.receipt_filter {
-            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(filter.encode().len())?,
+            )?)?;
         }
         if let Some(authority) = &self.authority {
             total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
@@ -543,12 +570,14 @@ impl SnapshotStore {
         let mut total = u64::try_from(MAGIC.len()).ok()?;
         for stored_meta in self.mem.all_meta() {
             let replaced = candidate.is_some_and(|meta| meta.id == stored_meta.id)
-                || self.reservations.iter().any(|(key, pending)| {
-                    Some(key) != skip && pending.id == stored_meta.id
-                })
-                || self.batch_reservations.values().any(|batch| {
-                    batch.iter().any(|pending| pending.id == stored_meta.id)
-                });
+                || self
+                    .reservations
+                    .iter()
+                    .any(|(key, pending)| Some(key) != skip && pending.id == stored_meta.id)
+                || self
+                    .batch_reservations
+                    .values()
+                    .any(|batch| batch.iter().any(|pending| pending.id == stored_meta.id));
             if replaced {
                 continue;
             }
@@ -562,7 +591,9 @@ impl SnapshotStore {
             if Some(key) == skip || candidate.is_some_and(|meta| meta.id == pending.id) {
                 continue;
             }
-            total = total.checked_add(bundle_record_size(usize::try_from(pending.declared_size).ok()?)?)?;
+            total = total.checked_add(bundle_record_size(
+                usize::try_from(pending.declared_size).ok()?,
+            )?)?;
         }
         for batch in self.batch_reservations.values() {
             for pending in batch {
@@ -572,22 +603,26 @@ impl SnapshotStore {
             }
         }
         if let Some(meta) = candidate {
-            total = total.checked_add(
-                bundle_record_size(usize::try_from(meta.size).ok()?)?,
-            )?;
+            total = total.checked_add(bundle_record_size(usize::try_from(meta.size).ok()?)?)?;
         }
 
         for claim in &self.claims {
-            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(claim.encode().len())?,
+            )?)?;
         }
         for blob in &self.group_blobs {
             total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
         }
         if let Some(seen) = &self.seen_index {
-            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(seen.encode().len())?,
+            )?)?;
         }
         if let Some(filter) = &self.receipt_filter {
-            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(filter.encode().len())?,
+            )?)?;
         }
         if let Some(authority) = &self.authority {
             total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
@@ -612,7 +647,10 @@ impl SnapshotStore {
         let mut total = u64::try_from(MAGIC.len()).ok()?;
         for stored_meta in self.mem.all_meta() {
             let replaced = candidate_ids.contains(&stored_meta.id)
-                || self.reservations.values().any(|pending| pending.id == stored_meta.id)
+                || self
+                    .reservations
+                    .values()
+                    .any(|pending| pending.id == stored_meta.id)
                 || self.batch_reservations.iter().any(|(key, batch)| {
                     Some(key) != skip && batch.iter().any(|pending| pending.id == stored_meta.id)
                 });
@@ -643,16 +681,22 @@ impl SnapshotStore {
             total = total.checked_add(bundle_record_size(usize::try_from(meta.size).ok()?)?)?;
         }
         for claim in &self.claims {
-            total = total.checked_add(framed_record_size(1usize.checked_add(claim.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(claim.encode().len())?,
+            )?)?;
         }
         for blob in &self.group_blobs {
             total = total.checked_add(framed_record_size(1usize.checked_add(blob.len())?)?)?;
         }
         if let Some(seen) = &self.seen_index {
-            total = total.checked_add(framed_record_size(1usize.checked_add(seen.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(seen.encode().len())?,
+            )?)?;
         }
         if let Some(filter) = &self.receipt_filter {
-            total = total.checked_add(framed_record_size(1usize.checked_add(filter.encode().len())?)?)?;
+            total = total.checked_add(framed_record_size(
+                1usize.checked_add(filter.encode().len())?,
+            )?)?;
         }
         if let Some(authority) = &self.authority {
             total = total.checked_add(framed_record_size(1usize.checked_add(authority.len())?)?)?;
@@ -819,13 +863,13 @@ fn valid_persisted_metadata(
     // The low nibble is the complete wire class domain.  Classes 6..=15 are
     // intentionally reserved for forward-compatible store-and-forward: a v1
     // node must retain and relay a signed class it does not interpret.
-    if class_byte > 0x0f || priority > prio::BULK || budget > L_MAX
-        || own_origin > 1
-    {
+    if class_byte > 0x0f || priority > prio::BULK || budget > L_MAX || own_origin > 1 {
         return false;
     }
 
-    let Some(lifetime) = expires_at.checked_sub(stored_at) else { return false };
+    let Some(lifetime) = expires_at.checked_sub(stored_at) else {
+        return false;
+    };
     lifetime <= class_max_lifetime_ms(class_byte)
 }
 
@@ -866,14 +910,26 @@ fn validate_complete_snapshot(bytes: &[u8]) -> bool {
 
     let mut pos = MAGIC.len();
     while pos < bytes.len() {
-        let Some(length_end) = pos.checked_add(4) else { return false };
-        let Some(length_bytes) = bytes.get(pos..length_end) else { return false };
-        let Ok(length_bytes) = <[u8; 4]>::try_from(length_bytes) else { return false };
+        let Some(length_end) = pos.checked_add(4) else {
+            return false;
+        };
+        let Some(length_bytes) = bytes.get(pos..length_end) else {
+            return false;
+        };
+        let Ok(length_bytes) = <[u8; 4]>::try_from(length_bytes) else {
+            return false;
+        };
         let length = u32::from_le_bytes(length_bytes) as usize;
-        let Some(after_length) = pos.checked_add(4) else { return false };
+        let Some(after_length) = pos.checked_add(4) else {
+            return false;
+        };
         pos = after_length;
-        let Some(record_end) = pos.checked_add(length) else { return false };
-        let Some(checksum_end) = record_end.checked_add(32) else { return false };
+        let Some(record_end) = pos.checked_add(length) else {
+            return false;
+        };
+        let Some(checksum_end) = record_end.checked_add(32) else {
+            return false;
+        };
         if checksum_end > bytes.len() {
             return false;
         }
@@ -882,11 +938,19 @@ fn validate_complete_snapshot(bytes: &[u8]) -> bool {
         if blake3::hash(record).as_bytes() != checksum {
             return false;
         }
-        let Some((&kind, payload)) = record.split_first() else { return false };
+        let Some((&kind, payload)) = record.split_first() else {
+            return false;
+        };
         let semantically_valid = match kind {
             RECORD_BUNDLE => decode_record(payload).is_some(),
             RECORD_CLAIM => Claim::decode(payload).ok().is_some_and(|claim| {
-                verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig).is_ok()
+                verify(
+                    SigDomain::Claim,
+                    &claim.owner,
+                    &claim.signed_object(),
+                    &claim.sig,
+                )
+                .is_ok()
             }),
             // GroupState is deliberately opaque at this layer; mmp-node
             // performs its strict decoder before adopting a group.
@@ -1008,8 +1072,12 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
         a.copy_from_slice(r.get(o..o + 16)?);
         Some(Id16(a))
     };
-    let u32le = |o: usize| -> Option<u32> { Some(u32::from_le_bytes(r.get(o..o + 4)?.try_into().unwrap())) };
-    let u64le = |o: usize| -> Option<u64> { Some(u64::from_le_bytes(r.get(o..o + 8)?.try_into().unwrap())) };
+    let u32le = |o: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(r.get(o..o + 4)?.try_into().unwrap()))
+    };
+    let u64le = |o: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(r.get(o..o + 8)?.try_into().unwrap()))
+    };
     let class_byte = *r.get(16)?;
     let priority = *r.get(49)?;
     let size = u32le(50)?;
@@ -1017,7 +1085,9 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
     let expires_at = u64le(62)?;
     let budget = *r.get(70)?;
     let own_origin = *r.get(71)?;
-    if !valid_persisted_metadata(class_byte, priority, budget, own_origin, stored_at, expires_at) {
+    if !valid_persisted_metadata(
+        class_byte, priority, budget, own_origin, stored_at, expires_at,
+    ) {
         return None;
     }
     // Snapshot bytes are local input, not an authenticated wire bundle. Keep
@@ -1038,7 +1108,11 @@ fn decode_record(r: &[u8]) -> Option<(BundleMeta, Vec<u8>)> {
         // clamp concept, so effective == declared; a restarted announcement
         // re-clamps to NORMAL until the authority state that justified any
         // prior elevation is re-established (it never persisted either).
-        effective_priority: if class_byte == class::ANNOUNCEMENT { prio::NORMAL } else { priority },
+        effective_priority: if class_byte == class::ANNOUNCEMENT {
+            prio::NORMAL
+        } else {
+            priority
+        },
         size,
         stored_at,
         expires_at,
@@ -1062,7 +1136,11 @@ impl BundleStore for SnapshotStore {
     fn put(&mut self, meta: BundleMeta, bytes: &[u8]) {
         self.mem.put(meta, bytes)
     }
-    fn try_put(&mut self, meta: BundleMeta, bytes: &[u8]) -> Result<StorePutOutcome, StorePutError> {
+    fn try_put(
+        &mut self,
+        meta: BundleMeta,
+        bytes: &[u8],
+    ) -> Result<StorePutOutcome, StorePutError> {
         // A checked write has no reservation-aware accounting here. Refuse it
         // while any runtime capability is outstanding so it cannot consume
         // bytes/image space promised to a later single or atomic batch commit.
@@ -1072,7 +1150,11 @@ impl BundleStore for SnapshotStore {
         let replaced = self.mem.meta(&meta.id).is_some();
         let Some(limits) = self.limits else {
             self.mem.put(meta, bytes);
-            return Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted });
+            return Ok(if replaced {
+                StorePutOutcome::Replaced
+            } else {
+                StorePutOutcome::Inserted
+            });
         };
         // An oversized image was intentionally not loaded. Do not let a
         // subsequent receive path appear to admit state that `persist` is
@@ -1085,7 +1167,11 @@ impl BundleStore for SnapshotStore {
             return Err(StorePutError::Capacity);
         }
         self.mem.put(meta, bytes);
-        Ok(if replaced { StorePutOutcome::Replaced } else { StorePutOutcome::Inserted })
+        Ok(if replaced {
+            StorePutOutcome::Replaced
+        } else {
+            StorePutOutcome::Inserted
+        })
     }
     fn try_put_batch(
         &mut self,
@@ -1111,8 +1197,8 @@ impl BundleStore for SnapshotStore {
         // earlier batch entry visible.
         let mut ids = BTreeSet::new();
         for entry in entries {
-            let byte_len = u64::try_from(entry.bytes.len())
-                .map_err(|_| StoreBatchError::Capacity)?;
+            let byte_len =
+                u64::try_from(entry.bytes.len()).map_err(|_| StoreBatchError::Capacity)?;
             if byte_len != u64::from(entry.meta.size) || !ids.insert(entry.meta.id) {
                 return Err(StoreBatchError::Invalid);
             }
@@ -1125,17 +1211,14 @@ impl BundleStore for SnapshotStore {
         let mut staged = MemStore::new();
         let mut existing_bytes = 0u64;
         for meta in self.mem.all_meta() {
-            let (stored_meta, stored_body) = self
-                .mem
-                .get(&meta.id)
-                .ok_or(StoreBatchError::Invalid)?;
+            let (stored_meta, stored_body) =
+                self.mem.get(&meta.id).ok_or(StoreBatchError::Invalid)?;
             if usize::try_from(stored_meta.size).ok() != Some(stored_body.len()) {
                 return Err(StoreBatchError::Invalid);
             }
             existing_bytes = existing_bytes
                 .checked_add(
-                    u64::try_from(stored_body.len())
-                        .map_err(|_| StoreBatchError::Capacity)?,
+                    u64::try_from(stored_body.len()).map_err(|_| StoreBatchError::Capacity)?,
                 )
                 .ok_or(StoreBatchError::Capacity)?;
             staged.put(stored_meta, &stored_body);
@@ -1192,10 +1275,14 @@ impl BundleStore for SnapshotStore {
         let mut ids = BTreeSet::new();
         for meta in metas {
             if !ids.insert(meta.id)
-                || self.reservations.values().any(|pending| pending.id == meta.id)
-                || self.batch_reservations.values().any(|batch| {
-                    batch.iter().any(|pending| pending.id == meta.id)
-                })
+                || self
+                    .reservations
+                    .values()
+                    .any(|pending| pending.id == meta.id)
+                || self
+                    .batch_reservations
+                    .values()
+                    .any(|batch| batch.iter().any(|pending| pending.id == meta.id))
             {
                 return Err(StoreReserveError::Invalid);
             }
@@ -1252,10 +1339,14 @@ impl BundleStore for SnapshotStore {
         let mut ids = BTreeSet::new();
         for meta in metas {
             if !ids.insert(meta.id)
-                || self.reservations.values().any(|pending| pending.id == meta.id)
-                || self.batch_reservations.values().any(|batch| {
-                    batch.iter().any(|pending| pending.id == meta.id)
-                })
+                || self
+                    .reservations
+                    .values()
+                    .any(|pending| pending.id == meta.id)
+                || self
+                    .batch_reservations
+                    .values()
+                    .any(|batch| batch.iter().any(|pending| pending.id == meta.id))
             {
                 return Err(StoreReserveError::Invalid);
             }
@@ -1343,10 +1434,7 @@ impl BundleStore for SnapshotStore {
         self.batch_reservations.remove(&key);
         Ok(outcomes)
     }
-    fn abort_reservation(
-        &mut self,
-        reservation: &StoreReservation,
-    ) -> Result<(), StoreAbortError> {
+    fn abort_reservation(&mut self, reservation: &StoreReservation) -> Result<(), StoreAbortError> {
         let key = reservation.key();
         let result = self.mem.abort_reservation(reservation);
         if result.is_ok() {
@@ -1488,10 +1576,8 @@ mod tests {
 
     #[test]
     fn batch_image_limit_rejection_has_no_mutation() {
-        let path = std::env::temp_dir().join(format!(
-            "mmp-store-batch-limit-{}.mmp",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("mmp-store-batch-limit-{}.mmp", std::process::id()));
         let _ = std::fs::remove_file(&path);
 
         let mut writer = SnapshotStore::open(&path);
@@ -1553,10 +1639,8 @@ mod tests {
 
     #[test]
     fn batch_load_rejected_fails_closed_without_mutation() {
-        let path = std::env::temp_dir().join(format!(
-            "mmp-store-batch-rejected-{}",
-            std::process::id()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("mmp-store-batch-rejected-{}", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir(&path).unwrap();
@@ -1588,8 +1672,7 @@ mod tests {
         writer.persist().unwrap();
         let exact_limit = std::fs::metadata(&path).unwrap().len();
 
-        let mut bounded =
-            SnapshotStore::open_with_limits(&path, SnapshotLimits::new(exact_limit));
+        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(exact_limit));
         let replacement = batch_meta(1, 3);
         let token = bounded.try_reserve(replacement).unwrap();
         // A second insert would exceed the complete image even though the
@@ -1621,7 +1704,10 @@ mod tests {
         assert!(store.load_rejected());
         let result = store.try_reserve(batch_meta(1, 3));
         assert_eq!(result, Err(StoreReserveError::Capacity));
-        assert_eq!(store.try_reserve_batch(&[batch_meta(2, 3)]), Err(StoreReserveError::Capacity));
+        assert_eq!(
+            store.try_reserve_batch(&[batch_meta(2, 3)]),
+            Err(StoreReserveError::Capacity)
+        );
         assert_eq!(store.total_bytes(), 0);
 
         let _ = std::fs::remove_dir_all(path);
@@ -1775,36 +1861,52 @@ mod tests {
 
         let mut unknown_class = encode_record(&meta, &[]);
         unknown_class[16] = 6;
-        assert!(decode_record(&unknown_class).is_some(), "unknown wire classes remain relayable");
+        assert!(
+            decode_record(&unknown_class).is_some(),
+            "unknown wire classes remain relayable"
+        );
 
         let mut unrepresentable_class = encode_record(&meta, &[]);
         unrepresentable_class[16] = 0x10;
-        assert!(decode_record(&unrepresentable_class).is_none(), "class bytes above the low nibble are invalid");
+        assert!(
+            decode_record(&unrepresentable_class).is_none(),
+            "class bytes above the low nibble are invalid"
+        );
 
         let mut oversized_budget = encode_record(&meta, &[]);
         oversized_budget[70] = L_MAX.saturating_add(1);
-        assert!(decode_record(&oversized_budget).is_none(), "restored spray budget must stay within L_MAX");
+        assert!(
+            decode_record(&oversized_budget).is_none(),
+            "restored spray budget must stay within L_MAX"
+        );
 
         let mut noncanonical_bool = encode_record(&meta, &[]);
         noncanonical_bool[71] = 2;
-        assert!(decode_record(&noncanonical_bool).is_none(), "boolean metadata must have one wire encoding");
+        assert!(
+            decode_record(&noncanonical_bool).is_none(),
+            "boolean metadata must have one wire encoding"
+        );
 
         let mut reversed_time = encode_record(&meta, &[]);
         reversed_time[62..70].copy_from_slice(&9u64.to_le_bytes());
-        assert!(decode_record(&reversed_time).is_none(), "expiry before storage must be rejected");
+        assert!(
+            decode_record(&reversed_time).is_none(),
+            "expiry before storage must be rejected"
+        );
 
         let mut overlong_time = encode_record(&meta, &[]);
         let overlong = 10u64 + class_max_lifetime_ms(class::DIRECT) + 1;
         overlong_time[62..70].copy_from_slice(&overlong.to_le_bytes());
-        assert!(decode_record(&overlong_time).is_none(), "persisted lifetime must respect class maximum");
+        assert!(
+            decode_record(&overlong_time).is_none(),
+            "persisted lifetime must respect class maximum"
+        );
     }
 
     #[test]
     fn replacement_swaps_complete_image() {
-        let dir = std::env::temp_dir().join(format!(
-            "mmp-store-atomic-replace-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("mmp-store-atomic-replace-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("snapshot.mmp");
         let tmp = path.with_extension("tmp");
@@ -1897,21 +1999,34 @@ mod tests {
         let mut invalid = valid;
         invalid.size = 4;
         store.put(invalid, b"hello");
-        let error = store.persist().expect_err("invalid metadata must not be persisted");
+        let error = store
+            .persist()
+            .expect_err("invalid metadata must not be persisted");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), primary);
-        assert!(!tmp.exists(), "validation must happen before creating a replacement image");
+        assert!(
+            !tmp.exists(),
+            "validation must happen before creating a replacement image"
+        );
 
         let mut invalid_priority = valid;
         invalid_priority.priority = prio::BULK.saturating_add(1);
         store.update_meta(invalid_priority);
-        let error = store.persist().expect_err("out-of-domain priority must not be persisted");
+        let error = store
+            .persist()
+            .expect_err("out-of-domain priority must not be persisted");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), primary);
-        assert!(!tmp.exists(), "priority validation must happen before creating a replacement image");
+        assert!(
+            !tmp.exists(),
+            "priority validation must happen before creating a replacement image"
+        );
 
         let restored = SnapshotStore::open(&path);
-        assert!(restored.get(&valid.id).is_some(), "the previous complete image remains recoverable");
+        assert!(
+            restored.get(&valid.id).is_some(),
+            "the previous complete image remains recoverable"
+        );
 
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(tmp);
@@ -1948,13 +2063,21 @@ mod tests {
         let mut invalid = valid;
         invalid.budget = L_MAX.saturating_add(1);
         store.update_meta(invalid);
-        let error = store.persist().expect_err("noncanonical metadata must not be persisted");
+        let error = store
+            .persist()
+            .expect_err("noncanonical metadata must not be persisted");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), primary);
-        assert!(!tmp.exists(), "validation must happen before creating a replacement image");
+        assert!(
+            !tmp.exists(),
+            "validation must happen before creating a replacement image"
+        );
 
         let restored = SnapshotStore::open(&path);
-        assert!(restored.get(&valid.id).is_some(), "the previous complete image remains recoverable");
+        assert!(
+            restored.get(&valid.id).is_some(),
+            "the previous complete image remains recoverable"
+        );
 
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(tmp);
@@ -1966,7 +2089,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("snapshot.tmp");
         let temp = temporary_path(&path);
-        assert_ne!(temp, path, "a .tmp primary must never alias its recovery path");
+        assert_ne!(
+            temp, path,
+            "a .tmp primary must never alias its recovery path"
+        );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(&temp);
 
@@ -1993,14 +2119,24 @@ mod tests {
         // Load the complete image at its exact limit, then add a second bundle
         // so the replacement image is rejected after the temporary file has
         // been written.  A colliding temp path would delete the primary here.
-        let mut bounded = SnapshotStore::open_with_limits(&path, SnapshotLimits::new(primary.len() as u64));
+        let mut bounded =
+            SnapshotStore::open_with_limits(&path, SnapshotLimits::new(primary.len() as u64));
         let mut second = meta;
         second.id = Id16([12; 16]);
         bounded.put(second, b"world");
-        let error = bounded.persist().expect_err("the expanded image must exceed its complete-file limit");
+        let error = bounded
+            .persist()
+            .expect_err("the expanded image must exceed its complete-file limit");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert_eq!(std::fs::read(&path).unwrap(), primary, "failed replacement must preserve the primary");
-        assert!(!temp.exists(), "the failed temporary candidate must be removed");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            primary,
+            "failed replacement must preserve the primary"
+        );
+        assert!(
+            !temp.exists(),
+            "the failed temporary candidate must be removed"
+        );
 
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(temp);
@@ -2024,8 +2160,13 @@ mod tests {
         std::fs::create_dir(&path).unwrap();
 
         let store = SnapshotStore::open(&path);
-        assert!(store.load_rejected(), "a non-file primary must not load as an empty store");
-        let error = store.persist().expect_err("an unreadable primary must not be replaced");
+        assert!(
+            store.load_rejected(),
+            "a non-file primary must not load as an empty store"
+        );
+        let error = store
+            .persist()
+            .expect_err("an unreadable primary must not be replaced");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert!(path.is_dir(), "the original primary path remains intact");
 
@@ -2048,8 +2189,13 @@ mod tests {
         std::fs::write(&path, original).unwrap();
 
         let store = SnapshotStore::open(&path);
-        assert!(store.load_rejected(), "an unknown primary format must be rejected");
-        let error = store.persist().expect_err("unknown primary must not be replaced");
+        assert!(
+            store.load_rejected(),
+            "an unknown primary format must be rejected"
+        );
+        let error = store
+            .persist()
+            .expect_err("unknown primary must not be replaced");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
         assert_eq!(std::fs::read(&path).unwrap(), original);
 
@@ -2069,11 +2215,22 @@ mod tests {
         std::fs::create_dir(&temp).unwrap();
 
         let store = SnapshotStore::open(&path);
-        assert!(store.load_rejected(), "an unreadable recovery candidate must block replacement");
-        let error = store.persist().expect_err("the missing primary must not mask an unreadable candidate");
+        assert!(
+            store.load_rejected(),
+            "an unreadable recovery candidate must block replacement"
+        );
+        let error = store
+            .persist()
+            .expect_err("the missing primary must not mask an unreadable candidate");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert!(temp.is_dir(), "the recovery candidate remains available for host repair");
-        assert!(!path.exists(), "no new primary is created while recovery is ambiguous");
+        assert!(
+            temp.is_dir(),
+            "the recovery candidate remains available for host repair"
+        );
+        assert!(
+            !path.exists(),
+            "no new primary is created while recovery is ambiguous"
+        );
 
         let _ = std::fs::remove_dir_all(temp);
     }
@@ -2119,7 +2276,10 @@ mod tests {
         std::fs::write(&temp, &candidate_bytes).unwrap();
         std::fs::remove_file(&path).unwrap();
         let recovered = SnapshotStore::open(&path);
-        assert!(recovered.get(&Id16([2; 16])).is_some(), "complete temp image must be recovered");
+        assert!(
+            recovered.get(&Id16([2; 16])).is_some(),
+            "complete temp image must be recovered"
+        );
         assert!(recovered.get(&Id16([1; 16])).is_none());
 
         // A valid primary always wins; an unvalidated temp must never shadow it.
@@ -2153,7 +2313,10 @@ mod tests {
             .persist()
             .expect_err("an invalid recovery candidate must block replacement");
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert!(!path.exists(), "ambiguous recovery must not create a primary");
+        assert!(
+            !path.exists(),
+            "ambiguous recovery must not create a primary"
+        );
         assert_eq!(
             std::fs::read(&temp).unwrap(),
             candidate_before_persist,
@@ -2223,7 +2386,13 @@ mod tests {
 
     fn signed_claim(seed: [u8; 32], field: u8, seq: u32, body: Vec<u8>) -> Claim {
         let identity = mmp_crypto::Identity::from_seed(&seed);
-        let mut claim = Claim { owner: identity.public(), field, seq, body, sig: mmp_types::ids::Sig64::ZERO };
+        let mut claim = Claim {
+            owner: identity.public(),
+            field,
+            seq,
+            body,
+            sig: mmp_types::ids::Sig64::ZERO,
+        };
         claim.sig = identity.sign(SigDomain::Claim, &claim.signed_object());
         claim
     }
@@ -2247,7 +2416,11 @@ mod tests {
         s.persist().unwrap();
 
         let s2 = SnapshotStore::open(&path);
-        assert_eq!(s2.claims().len(), 2, "both signed claims survive the round trip");
+        assert_eq!(
+            s2.claims().len(),
+            2,
+            "both signed claims survive the round trip"
+        );
         assert!(s2.claims().contains(&c1));
         assert!(s2.claims().contains(&c2));
 
@@ -2257,7 +2430,10 @@ mod tests {
         bytes[n - 40] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.claims().len() < 2, "the corrupted claim record must not survive load");
+        assert!(
+            s3.claims().len() < 2,
+            "the corrupted claim record must not survive load"
+        );
     }
 
     /// A claim whose signature does not verify (tampered body, valid framing
@@ -2285,7 +2461,10 @@ mod tests {
         s2.persist().unwrap();
 
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.claims().is_empty(), "a claim whose signature no longer matches its body must be dropped");
+        assert!(
+            s3.claims().is_empty(),
+            "a claim whose signature no longer matches its body must be dropped"
+        );
     }
 
     /// Mirrors `snapshot_roundtrip_and_corruption_drop`'s shape for the
@@ -2318,7 +2497,10 @@ mod tests {
         bytes[n - 20] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.group_blobs().len() < 2, "the corrupted group-blob record must not survive load");
+        assert!(
+            s3.group_blobs().len() < 2,
+            "the corrupted group-blob record must not survive load"
+        );
     }
 
     /// E4-S4 acceptance (handbook §4.3 step 3): a previously-received bundle
@@ -2347,7 +2529,10 @@ mod tests {
         bytes[n - 10] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.seen_index().is_none(), "the corrupted SeenIndex record must not survive load");
+        assert!(
+            s3.seen_index().is_none(),
+            "the corrupted SeenIndex record must not survive load"
+        );
     }
 
     /// Mirrors `seen_index_roundtrip_and_corruption_drop` for `ReceiptFilter`.
@@ -2376,7 +2561,10 @@ mod tests {
         bytes[n - 5] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.receipt_filter().is_none(), "the corrupted ReceiptFilter record must not survive load");
+        assert!(
+            s3.receipt_filter().is_none(),
+            "the corrupted ReceiptFilter record must not survive load"
+        );
     }
 
     #[test]
@@ -2412,14 +2600,19 @@ mod tests {
         let s2 = SnapshotStore::open(&path);
         let restored = mmp_core::AuthorityStore::decode(s2.authority().unwrap()).unwrap();
         assert!(restored.is_subscribed(&scope));
-        assert!(restored.grant_for(&subject, &scope, prio::OPERATIONAL, 0).is_some());
+        assert!(restored
+            .grant_for(&subject, &scope, prio::OPERATIONAL, 0)
+            .is_some());
 
         let mut bytes = std::fs::read(&path).unwrap();
         let n = bytes.len();
         bytes[n - 40] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.authority().is_none(), "the corrupted authority record must not survive load");
+        assert!(
+            s3.authority().is_none(),
+            "the corrupted authority record must not survive load"
+        );
     }
 
     #[test]
@@ -2435,7 +2628,11 @@ mod tests {
         let mut s = SnapshotStore::open(&path);
         s.set_blocklist(blocklist.clone());
         s.set_blocklist(vec![BLOCKLIST_VERSION, 0, 0, 0]);
-        assert_eq!(s.blocklist(), Some(blocklist.as_slice()), "invalid staging must not clear valid state");
+        assert_eq!(
+            s.blocklist(),
+            Some(blocklist.as_slice()),
+            "invalid staging must not clear valid state"
+        );
         s.persist().unwrap();
 
         let s2 = SnapshotStore::open(&path);
@@ -2446,7 +2643,10 @@ mod tests {
         bytes[n - 40] ^= 0xff;
         std::fs::write(&path, &bytes).unwrap();
         let s3 = SnapshotStore::open(&path);
-        assert!(s3.blocklist().is_none(), "the corrupted blocklist record must not survive load");
+        assert!(
+            s3.blocklist().is_none(),
+            "the corrupted blocklist record must not survive load"
+        );
     }
 
     #[test]
@@ -2489,7 +2689,10 @@ mod tests {
         store.set_blocklist(first_blocklist.clone());
         store.persist().unwrap();
 
-        let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
         let mut append_record = |kind: u8, payload: &[u8]| {
             let mut record = vec![kind];
             record.extend_from_slice(payload);
@@ -2503,7 +2706,10 @@ mod tests {
 
         let restored = SnapshotStore::open(&path);
         assert_eq!(restored.seen_index().unwrap().encode(), first_seen.encode());
-        assert_eq!(restored.receipt_filter().unwrap().encode(), first_receipts.encode());
+        assert_eq!(
+            restored.receipt_filter().unwrap().encode(),
+            first_receipts.encode()
+        );
         assert_eq!(restored.authority(), Some(first_authority.as_slice()));
         assert_eq!(restored.blocklist(), Some(first_blocklist.as_slice()));
 

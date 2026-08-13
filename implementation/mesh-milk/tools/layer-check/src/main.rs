@@ -105,7 +105,11 @@ fn main() {
 
     check_dependency_graph(&root, &mut failures);
     for krate in LOWER_LAYERS {
-        scan_sources(&root.join("crates").join(krate).join("src"), krate, &mut failures);
+        scan_sources(
+            &root.join("crates").join(krate).join("src"),
+            krate,
+            &mut failures,
+        );
     }
 
     if failures.is_empty() {

@@ -30,15 +30,15 @@ use mmp_types::beacon::Beacon;
 use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
 use mmp_types::claim::{field, friendship_signed_object, Claim, PrekeyBatch};
 use mmp_types::consts::{
-    LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, MAX_FRAME_PAYLOAD, RS_DATA_K,
-    RS_TOTAL_N, SYMBOL_SIZE, L_MAX,
+    LIFETIME_CLAIM_MS, LIFETIME_CONTROL_MS, LIFETIME_MESSAGE_MS, L_MAX, MAX_FRAME_PAYLOAD,
+    RS_DATA_K, RS_TOTAL_N, SYMBOL_SIZE,
 };
 use mmp_types::domain::SigDomain;
 use mmp_types::frame::{
-    try_write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello, ProxySummaryBody,
-    Range, Summary, SummaryBucket, WantHeads, FT_BLOB_HAVE, FT_BLOB_REQ, FT_BUDGET, FT_BUNDLE, FT_CLOSE,
-    FT_CREDIT, FT_ERROR, FT_FRIEND_ACK, FT_FRIEND_OFFER, FT_HS, FT_ID_PROOF, FT_RECON_IDS, FT_RECON_INIT,
-    FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
+    try_write_envelope, ClaimDigestEntry, Frame, FriendAckBody, FriendOfferBody, Hello,
+    ProxySummaryBody, Range, Summary, SummaryBucket, WantHeads, FT_BLOB_HAVE, FT_BLOB_REQ,
+    FT_BUDGET, FT_BUNDLE, FT_CLOSE, FT_CREDIT, FT_ERROR, FT_FRIEND_ACK, FT_FRIEND_OFFER, FT_HS,
+    FT_ID_PROOF, FT_RECON_IDS, FT_RECON_INIT, FT_RECON_RANGE, FT_SUMMARY, FT_WANT,
 };
 use mmp_types::ids::{Id16, Key32, Sig64};
 use mmp_types::manifest::{FileEntry, FileManifest};
@@ -143,7 +143,8 @@ fn vector_signature_domain_cases() -> Vec<SignatureDomainCase> {
     };
 
     let friend_object = friendship_signed_object(&peer_key, &signer_key, 0x0102_0304_0506_0708);
-    let blob_object = mmp_crypto::merkle::blobroot_object(&[0x45; 32], 0x0102_0304_0506_0708, 8, 12);
+    let blob_object =
+        mmp_crypto::merkle::blobroot_object(&[0x45; 32], 0x0102_0304_0506_0708, 8, 12);
     let chanbind_object = mmp_crypto::noise::chanbind_object(&[0x46; 32], &signer_key, &peer_key);
 
     let manifest = FileManifest {
@@ -189,9 +190,21 @@ fn vector_signature_domain_cases() -> Vec<SignatureDomainCase> {
         ("mmp1/prekey", SigDomain::Prekey, prekey.signed_object()),
         ("mmp1/blobroot", SigDomain::BlobRoot, blob_object),
         ("mmp1/chanbind", SigDomain::ChanBind, chanbind_object),
-        ("mmp1/manifest", SigDomain::Manifest, manifest.signed_object()),
-        ("mmp1/authcert", SigDomain::AuthCert, authcert.signed_object()),
-        ("mmp1/announce", SigDomain::Announce, announcement.signed_object()),
+        (
+            "mmp1/manifest",
+            SigDomain::Manifest,
+            manifest.signed_object(),
+        ),
+        (
+            "mmp1/authcert",
+            SigDomain::AuthCert,
+            authcert.signed_object(),
+        ),
+        (
+            "mmp1/announce",
+            SigDomain::Announce,
+            announcement.signed_object(),
+        ),
     ];
 
     objects
@@ -211,10 +224,8 @@ fn vector_signature_domain_cases() -> Vec<SignatureDomainCase> {
 /// S preserves the group equation while making the wire scalar non-canonical
 /// (`S >= L`); strict verification MUST reject it.
 const ED25519_L_LE: [u8; 32] = [
-    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
-    0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+    0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58, 0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
 ];
 
 /// Construct the deterministic overlarge-S negative without relying on a
@@ -229,7 +240,10 @@ fn add_l_to_s(signature: Sig64) -> Sig64 {
         out[32 + i] = sum as u8;
         carry = sum >> 8;
     }
-    assert_eq!(carry, 0, "chosen valid S must permit an in-range 256-bit S+L encoding");
+    assert_eq!(
+        carry, 0,
+        "chosen valid S must permit an in-range 256-bit S+L encoding"
+    );
     Sig64(out)
 }
 
@@ -262,7 +276,15 @@ struct BundleDraft {
 }
 
 fn signed_class_bundle(identity: &Identity, draft: BundleDraft) -> Bundle {
-    let BundleDraft { class_id, flags, dest, lifetime_ms, priority, exts, payload } = draft;
+    let BundleDraft {
+        class_id,
+        flags,
+        dest,
+        lifetime_ms,
+        priority,
+        exts,
+        payload,
+    } = draft;
     let mut bundle = Bundle {
         class: class_id,
         flags,
@@ -289,7 +311,10 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
     let receipt_root = [0x33u8; 32];
     let delivered = Id16([0x44; 16]);
     let receipt_key = receipt::receipt_key(&receipt_root);
-    let receipt = ReceiptPayload { delivered, mac: receipt::receipt_mac(&receipt_key, &delivered) };
+    let receipt = ReceiptPayload {
+        delivered,
+        mac: receipt::receipt_mac(&receipt_key, &delivered),
+    };
     let class0 = signed_class_bundle(
         &identity,
         BundleDraft {
@@ -384,12 +409,18 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
     let symbols: Vec<Vec<u8>> = (0..4)
         .map(|index| vec![0x60 + index as u8; SYMBOL_SIZE])
         .collect();
-    let leaves: Vec<[u8; 32]> = symbols.iter().map(|symbol| merkle::hash_block(symbol)).collect();
+    let leaves: Vec<[u8; 32]> = symbols
+        .iter()
+        .map(|symbol| merkle::hash_block(symbol))
+        .collect();
     let symbol_index = 2usize;
     let path = merkle::merkle_path(&leaves, symbol_index);
     let mut root = [0u8; 16];
     root.copy_from_slice(&merkle::merkle_root(&leaves)[..16]);
-    let symbol = SymbolPayload { path: path.encode(), symbol: symbols[symbol_index].clone() };
+    let symbol = SymbolPayload {
+        path: path.encode(),
+        symbol: symbols[symbol_index].clone(),
+    };
     let class4 = signed_class_bundle(
         &identity,
         BundleDraft {
@@ -431,7 +462,10 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
             dest: scope,
             lifetime_ms: LIFETIME_MESSAGE_MS,
             priority: prio::OPERATIONAL,
-            exts: vec![Ext::Optional { typ: TLV_SCOPE_INFO, val: b"train/vector/001".to_vec() }],
+            exts: vec![Ext::Optional {
+                typ: TLV_SCOPE_INFO,
+                val: b"train/vector/001".to_vec(),
+            }],
             payload: announcement.encode(),
         },
     );
@@ -463,7 +497,8 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
             payload_schema: "GroupPayload",
             status: "implementation_assigned_groupmsg_domain",
             provisional: true,
-            provisional_reason: "sender-key distribution and chain secret are outside the outer vector",
+            provisional_reason:
+                "sender-key distribution and chain secret are outside the outer vector",
             bundle: class2,
             inner_pubkey: Some(group_identity.public()),
         },
@@ -483,7 +518,8 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
             payload_schema: "SymbolPayload+SymbolInfo",
             status: "implementation_extension",
             provisional: true,
-            provisional_reason: "Merkle path framing is implementation-owned beyond frozen doc 10 §4.5",
+            provisional_reason:
+                "Merkle path framing is implementation-owned beyond frozen doc 10 §4.5",
             bundle: class4,
             inner_pubkey: None,
         },
@@ -493,7 +529,8 @@ fn vector_bundle_class_cases() -> Vec<BundleClassCase> {
             payload_schema: "AnnouncementBody",
             status: "implementation_extension_spec_gap",
             provisional: true,
-            provisional_reason: "suite byte is present in doc 18 preimage but omitted by frozen doc 10 §4.6",
+            provisional_reason:
+                "suite byte is present in doc 18 preimage but omitted by frozen doc 10 §4.6",
             bundle: class5,
             inner_pubkey: None,
         },
@@ -558,7 +595,12 @@ fn vector_frame_cases() -> Vec<FrameCase> {
     let id16_a = Id16([0x11; 16]);
     let id16_b = Id16([0x22; 16]);
     let id16_c = Id16([0x33; 16]);
-    let range = Range { lo: id16_a, hi: id16_b, count: 3, fp: 0x0102_0304_0506_0708 };
+    let range = Range {
+        lo: id16_a,
+        hi: id16_b,
+        count: 3,
+        fp: 0x0102_0304_0506_0708,
+    };
     let hello = Hello {
         ver: 1,
         suites: vec![1, 2],
@@ -568,61 +610,142 @@ fn vector_frame_cases() -> Vec<FrameCase> {
         psm: 0x0025,
     };
     vec![
-        FrameCase { name: "hs", frame: Frame::Hs(hello.encode()) },
+        FrameCase {
+            name: "hs",
+            frame: Frame::Hs(hello.encode()),
+        },
         FrameCase {
             name: "id_proof",
-            frame: Frame::IdProof { identity: Key32([0x44; 32]), sig: Sig64([0x55; 64]) },
+            frame: Frame::IdProof {
+                identity: Key32([0x44; 32]),
+                sig: Sig64([0x55; 64]),
+            },
         },
-        FrameCase { name: "credit", frame: Frame::Credit(7) },
+        FrameCase {
+            name: "credit",
+            frame: Frame::Credit(7),
+        },
         FrameCase {
             name: "summary",
             frame: Frame::Summary(Summary {
-                receipt_buckets: vec![SummaryBucket { bucket_epoch: 9, bloom: vec![0xa0, 0xa1] }],
-                claim_digest: vec![ClaimDigestEntry { node_prefix: 0x0102_0304, field: 1, seq: 5 }],
+                receipt_buckets: vec![SummaryBucket {
+                    bucket_epoch: 9,
+                    bloom: vec![0xa0, 0xa1],
+                }],
+                claim_digest: vec![ClaimDigestEntry {
+                    node_prefix: 0x0102_0304,
+                    field: 1,
+                    seq: 5,
+                }],
                 group_hints: vec![id16_c],
-                want_heads: vec![WantHeads { conv: id16_a, heads: vec![id16_b, id16_c] }],
+                want_heads: vec![WantHeads {
+                    conv: id16_a,
+                    heads: vec![id16_b, id16_c],
+                }],
             }),
         },
         FrameCase {
             name: "recon_init",
-            frame: Frame::ReconInit { domain: 1, window: 4, range },
+            frame: Frame::ReconInit {
+                domain: 1,
+                window: 4,
+                range,
+            },
         },
         FrameCase {
             name: "recon_range",
-            frame: Frame::ReconRange { domain: 2, ranges: vec![range, Range { lo: id16_b, hi: id16_c, count: 1, fp: 9 }] },
+            frame: Frame::ReconRange {
+                domain: 2,
+                ranges: vec![
+                    range,
+                    Range {
+                        lo: id16_b,
+                        hi: id16_c,
+                        count: 1,
+                        fp: 9,
+                    },
+                ],
+            },
         },
         FrameCase {
             name: "recon_ids",
-            frame: Frame::ReconIds { domain: 3, lo: id16_a, hi: id16_c, ids: vec![id16_a, id16_b] },
+            frame: Frame::ReconIds {
+                domain: 3,
+                lo: id16_a,
+                hi: id16_c,
+                ids: vec![id16_a, id16_b],
+            },
         },
-        FrameCase { name: "want", frame: Frame::Want(vec![id16_a, id16_b]) },
-        FrameCase { name: "bundle", frame: Frame::Bundle(vector_bundle().0.encode()) },
-        FrameCase { name: "budget", frame: Frame::Budget { id: id16_b, granted: 6 } },
+        FrameCase {
+            name: "want",
+            frame: Frame::Want(vec![id16_a, id16_b]),
+        },
+        FrameCase {
+            name: "bundle",
+            frame: Frame::Bundle(vector_bundle().0.encode()),
+        },
+        FrameCase {
+            name: "budget",
+            frame: Frame::Budget {
+                id: id16_b,
+                granted: 6,
+            },
+        },
         FrameCase {
             name: "blob_req",
-            frame: Frame::BlobReq { root: id16_a, block: 5, bitmap: vec![0xf0, 0x0f] },
+            frame: Frame::BlobReq {
+                root: id16_a,
+                block: 5,
+                bitmap: vec![0xf0, 0x0f],
+            },
         },
         FrameCase {
             name: "blob_have",
-            frame: Frame::BlobHave { root: id16_b, block: 6, bitmap: vec![0x0f, 0xf0] },
+            frame: Frame::BlobHave {
+                root: id16_b,
+                block: 6,
+                bitmap: vec![0x0f, 0xf0],
+            },
         },
         FrameCase {
             name: "friend_offer",
-            frame: Frame::FriendOffer(FriendOfferBody { since: 0x0102_0304_0506_0708 }.encode()),
+            frame: Frame::FriendOffer(
+                FriendOfferBody {
+                    since: 0x0102_0304_0506_0708,
+                }
+                .encode(),
+            ),
         },
         FrameCase {
             name: "friend_ack",
-            frame: Frame::FriendAck(FriendAckBody { countersig: Sig64([0x66; 64]) }.encode()),
+            frame: Frame::FriendAck(
+                FriendAckBody {
+                    countersig: Sig64([0x66; 64]),
+                }
+                .encode(),
+            ),
         },
         FrameCase {
             name: "proxy_summary",
-            frame: Frame::ProxySummary(ProxySummaryBody { dependent: id16_c, bloom: vec![0xbe, 0xef] }.encode()),
+            frame: Frame::ProxySummary(
+                ProxySummaryBody {
+                    dependent: id16_c,
+                    bloom: vec![0xbe, 0xef],
+                }
+                .encode(),
+            ),
         },
         FrameCase {
             name: "error",
-            frame: Frame::Error { code: mmp_types::frame::errcode::PROTOCOL, detail: b"frame vector".to_vec() },
+            frame: Frame::Error {
+                code: mmp_types::frame::errcode::PROTOCOL,
+                detail: b"frame vector".to_vec(),
+            },
         },
-        FrameCase { name: "close", frame: Frame::Close },
+        FrameCase {
+            name: "close",
+            frame: Frame::Close,
+        },
     ]
 }
 
@@ -633,7 +756,10 @@ fn vector_frame_cases() -> Vec<FrameCase> {
 fn frames_vector() -> VectorFile {
     let cases = vector_frame_cases();
     debug_assert_eq!(cases.len(), 17);
-    debug_assert!(cases.iter().zip(REGISTERED_FRAME_TYPES).all(|(case, typ)| case.frame.typ() == typ));
+    debug_assert!(cases
+        .iter()
+        .zip(REGISTERED_FRAME_TYPES)
+        .all(|(case, typ)| case.frame.typ() == typ));
     let mut json = String::from(
         "{\n  \"description\": \"deterministic payload and envelope bytes for every registered MMP/1 frame type\",\n  \"frame_count\": 17,\n  \"frames\": [\n",
     );
@@ -642,7 +768,10 @@ fn frames_vector() -> VectorFile {
             .frame
             .try_encode_payload()
             .expect("trusted committed vector fixture");
-        let wire = case.frame.try_encode().expect("trusted committed vector fixture");
+        let wire = case
+            .frame
+            .try_encode()
+            .expect("trusted committed vector fixture");
         json.push_str(&format!(
             "    {{\"name\": \"{}\", \"type\": {}, \"payload\": \"{}\", \"wire\": \"{}\"}}{}\n",
             case.name,
@@ -653,7 +782,10 @@ fn frames_vector() -> VectorFile {
         ));
     }
     json.push_str("  ]\n}\n");
-    VectorFile { name: "frames.json", json }
+    VectorFile {
+        name: "frames.json",
+        json,
+    }
 }
 
 fn bundle_vector() -> VectorFile {
@@ -670,7 +802,10 @@ BundleID = BLAKE3(canonical)[0..16], and the mmp1/bundle signature over the cano
         hex(&b.id().0),
         hex(&b.signature.0),
     );
-    VectorFile { name: "bundle.json", json }
+    VectorFile {
+        name: "bundle.json",
+        json,
+    }
 }
 
 /// Serialize the complete class-0..5 catalog as one grouped JSON artifact.
@@ -717,7 +852,10 @@ fn bundles_vector() -> VectorFile {
         ));
     }
     json.push_str("  ]\n}\n");
-    VectorFile { name: "bundles.json", json }
+    VectorFile {
+        name: "bundles.json",
+        json,
+    }
 }
 
 /// The one beacon the beacon vector and its invariant test share.
@@ -731,7 +869,9 @@ fn vector_beacon() -> Beacon {
         epoch: 5,
         frag_structure: 1,
         frag_offset: 0x0abc,
-        fragment: [0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB],
+        fragment: [
+            0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB,
+        ],
     }
 }
 
@@ -752,11 +892,21 @@ fn beacon_vector() -> VectorFile {
         hex(&beacon.fragment),
         hex(&beacon.encode()),
     );
-    VectorFile { name: "beacon.json", json }
+    VectorFile {
+        name: "beacon.json",
+        json,
+    }
 }
 
 fn hello_vector() -> VectorFile {
-    let hello = Hello { ver: 1, suites: vec![1, 2], tier: 2, flags: 0x0003, credits: 8, psm: 0x0025 };
+    let hello = Hello {
+        ver: 1,
+        suites: vec![1, 2],
+        tier: 2,
+        flags: 0x0003,
+        credits: 8,
+        psm: 0x0025,
+    };
     let json = format!(
         "{{\n  \"description\": \"HELLO payload codec (doc 10 §2.1)\",\n  \"ver\": {},\n  \"suites\": \"{}\",\n  \"tier\": {},\n  \"flags\": {},\n  \"credits\": {},\n  \"psm\": {},\n  \"wire\": \"{}\"\n}}\n",
         hello.ver,
@@ -767,7 +917,10 @@ fn hello_vector() -> VectorFile {
         hello.psm,
         hex(&hello.encode()),
     );
-    VectorFile { name: "hello.json", json }
+    VectorFile {
+        name: "hello.json",
+        json,
+    }
 }
 
 fn claim_vector() -> VectorFile {
@@ -793,7 +946,10 @@ field ‖ seq ‖ body), full wire bytes, and signature (doc 06 §4, doc 10 §4.
         hex(&c.encode()),
         hex(&c.sig.0),
     );
-    VectorFile { name: "claim.json", json }
+    VectorFile {
+        name: "claim.json",
+        json,
+    }
 }
 
 fn receipt_vector() -> VectorFile {
@@ -811,7 +967,10 @@ delivered_id). The derived key is a secret and is intentionally omitted.\",\n  \
         hex(&delivered.0),
         hex(&mac),
     );
-    VectorFile { name: "receipt.json", json }
+    VectorFile {
+        name: "receipt.json",
+        json,
+    }
 }
 
 fn envelope_vector() -> VectorFile {
@@ -824,14 +983,20 @@ fn envelope_vector() -> VectorFile {
         hex(payload),
         hex(&wire),
     );
-    VectorFile { name: "envelope.json", json }
+    VectorFile {
+        name: "envelope.json",
+        json,
+    }
 }
 
 /// Encode an envelope without the production writer's debug-only size guard.
 /// The negative vectors deliberately exercise bytes that a hostile peer can
 /// put on the wire; constructing them must not trip the writer canary first.
 fn raw_envelope(typ: u8, payload_len: usize, fill: u8) -> Vec<u8> {
-    assert!(payload_len <= u16::MAX as usize, "negative envelope must fit u16 length");
+    assert!(
+        payload_len <= u16::MAX as usize,
+        "negative envelope must fit u16 length"
+    );
     let mut wire = Vec::with_capacity(3 + payload_len);
     wire.extend_from_slice(&(payload_len as u16).to_le_bytes());
     wire.push(typ);
@@ -860,7 +1025,11 @@ fn raw_tlv(typ: u8, value: &[u8]) -> Vec<u8> {
 fn bundle_wire_with_raw_exts(exts: &[u8]) -> Vec<u8> {
     let (bundle, _) = vector_bundle();
     let base = bundle.encode();
-    assert_eq!(u16::from_le_bytes([base[56], base[57]]), 0, "base vector must have no TLVs");
+    assert_eq!(
+        u16::from_le_bytes([base[56], base[57]]),
+        0,
+        "base vector must have no TLVs"
+    );
     let mut wire = Vec::with_capacity(base.len() + exts.len());
     wire.extend_from_slice(&base[..56]);
     wire.extend_from_slice(&(exts.len() as u16).to_le_bytes());
@@ -888,7 +1057,10 @@ fn envelope_oversize_negative_vector() -> VectorFile {
         runtime_over.len() - 3,
         hex(&runtime_over),
     );
-    VectorFile { name: "envelope_oversize_negative.json", json }
+    VectorFile {
+        name: "envelope_oversize_negative.json",
+        json,
+    }
 }
 
 /// Negative bundle vectors for the three canonical extension rules in doc 10
@@ -912,7 +1084,10 @@ fn bundle_tlv_negative_vector() -> VectorFile {
         hex(&out_of_order),
         hex(&duplicate),
     );
-    VectorFile { name: "bundle_tlv_negative.json", json }
+    VectorFile {
+        name: "bundle_tlv_negative.json",
+        json,
+    }
 }
 
 /// Negative bundle vector for the reserved outer-flag bits in doc 10 §6.1.
@@ -930,7 +1105,10 @@ fn reserved_bits_negative_vector() -> VectorFile {
         RESERVED_MASK,
         hex(&wire),
     );
-    VectorFile { name: "reserved_bits_negative.json", json }
+    VectorFile {
+        name: "reserved_bits_negative.json",
+        json,
+    }
 }
 
 /// Machine-readable map from every committed artifact to its normative
@@ -938,44 +1116,234 @@ fn reserved_bits_negative_vector() -> VectorFile {
 /// manifest generated makes additions fail the same drift gate as wire bytes.
 fn coverage_manifest_vector() -> VectorFile {
     const ENTRIES: &[(&str, &str, &str, &str)] = &[
-        ("beacon.codec.v1", "beacon.json", "specification/10-message-format.md §5", "independent_fixed_reader+production_roundtrip"),
-        ("bundle.compat.class1.v1", "bundle.json", "specification/10-message-format.md §3", "independent_outer_reader+production_signature"),
-        ("bundle.classes.0-5.v1", "bundles.json", "specification/10-message-format.md §3-§4", "independent_outer_reader+production_payload_invariants"),
-        ("claim.nickname.v1", "claim.json", "specification/06-sync-spec.md §4; specification/10-message-format.md §4.4", "production_roundtrip+signature"),
-        ("negative.budget.clamp.v1", "budget_clamp_negative.json", "specification/05-routing-spec.md §6", "production_invariant"),
-        ("negative.bundle.tlv.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
-        ("negative.bundle.reserved-bits.v1", "reserved_bits_negative.json", "specification/10-message-format.md §6.1", "independent_outer_reader+structural_rejection"),
-        ("negative.tlv.unknown-critical.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
-        ("negative.tlv.out-of-order.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
-        ("negative.tlv.duplicate.v1", "bundle_tlv_negative.json", "specification/10-message-format.md §6.1", "independent_tlv_reader+production_rejection"),
-        ("negative.cross-domain.v1", "cross_domain_negative.json", "specification/10-message-format.md §3.1", "production_cross_domain_rejection"),
-        ("negative.cross-domain.matrix.v1", "cross_domain_matrix.json", "specification/10-message-format.md §3.1", "independent_schema+production_9x9_matrix"),
-        ("negative.envelope.oversize.v1", "envelope_oversize_negative.json", "specification/10-message-format.md §6.4", "independent_normative_cap+production_runtime_cap"),
-        ("negative.ed25519.s-plus-l.v1", "noncanonical_s_negative.json", "specification/10-message-format.md §6.3", "independent_scalar_arithmetic+strict_verify"),
-        ("negative.lifetime-reset.v1", "lifetime_reset_negative.json", "specification/10-message-format.md §3", "production_bundle_id_invariant"),
-        ("envelope.framing.v1", "envelope.json", "specification/10-message-format.md §2", "independent_envelope_reader+production_roundtrip"),
-        ("frame.hello.v1", "hello.json", "specification/10-message-format.md §2.1", "independent_fixed_reader+production_roundtrip"),
-        ("frame.registry.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x01.hs.v1", "frames.json", "specification/10-message-format.md §2", "independent_envelope_reader+production_roundtrip"),
-        ("frame.type.0x02.id-proof.v1", "frames.json", "specification/10-message-format.md §2.2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x03.credit.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x10.summary.v1", "frames.json", "specification/10-message-format.md §2.3", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x11.recon-init.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x12.recon-range.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x13.recon-ids.v1", "frames.json", "specification/10-message-format.md §2.4", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x14.want.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x20.bundle.v1", "frames.json", "specification/10-message-format.md §2.5", "independent_outer_reader+production_roundtrip"),
-        ("frame.type.0x21.budget.v1", "frames.json", "specification/10-message-format.md §2.5", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x30.blob-req.v1", "frames.json", "specification/10-message-format.md §2.6", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x31.blob-have.v1", "frames.json", "specification/10-message-format.md §2.6", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x40.friend-offer.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x41.friend-ack.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x42.proxy-summary.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x7e.error.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("frame.type.0x7f.close.v1", "frames.json", "specification/10-message-format.md §2", "independent_payload_grammar+production_roundtrip"),
-        ("receipt.mac.v1", "receipt.json", "specification/05-routing-spec.md §7", "production_mac_invariant"),
-        ("rbsr.fingerprint.v1", "rbsr_fingerprint.json", "specification/06-sync-spec.md §9", "production_fingerprint_invariant"),
-        ("coverage.manifest.v1", "coverage.json", "specification/12-rust-blueprint.md §7", "machine_readable_manifest_completeness"),
+        (
+            "beacon.codec.v1",
+            "beacon.json",
+            "specification/10-message-format.md §5",
+            "independent_fixed_reader+production_roundtrip",
+        ),
+        (
+            "bundle.compat.class1.v1",
+            "bundle.json",
+            "specification/10-message-format.md §3",
+            "independent_outer_reader+production_signature",
+        ),
+        (
+            "bundle.classes.0-5.v1",
+            "bundles.json",
+            "specification/10-message-format.md §3-§4",
+            "independent_outer_reader+production_payload_invariants",
+        ),
+        (
+            "claim.nickname.v1",
+            "claim.json",
+            "specification/06-sync-spec.md §4; specification/10-message-format.md §4.4",
+            "production_roundtrip+signature",
+        ),
+        (
+            "negative.budget.clamp.v1",
+            "budget_clamp_negative.json",
+            "specification/05-routing-spec.md §6",
+            "production_invariant",
+        ),
+        (
+            "negative.bundle.tlv.v1",
+            "bundle_tlv_negative.json",
+            "specification/10-message-format.md §6.1",
+            "independent_tlv_reader+production_rejection",
+        ),
+        (
+            "negative.bundle.reserved-bits.v1",
+            "reserved_bits_negative.json",
+            "specification/10-message-format.md §6.1",
+            "independent_outer_reader+structural_rejection",
+        ),
+        (
+            "negative.tlv.unknown-critical.v1",
+            "bundle_tlv_negative.json",
+            "specification/10-message-format.md §6.1",
+            "independent_tlv_reader+production_rejection",
+        ),
+        (
+            "negative.tlv.out-of-order.v1",
+            "bundle_tlv_negative.json",
+            "specification/10-message-format.md §6.1",
+            "independent_tlv_reader+production_rejection",
+        ),
+        (
+            "negative.tlv.duplicate.v1",
+            "bundle_tlv_negative.json",
+            "specification/10-message-format.md §6.1",
+            "independent_tlv_reader+production_rejection",
+        ),
+        (
+            "negative.cross-domain.v1",
+            "cross_domain_negative.json",
+            "specification/10-message-format.md §3.1",
+            "production_cross_domain_rejection",
+        ),
+        (
+            "negative.cross-domain.matrix.v1",
+            "cross_domain_matrix.json",
+            "specification/10-message-format.md §3.1",
+            "independent_schema+production_9x9_matrix",
+        ),
+        (
+            "negative.envelope.oversize.v1",
+            "envelope_oversize_negative.json",
+            "specification/10-message-format.md §6.4",
+            "independent_normative_cap+production_runtime_cap",
+        ),
+        (
+            "negative.ed25519.s-plus-l.v1",
+            "noncanonical_s_negative.json",
+            "specification/10-message-format.md §6.3",
+            "independent_scalar_arithmetic+strict_verify",
+        ),
+        (
+            "negative.lifetime-reset.v1",
+            "lifetime_reset_negative.json",
+            "specification/10-message-format.md §3",
+            "production_bundle_id_invariant",
+        ),
+        (
+            "envelope.framing.v1",
+            "envelope.json",
+            "specification/10-message-format.md §2",
+            "independent_envelope_reader+production_roundtrip",
+        ),
+        (
+            "frame.hello.v1",
+            "hello.json",
+            "specification/10-message-format.md §2.1",
+            "independent_fixed_reader+production_roundtrip",
+        ),
+        (
+            "frame.registry.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x01.hs.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_envelope_reader+production_roundtrip",
+        ),
+        (
+            "frame.type.0x02.id-proof.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x03.credit.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x10.summary.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.3",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x11.recon-init.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.4",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x12.recon-range.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.4",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x13.recon-ids.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.4",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x14.want.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x20.bundle.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.5",
+            "independent_outer_reader+production_roundtrip",
+        ),
+        (
+            "frame.type.0x21.budget.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.5",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x30.blob-req.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.6",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x31.blob-have.v1",
+            "frames.json",
+            "specification/10-message-format.md §2.6",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x40.friend-offer.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x41.friend-ack.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x42.proxy-summary.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x7e.error.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "frame.type.0x7f.close.v1",
+            "frames.json",
+            "specification/10-message-format.md §2",
+            "independent_payload_grammar+production_roundtrip",
+        ),
+        (
+            "receipt.mac.v1",
+            "receipt.json",
+            "specification/05-routing-spec.md §7",
+            "production_mac_invariant",
+        ),
+        (
+            "rbsr.fingerprint.v1",
+            "rbsr_fingerprint.json",
+            "specification/06-sync-spec.md §9",
+            "production_fingerprint_invariant",
+        ),
+        (
+            "coverage.manifest.v1",
+            "coverage.json",
+            "specification/12-rust-blueprint.md §7",
+            "machine_readable_manifest_completeness",
+        ),
     ];
     let mut json = String::from(
         "{\n  \"schema\": \"mmp-e5-s4-coverage-v1\",\n  \"description\": \"normative requirement coverage for committed MMP/1 vectors\",\n  \"entry_count\": ",
@@ -993,7 +1361,10 @@ fn coverage_manifest_vector() -> VectorFile {
         ));
     }
     json.push_str("  ]\n}\n");
-    VectorFile { name: "coverage.json", json }
+    VectorFile {
+        name: "coverage.json",
+        json,
+    }
 }
 
 fn rbsr_fingerprint_vector() -> VectorFile {
@@ -1007,7 +1378,10 @@ content-sensitive u64\",\n  \"ids\": [{}],\n  \"fingerprint_u64\": {},\n  \"fing
         fp,
         hex(&fp.to_le_bytes()),
     );
-    VectorFile { name: "rbsr_fingerprint.json", json }
+    VectorFile {
+        name: "rbsr_fingerprint.json",
+        json,
+    }
 }
 
 fn cross_domain_negative_vector() -> VectorFile {
@@ -1025,7 +1399,10 @@ under each listed domain it must fail.\",\n  \"pubkey\": \"{}\",\n  \"object\": 
         hex(&b.canonical_zeroed()),
         hex(&b.signature.0),
     );
-    VectorFile { name: "cross_domain_negative.json", json }
+    VectorFile {
+        name: "cross_domain_negative.json",
+        json,
+    }
 }
 
 /// Emit the complete 9×9 domain-separation matrix.  Each row signs one
@@ -1047,22 +1424,35 @@ fn cross_domain_matrix_vector() -> VectorFile {
             hex(&case.signature.0),
         ));
         for (check_index, (name, domain)) in REGISTERED_SIGNATURE_DOMAINS.iter().enumerate() {
-            let accepted = mmp_crypto::verify(*domain, &case.public_key, &case.object, &case.signature).is_ok();
+            let accepted =
+                mmp_crypto::verify(*domain, &case.public_key, &case.object, &case.signature)
+                    .is_ok();
             debug_assert_eq!(accepted, row_index == check_index);
             json.push_str(&format!(
                 "{{\"verify_domain\": \"{}\", \"result\": \"{}\"}}{}",
                 name,
                 if accepted { "accept" } else { "reject" },
-                if check_index + 1 == REGISTERED_SIGNATURE_DOMAINS.len() { "" } else { "," },
+                if check_index + 1 == REGISTERED_SIGNATURE_DOMAINS.len() {
+                    ""
+                } else {
+                    ","
+                },
             ));
         }
         json.push_str(&format!(
             "]}}{}\n",
-            if row_index + 1 == cases.len() { "" } else { "," },
+            if row_index + 1 == cases.len() {
+                ""
+            } else {
+                ","
+            },
         ));
     }
     json.push_str("  ]\n}\n");
-    VectorFile { name: "cross_domain_matrix.json", json }
+    VectorFile {
+        name: "cross_domain_matrix.json",
+        json,
+    }
 }
 
 fn noncanonical_s_negative_vector() -> VectorFile {
@@ -1073,8 +1463,16 @@ fn noncanonical_s_negative_vector() -> VectorFile {
     let (b, _) = vector_bundle();
     let valid = b.signature;
     let malformed = add_l_to_s(valid);
-    assert!(mmp_crypto::verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &valid).is_ok());
-    assert!(mmp_crypto::verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &malformed).is_err());
+    assert!(
+        mmp_crypto::verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &valid).is_ok()
+    );
+    assert!(mmp_crypto::verify(
+        SigDomain::Bundle,
+        &b.origin,
+        &b.canonical_zeroed(),
+        &malformed
+    )
+    .is_err());
     let json = format!(
         "{{\n  \"description\": \"Ed25519 overlarge-S negative: replacing canonical S with S+L MUST be rejected by strict verification (RFC 8032 §5.1.7, AUDIT F9)\",\n  \"domain\": \"mmp1/bundle\",\n  \"pubkey\": \"{}\",\n  \"object\": \"{}\",\n  \"valid_signature\": \"{}\",\n  \"noncanonical_signature\": \"{}\",\n  \"valid_s\": \"{}\",\n  \"noncanonical_s\": \"{}\",\n  \"expected_valid\": \"accept\",\n  \"expected_noncanonical\": \"reject\"\n}}\n",
         hex(&b.origin.0),
@@ -1084,7 +1482,10 @@ fn noncanonical_s_negative_vector() -> VectorFile {
         hex(&valid.0[32..]),
         hex(&malformed.0[32..]),
     );
-    VectorFile { name: "noncanonical_s_negative.json", json }
+    VectorFile {
+        name: "noncanonical_s_negative.json",
+        json,
+    }
 }
 
 fn lifetime_reset_negative_vector() -> VectorFile {
@@ -1105,7 +1506,10 @@ excluded from the ID, so both lifetimes below hash to bundle_id.\",\n  \"lifetim
         b.lifetime_ms,
         hex(&id_a.0),
     );
-    VectorFile { name: "lifetime_reset_negative.json", json }
+    VectorFile {
+        name: "lifetime_reset_negative.json",
+        json,
+    }
 }
 
 fn budget_clamp_negative_vector() -> VectorFile {
@@ -1117,7 +1521,10 @@ fn budget_clamp_negative_vector() -> VectorFile {
 \"granted\": {},\n  \"l_max\": {},\n  \"clamped\": {}\n}}\n",
         granted, L_MAX, clamped,
     );
-    VectorFile { name: "budget_clamp_negative.json", json }
+    VectorFile {
+        name: "budget_clamp_negative.json",
+        json,
+    }
 }
 
 #[cfg(test)]
@@ -1152,8 +1559,9 @@ mod tests {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../vectors");
         for vf in generate() {
             let path = format!("{dir}/{}", vf.name);
-            let committed = std::fs::read_to_string(&path)
-                .unwrap_or_else(|e| panic!("missing golden vector {path}: {e} — run `cargo run -p mmp-cli -- vectors`"));
+            let committed = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                panic!("missing golden vector {path}: {e} — run `cargo run -p mmp-cli -- vectors`")
+            });
             // Normalize CRLF so the test is stable regardless of the checkout's
             // line-ending policy (this repo is developed on Windows).
             assert_eq!(
@@ -1174,16 +1582,21 @@ mod tests {
         // BundleID is BLAKE3(canonical)[0..16], and the wire roundtrips.
         assert_eq!(Bundle::decode_canonical(&b.encode()).unwrap(), b);
         // The signature verifies under mmp1/bundle over the canonical bytes.
-        verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &b.signature)
-            .expect("bundle signature must verify under mmp1/bundle");
+        verify(
+            SigDomain::Bundle,
+            &b.origin,
+            &b.canonical_zeroed(),
+            &b.signature,
+        )
+        .expect("bundle signature must verify under mmp1/bundle");
 
         // Beacon roundtrips through its 24-byte codec.
         let beacon = vector_beacon();
         assert_eq!(Beacon::decode(&beacon.encode()).unwrap(), beacon);
 
         // Envelope roundtrips.
-        let wire =
-            try_write_envelope(FT_BUNDLE, b"golden frame payload").expect("trusted committed vector fixture");
+        let wire = try_write_envelope(FT_BUNDLE, b"golden frame payload")
+            .expect("trusted committed vector fixture");
         let parts = read_envelope(&wire).unwrap().unwrap();
         assert_eq!(parts.0, FT_BUNDLE);
         assert_eq!(parts.1, b"golden frame payload");
@@ -1196,7 +1609,12 @@ mod tests {
         let (b, _) = vector_bundle();
         // Cross-domain: the mmp1/bundle signature must fail under every other
         // domain tag (AUDIT F4, rev-B tag set).
-        for dom in [SigDomain::Claim, SigDomain::Manifest, SigDomain::AuthCert, SigDomain::Announce] {
+        for dom in [
+            SigDomain::Claim,
+            SigDomain::Manifest,
+            SigDomain::AuthCert,
+            SigDomain::Announce,
+        ] {
             assert!(
                 verify(dom, &b.origin, &b.canonical_zeroed(), &b.signature).is_err(),
                 "signature must not verify under {dom:?}"
@@ -1207,9 +1625,25 @@ mod tests {
         // neither R nor the group equation, but the resulting S is overlarge
         // and MUST be rejected by the public strict-verification path.
         let noncanonical = add_l_to_s(b.signature);
-        assert_eq!(noncanonical.0[..32], b.signature.0[..32], "S+L must preserve R");
-        assert!(verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &b.signature).is_ok());
-        assert!(verify(SigDomain::Bundle, &b.origin, &b.canonical_zeroed(), &noncanonical).is_err());
+        assert_eq!(
+            noncanonical.0[..32],
+            b.signature.0[..32],
+            "S+L must preserve R"
+        );
+        assert!(verify(
+            SigDomain::Bundle,
+            &b.origin,
+            &b.canonical_zeroed(),
+            &b.signature
+        )
+        .is_ok());
+        assert!(verify(
+            SigDomain::Bundle,
+            &b.origin,
+            &b.canonical_zeroed(),
+            &noncanonical
+        )
+        .is_err());
 
         // Lifetime reset: ID is stable across a lifetime change (AUDIT F1).
         let id_a = b.id();
@@ -1230,7 +1664,8 @@ mod tests {
         assert_eq!(logical_over.len() - 3, MAX_FRAME_PAYLOAD + 1);
         assert_eq!(read_envelope(&logical_over), Err(WireError::Oversize));
 
-        let runtime_over = raw_envelope(FT_BUNDLE, mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 1, 0xa2);
+        let runtime_over =
+            raw_envelope(FT_BUNDLE, mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 1, 0xa2);
         assert_eq!(
             read_envelope(&runtime_over),
             Err(WireError::Oversize),
@@ -1243,17 +1678,26 @@ mod tests {
     #[test]
     fn malformed_bundle_tlv_vectors_are_rejected() {
         let unknown_critical = bundle_wire_with_raw_exts(&raw_tlv(0x04, &[0xc1]));
-        assert_eq!(Bundle::decode_canonical(&unknown_critical), Err(WireError::TlvUnknownCritical));
+        assert_eq!(
+            Bundle::decode_canonical(&unknown_critical),
+            Err(WireError::TlvUnknownCritical)
+        );
 
         let mut out_of_order_ext = raw_tlv(0x02, &[0x34, 0x12]);
         out_of_order_ext.extend_from_slice(&raw_tlv(0x01, &[0x55; 16]));
         let out_of_order = bundle_wire_with_raw_exts(&out_of_order_ext);
-        assert_eq!(Bundle::decode_canonical(&out_of_order), Err(WireError::TlvOrder));
+        assert_eq!(
+            Bundle::decode_canonical(&out_of_order),
+            Err(WireError::TlvOrder)
+        );
 
         let mut duplicate_ext = raw_tlv(0x02, &[0x34, 0x12]);
         duplicate_ext.extend_from_slice(&raw_tlv(0x02, &[0x78, 0x56]));
         let duplicate = bundle_wire_with_raw_exts(&duplicate_ext);
-        assert_eq!(Bundle::decode_canonical(&duplicate), Err(WireError::TlvOrder));
+        assert_eq!(
+            Bundle::decode_canonical(&duplicate),
+            Err(WireError::TlvOrder)
+        );
     }
 
     /// Every registered signing-domain pair is exercised: each row's own
@@ -1270,12 +1714,22 @@ mod tests {
             assert_eq!(case.name, REGISTERED_SIGNATURE_DOMAINS[row].0);
             assert_eq!(case.domain, REGISTERED_SIGNATURE_DOMAINS[row].1);
             for (column, (_, domain)) in REGISTERED_SIGNATURE_DOMAINS.iter().enumerate() {
-                let accepted = verify(*domain, &case.public_key, &case.object, &case.signature).is_ok();
+                let accepted =
+                    verify(*domain, &case.public_key, &case.object, &case.signature).is_ok();
                 if row == column {
-                    assert!(accepted, "{} signature must verify under its own domain", case.name);
+                    assert!(
+                        accepted,
+                        "{} signature must verify under its own domain",
+                        case.name
+                    );
                     accepts += 1;
                 } else {
-                    assert!(!accepted, "{} signature must reject under {}", case.name, domain.tag().escape_ascii());
+                    assert!(
+                        !accepted,
+                        "{} signature must reject under {}",
+                        case.name,
+                        domain.tag().escape_ascii()
+                    );
                     rejects += 1;
                 }
             }
@@ -1293,13 +1747,30 @@ mod tests {
         let cases = vector_frame_cases();
         assert_eq!(cases.len(), REGISTERED_FRAME_TYPES.len());
         for (case, expected_type) in cases.iter().zip(REGISTERED_FRAME_TYPES) {
-            assert_eq!(case.frame.typ(), expected_type, "frame case {} has wrong type", case.name);
-            let wire = case.frame.try_encode().expect("trusted committed vector fixture");
+            assert_eq!(
+                case.frame.typ(),
+                expected_type,
+                "frame case {} has wrong type",
+                case.name
+            );
+            let wire = case
+                .frame
+                .try_encode()
+                .expect("trusted committed vector fixture");
             let (typ, payload, consumed) = read_envelope(&wire)
                 .expect("frame envelope must parse")
                 .expect("complete frame envelope");
-            assert_eq!(consumed, wire.len(), "frame {} has trailing bytes", case.name);
-            assert_eq!(typ, expected_type, "frame {} has wrong envelope tag", case.name);
+            assert_eq!(
+                consumed,
+                wire.len(),
+                "frame {} has trailing bytes",
+                case.name
+            );
+            assert_eq!(
+                typ, expected_type,
+                "frame {} has wrong envelope tag",
+                case.name
+            );
             assert_eq!(
                 payload,
                 case.frame
@@ -1308,7 +1779,10 @@ mod tests {
                 "frame {} payload drift",
                 case.name
             );
-            assert_eq!(Frame::decode_payload(typ, payload).expect("frame payload must decode"), case.frame);
+            assert_eq!(
+                Frame::decode_payload(typ, payload).expect("frame payload must decode"),
+                case.frame
+            );
         }
     }
 
@@ -1320,11 +1794,21 @@ mod tests {
     #[test]
     fn every_bundle_class_roundtrips_and_validates_declared_invariants() {
         let cases = vector_bundle_class_cases();
-        assert_eq!(cases.iter().map(|case| case.bundle.class).collect::<Vec<_>>(), (0u8..=5).collect::<Vec<_>>());
+        assert_eq!(
+            cases
+                .iter()
+                .map(|case| case.bundle.class)
+                .collect::<Vec<_>>(),
+            (0u8..=5).collect::<Vec<_>>()
+        );
         for case in &cases {
             let wire = case.bundle.encode();
             let decoded = Bundle::decode_canonical(&wire).expect("bundle class wire must decode");
-            assert_eq!(&decoded, &case.bundle, "class {} bundle drifted", case.bundle.class);
+            assert_eq!(
+                &decoded, &case.bundle,
+                "class {} bundle drifted",
+                case.bundle.class
+            );
             assert_eq!(decoded.id(), case.bundle.id());
             verify(
                 SigDomain::Bundle,
@@ -1336,22 +1820,38 @@ mod tests {
 
             match case.bundle.class {
                 class::CONTROL => {
-                    assert_eq!(ReceiptPayload::decode(&decoded.payload).unwrap().encode(), decoded.payload);
+                    assert_eq!(
+                        ReceiptPayload::decode(&decoded.payload).unwrap().encode(),
+                        decoded.payload
+                    );
                 }
                 class::DIRECT => {
-                    assert_eq!(DirectPayload::decode(&decoded.payload).unwrap().encode(), decoded.payload);
+                    assert_eq!(
+                        DirectPayload::decode(&decoded.payload).unwrap().encode(),
+                        decoded.payload
+                    );
                 }
                 class::GROUP => {
                     let group = GroupPayload::decode(&decoded.payload).unwrap();
                     let member_pubkey = case.inner_pubkey.expect("group fixture public key");
-                    verify(SigDomain::GroupMsg, &member_pubkey, &group.signed_object(), &group.member_sig)
-                        .expect("group fixture signature must verify under its declared fixture key");
+                    verify(
+                        SigDomain::GroupMsg,
+                        &member_pubkey,
+                        &group.signed_object(),
+                        &group.member_sig,
+                    )
+                    .expect("group fixture signature must verify under its declared fixture key");
                     assert_eq!(group.encode(), decoded.payload);
                 }
                 class::CLAIM => {
                     let claim = Claim::decode(&decoded.payload).unwrap();
-                    verify(SigDomain::Claim, &claim.owner, &claim.signed_object(), &claim.sig)
-                        .expect("claim inner signature must verify");
+                    verify(
+                        SigDomain::Claim,
+                        &claim.owner,
+                        &claim.signed_object(),
+                        &claim.sig,
+                    )
+                    .expect("claim inner signature must verify");
                     assert_eq!(claim.encode(), decoded.payload);
                 }
                 class::SYMBOL => {
@@ -1361,14 +1861,23 @@ mod tests {
                         .exts
                         .iter()
                         .find_map(|ext| match ext {
-                            Ext::SymbolInfo { root, block, sym, .. } => Some((*root, *block, *sym)),
+                            Ext::SymbolInfo {
+                                root, block, sym, ..
+                            } => Some((*root, *block, *sym)),
                             _ => None,
                         })
                         .expect("symbol bundle must carry SymbolInfo");
                     let leaf = merkle::hash_block(&symbol.symbol);
                     let root = merkle::compute_root(&leaf, &path).unwrap();
-                    assert_eq!(root[..16], info.0.0, "symbol path root prefix must match SymbolInfo");
-                    assert_eq!(path.leaf_index(), u64::from(info.1) * RS_TOTAL_N as u64 + u64::from(info.2));
+                    assert_eq!(
+                        root[..16],
+                        info.0 .0,
+                        "symbol path root prefix must match SymbolInfo"
+                    );
+                    assert_eq!(
+                        path.leaf_index(),
+                        u64::from(info.1) * RS_TOTAL_N as u64 + u64::from(info.2)
+                    );
                     assert_eq!(symbol.encode(), decoded.payload);
                 }
                 class::ANNOUNCEMENT => {
@@ -1380,7 +1889,10 @@ mod tests {
                         &announcement.sig,
                     )
                     .expect("announcement inner signature must verify");
-                    assert_eq!(announcement.scope, decoded.dest, "announcement scope must bind to bundle dest");
+                    assert_eq!(
+                        announcement.scope, decoded.dest,
+                        "announcement scope must bind to bundle dest"
+                    );
                     assert_eq!(announcement.encode(), decoded.payload);
                 }
                 other => panic!("unexpected class {} in class catalog", other),

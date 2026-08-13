@@ -79,7 +79,10 @@ mod tests {
         assert_eq!(restored.len(), original.len());
         assert_eq!(restored.display_order(), original.display_order());
         assert_eq!(restored.heads(), original.heads());
-        assert_eq!(restored.gaps().copied().collect::<Vec<_>>(), original.gaps().copied().collect::<Vec<_>>());
+        assert_eq!(
+            restored.gaps().copied().collect::<Vec<_>>(),
+            original.gaps().copied().collect::<Vec<_>>()
+        );
         for known in [id(1), id(2), id(3)] {
             assert!(restored.contains(&known));
         }
@@ -210,22 +213,18 @@ impl ConversationDag {
         {
             return Err(DagSnapshotError::Invalid);
         }
-        let node_count = u32::from_le_bytes([
-            bytes[9], bytes[10], bytes[11], bytes[12],
-        ]) as usize;
-        let head_count = u32::from_le_bytes([
-            bytes[13], bytes[14], bytes[15], bytes[16],
-        ]) as usize;
-        let gap_count = u32::from_le_bytes([
-            bytes[17], bytes[18], bytes[19], bytes[20],
-        ]) as usize;
+        let node_count = u32::from_le_bytes([bytes[9], bytes[10], bytes[11], bytes[12]]) as usize;
+        let head_count = u32::from_le_bytes([bytes[13], bytes[14], bytes[15], bytes[16]]) as usize;
+        let gap_count = u32::from_le_bytes([bytes[17], bytes[18], bytes[19], bytes[20]]) as usize;
         if node_count > MAX_SNAPSHOT_NODES
             || head_count > MAX_SNAPSHOT_HEADS
             || gap_count > MAX_SNAPSHOT_GAPS
         {
             return Err(DagSnapshotError::Invalid);
         }
-        let min_nodes = node_count.checked_mul(SNAPSHOT_NODE_FIXED_LEN).ok_or(DagSnapshotError::Invalid)?;
+        let min_nodes = node_count
+            .checked_mul(SNAPSHOT_NODE_FIXED_LEN)
+            .ok_or(DagSnapshotError::Invalid)?;
         let min_frontier = head_count
             .checked_add(gap_count)
             .and_then(|count| count.checked_mul(SNAPSHOT_ID_LEN))
@@ -251,7 +250,9 @@ impl ConversationDag {
             if parent_count > MAX_SNAPSHOT_PARENTS {
                 return Err(DagSnapshotError::Invalid);
             }
-            let parent_bytes = parent_count.checked_mul(SNAPSHOT_ID_LEN).ok_or(DagSnapshotError::Invalid)?;
+            let parent_bytes = parent_count
+                .checked_mul(SNAPSHOT_ID_LEN)
+                .ok_or(DagSnapshotError::Invalid)?;
             if bytes.len().saturating_sub(pos) < parent_bytes {
                 return Err(DagSnapshotError::Invalid);
             }
@@ -323,7 +324,13 @@ impl ConversationDag {
             self.heads.remove(p);
         }
         self.gaps.remove(&id);
-        self.nodes.insert(id, MsgNode { parents: parents.to_vec(), height });
+        self.nodes.insert(
+            id,
+            MsgNode {
+                parents: parents.to_vec(),
+                height,
+            },
+        );
         // It's a head unless something already claims it as parent (late arrival).
         let has_child = self.nodes.values().any(|n| n.parents.contains(&id));
         if !has_child {
@@ -334,7 +341,11 @@ impl ConversationDag {
 
     /// Current heads, ≤ 4, for the PARENTS TLV of an outgoing message.
     pub fn heads(&self) -> Vec<Id16> {
-        self.heads.iter().take(mmp_types::tlv::MAX_PARENTS).copied().collect()
+        self.heads
+            .iter()
+            .take(mmp_types::tlv::MAX_PARENTS)
+            .copied()
+            .collect()
     }
 
     /// Unresolved parent references (feed the session WANT set).
@@ -381,7 +392,9 @@ fn read_u32(bytes: &[u8], pos: &mut usize) -> Result<u32, DagSnapshotError> {
 }
 
 fn read_id(bytes: &[u8], pos: &mut usize) -> Result<Id16, DagSnapshotError> {
-    let end = pos.checked_add(SNAPSHOT_ID_LEN).ok_or(DagSnapshotError::Invalid)?;
+    let end = pos
+        .checked_add(SNAPSHOT_ID_LEN)
+        .ok_or(DagSnapshotError::Invalid)?;
     let slice = bytes.get(*pos..end).ok_or(DagSnapshotError::Invalid)?;
     let mut id = [0u8; 16];
     id.copy_from_slice(slice);

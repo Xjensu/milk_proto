@@ -65,10 +65,7 @@ fn run(profile: Profile, iterations: usize) {
     let mut received: Vec<(u8, Vec<u8>)> = (profile.k..profile.n)
         .map(|index| (index as u8, encoded[index].clone()))
         .collect();
-    received.extend(
-        (parity_count..profile.k)
-            .map(|index| (index as u8, encoded[index].clone())),
-    );
+    received.extend((parity_count..profile.k).map(|index| (index as u8, encoded[index].clone())));
 
     let mut samples = Vec::with_capacity(iterations);
     for _ in 0..iterations {

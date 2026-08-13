@@ -89,7 +89,9 @@ pub(crate) struct SealedCandidate {
 /// intentionally not bounded here: its encoding belongs to the native
 /// provider, which must enforce its own size/IPC limit before unwrapping.
 fn validate_record_bounds(record: &SealedRecord) -> Result<(), VaultError> {
-    if record.context.len() > MAX_CONTEXT_BYTES || record.envelope.len() > snapshot::MAX_ENVELOPE_BYTES {
+    if record.context.len() > MAX_CONTEXT_BYTES
+        || record.envelope.len() > snapshot::MAX_ENVELOPE_BYTES
+    {
         return Err(VaultError::Invalid);
     }
     Ok(())
@@ -106,7 +108,10 @@ pub(crate) trait SnapshotVault {
     /// provide a default no-op: without a real provider lock, a concurrent
     /// commit can invalidate the state immediately after the final generation
     /// check and before the node installs it.
-    fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError>;
+    fn with_restore_lock(
+        &mut self,
+        operation: &mut RestoreOperation<'_>,
+    ) -> Result<u64, VaultError>;
 
     /// Load the last committed opaque record, if one exists.
     fn load(&mut self) -> Result<Option<SealedRecord>, VaultError>;
@@ -121,11 +126,20 @@ pub(crate) trait SnapshotVault {
 
     /// Atomically commit `candidate` only when its generation follows
     /// `expected_generation` (zero means no prior record).
-    fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError>;
+    fn commit(
+        &mut self,
+        expected_generation: u64,
+        candidate: SealedCandidate,
+        dek: &[u8; 32],
+    ) -> Result<(), VaultError>;
 
     /// Unwrap a provider-owned DEK. The returned key is zeroizing and must
     /// stay inside Rust's seal/open path.
-    fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError>;
+    fn unwrap_dek(
+        &mut self,
+        context: &[u8],
+        wrapped_dek: &[u8],
+    ) -> Result<Zeroizing<[u8; 32]>, VaultError>;
 }
 
 /// Build the canonical non-secret context for a node's current pairwise set.
@@ -133,7 +147,11 @@ pub(crate) fn context_for_core(core: &NodeCore) -> Result<Vec<u8>, VaultError> {
     if core.convs.len() > MAX_CONTEXT_ENTRIES {
         return Err(VaultError::Invalid);
     }
-    let mut entries: Vec<(Id16, Key32)> = core.convs.iter().map(|(id, conv)| (*id, conv.peer)).collect();
+    let mut entries: Vec<(Id16, Key32)> = core
+        .convs
+        .iter()
+        .map(|(id, conv)| (*id, conv.peer))
+        .collect();
     entries.sort_unstable_by_key(|(id, _)| *id);
     let mut context = Vec::with_capacity(CONTEXT_HEADER_LEN + entries.len() * CONTEXT_ENTRY_LEN);
     context.extend_from_slice(&CONTEXT_MAGIC);
@@ -169,16 +187,26 @@ pub(crate) fn seal_core(
         &plaintext,
     )
     .map_err(|_| VaultError::Invalid)?;
-    Ok(SealedCandidate { generation, context, envelope })
+    Ok(SealedCandidate {
+        generation,
+        context,
+        envelope,
+    })
 }
 
 /// Check the CAS condition that every provider commit must enforce durably.
-pub(crate) fn validate_commit_generation(expected_generation: u64, candidate: &SealedCandidate) -> Result<(), VaultError> {
-    let next_generation = expected_generation.checked_add(1).ok_or(VaultError::Generation)?;
+pub(crate) fn validate_commit_generation(
+    expected_generation: u64,
+    candidate: &SealedCandidate,
+) -> Result<(), VaultError> {
+    let next_generation = expected_generation
+        .checked_add(1)
+        .ok_or(VaultError::Generation)?;
     if candidate.generation != next_generation {
         return Err(VaultError::Generation);
     }
-    snapshot::validate_next_generation(expected_generation, candidate.generation).map_err(|_| VaultError::Generation)
+    snapshot::validate_next_generation(expected_generation, candidate.generation)
+        .map_err(|_| VaultError::Generation)
 }
 
 /// Seal and submit one complete candidate through the provider's atomic
@@ -193,7 +221,15 @@ pub(crate) fn save_core(
 ) -> Result<u64, VaultError> {
     let mut dek = Zeroizing::new([0u8; 32]);
     rng.fill_bytes(&mut *dek);
-    let candidate = seal_core(core, expected_generation.checked_add(1).ok_or(VaultError::Generation)?, written_at_ms, &dek, rng)?;
+    let candidate = seal_core(
+        core,
+        expected_generation
+            .checked_add(1)
+            .ok_or(VaultError::Generation)?,
+        written_at_ms,
+        &dek,
+        rng,
+    )?;
     validate_commit_generation(expected_generation, &candidate)?;
     let generation = candidate.generation;
     vault.commit(expected_generation, candidate, &dek)?;
@@ -244,8 +280,14 @@ pub(crate) fn open_record(
     }
     let state = secret_state::decode(&plaintext).map_err(|_| VaultError::Invalid)?;
     if state.convs.len() != entries.len()
-        || state.convs.iter().any(|(id, conv)| entries.get(id) != Some(&conv.peer))
-        || state.convs.iter().any(|(id, conv)| conversation_id(node_public, &conv.peer) != *id)
+        || state
+            .convs
+            .iter()
+            .any(|(id, conv)| entries.get(id) != Some(&conv.peer))
+        || state
+            .convs
+            .iter()
+            .any(|(id, conv)| conversation_id(node_public, &conv.peer) != *id)
     {
         return Err(VaultError::Invalid);
     }
@@ -370,11 +412,17 @@ pub(crate) fn restore_from_vault(
     Ok((generation, state))
 }
 
-fn parse_context(context: &[u8], public: &Key32, node_id: &Id16) -> Result<HashMap<Id16, Key32>, VaultError> {
+fn parse_context(
+    context: &[u8],
+    public: &Key32,
+    node_id: &Id16,
+) -> Result<HashMap<Id16, Key32>, VaultError> {
     if context.len() < CONTEXT_HEADER_LEN || context.len() > MAX_CONTEXT_BYTES {
         return Err(VaultError::Invalid);
     }
-    if context[..CONTEXT_MAGIC.len()] != CONTEXT_MAGIC || context[CONTEXT_MAGIC.len()] != CONTEXT_VERSION {
+    if context[..CONTEXT_MAGIC.len()] != CONTEXT_MAGIC
+        || context[CONTEXT_MAGIC.len()] != CONTEXT_VERSION
+    {
         return Err(VaultError::Invalid);
     }
     let mut pos = CONTEXT_MAGIC.len() + 1;
@@ -390,17 +438,37 @@ fn parse_context(context: &[u8], public: &Key32, node_id: &Id16) -> Result<HashM
         return Err(VaultError::Invalid);
     }
     pos += 16;
-    let count = u16::from_le_bytes(context.get(pos..pos + 2).ok_or(VaultError::Invalid)?.try_into().map_err(|_| VaultError::Invalid)?) as usize;
+    let count = u16::from_le_bytes(
+        context
+            .get(pos..pos + 2)
+            .ok_or(VaultError::Invalid)?
+            .try_into()
+            .map_err(|_| VaultError::Invalid)?,
+    ) as usize;
     pos += 2;
-    if count > MAX_CONTEXT_ENTRIES || context.len() != CONTEXT_HEADER_LEN + count * CONTEXT_ENTRY_LEN {
+    if count > MAX_CONTEXT_ENTRIES
+        || context.len() != CONTEXT_HEADER_LEN + count * CONTEXT_ENTRY_LEN
+    {
         return Err(VaultError::Invalid);
     }
     let mut entries = HashMap::with_capacity(count);
     let mut previous = None;
     for _ in 0..count {
-        let id = Id16(context.get(pos..pos + 16).ok_or(VaultError::Invalid)?.try_into().map_err(|_| VaultError::Invalid)?);
+        let id = Id16(
+            context
+                .get(pos..pos + 16)
+                .ok_or(VaultError::Invalid)?
+                .try_into()
+                .map_err(|_| VaultError::Invalid)?,
+        );
         pos += 16;
-        let peer = Key32(context.get(pos..pos + 32).ok_or(VaultError::Invalid)?.try_into().map_err(|_| VaultError::Invalid)?);
+        let peer = Key32(
+            context
+                .get(pos..pos + 32)
+                .ok_or(VaultError::Invalid)?
+                .try_into()
+                .map_err(|_| VaultError::Invalid)?,
+        );
         pos += 32;
         if previous.is_some_and(|old| old >= id) || entries.insert(id, peer).is_some() {
             return Err(VaultError::Invalid);
@@ -417,10 +485,13 @@ mod freshness_model;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Node, Tier};
     use mmp_core::MemStore;
     use rand::{rngs::StdRng, SeedableRng};
-    use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
-    use crate::{Node, Tier};
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
 
     struct ReferenceSnapshotVault {
         available: bool,
@@ -465,7 +536,10 @@ mod tests {
     }
 
     impl SnapshotVault for ReferenceSnapshotVault {
-        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+        fn with_restore_lock(
+            &mut self,
+            operation: &mut RestoreOperation<'_>,
+        ) -> Result<u64, VaultError> {
             // This in-memory fixture has no external process.  Count the
             // callback so tests still prove the production path cannot bypass
             // the required provider transaction seam.
@@ -481,16 +555,25 @@ mod tests {
         }
 
         fn generation_floor(&mut self) -> Result<u64, VaultError> {
-            if !self.available { return Err(VaultError::Unavailable); }
+            if !self.available {
+                return Err(VaultError::Unavailable);
+            }
             Ok(self.reported_floor.unwrap_or(self.high_water))
         }
 
         fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
-            if !self.available { return Err(VaultError::Unavailable); }
+            if !self.available {
+                return Err(VaultError::Unavailable);
+            }
             Ok(self.trusted_now_ms)
         }
 
-        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+        fn commit(
+            &mut self,
+            expected_generation: u64,
+            candidate: SealedCandidate,
+            dek: &[u8; 32],
+        ) -> Result<(), VaultError> {
             if !self.available {
                 return Err(VaultError::Unavailable);
             }
@@ -500,7 +583,11 @@ mod tests {
                 return Err(VaultError::Generation);
             }
             validate_commit_generation(expected_generation, &candidate)?;
-            if candidate.generation != expected_generation.checked_add(1).ok_or(VaultError::Generation)? {
+            if candidate.generation
+                != expected_generation
+                    .checked_add(1)
+                    .ok_or(VaultError::Generation)?
+            {
                 return Err(VaultError::Generation);
             }
             let envelope_generation = envelope_generation(&candidate.envelope)?;
@@ -521,7 +608,11 @@ mod tests {
             Ok(())
         }
 
-        fn unwrap_dek(&mut self, _context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+        fn unwrap_dek(
+            &mut self,
+            _context: &[u8],
+            wrapped_dek: &[u8],
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
             if !self.available {
                 return Err(VaultError::Unavailable);
             }
@@ -541,7 +632,10 @@ mod tests {
     }
 
     impl SnapshotVault for FloorAdvancingAfterLoadVault {
-        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+        fn with_restore_lock(
+            &mut self,
+            operation: &mut RestoreOperation<'_>,
+        ) -> Result<u64, VaultError> {
             self.inner.restore_lock_calls += 1;
             operation(self)
         }
@@ -549,7 +643,11 @@ mod tests {
         fn load(&mut self) -> Result<Option<SealedRecord>, VaultError> {
             let record = self.inner.load()?;
             if self.advance_after_load {
-                self.inner.high_water = self.inner.high_water.checked_add(1).ok_or(VaultError::Generation)?;
+                self.inner.high_water = self
+                    .inner
+                    .high_water
+                    .checked_add(1)
+                    .ok_or(VaultError::Generation)?;
                 self.advance_after_load = false;
             }
             Ok(record)
@@ -563,11 +661,20 @@ mod tests {
             self.inner.trusted_now_ms()
         }
 
-        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+        fn commit(
+            &mut self,
+            expected_generation: u64,
+            candidate: SealedCandidate,
+            dek: &[u8; 32],
+        ) -> Result<(), VaultError> {
             self.inner.commit(expected_generation, candidate, dek)
         }
 
-        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+        fn unwrap_dek(
+            &mut self,
+            context: &[u8],
+            wrapped_dek: &[u8],
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
             self.inner.unwrap_dek(context, wrapped_dek)
         }
     }
@@ -581,7 +688,10 @@ mod tests {
     }
 
     impl SnapshotVault for FloorAdvancingAfterClockVault {
-        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+        fn with_restore_lock(
+            &mut self,
+            operation: &mut RestoreOperation<'_>,
+        ) -> Result<u64, VaultError> {
             self.inner.restore_lock_calls += 1;
             operation(self)
         }
@@ -597,17 +707,30 @@ mod tests {
         fn trusted_now_ms(&mut self) -> Result<u64, VaultError> {
             let now = self.inner.trusted_now_ms()?;
             if self.advance_after_clock {
-                self.inner.high_water = self.inner.high_water.checked_add(1).ok_or(VaultError::Generation)?;
+                self.inner.high_water = self
+                    .inner
+                    .high_water
+                    .checked_add(1)
+                    .ok_or(VaultError::Generation)?;
                 self.advance_after_clock = false;
             }
             Ok(now)
         }
 
-        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+        fn commit(
+            &mut self,
+            expected_generation: u64,
+            candidate: SealedCandidate,
+            dek: &[u8; 32],
+        ) -> Result<(), VaultError> {
             self.inner.commit(expected_generation, candidate, dek)
         }
 
-        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+        fn unwrap_dek(
+            &mut self,
+            context: &[u8],
+            wrapped_dek: &[u8],
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
             self.inner.unwrap_dek(context, wrapped_dek)
         }
     }
@@ -622,8 +745,14 @@ mod tests {
     }
 
     impl SnapshotVault for LockObservingVault {
-        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
-            assert!(!self.active.swap(true, Ordering::AcqRel), "restore lock must not be nested");
+        fn with_restore_lock(
+            &mut self,
+            operation: &mut RestoreOperation<'_>,
+        ) -> Result<u64, VaultError> {
+            assert!(
+                !self.active.swap(true, Ordering::AcqRel),
+                "restore lock must not be nested"
+            );
             let result = operation(self);
             self.active.store(false, Ordering::Release);
             result
@@ -641,11 +770,20 @@ mod tests {
             self.inner.trusted_now_ms()
         }
 
-        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+        fn commit(
+            &mut self,
+            expected_generation: u64,
+            candidate: SealedCandidate,
+            dek: &[u8; 32],
+        ) -> Result<(), VaultError> {
             self.inner.commit(expected_generation, candidate, dek)
         }
 
-        fn unwrap_dek(&mut self, context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+        fn unwrap_dek(
+            &mut self,
+            context: &[u8],
+            wrapped_dek: &[u8],
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
             self.inner.unwrap_dek(context, wrapped_dek)
         }
     }
@@ -735,12 +873,14 @@ mod tests {
             let selected = current
                 .filter(|record| record.generation >= floor && self.record_is_complete(record))
                 .or_else(|| {
-                    synced_temp
-                        .filter(|record| record.generation >= floor && self.record_is_complete(record))
+                    synced_temp.filter(|record| {
+                        record.generation >= floor && self.record_is_complete(record)
+                    })
                 })
                 .or_else(|| {
-                    previous
-                        .filter(|record| record.generation >= floor && self.record_is_complete(record))
+                    previous.filter(|record| {
+                        record.generation >= floor && self.record_is_complete(record)
+                    })
                 });
             self.image.current = selected;
             if let Some(record) = self.image.current.as_ref() {
@@ -754,7 +894,10 @@ mod tests {
     }
 
     impl SnapshotVault for JournaledSnapshotVault {
-        fn with_restore_lock(&mut self, operation: &mut RestoreOperation<'_>) -> Result<u64, VaultError> {
+        fn with_restore_lock(
+            &mut self,
+            operation: &mut RestoreOperation<'_>,
+        ) -> Result<u64, VaultError> {
             // The journal model is single-process and therefore cannot model
             // a native cross-process lock; retain the explicit callback seam
             // so production adapters cannot accidentally omit it.
@@ -773,14 +916,26 @@ mod tests {
             Ok(self.trusted_now_ms)
         }
 
-        fn commit(&mut self, expected_generation: u64, candidate: SealedCandidate, dek: &[u8; 32]) -> Result<(), VaultError> {
+        fn commit(
+            &mut self,
+            expected_generation: u64,
+            candidate: SealedCandidate,
+            dek: &[u8; 32],
+        ) -> Result<(), VaultError> {
             if self.image.floor != expected_generation
-                || self.image.current.as_ref().map_or(0, |record| record.generation) != expected_generation
+                || self
+                    .image
+                    .current
+                    .as_ref()
+                    .map_or(0, |record| record.generation)
+                    != expected_generation
             {
                 return Err(VaultError::Generation);
             }
             validate_commit_generation(expected_generation, &candidate)?;
-            if envelope_generation(&candidate.envelope)? != candidate.generation || candidate.context.is_empty() {
+            if envelope_generation(&candidate.envelope)? != candidate.generation
+                || candidate.context.is_empty()
+            {
                 return Err(VaultError::Invalid);
             }
             let record = SealedRecord {
@@ -821,14 +976,22 @@ mod tests {
             Ok(())
         }
 
-        fn unwrap_dek(&mut self, _context: &[u8], wrapped_dek: &[u8]) -> Result<Zeroizing<[u8; 32]>, VaultError> {
+        fn unwrap_dek(
+            &mut self,
+            _context: &[u8],
+            wrapped_dek: &[u8],
+        ) -> Result<Zeroizing<[u8; 32]>, VaultError> {
             let key: [u8; 32] = wrapped_dek.try_into().map_err(|_| VaultError::Invalid)?;
             Ok(Zeroizing::new(key))
         }
     }
 
     fn envelope_generation(envelope: &[u8]) -> Result<u64, VaultError> {
-        if envelope.len() < 14 || envelope[..4] != *b"MKS1" || envelope[4] != 1 || envelope[5] != KIND_NODE_SECRET_STATE {
+        if envelope.len() < 14
+            || envelope[..4] != *b"MKS1"
+            || envelope[4] != 1
+            || envelope[5] != KIND_NODE_SECRET_STATE
+        {
             return Err(VaultError::Invalid);
         }
         let mut bytes = [0u8; 8];
@@ -849,13 +1012,20 @@ mod tests {
         for (index, point) in points.into_iter().enumerate() {
             let mut vault = JournaledSnapshotVault::new(&node.core);
             let mut rng = StdRng::seed_from_u64(20 + index as u64);
-            assert_eq!(save_core(&mut vault, &node.core, 0, 10_000, &mut rng).unwrap(), 1);
+            assert_eq!(
+                save_core(&mut vault, &node.core, 0, 10_000, &mut rng).unwrap(),
+                1
+            );
 
             vault.inject_fault(point);
-            assert_eq!(save_core(&mut vault, &node.core, 1, 20_000, &mut rng), Err(VaultError::Unavailable));
+            assert_eq!(
+                save_core(&mut vault, &node.core, 1, 20_000, &mut rng),
+                Err(VaultError::Unavailable)
+            );
 
             let mut recovered = vault.reopen();
-            let (generation, _) = restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
+            let (generation, _) =
+                restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
             let expected = match point {
                 CrashPoint::Write | CrashPoint::Fsync => 1,
                 CrashPoint::Replace | CrashPoint::Floor => 2,
@@ -871,15 +1041,25 @@ mod tests {
         let node = Node::new([108; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = JournaledSnapshotVault::new(&node.core);
         let mut rng = StdRng::seed_from_u64(24);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(),
+            1
+        );
 
         vault.inject_fault(CrashPoint::Replace);
-        assert_eq!(save_core(&mut vault, &node.core, 1, 40_000, &mut rng), Err(VaultError::Unavailable));
+        assert_eq!(
+            save_core(&mut vault, &node.core, 1, 40_000, &mut rng),
+            Err(VaultError::Unavailable)
+        );
         vault.image.current.as_mut().unwrap().envelope[0] ^= 1;
 
         let mut recovered = vault.reopen();
-        let (generation, _) = restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
-        assert_eq!(generation, 1, "corrupt next record falls back to the previous complete one");
+        let (generation, _) =
+            restore_from_vault(&mut recovered, &node.core.public, &node.core.node_id).unwrap();
+        assert_eq!(
+            generation, 1,
+            "corrupt next record falls back to the previous complete one"
+        );
         assert_eq!(recovered.generation_floor().unwrap(), 1);
 
         recovered.image.floor = 2;
@@ -897,9 +1077,15 @@ mod tests {
         let node = Node::new([109; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut inner = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(25);
-        assert_eq!(save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(),
+            1
+        );
 
-        let mut vault = FloorAdvancingAfterLoadVault { inner, advance_after_load: true };
+        let mut vault = FloorAdvancingAfterLoadVault {
+            inner,
+            advance_after_load: true,
+        };
         assert!(matches!(
             restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
             Err(VaultError::Generation)
@@ -912,9 +1098,15 @@ mod tests {
         let node = Node::new([108; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut inner = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(27);
-        assert_eq!(save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut inner, &node.core, 0, 35_000, &mut rng).unwrap(),
+            1
+        );
 
-        let mut vault = FloorAdvancingAfterClockVault { inner, advance_after_clock: true };
+        let mut vault = FloorAdvancingAfterClockVault {
+            inner,
+            advance_after_clock: true,
+        };
         assert!(matches!(
             restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
             Err(VaultError::Generation)
@@ -927,7 +1119,10 @@ mod tests {
         let node = Node::new([117; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(28);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 35_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 35_000, &mut rng).unwrap(),
+            1
+        );
 
         let mut record = vault.record.clone().expect("sealed fixture");
         record.context[0] ^= 1;
@@ -937,7 +1132,10 @@ mod tests {
             restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
             Err(VaultError::Invalid)
         ));
-        assert_eq!(vault.unwrap_calls, 0, "invalid context must not reach provider key unwrap");
+        assert_eq!(
+            vault.unwrap_calls, 0,
+            "invalid context must not reach provider key unwrap"
+        );
     }
 
     #[test]
@@ -945,19 +1143,29 @@ mod tests {
         let node = Node::new([118; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(29);
-        assert_eq!(save_core_from_vault(&mut vault, &node.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut vault, &node.core, &mut rng).unwrap(),
+            1
+        );
         vault.set_reported_floor(Some(0));
 
         assert!(matches!(
             restore_from_vault(&mut vault, &node.core.public, &node.core.node_id),
             Err(VaultError::Generation)
         ));
-        assert_eq!(vault.unwrap_calls, 0, "an inconsistent floor must not reach provider key unwrap");
+        assert_eq!(
+            vault.unwrap_calls, 0,
+            "an inconsistent floor must not reach provider key unwrap"
+        );
     }
 
     fn introduce(a: &mut Node, b: &mut Node) {
-        for claim in a.own_claims() { b.ingest_claim(claim, true); }
-        for claim in b.own_claims() { a.ingest_claim(claim, true); }
+        for claim in a.own_claims() {
+            b.ingest_claim(claim, true);
+        }
+        for claim in b.own_claims() {
+            a.ingest_claim(claim, true);
+        }
     }
 
     fn contact(a: &mut Node, b: &mut Node, link: u64, now: u64) {
@@ -1006,13 +1214,31 @@ mod tests {
             envelope: candidate.envelope,
             wrapped_dek: vec![1, 2, 3],
         };
-        let (generation, state) = open_record(&node.core.public, &node.core.node_id, &record, &[7; 32], 10_001, RATCHET_PERSIST_TTL_MS, 1).unwrap();
+        let (generation, state) = open_record(
+            &node.core.public,
+            &node.core.node_id,
+            &record,
+            &[7; 32],
+            10_001,
+            RATCHET_PERSIST_TTL_MS,
+            1,
+        )
+        .unwrap();
         assert_eq!(generation, 1);
         assert_eq!(state.convs.len(), 1);
 
         let mut wrong = record.clone();
         wrong.context[9] ^= 1;
-        assert!(open_record(&node.core.public, &node.core.node_id, &wrong, &[7; 32], 10_001, RATCHET_PERSIST_TTL_MS, 1).is_err());
+        assert!(open_record(
+            &node.core.public,
+            &node.core.node_id,
+            &wrong,
+            &[7; 32],
+            10_001,
+            RATCHET_PERSIST_TTL_MS,
+            1
+        )
+        .is_err());
         assert!(snapshot::validate_next_generation(generation, 2).is_ok());
         assert!(snapshot::validate_next_generation(generation, 1).is_err());
     }
@@ -1022,7 +1248,10 @@ mod tests {
         let source = Node::new([117; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut source_vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(117);
-        assert_eq!(save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(),
+            1
+        );
 
         // A valid envelope and DEK are not sufficient for restore: the
         // authenticated context is bound to the source identity and node ID.
@@ -1033,8 +1262,14 @@ mod tests {
 
         let mut target = Node::new([118; 32], Box::new(MemStore::new()), Tier::Relay);
         let before = target.secret_state_snapshot().unwrap();
-        assert_eq!(target.restore_secret_state_from_vault(&mut replay_vault), Err(VaultError::Invalid));
-        assert_eq!(target.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            target.restore_secret_state_from_vault(&mut replay_vault),
+            Err(VaultError::Invalid)
+        );
+        assert_eq!(
+            target.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
     }
 
     #[test]
@@ -1042,7 +1277,10 @@ mod tests {
         let source = Node::new([119; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut source_vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(119);
-        assert_eq!(save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut source_vault, &source.core, &mut rng).unwrap(),
+            1
+        );
 
         let active = Arc::new(AtomicBool::new(false));
         let mut vault = LockObservingVault {
@@ -1075,10 +1313,16 @@ mod tests {
         let node = Node::new([101; 32], Box::new(MemStore::new()), Tier::Leaf);
         let mut rng = StdRng::seed_from_u64(18);
         let gap = seal_core(&node.core, 3, 11_000, &[11; 32], &mut rng).unwrap();
-        assert_eq!(validate_commit_generation(1, &gap), Err(VaultError::Generation));
+        assert_eq!(
+            validate_commit_generation(1, &gap),
+            Err(VaultError::Generation)
+        );
 
         let overflow = seal_core(&node.core, u64::MAX - 1, 11_001, &[11; 32], &mut rng).unwrap();
-        assert_eq!(validate_commit_generation(u64::MAX - 1, &overflow), Err(VaultError::Generation));
+        assert_eq!(
+            validate_commit_generation(u64::MAX - 1, &overflow),
+            Err(VaultError::Generation)
+        );
     }
 
     #[test]
@@ -1094,9 +1338,14 @@ mod tests {
         let node = Node::new([94; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(13);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 20_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 20_000, &mut rng).unwrap(),
+            1
+        );
         let record = vault.load().unwrap().unwrap();
-        let dek = vault.unwrap_dek(&record.context, &record.wrapped_dek).unwrap();
+        let dek = vault
+            .unwrap_dek(&record.context, &record.wrapped_dek)
+            .unwrap();
         let (generation, state) = open_record(
             &node.core.public,
             &node.core.node_id,
@@ -1108,11 +1357,18 @@ mod tests {
         )
         .unwrap();
         assert_eq!((generation, state.convs.len()), (1, 0));
-        assert_eq!(save_core(&mut vault, &node.core, 1, 20_002, &mut rng).unwrap(), 2);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 1, 20_002, &mut rng).unwrap(),
+            2
+        );
 
         let mut second = ReferenceSnapshotVault::new();
-        assert_eq!(save_core_from_vault(&mut second, &node.core, &mut rng).unwrap(), 1);
-        let (generation, state) = restore_from_vault(&mut second, &node.core.public, &node.core.node_id).unwrap();
+        assert_eq!(
+            save_core_from_vault(&mut second, &node.core, &mut rng).unwrap(),
+            1
+        );
+        let (generation, state) =
+            restore_from_vault(&mut second, &node.core.public, &node.core.node_id).unwrap();
         assert_eq!((generation, state.convs.len()), (1, 0));
     }
 
@@ -1126,18 +1382,32 @@ mod tests {
 
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(16);
-        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(),
+            1
+        );
 
         let mut restored = Node::new([97; 32], Box::new(MemStore::new()), Tier::Relay);
-        assert_eq!(restored.restore_secret_state_from_vault(&mut vault).unwrap(), 1);
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), expected.as_slice());
+        assert_eq!(
+            restored
+                .restore_secret_state_from_vault(&mut vault)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            expected.as_slice()
+        );
 
         restored.on_tal_event(mmp_tal::TalEvent::LinkUp {
             link: 11,
             initiator: true,
             quality: Default::default(),
         });
-        assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Busy));
+        assert_eq!(
+            restored.restore_secret_state_from_vault(&mut vault),
+            Err(VaultError::Busy)
+        );
     }
 
     #[test]
@@ -1157,7 +1427,10 @@ mod tests {
             restored.restore_secret_state_from_vault(&mut save_vault),
             Err(VaultError::Unavailable)
         );
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
     }
 
     #[test]
@@ -1165,7 +1438,10 @@ mod tests {
         let original = Node::new([116; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(32);
-        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(),
+            1
+        );
 
         let mut restored = Node::new([116; 32], Box::new(MemStore::new()), Tier::Relay);
         let before = restored.secret_state_snapshot().unwrap();
@@ -1176,13 +1452,18 @@ mod tests {
         // authenticated envelope plaintext cap without attempting to decrypt
         // or parse the extra bytes.
         let mut oversized_envelope = vault.record.clone().expect("sealed fixture");
-        oversized_envelope.envelope.resize(snapshot::MAX_ENVELOPE_BYTES + 1, 0);
+        oversized_envelope
+            .envelope
+            .resize(snapshot::MAX_ENVELOPE_BYTES + 1, 0);
         vault.record = Some(oversized_envelope);
         assert_eq!(
             restored.restore_secret_state_from_vault(&mut vault),
             Err(VaultError::Invalid)
         );
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
 
         // A context is also provider-supplied metadata.  Keep the envelope
         // valid and make only the context exceed the bounded parser surface;
@@ -1197,7 +1478,10 @@ mod tests {
             restored.restore_secret_state_from_vault(&mut vault),
             Err(VaultError::Invalid)
         );
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
     }
 
     #[test]
@@ -1205,18 +1489,29 @@ mod tests {
         let mut original = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([111; 32], Box::new(MemStore::new()), Tier::Relay);
         introduce(&mut original, &mut peer);
-        original.send_text(&peer.node_id(), "expires").expect("first send");
+        original
+            .send_text(&peer.node_id(), "expires")
+            .expect("first send");
 
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(26);
-        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(),
+            1
+        );
 
         let mut restored = Node::new([110; 32], Box::new(MemStore::new()), Tier::Relay);
         let before = restored.secret_state_snapshot().unwrap();
         vault.trusted_now_ms = 100_000 + RATCHET_PERSIST_TTL_MS + 1;
 
-        assert_eq!(restored.restore_secret_state_from_vault(&mut vault), Err(VaultError::Invalid));
-        assert_eq!(restored.secret_state_snapshot().unwrap().as_slice(), before.as_slice());
+        assert_eq!(
+            restored.restore_secret_state_from_vault(&mut vault),
+            Err(VaultError::Invalid)
+        );
+        assert_eq!(
+            restored.secret_state_snapshot().unwrap().as_slice(),
+            before.as_slice()
+        );
     }
 
     #[test]
@@ -1225,17 +1520,27 @@ mod tests {
         let mut peer = Node::new([100; 32], Box::new(MemStore::new()), Tier::Relay);
         introduce(&mut original, &mut peer);
 
-        original.send_text(&peer.node_id(), "before restart").unwrap();
+        original
+            .send_text(&peer.node_id(), "before restart")
+            .unwrap();
         contact(&mut original, &mut peer, 21, 10_000);
         assert_eq!(original.conv_epoch(&peer.node_id()), Some((0, 0)));
         assert_eq!(peer.conv_epoch(&original.node_id()), Some((0, 0)));
 
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(17);
-        assert_eq!(save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core_from_vault(&mut vault, &original.core, &mut rng).unwrap(),
+            1
+        );
 
         let mut restored = Node::new([99; 32], Box::new(MemStore::new()), Tier::Relay);
-        assert_eq!(restored.restore_secret_state_from_vault(&mut vault).unwrap(), 1);
+        assert_eq!(
+            restored
+                .restore_secret_state_from_vault(&mut vault)
+                .unwrap(),
+            1
+        );
         // Identity claims are non-secret bootstrap state and are expected to
         // come from the ordinary snapshot/QR path alongside the vault.
         introduce(&mut restored, &mut peer);
@@ -1251,7 +1556,10 @@ mod tests {
         let node = Node::new([95; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(14);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 30_000, &mut rng).unwrap(),
+            1
+        );
         let dek = [8; 32];
 
         let equal = seal_core(&node.core, 1, 30_002, &dek, &mut rng).unwrap();
@@ -1271,11 +1579,17 @@ mod tests {
         let node = Node::new([97; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(16);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(),
+            1
+        );
         vault.simulate_record_loss();
 
         let candidate = seal_core(&node.core, 2, 50_001, &[10; 32], &mut rng).unwrap();
-        assert_eq!(vault.commit(1, candidate, &[10; 32]), Err(VaultError::Generation));
+        assert_eq!(
+            vault.commit(1, candidate, &[10; 32]),
+            Err(VaultError::Generation)
+        );
         assert_eq!(vault.load().unwrap(), None);
         assert_eq!(vault.high_water_generation(), 1);
     }
@@ -1285,7 +1599,10 @@ mod tests {
         let node = Node::new([98; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(17);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 50_000, &mut rng).unwrap(),
+            1
+        );
         vault.simulate_record_loss();
 
         let mut applied = false;
@@ -1309,13 +1626,19 @@ mod tests {
         let node = Node::new([96; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut vault = ReferenceSnapshotVault::new();
         let mut rng = StdRng::seed_from_u64(15);
-        assert_eq!(save_core(&mut vault, &node.core, 0, 40_000, &mut rng).unwrap(), 1);
+        assert_eq!(
+            save_core(&mut vault, &node.core, 0, 40_000, &mut rng).unwrap(),
+            1
+        );
         let before = vault.load().unwrap();
         let dek = [9; 32];
 
         vault.set_available(false);
         let unavailable = seal_core(&node.core, 2, 40_001, &dek, &mut rng).unwrap();
-        assert_eq!(vault.commit(1, unavailable, &dek), Err(VaultError::Unavailable));
+        assert_eq!(
+            vault.commit(1, unavailable, &dek),
+            Err(VaultError::Unavailable)
+        );
         assert_eq!(vault.load(), Err(VaultError::Unavailable));
         vault.set_available(true);
         assert_eq!(vault.load().unwrap(), before);

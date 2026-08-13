@@ -55,7 +55,10 @@ impl Default for ReceiptFilter {
 impl ReceiptFilter {
     /// Builds an empty filter: no buckets, no exact receipts.
     pub fn new() -> ReceiptFilter {
-        ReceiptFilter { buckets: VecDeque::new(), exact: BTreeMap::new() }
+        ReceiptFilter {
+            buckets: VecDeque::new(),
+            exact: BTreeMap::new(),
+        }
     }
 
     /// Fold a VERIFIED receipt (origin-signed class-0, doc 05 §7.2) for
@@ -66,7 +69,8 @@ impl ReceiptFilter {
             Some((_, b)) => b,
             None => {
                 let pos = self.buckets.partition_point(|(e, _)| *e < epoch);
-                self.buckets.insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
+                self.buckets
+                    .insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
                 &mut self.buckets[pos].1
             }
         };
@@ -88,7 +92,8 @@ impl ReceiptFilter {
                 let _ = self.exact.remove(&oldest);
             }
         }
-        self.exact.insert(*delivered, now_ms.saturating_add(LIFETIME_MESSAGE_MS));
+        self.exact
+            .insert(*delivered, now_ms.saturating_add(LIFETIME_MESSAGE_MS));
     }
 
     /// OR a peer's bucket into ours — caller MUST have authenticated the
@@ -106,7 +111,8 @@ impl ReceiptFilter {
             Some((_, b)) => b,
             None => {
                 let pos = self.buckets.partition_point(|(e, _)| *e < epoch);
-                self.buckets.insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
+                self.buckets
+                    .insert(pos, (epoch, Bloom::with_capacity(BLOOM_CAPACITY)));
                 &mut self.buckets[pos].1
             }
         };
@@ -117,7 +123,11 @@ impl ReceiptFilter {
     pub fn signal(&self, id: &Id16) -> SuppressSignal {
         if self.exact.contains_key(id) {
             SuppressSignal::Purge
-        } else if self.buckets.iter().any(|(_, b)| b.contains(id, &INTERNAL_SALT)) {
+        } else if self
+            .buckets
+            .iter()
+            .any(|(_, b)| b.contains(id, &INTERNAL_SALT))
+        {
             SuppressSignal::Hint
         } else {
             SuppressSignal::None
@@ -196,9 +206,7 @@ impl ReceiptFilter {
         // Each exact entry is a 16-byte ID plus an 8-byte expiry.  Check the
         // count against the remaining bytes before entering the loop so a
         // hostile snapshot cannot force an unbounded parse.
-        if exact_count > EXACT_RECEIPT_CAP
-            || exact_count > bytes.len().saturating_sub(pos) / 24
-        {
+        if exact_count > EXACT_RECEIPT_CAP || exact_count > bytes.len().saturating_sub(pos) / 24 {
             return None;
         }
         let mut exact = BTreeMap::new();

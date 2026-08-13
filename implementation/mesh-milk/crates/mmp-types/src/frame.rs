@@ -79,7 +79,12 @@ impl Range {
         out.put_u64(self.fp);
     }
     fn decode(r: &mut Reader<'_>) -> Result<Range, WireError> {
-        Ok(Range { lo: r.id16()?, hi: r.id16()?, count: r.u32()?, fp: r.u64()? })
+        Ok(Range {
+            lo: r.id16()?,
+            hi: r.id16()?,
+            count: r.u32()?,
+            fp: r.u64()?,
+        })
     }
 }
 
@@ -354,7 +359,11 @@ fn checked_mul_len(left: usize, right: usize) -> Result<usize, WireError> {
 }
 
 fn checked_count(len: usize, max: usize) -> Result<(), WireError> {
-    if len <= max { Ok(()) } else { Err(WireError::Oversize) }
+    if len <= max {
+        Ok(())
+    } else {
+        Err(WireError::Oversize)
+    }
 }
 
 fn checked_payload_len(frame: &Frame) -> Result<usize, WireError> {
@@ -413,7 +422,11 @@ fn checked_payload_len(frame: &Frame) -> Result<usize, WireError> {
         }
         Frame::Close => 0,
     };
-    if len <= MAX_FRAME_PAYLOAD { Ok(len) } else { Err(WireError::Oversize) }
+    if len <= MAX_FRAME_PAYLOAD {
+        Ok(len)
+    } else {
+        Err(WireError::Oversize)
+    }
 }
 
 impl Frame {
@@ -454,7 +467,8 @@ impl Frame {
     /// known to satisfy the wire caps. New production code should use
     /// [`Frame::try_encode_payload`] and handle [`WireError::Oversize`].
     pub fn encode_payload(&self) -> Vec<u8> {
-        self.try_encode_payload().expect("frame payload exceeds frozen wire limits")
+        self.try_encode_payload()
+            .expect("frame payload exceeds frozen wire limits")
     }
 
     fn encode_payload_unchecked(&self) -> Vec<u8> {
@@ -493,7 +507,11 @@ impl Frame {
                     }
                 }
             }
-            Frame::ReconInit { domain, window, range } => {
+            Frame::ReconInit {
+                domain,
+                window,
+                range,
+            } => {
                 out.push(*domain);
                 out.push(*window);
                 range.encode(&mut out);
@@ -505,7 +523,12 @@ impl Frame {
                     rg.encode(&mut out);
                 }
             }
-            Frame::ReconIds { domain, lo, hi, ids } => {
+            Frame::ReconIds {
+                domain,
+                lo,
+                hi,
+                ids,
+            } => {
                 out.push(*domain);
                 out.extend_from_slice(&lo.0);
                 out.extend_from_slice(&hi.0);
@@ -525,7 +548,16 @@ impl Frame {
                 out.extend_from_slice(&id.0);
                 out.push(*granted);
             }
-            Frame::BlobReq { root, block, bitmap } | Frame::BlobHave { root, block, bitmap } => {
+            Frame::BlobReq {
+                root,
+                block,
+                bitmap,
+            }
+            | Frame::BlobHave {
+                root,
+                block,
+                bitmap,
+            } => {
                 out.extend_from_slice(&root.0);
                 out.put_u16(*block);
                 out.put_var(bitmap);
@@ -562,7 +594,10 @@ impl Frame {
         let frame = match typ {
             FT_HS => Frame::Hs(payload.to_vec()),
             FT_ID_PROOF => {
-                let f = Frame::IdProof { identity: r.key32()?, sig: r.sig64()? };
+                let f = Frame::IdProof {
+                    identity: r.key32()?,
+                    sig: r.sig64()?,
+                };
                 r.finish()?;
                 f
             }
@@ -638,7 +673,12 @@ impl Frame {
                     ids.push(r.id16()?);
                 }
                 r.finish()?;
-                Frame::ReconIds { domain, lo, hi, ids }
+                Frame::ReconIds {
+                    domain,
+                    lo,
+                    hi,
+                    ids,
+                }
             }
             FT_WANT => {
                 let n = r.u16()? as usize;
@@ -656,7 +696,10 @@ impl Frame {
             }
             FT_BUNDLE => Frame::Bundle(payload.to_vec()),
             FT_BUDGET => {
-                let f = Frame::Budget { id: r.id16()?, granted: r.u8()? };
+                let f = Frame::Budget {
+                    id: r.id16()?,
+                    granted: r.u8()?,
+                };
                 r.finish()?;
                 f
             }
@@ -666,9 +709,17 @@ impl Frame {
                 let bitmap = r.varbytes(MAX_FRAME_PAYLOAD)?.to_vec();
                 r.finish()?;
                 if typ == FT_BLOB_REQ {
-                    Frame::BlobReq { root, block, bitmap }
+                    Frame::BlobReq {
+                        root,
+                        block,
+                        bitmap,
+                    }
                 } else {
-                    Frame::BlobHave { root, block, bitmap }
+                    Frame::BlobHave {
+                        root,
+                        block,
+                        bitmap,
+                    }
                 }
             }
             FT_FRIEND_OFFER => Frame::FriendOffer(payload.to_vec()),
@@ -748,12 +799,22 @@ mod tests {
     fn recon_range_rejects_count_before_allocating_ranges() {
         // `Range` is 44 bytes on the wire. A maximum count with no records
         // must fail before reserving 255 `Range` values.
-        assert_eq!(Frame::decode_payload(FT_RECON_RANGE, &[0, 255]), Err(WireError::Truncated));
+        assert_eq!(
+            Frame::decode_payload(FT_RECON_RANGE, &[0, 255]),
+            Err(WireError::Truncated)
+        );
     }
 
     #[test]
     fn hello_rejects_wrong_wire_version() {
-        let hello = Hello { ver: 1, suites: vec![0x01], tier: 2, flags: 0, credits: 8, psm: 0 };
+        let hello = Hello {
+            ver: 1,
+            suites: vec![0x01],
+            tier: 2,
+            flags: 0,
+            credits: 8,
+            psm: 0,
+        };
         let mut encoded = hello.encode();
         encoded[0] = 2;
 

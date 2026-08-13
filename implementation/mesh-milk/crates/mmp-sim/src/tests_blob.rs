@@ -88,10 +88,15 @@ fn file_transfer_survives_lossy_relay_and_dedups() {
     // 250 KB: 4 stripes (STRIPE_DATA_BYTES = 64 KiB), a non-multiple length,
     // 160 symbols total (see the module doc comment, interpretation call 3).
     // Deterministic, non-trivial content (not all-zero).
-    let data: Vec<u8> = (0..250_000u32).map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8).collect();
+    let data: Vec<u8> = (0..250_000u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+        .collect();
 
     let b_id = sim.node_id(B);
-    let sent = sim.node_mut(A).send_file(&b_id, "vacation.jpg", "image/jpeg", &data).expect("send_file");
+    let sent = sim
+        .node_mut(A)
+        .send_file(&b_id, "vacation.jpg", "image/jpeg", &data)
+        .expect("send_file");
 
     let dir = std::env::temp_dir().join("mmp-sim-blob-test");
     std::fs::create_dir_all(&dir).expect("create temp dir");
@@ -114,15 +119,21 @@ fn file_transfer_survives_lossy_relay_and_dedups() {
         let events = sim.meet_with_bundle_loss(R, B, DT_MS, CUTOFF_PCT);
 
         if !fetch_started {
-            let offered =
-                events.iter().any(|(idx, ev)| *idx == B && matches!(ev, Event::FileOffered { .. }));
+            let offered = events
+                .iter()
+                .any(|(idx, ev)| *idx == B && matches!(ev, Event::FileOffered { .. }));
             if offered {
-                sim.node_mut(B).fetch_file(&sent.root, &dest).expect("fetch_file");
+                sim.node_mut(B)
+                    .fetch_file(&sent.root, &dest)
+                    .expect("fetch_file");
                 fetch_started = true;
             }
         }
 
-        assert!(sim.quota_ok(), "no node exceeded its store quota at round {round}");
+        assert!(
+            sim.quota_ok(),
+            "no node exceeded its store quota at round {round}"
+        );
 
         if let Some(p) = sim.node(B).file_progress(&sent.root) {
             if p.state == BlobState::Assembled {
@@ -132,7 +143,10 @@ fn file_transfer_survives_lossy_relay_and_dedups() {
         }
     }
 
-    assert!(fetch_started, "B never received the file offer across {ROUNDS} lossy rounds");
+    assert!(
+        fetch_started,
+        "B never received the file offer across {ROUNDS} lossy rounds"
+    );
     assert!(
         assembled,
         "B never finished assembling the file across {ROUNDS} lossy rounds; final progress: {:?}",
@@ -140,17 +154,30 @@ fn file_transfer_survives_lossy_relay_and_dedups() {
     );
 
     let written = std::fs::read(&dest).expect("assembled file exists");
-    assert_eq!(written, data, "reassembled bytes are bit-exact despite lossy, multi-contact relay");
+    assert_eq!(
+        written, data,
+        "reassembled bytes are bit-exact despite lossy, multi-contact relay"
+    );
 
     // Dedup by content address (decision D6): a second `send_file` of the
     // identical bytes mints exactly one new bundle in A's own store (a fresh
     // manifest message — content-addressed, so its ciphertext/BundleID still
     // differ per send) and zero new class-4 symbol bundles.
     let before = sim.store_len(A);
-    let resent = sim.node_mut(A).send_file(&b_id, "vacation.jpg", "image/jpeg", &data).expect("resend");
+    let resent = sim
+        .node_mut(A)
+        .send_file(&b_id, "vacation.jpg", "image/jpeg", &data)
+        .expect("resend");
     let after = sim.store_len(A);
-    assert_eq!(resent.root, sent.root, "identical content ⇒ same Merkle root");
-    assert_eq!(after, before + 1, "resend mints exactly one new bundle (the manifest), zero symbols");
+    assert_eq!(
+        resent.root, sent.root,
+        "identical content ⇒ same Merkle root"
+    );
+    assert_eq!(
+        after,
+        before + 1,
+        "resend mints exactly one new bundle (the manifest), zero symbols"
+    );
 
     let _ = std::fs::remove_file(&dest);
 }

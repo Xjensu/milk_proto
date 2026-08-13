@@ -159,7 +159,9 @@ impl EventSender {
     }
 
     fn control_full(&self) -> Result<(), ControlEnqueueError> {
-        self.0.control_events_dropped.fetch_add(1, Ordering::Relaxed);
+        self.0
+            .control_events_dropped
+            .fetch_add(1, Ordering::Relaxed);
         Err(ControlEnqueueError::Full)
     }
 
@@ -240,10 +242,13 @@ impl EventSender {
                 state.record_generation(link, generation);
                 state.current.remove(&link);
                 purge_link(&mut state, link);
-                if let Some(index) = state.controls.iter().position(|pending| {
-                    pending.link == link && pending.kind == ControlKind::Down
-                }) {
-                    state.controls[index].generation = state.controls[index].generation.max(generation);
+                if let Some(index) = state
+                    .controls
+                    .iter()
+                    .position(|pending| pending.link == link && pending.kind == ControlKind::Down)
+                {
+                    state.controls[index].generation =
+                        state.controls[index].generation.max(generation);
                     let mut seen_down = false;
                     state.controls.retain(|pending| {
                         if pending.link != link {
@@ -268,14 +273,20 @@ impl EventSender {
                     // before escalating Down. Otherwise emergency dispatch
                     // could expose Down before that Up and create a session
                     // after the transport has already been retired.
-                    let had_pending_up = state.controls.iter().any(|pending| {
-                        pending.link == link && pending.kind == ControlKind::Up
-                    });
+                    let had_pending_up = state
+                        .controls
+                        .iter()
+                        .any(|pending| pending.link == link && pending.kind == ControlKind::Up);
                     if had_pending_up {
                         state.controls.retain(|pending| {
                             pending.link != link || pending.kind != ControlKind::Up
                         });
-                        state.controls.push_back(ControlRecord { link, generation, kind, event });
+                        state.controls.push_back(ControlRecord {
+                            link,
+                            generation,
+                            kind,
+                            event,
+                        });
                         drop(state);
                         self.0.notify.notify_one();
                         return Ok(());
@@ -288,7 +299,12 @@ impl EventSender {
                     self.0.notify.notify_one();
                     return Ok(());
                 }
-                state.controls.push_back(ControlRecord { link, generation, kind, event });
+                state.controls.push_back(ControlRecord {
+                    link,
+                    generation,
+                    kind,
+                    event,
+                });
             }
             ControlKind::Up => {
                 // An emergency Down is already pending for this link. Do not
@@ -297,7 +313,11 @@ impl EventSender {
                 if state.emergency_down.contains_key(&link) {
                     return self.control_full();
                 }
-                if let Some(index) = state.controls.iter().rposition(|pending| pending.link == link) {
+                if let Some(index) = state
+                    .controls
+                    .iter()
+                    .rposition(|pending| pending.link == link)
+                {
                     if state.controls[index].kind == ControlKind::Up {
                         state.controls[index].generation = generation;
                         state.controls[index].event = event;
@@ -315,14 +335,18 @@ impl EventSender {
                 state.record_generation(link, generation);
                 state.current.insert(link, generation);
                 purge_except_generation(&mut state, link, generation);
-                state.controls.push_back(ControlRecord { link, generation, kind, event });
+                state.controls.push_back(ControlRecord {
+                    link,
+                    generation,
+                    kind,
+                    event,
+                });
             }
         }
         drop(state);
         self.0.notify.notify_one();
         Ok(())
     }
-
 }
 
 impl State {
@@ -345,7 +369,9 @@ impl State {
             *last = (*last).max(generation);
             return true;
         }
-        if self.generation_ledger_exhausted || self.last_generation.len() >= MAX_GENERATION_TOMBSTONES {
+        if self.generation_ledger_exhausted
+            || self.last_generation.len() >= MAX_GENERATION_TOMBSTONES
+        {
             self.generation_ledger_exhausted = true;
             return false;
         }
@@ -364,9 +390,9 @@ impl State {
 }
 
 fn purge_link(state: &mut State, link: LinkId) {
-    state.data.retain(|record| {
-        !matches!(record.stamp, DataStamp::Link { link: r_link, .. } if r_link == link)
-    });
+    state.data.retain(
+        |record| !matches!(record.stamp, DataStamp::Link { link: r_link, .. } if r_link == link),
+    );
 }
 
 fn purge_except_generation(state: &mut State, link: LinkId, generation: u64) {
@@ -386,12 +412,19 @@ async fn dispatch(
             let mut state = inner.state.lock().expect("event ingress mutex poisoned");
             if let Some(control) = state.controls.pop_front() {
                 Some(control.event)
-            } else if let Some((link, _generation)) = state.emergency_down.iter().next().map(|(link, generation)| (*link, *generation)) {
+            } else if let Some((link, _generation)) = state
+                .emergency_down
+                .iter()
+                .next()
+                .map(|(link, generation)| (*link, *generation))
+            {
                 state.emergency_down.remove(&link);
                 Some(TalEvent::LinkDown { link })
             } else {
                 loop {
-                    let Some(data) = state.data.pop_front() else { break None };
+                    let Some(data) = state.data.pop_front() else {
+                        break None;
+                    };
                     let current = match data.stamp {
                         DataStamp::Unstamped => true,
                         DataStamp::Link { link, generation } => {
@@ -431,14 +464,20 @@ async fn dispatch(
 
 #[cfg(test)]
 mod tests {
-    use super::{event_channel, event_channel_with_close_handler, DataEnqueueError, CONTROL_CAPACITY, DATA_CAPACITY};
+    use super::{
+        event_channel, event_channel_with_close_handler, DataEnqueueError, CONTROL_CAPACITY,
+        DATA_CAPACITY,
+    };
     use mmp_tal::{LinkQuality, TalEvent};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use tokio::time::{timeout, Duration};
 
     fn data(sequence: usize) -> TalEvent {
-        TalEvent::LinkData { link: 7, bytes: vec![sequence as u8] }
+        TalEvent::LinkData {
+            link: 7,
+            bytes: vec![sequence as u8],
+        }
     }
 
     #[tokio::test]
@@ -464,71 +503,186 @@ mod tests {
     #[tokio::test]
     async fn control_survives_full_data_lane() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1)
-            .expect("link must become current before data");
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .expect("link must become current before data");
         for sequence in 0..DATA_CAPACITY {
-            tx.try_link_data(7, 1, data(sequence)).expect("data budget must fit");
+            tx.try_link_data(7, 1, data(sequence))
+                .expect("data budget must fit");
         }
-        assert_eq!(tx.try_link_data(7, 1, data(0xff)), Err(DataEnqueueError::Full));
-        tx.try_control(TalEvent::LinkDown { link: 7 }, 1).expect("reserved control lane must fit");
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(
+            tx.try_link_data(7, 1, data(0xff)),
+            Err(DataEnqueueError::Full)
+        );
+        tx.try_control(TalEvent::LinkDown { link: 7 }, 1)
+            .expect("reserved control lane must fit");
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
         drop(tx);
-        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
-            .await
-            .expect("dispatcher must close after stale data is purged")
-            .is_none());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), rx.recv())
+                .await
+                .expect("dispatcher must close after stale data is purged")
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn stale_data_is_dropped_after_replacement() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_link_data(7, 1, data(1)).unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 2).unwrap();
-        tx.try_link_data(7, 1, data(2)).expect_err("old generation must be rejected");
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
+        tx.try_link_data(7, 1, data(2))
+            .expect_err("old generation must be rejected");
         tx.try_link_data(7, 2, data(3)).unwrap();
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(3)));
     }
 
     #[tokio::test]
     async fn stale_lifecycle_controls_cannot_retire_new_generation() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 2).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            2,
+        )
+        .unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality { mtu: 244, ..Default::default() } }, 1).unwrap();
-        tx.try_link_data(7, 2, data(9)).expect("current generation must remain live");
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..Default::default()
+                },
+            },
+            1,
+        )
+        .unwrap();
+        tx.try_link_data(7, 2, data(9))
+            .expect("current generation must remain live");
 
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(data(9)));
     }
 
     #[tokio::test]
     async fn stale_up_cannot_reopen_retired_generation() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
-        assert_eq!(tx.try_link_data(7, 1, data(9)), Err(DataEnqueueError::Stale));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            tx.try_link_data(7, 1, data(9)),
+            Err(DataEnqueueError::Stale)
+        );
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
     }
 
     #[tokio::test]
     async fn oversized_link_data_is_rejected_before_queueing() {
         let (tx, _rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1)
-            .unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         let oversized = TalEvent::LinkData {
             link: 7,
             bytes: vec![0; mmp_types::frame::MAX_ENVELOPE_PAYLOAD + 4],
         };
 
-        assert_eq!(tx.try_link_data(7, 1, oversized), Err(DataEnqueueError::Full));
+        assert_eq!(
+            tx.try_link_data(7, 1, oversized),
+            Err(DataEnqueueError::Full)
+        );
     }
 
     #[tokio::test]
@@ -545,7 +699,15 @@ mod tests {
     #[tokio::test]
     async fn control_enqueue_is_nonblocking_when_data_full() {
         let (tx, _rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         for sequence in 0..DATA_CAPACITY {
             tx.try_link_data(7, 1, data(sequence)).unwrap();
         }
@@ -562,55 +724,141 @@ mod tests {
     #[tokio::test]
     async fn control_ledger_coalesces_duplicate_down_and_latest_up() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
         tx.try_control(TalEvent::LinkDown { link: 7 }, 1).unwrap();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality { mtu: 244, ..Default::default() } }, 2).unwrap();
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }));
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..Default::default()
+                },
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default()
+            })
+        );
         assert_eq!(rx.recv().await, Some(TalEvent::LinkDown { link: 7 }));
-        assert_eq!(rx.recv().await, Some(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality { mtu: 244, ..Default::default() } }));
+        assert_eq!(
+            rx.recv().await,
+            Some(TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality {
+                    mtu: 244,
+                    ..Default::default()
+                }
+            })
+        );
     }
 
     #[tokio::test]
     async fn full_control_lane_tombstones_data_before_emergency_down() {
         let (tx, mut rx) = event_channel();
-        tx.try_control(TalEvent::LinkUp { link: 7, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+        tx.try_control(
+            TalEvent::LinkUp {
+                link: 7,
+                initiator: true,
+                quality: LinkQuality::default(),
+            },
+            1,
+        )
+        .unwrap();
         tx.try_link_data(7, 1, data(1)).unwrap();
         for link in 8..(8 + CONTROL_CAPACITY as u64 - 1) {
-            tx.try_control(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() }, 1).unwrap();
+            tx.try_control(
+                TalEvent::LinkUp {
+                    link,
+                    initiator: true,
+                    quality: LinkQuality::default(),
+                },
+                1,
+            )
+            .unwrap();
         }
         assert_eq!(tx.try_control(TalEvent::LinkDown { link: 7 }, 1), Ok(()));
-        assert_eq!(tx.try_link_data(7, 1, data(2)), Err(DataEnqueueError::Stale));
+        assert_eq!(
+            tx.try_link_data(7, 1, data(2)),
+            Err(DataEnqueueError::Stale)
+        );
         let mut seen = Vec::new();
         for _ in 0..CONTROL_CAPACITY {
             seen.push(rx.recv().await.expect("pending controls must drain"));
         }
-        assert!(seen.iter().all(|event| {
-            !matches!(event, TalEvent::LinkUp { link: 7, .. })
-        }));
-        assert!(seen.iter().any(|event| {
-            matches!(event, TalEvent::LinkDown { link: 7 })
-        }));
+        assert!(seen
+            .iter()
+            .all(|event| { !matches!(event, TalEvent::LinkUp { link: 7, .. }) }));
+        assert!(seen
+            .iter()
+            .any(|event| { matches!(event, TalEvent::LinkDown { link: 7 }) }));
         // A second distinct teardown can use the bounded emergency lane while
         // the normal control ledger remains full.
         let second = 8 + CONTROL_CAPACITY as u64 - 2;
-        tx.try_link_data(second, 1, TalEvent::LinkData { link: second, bytes: vec![3] }).unwrap();
-        assert_eq!(tx.try_control(TalEvent::LinkDown { link: second }, 1), Ok(()));
-        assert_eq!(tx.try_link_data(second, 1, TalEvent::LinkData { link: second, bytes: vec![4] }), Err(DataEnqueueError::Stale));
+        tx.try_link_data(
+            second,
+            1,
+            TalEvent::LinkData {
+                link: second,
+                bytes: vec![3],
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            tx.try_control(TalEvent::LinkDown { link: second }, 1),
+            Ok(())
+        );
+        assert_eq!(
+            tx.try_link_data(
+                second,
+                1,
+                TalEvent::LinkData {
+                    link: second,
+                    bytes: vec![4]
+                }
+            ),
+            Err(DataEnqueueError::Stale)
+        );
     }
 
     #[tokio::test]
     async fn control_saturation_is_sticky_and_visible() {
         let (tx, _rx) = event_channel();
         for link in 8..(8 + CONTROL_CAPACITY as u64) {
-            tx.try_control(TalEvent::LinkUp { link, initiator: true, quality: LinkQuality::default() }, 1)
-                .expect("normal control lane must fill");
+            tx.try_control(
+                TalEvent::LinkUp {
+                    link,
+                    initiator: true,
+                    quality: LinkQuality::default(),
+                },
+                1,
+            )
+            .expect("normal control lane must fill");
         }
         for link in 100..(100 + CONTROL_CAPACITY as u64) {
             tx.try_control(TalEvent::LinkDown { link }, 1)
                 .expect("emergency down lane must fill");
         }
-        assert_eq!(tx.try_control(TalEvent::LinkDown { link: 999 }, 1), Err(super::ControlEnqueueError::Full));
+        assert_eq!(
+            tx.try_control(TalEvent::LinkDown { link: 999 }, 1),
+            Err(super::ControlEnqueueError::Full)
+        );
         assert_eq!(tx.control_events_dropped(), 1);
     }
 }

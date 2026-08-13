@@ -36,11 +36,17 @@ fn recon_ids_count_cannot_allocate_before_truncation_check() {
     payload.extend_from_slice(&[0u8; 16]); // lo
     payload.extend_from_slice(&[0u8; 16]); // hi
     payload.extend_from_slice(&u16::MAX.to_le_bytes());
-    assert_eq!(Frame::decode_payload(FT_RECON_IDS, &payload), Err(WireError::Truncated));
+    assert_eq!(
+        Frame::decode_payload(FT_RECON_IDS, &payload),
+        Err(WireError::Truncated)
+    );
 }
 
 #[test]
 fn want_count_cannot_allocate_before_truncation_check() {
     let payload = u16::MAX.to_le_bytes();
-    assert_eq!(Frame::decode_payload(FT_WANT, &payload), Err(WireError::Truncated));
+    assert_eq!(
+        Frame::decode_payload(FT_WANT, &payload),
+        Err(WireError::Truncated)
+    );
 }
