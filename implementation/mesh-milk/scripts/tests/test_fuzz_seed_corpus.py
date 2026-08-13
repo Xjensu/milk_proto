@@ -16,6 +16,14 @@ SPEC.loader.exec_module(CORPUS)
 
 
 class FuzzSeedCorpusTests(unittest.TestCase):
+    def test_ci_pins_the_cargo_fuzz_frontend_for_both_fuzz_jobs(self) -> None:
+        workflow = (Path(__file__).parents[4] / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        command = "cargo install cargo-fuzz --version 0.13.2 --locked"
+        self.assertEqual(workflow.count(command), 2)
+        self.assertNotIn("cargo install cargo-fuzz --locked", workflow)
+
     def test_cargo_target_inventory_matches_seed_mapping(self) -> None:
         inventory = CORPUS.validate_target_inventory()
         self.assertEqual(tuple(inventory), CORPUS.TARGETS)

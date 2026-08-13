@@ -352,7 +352,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-fuzz --locked
+      # Pin the cargo-fuzz frontend as well as its installation graph. The
+      # fuzz workspace's Cargo.lock only constrains target dependencies.
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: validate deterministic seed recipe
         run: python fuzz/seed_corpus.py check
       - name: materialize and verify deterministic seed corpus
@@ -382,7 +384,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
-      - run: cargo install cargo-fuzz --locked
+      # Keep the smoke campaign on the identical cargo-fuzz frontend as the
+      # every-push build gate.
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: run each target for 2 minutes
         run: |
           cd fuzz

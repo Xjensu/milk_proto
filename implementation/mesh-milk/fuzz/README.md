@@ -23,7 +23,7 @@ The seed-corpus recipe requires Python 3.11 or newer because it validates the
 standalone fuzz manifest with the standard-library `tomllib` module.
 
 ```sh
-cargo install cargo-fuzz --locked   # once
+cargo install cargo-fuzz --version 0.13.2 --locked   # once; match CI
 cd fuzz
 cargo +nightly fuzz build fuzz_beacon      # or fuzz_envelope / fuzz_bundle / fuzz_hs
 cargo +nightly fuzz run fuzz_bundle -- -max_total_time=120   # short local run
