@@ -106,7 +106,7 @@ class CIWorkflowTests(unittest.TestCase):
         self.assertEqual(
             checks,
             [
-                "cargo check -p mmp-node-embassy -p mmp-tal-embedded -p mmp-flash-journal -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked"
+                "cargo check -p mmp-board-nrf52840-dk -p mmp-node-embassy -p mmp-tal-embedded -p mmp-flash-journal -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked"
             ],
         )
 
