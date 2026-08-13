@@ -445,6 +445,50 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_roundtrip_preserves_prekey_generation_and_tombstones() {
+        let mut original = Node::new([89; 32], Box::new(MemStore::new()), Tier::Relay);
+        original
+            .core
+            .prekeys
+            .mark_otk_consumed(0)
+            .expect("known one-time prekey");
+        original
+            .core
+            .prekeys
+            .set_expiry(10_000, 20_000)
+            .expect("valid local prekey expiry");
+        let expected_prekeys = original.core.prekeys.snapshot_state().unwrap();
+        let snapshot = original
+            .secret_state_snapshot()
+            .expect("aggregate snapshot");
+
+        let mut restored = Node::new([89; 32], Box::new(MemStore::new()), Tier::Relay);
+        restored
+            .restore_secret_state(&snapshot)
+            .expect("aggregate restore");
+
+        assert_eq!(
+            restored.core.prekeys.snapshot_state().unwrap().as_slice(),
+            expected_prekeys.as_slice(),
+            "aggregate restore must retain prekey generation, expiry, private keys, and tombstones"
+        );
+        assert!(restored.core.prekeys.otk_consumed(0));
+        assert!(!restored.core.prekeys.otk_consumed(1));
+
+        // Replaying the consumed OTK is idempotent and must not advance the
+        // restored generation or erase its tombstone.
+        restored
+            .core
+            .prekeys
+            .mark_otk_consumed(0)
+            .expect("duplicate OTK use is idempotent");
+        assert_eq!(
+            restored.core.prekeys.snapshot_state().unwrap().as_slice(),
+            expected_prekeys.as_slice()
+        );
+    }
+
+    #[test]
     fn malformed_or_busy_restore_is_atomic() {
         let mut original = Node::new([83; 32], Box::new(MemStore::new()), Tier::Relay);
         let mut peer = Node::new([84; 32], Box::new(MemStore::new()), Tier::Relay);

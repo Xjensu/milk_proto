@@ -44,16 +44,29 @@ The frozen signed prekey claim grammar and duplicate-replay behavior are
 unchanged; expiry enforcement and key rotation still require a trusted clock
 and an explicit lifecycle policy.
 
-This slice deliberately does not claim complete Node restart continuity. Group
-sender-key ratchets, one-time-prekey consumption/tombstone metadata, durable
-generation/rollback state, provider transactions, and crash recovery remain
-unimplemented gates. Group membership/epoch records may continue through the
-existing non-secret snapshot path, but group cryptographic material must not be
-silently regenerated as if it were restored secret state. The implementation
-now marks a decoded group as requiring one local sender-key re-gossip; the first
-post-restore group send schedules distributions before publishing ciphertext.
-If that distribution cannot be committed, the marker remains set and the send
-fails closed rather than advertising false continuity.
+### Verification disposition (2026-08-13)
+
+The aggregate restore regression now proves that prekey private material,
+generation, expiry, and idempotent OTK tombstones survive a Node snapshot
+roundtrip. The tombstone is durable bookkeeping, not a receiver-side replay
+fence: frozen MMP/1 §4.2 explicitly permits reuse of an unexpired published
+prekey because serverless peers cannot enforce global one-time consumption;
+duplicate first-contact handling remains scoped by BundleID deduplication.
+Adding a `recipient_agree` rejection for a tombstoned ID would therefore be a
+wire-compatible-looking but behavior-incompatible liveness change and is
+intentionally recorded as `NO-CHANGE-JUSTIFIED` for this cycle.
+
+This Rust-internal slice does not claim complete platform restart continuity.
+The aggregate, vault transaction, prekey tombstone, generation, and rollback
+paths are covered by host tests; native Android/iOS provider wiring, group
+sender-key secret persistence, crash-point evidence, and physical kill/restart
+validation remain open gates. Group membership/epoch records may continue
+through the existing non-secret snapshot path, but group cryptographic material
+must not be silently regenerated as if it were restored secret state. The
+implementation marks a decoded group as requiring one local sender-key
+re-gossip; the first post-restore group send schedules distributions before
+publishing ciphertext. If that distribution cannot be committed, the marker
+remains set and the send fails closed rather than advertising false continuity.
 
 Commit `9357a49` adds the Rust-internal vault seam around that aggregate. A
 canonical context binds the pairwise/prekey coverage version, local Ed25519
