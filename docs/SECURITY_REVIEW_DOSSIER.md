@@ -132,7 +132,7 @@ parsers first — attacker input costs the attacker nothing before any identity 
 **Honest status, not overstated:**
 - **CI `fuzz-build`** (every push): all four targets build — a link-correctness gate, not a fuzzing
   run.
-- **CI `fuzz-run`** (manual `workflow_dispatch` only): a 2-minute smoke run per target on
+- **CI `fuzz-run`** (weekly scheduled run or manual `workflow_dispatch`): a 2-minute smoke run per target on
   `ubuntu-latest`, corpus uploaded as a build artifact. **This is a smoke check, not the hardening
   run** doc 12 §7's "N CPU-hours once a baseline throughput is measured" calls for — no baseline has
   been measured yet, so no CPU-hour figure is pre-committed (same no-pre-commit discipline the

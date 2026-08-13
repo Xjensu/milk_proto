@@ -36,6 +36,35 @@ class FuzzSeedCorpusTests(unittest.TestCase):
         self.assertIn("if-no-files-found: error", job)
         self.assertIn("path: implementation/mesh-milk/fuzz/corpus", job)
 
+    def test_fuzz_run_status_documents_both_ci_triggers(self) -> None:
+        """Keep fuzz status docs aligned with the scheduled fuzz gate."""
+
+        repository = Path(__file__).parents[4]
+        workflow = (repository / ".github" / "workflows" / "ci.yml").read_text(
+            encoding="utf-8"
+        )
+        dossier = (repository / "docs" / "SECURITY_REVIEW_DOSSIER.md").read_text(
+            encoding="utf-8"
+        )
+        readme = (repository / "implementation" / "mesh-milk" / "fuzz" / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('cron: "17 3 * * 0"', workflow)
+        self.assertIn(
+            "if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'",
+            workflow,
+        )
+        self.assertIn(
+            "**CI `fuzz-run`** (weekly scheduled run or manual `workflow_dispatch`)",
+            dossier,
+        )
+        self.assertNotIn("**CI `fuzz-run`** (manual `workflow_dispatch` only)", dossier)
+        self.assertIn(
+            "- `fuzz-run` (weekly scheduled run or manual `workflow_dispatch`, not on every push):",
+            readme,
+        )
+        self.assertNotIn("- `fuzz-run` (manual `workflow_dispatch` only", readme)
+
     def test_cargo_target_inventory_matches_seed_mapping(self) -> None:
         inventory = CORPUS.validate_target_inventory()
         self.assertEqual(tuple(inventory), CORPUS.TARGETS)

@@ -911,6 +911,7 @@ impl Sim {
     ) -> Vec<(usize, Event)> {
         assert_ne!(i, j, "a node cannot meet itself");
         assert!(drop_pct <= 100);
+        update_trace(&mut self.trace_hasher, i, j, dt_ms);
         let link = self.next_link;
         self.next_link += 1;
         let now = self.now_ms;

@@ -43,7 +43,7 @@ on Windows, and use CI's `fuzz-build`/`fuzz-run` jobs (or a Linux/WSL box) to ac
 - `fuzz-build` (every push): `cargo fuzz build` for all four targets — a cheap "still compiles and
   links" gate, not a fuzzing run. It materializes and verifies the deterministic seed corpus
   against the committed vectors before building the targets.
-- `fuzz-run` (manual `workflow_dispatch` only, not on every push): a 2-minute smoke run per target,
+- `fuzz-run` (weekly scheduled run or manual `workflow_dispatch`, not on every push): a 2-minute smoke run per target,
   corpus uploaded as a build artifact. This is a smoke check, not the real hardening run — doc 12
   §7's "N CPU-hours once a baseline throughput is measured" is deliberately not pre-committed here
   (see `docs/ROADMAP_TO_PRODUCTION.md` Phase C exit gate, same discipline).

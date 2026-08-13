@@ -318,6 +318,23 @@ fn contact_trace_id_distinguishes_schedules_with_equal_empty_metrics() {
 }
 
 #[test]
+fn bundle_loss_contacts_contribute_to_trace_identity() {
+    let mut first = Sim::new(2, 0x7ACE_0001);
+    let mut second = Sim::new(2, 0x7ACE_0001);
+
+    first.meet_with_bundle_loss(0, 1, 1_000, 100);
+    second.meet_with_bundle_loss(0, 1, 2_000, 100);
+
+    assert_ne!(
+        first.trace_id(),
+        second.trace_id(),
+        "loss-injected contacts with different gaps must not share a trace id"
+    );
+    assert_eq!(first.counters().meetings_run, 1);
+    assert_eq!(second.counters().meetings_run, 1);
+}
+
+#[test]
 fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
     let schedule = crate::ContactSchedule::new(
         4,

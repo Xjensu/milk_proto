@@ -76,6 +76,12 @@ calculation:
 cargo test -p mmp-sim edr_ -- --nocapture
 ```
 
+The reproducibility identity also covers loss-injected contacts.  The
+`meet_with_bundle_loss` path hashes the same ordered `(pair, virtual gap)`
+event as a normal `meet`; `bundle_loss_contacts_contribute_to_trace_identity`
+regresses that two schedules with different gaps cannot receive the same trace
+label merely because both contacts terminate during loss injection.
+
 The next research step is to feed measured activity/energy samples from Linux,
 Android, and iOS harnesses into this model and compare EDR candidates against
 the current policy under the same contact traces. Until that evidence exists,
