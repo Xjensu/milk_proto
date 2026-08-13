@@ -693,7 +693,10 @@ mod tests {
     use core::cell::Cell;
     use mmp_core::{BundleMeta, EmbeddedBundleStore, FixedBundleStore, SlotState};
     use mmp_crypto::Identity;
-    use mmp_flash_journal::{encode, write_record, BackendError, Geometry};
+    use mmp_flash_journal::{
+        encode, scan_first_validated, write_record, BackendError, GenerationFloorRecord,
+        GenerationFloorRecordError, Geometry, GENERATION_FLOOR_PAYLOAD_LEN,
+    };
     use mmp_types::bundle::{class, Bundle};
     use mmp_types::domain::SigDomain;
     use mmp_types::ids::{Id16, Sig64};
@@ -867,6 +870,107 @@ mod tests {
             &mut scratch,
         )
         .unwrap();
+    }
+
+    const FLOOR_SLOT: usize = 128;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum FloorAuthority {
+        Uninitialized,
+        Valid(u64),
+        Invalid,
+        Ambiguous,
+    }
+
+    fn append_floor(backend: &mut MemoryBackend, slot: usize, generation: u64) {
+        let mut payload = [0u8; GENERATION_FLOOR_PAYLOAD_LEN];
+        let payload = GenerationFloorRecord { generation }
+            .encode(&mut payload)
+            .unwrap();
+        let mut scratch = [0u8; FLOOR_SLOT];
+        write_record(
+            backend,
+            slot * FLOOR_SLOT,
+            generation,
+            payload,
+            &mut scratch,
+        )
+        .unwrap();
+    }
+
+    fn floor_authority(backend: &MemoryBackend) -> FloorAuthority {
+        let mut selected = [None; 2];
+        for (slot, selected_generation) in selected.iter_mut().enumerate() {
+            let start = slot * FLOOR_SLOT;
+            let scan = scan_first_validated(&backend.bytes[start..start + FLOOR_SLOT], |record| {
+                GenerationFloorRecord::validate_record(record).map(|_| ())
+            });
+            let scan = match scan {
+                Ok(scan) => scan,
+                Err(
+                    GenerationFloorRecordError::Truncated
+                    | GenerationFloorRecordError::Trailing
+                    | GenerationFloorRecordError::InvalidMagic
+                    | GenerationFloorRecordError::InvalidGeneration
+                    | GenerationFloorRecordError::GenerationMismatch { .. }
+                    | GenerationFloorRecordError::OutputTooSmall { .. },
+                ) => return FloorAuthority::Invalid,
+            };
+            if scan.candidates != 0 && scan.selected.is_none() {
+                return FloorAuthority::Invalid;
+            }
+            *selected_generation = scan.selected.map(|record| record.generation);
+        }
+        match (selected[0], selected[1]) {
+            (None, None) => FloorAuthority::Uninitialized,
+            (Some(first), None) | (None, Some(first)) => FloorAuthority::Valid(first),
+            (Some(first), Some(second)) if first == second => FloorAuthority::Ambiguous,
+            (Some(first), Some(second)) => FloorAuthority::Valid(first.max(second)),
+        }
+    }
+
+    fn recover_with_floor_authority(
+        snapshot_backend: MemoryBackend,
+        snapshot_layout: JournalLayout,
+        floor_backend: &MemoryBackend,
+        image: &mut [u8],
+    ) -> Result<Provider, FloorAuthority> {
+        let floor = match floor_authority(floor_backend) {
+            FloorAuthority::Valid(generation) => generation,
+            state => return Err(state),
+        };
+        Provider::recover_with_exact_durable_floor(
+            snapshot_backend,
+            snapshot_layout,
+            7,
+            image,
+            floor,
+        )
+        .map_err(|_| FloorAuthority::Invalid)
+    }
+
+    fn recover_cross_region_pair(
+        snapshot_generation: u64,
+        floor_generation: u64,
+    ) -> Result<Provider, ProviderError<BackendError>> {
+        let mut snapshot_backend = MemoryBackend::new();
+        let snapshot = snapshot_payload(60 + snapshot_generation as u8, b"cross-region");
+        append_snapshot(&mut snapshot_backend, 0, snapshot_generation, &snapshot);
+        let snapshot_layout = layout(&snapshot_backend);
+        let mut floor_backend = MemoryBackend::new();
+        append_floor(&mut floor_backend, 0, floor_generation);
+        let floor = match floor_authority(&floor_backend) {
+            FloorAuthority::Valid(generation) => generation,
+            state => panic!("expected valid floor authority, got {state:?}"),
+        };
+        let mut image = [0u8; CAPACITY];
+        Provider::recover_with_exact_durable_floor(
+            snapshot_backend,
+            snapshot_layout,
+            7,
+            &mut image,
+            floor,
+        )
     }
 
     #[test]
@@ -1335,6 +1439,89 @@ mod tests {
                 observed_generation: 0,
             })
         ));
+    }
+
+    #[test]
+    fn separate_floor_and_snapshot_matrix_fails_closed_on_mismatch() {
+        // old/old succeeds, but this is deliberately not an anti-rollback
+        // claim: jointly restoring both regions to an old pair is invisible
+        // to an equality-only comparison.
+        assert_eq!(recover_cross_region_pair(1, 1).unwrap().generation(), 1);
+        assert!(matches!(
+            recover_cross_region_pair(1, 2),
+            Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor: 2,
+                observed_generation: 1,
+            })
+        ));
+        assert!(matches!(
+            recover_cross_region_pair(2, 1),
+            Err(ProviderError::ExactDurableFloorMismatch {
+                durable_floor: 1,
+                observed_generation: 2,
+            })
+        ));
+        assert_eq!(recover_cross_region_pair(2, 2).unwrap().generation(), 2);
+    }
+
+    #[test]
+    fn floor_authority_never_maps_missing_or_corrupt_state_to_zero() {
+        let mut snapshot_backend = MemoryBackend::new();
+        let snapshot = snapshot_payload(63, b"missing floor");
+        append_snapshot(&mut snapshot_backend, 0, 1, &snapshot);
+        let snapshot_layout = layout(&snapshot_backend);
+        let mut image = [0u8; CAPACITY];
+
+        let empty_floor = MemoryBackend::new();
+        assert_eq!(floor_authority(&empty_floor), FloorAuthority::Uninitialized);
+        assert!(matches!(
+            recover_with_floor_authority(
+                snapshot_backend,
+                snapshot_layout,
+                &empty_floor,
+                &mut image,
+            ),
+            Err(FloorAuthority::Uninitialized)
+        ));
+
+        for corrupt_offset in [16, 28, 60] {
+            let mut corrupt_floor = MemoryBackend::new();
+            append_floor(&mut corrupt_floor, 0, 1);
+            corrupt_floor.bytes[corrupt_offset] ^= 1;
+            assert_eq!(
+                floor_authority(&corrupt_floor),
+                FloorAuthority::Invalid,
+                "floor corruption at byte {corrupt_offset} must fail closed"
+            );
+        }
+    }
+
+    #[test]
+    fn floor_authority_rejects_duplicate_and_malformed_highest_records() {
+        let mut duplicate = MemoryBackend::new();
+        append_floor(&mut duplicate, 0, 1);
+        append_floor(&mut duplicate, 1, 1);
+        assert_eq!(floor_authority(&duplicate), FloorAuthority::Ambiguous);
+
+        let mut malformed_highest = MemoryBackend::new();
+        append_floor(&mut malformed_highest, 0, 1);
+        append_floor(&mut malformed_highest, 1, 2);
+        // The commit marker starts at offset encoded_len(12) - 4 = 60.
+        malformed_highest.bytes[FLOOR_SLOT + 60] = 0;
+        assert_eq!(
+            floor_authority(&malformed_highest),
+            FloorAuthority::Invalid,
+            "a malformed higher floor must not fall back to a lower valid floor"
+        );
+
+        let mut mismatched = MemoryBackend::new();
+        let mut payload = [0u8; GENERATION_FLOOR_PAYLOAD_LEN];
+        let payload = GenerationFloorRecord { generation: 1 }
+            .encode(&mut payload)
+            .unwrap();
+        let mut scratch = [0u8; FLOOR_SLOT];
+        write_record(&mut mismatched, 0, 2, payload, &mut scratch).unwrap();
+        assert_eq!(floor_authority(&mismatched), FloorAuthority::Invalid);
     }
 
     #[test]

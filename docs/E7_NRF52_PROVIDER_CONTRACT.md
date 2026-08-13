@@ -297,6 +297,13 @@ closed, and how power loss is tested before own-origin producers are enabled.
 The exact helper accepts `0/0` only for explicit first-install or
 uninitialized authority; it cannot distinguish a deleted or reset authority.
 
+The host regression matrix models the separate GFL1 authority and covers
+old/old, new-floor/old-snapshot, old-floor/new-snapshot, and new/new states,
+plus missing, corrupted, duplicate, malformed-highest, and inner/outer
+mismatch records. It proves fail-closed comparison behavior only; it does not
+prove cross-region atomicity, authenticity, or rollback resistance when both
+regions are jointly restored.
+
 The MMP/1 specification remains frozen throughout these steps.
 
 ## 11. Design review record

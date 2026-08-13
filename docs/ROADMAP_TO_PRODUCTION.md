@@ -214,6 +214,8 @@ the target-only NVMC wrapper. It accepts only exact snapshot/floor generation
 equality (or explicit first-install `0/0`) and fails closed on either ordering
 mismatch. This is still a comparison seam; durable floor authentication,
 two-region atomicity, and producer checkpoint continuity remain open.
+The host TEST-ONLY matrix covers all four cross-region ordering states and
+invalid floor-authority cases; it does not establish hardware atomicity.
 
 No calendar dates — this repo doesn't fake schedules (see CLAUDE.md methodology). Sizes are relative: S = days, M = one to a few weeks of focused work, L = a substantial multi-week effort, all in single-engineer-equivalent terms.
 

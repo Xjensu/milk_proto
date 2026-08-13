@@ -45,10 +45,19 @@ old-floor/new-snapshot, and new/new power-loss states. The provider comparison
 seam now rejects cross-region generation mismatch, but it does not resolve
 those power-loss states or make equality a property of the codec.
 
+The host provider test matrix now models a separate two-slot GFL1 authority. It
+covers all four ordering states, missing/uninitialized authority, body/checksum/
+marker corruption, duplicate generations, malformed higher records, and
+inner/outer generation mismatch. Invalid authority is never converted to the
+scalar floor `0`. The old/old case intentionally passes equality to document
+the residual limitation: jointly rolled-back regions require an independent
+rollback-resistant authority and are not detected by this comparison seam.
+
 ## Next implementation gate
 
-Implement a named-board floor region and a host fault-injection model before
-connecting producers. The gate must prove exact-generation selection,
-fail-closed mismatch handling, torn-write recovery, duplicate-generation
-handling, and no counter reuse after an indeterminate write. Keep the MMP/1
-specification and wire format unchanged.
+The host fault-injection matrix is complete. The next gate is a named-board
+floor region plus hardware/power-loss fault evidence before connecting
+producers. That gate must prove exact-generation selection, fail-closed
+mismatch handling, torn-write recovery, duplicate-generation handling, and no
+counter reuse after an indeterminate write. Keep the MMP/1 specification and
+wire format unchanged.

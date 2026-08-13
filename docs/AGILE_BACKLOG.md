@@ -336,3 +336,9 @@ generation pairs (or explicit first-install `0/0`) and fails closed on either
 cross-region ordering mismatch. It remains a comparison seam: floor
 authentication, two-region atomicity, and producer checkpoint continuity are
 not implemented.
+
+The embedded provider test suite now includes a separate GFL1 floor-authority
+matrix: all four cross-region ordering states, missing/corrupt/duplicate and
+malformed-highest records, and inner/outer generation mismatch. It is a
+TEST-ONLY fail-closed gate and does not claim cross-region atomicity or
+anti-rollback.
