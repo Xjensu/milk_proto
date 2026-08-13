@@ -461,6 +461,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # The Linux mmp-cli release links mmp-tal-peripheral's BlueZ backend,
+      # just like the host job. Keep the release matrix self-contained instead
+      # of relying on an undocumented runner image package.
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
       - name: validate specification status manifest
         run: python scripts/check_spec_status.py --repo ../..
       - name: validate publication governance artifacts

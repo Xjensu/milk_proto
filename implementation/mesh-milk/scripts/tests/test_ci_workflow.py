@@ -391,6 +391,20 @@ class CIWorkflowTests(unittest.TestCase):
         copy = next(step for step in steps if step.get("run", "").startswith("cp target/"))
         self.assertIn("target/${{ matrix.target }}/release/${{ matrix.bin }}", copy["run"])
 
+    def test_release_linux_installs_bluez_build_prerequisites(self) -> None:
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        release_steps = workflow["jobs"]["release"]["steps"]
+        linux_setup = [
+            step
+            for step in release_steps
+            if step.get("if") == "matrix.os == 'ubuntu-latest'"
+        ]
+        self.assertEqual(len(linux_setup), 1)
+        self.assertEqual(
+            linux_setup[0]["run"],
+            "sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config",
+        )
+
     def test_fuzz_jobs_resolve_paths_from_workspace_working_directory(self) -> None:
         """Keep fuzz commands relative to the workflow's default directory."""
 
