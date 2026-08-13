@@ -332,6 +332,43 @@ fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
     assert_eq!(baseline_trace, schedule.trace_id());
     assert_eq!(baseline.now_ms(), candidate.now_ms());
     assert_eq!(baseline.counters(), candidate.counters());
+
+    let baseline_metrics =
+        baseline.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    let candidate_metrics =
+        candidate.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    assert_eq!(
+        baseline_metrics.outbound_wire_bytes, candidate_metrics.outbound_wire_bytes,
+        "a paired replay must account for the same outbound simulator bytes"
+    );
+    assert_eq!(
+        baseline_metrics.inbound_wire_bytes, candidate_metrics.inbound_wire_bytes,
+        "a paired replay must account for the same inbound simulator bytes"
+    );
+    assert_eq!(
+        baseline_metrics.contact_sessions, candidate_metrics.contact_sessions,
+        "a paired replay must account for the same number of contacts"
+    );
+}
+
+#[test]
+fn fresh_sims_reset_wire_and_contact_accounting() {
+    let mut used = Sim::new(2, 0xACC0_0001);
+    used.meet(0, 1, 1_000);
+    let used_metrics = used.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    assert!(used_metrics.outbound_wire_bytes > 0);
+    assert_eq!(
+        used_metrics.outbound_wire_bytes,
+        used_metrics.inbound_wire_bytes
+    );
+    assert_eq!(used_metrics.contact_sessions, 1);
+
+    let fresh = Sim::new(2, 0xACC0_0001);
+    let fresh_metrics = fresh.research_metrics(crate::ContactGeneratorKind::UniformRandom, None);
+    assert_eq!(fresh_metrics.outbound_wire_bytes, 0);
+    assert_eq!(fresh_metrics.inbound_wire_bytes, 0);
+    assert_eq!(fresh_metrics.contact_sessions, 0);
+    assert_eq!(fresh_metrics.store_high_water_bytes, 0);
 }
 
 #[test]

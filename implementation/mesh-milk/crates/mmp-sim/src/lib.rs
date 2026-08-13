@@ -453,6 +453,17 @@ pub struct ContactScenarioMetrics {
     pub p50_latency_ms: Option<u64>,
     pub p90_latency_ms: Option<u64>,
     pub store_high_water_bytes: u64,
+    /// Sum of byte lengths returned by `Node::poll_send()` during completed
+    /// [`Sim::meet`] contacts. This is simulator wire-pump accounting, not
+    /// BLE airtime or an energy estimate.
+    pub outbound_wire_bytes: u64,
+    /// Sum of byte lengths handed to `TalEvent::LinkData` during completed
+    /// [`Sim::meet`] contacts. In this in-memory pump it equals outbound
+    /// bytes; both are exposed to make the accounting boundary explicit.
+    pub inbound_wire_bytes: u64,
+    /// Number of link sessions opened by [`Sim::meet`]. This is not a radio
+    /// connection-time measurement.
+    pub contact_sessions: u64,
     pub quota_ok: bool,
 }
 
@@ -630,6 +641,9 @@ pub struct Sim {
     /// (doc 13 §3's "store high-water" column is a peak-over-the-run figure,
     /// not an end-of-run one).
     store_high_water_bytes: u64,
+    outbound_wire_bytes: u64,
+    inbound_wire_bytes: u64,
+    contact_sessions: u64,
 }
 
 impl Sim {
@@ -666,6 +680,9 @@ impl Sim {
             sent_at_ms: std::collections::HashMap::new(),
             delivery_latencies_ms: Vec::new(),
             store_high_water_bytes: 0,
+            outbound_wire_bytes: 0,
+            inbound_wire_bytes: 0,
+            contact_sessions: 0,
         }
     }
 
@@ -796,10 +813,16 @@ impl Sim {
             let mut quiet = true;
             while let Some((l, bytes)) = a.poll_send() {
                 quiet = false;
+                let byte_count = bytes.len() as u64;
+                self.outbound_wire_bytes = self.outbound_wire_bytes.saturating_add(byte_count);
+                self.inbound_wire_bytes = self.inbound_wire_bytes.saturating_add(byte_count);
                 b.on_tal_event(TalEvent::LinkData { link: l, bytes });
             }
             while let Some((l, bytes)) = b.poll_send() {
                 quiet = false;
+                let byte_count = bytes.len() as u64;
+                self.outbound_wire_bytes = self.outbound_wire_bytes.saturating_add(byte_count);
+                self.inbound_wire_bytes = self.inbound_wire_bytes.saturating_add(byte_count);
                 a.on_tal_event(TalEvent::LinkData { link: l, bytes });
             }
             if quiet {
@@ -839,6 +862,7 @@ impl Sim {
         }
 
         self.counters.meetings_run += 1;
+        self.contact_sessions = self.contact_sessions.saturating_add(1);
         self.now_ms += dt_ms;
         out
     }
@@ -1176,6 +1200,9 @@ impl Sim {
             p50_latency_ms: self.latency_percentile_ms(0.50),
             p90_latency_ms: self.latency_percentile_ms(0.90),
             store_high_water_bytes: self.store_high_water_bytes,
+            outbound_wire_bytes: self.outbound_wire_bytes,
+            inbound_wire_bytes: self.inbound_wire_bytes,
+            contact_sessions: self.contact_sessions,
             quota_ok: self.quota_ok(),
         }
     }

@@ -45,6 +45,19 @@ acceptance experiment must compare discovery probability, missed contacts,
 radio/controller energy, host wakeups, whole-device energy, airtime, and
 delivery latency against the existing duty-cycle policy.
 
+## Paired simulator observables
+
+`mmp-sim::ContactScenarioMetrics` reports three deterministic resource
+observables for replayed `Sim::meet` contacts: `outbound_wire_bytes`,
+`inbound_wire_bytes`, and `contact_sessions`. They count bytes moved through
+the in-memory `Node`/TAL pump and completed simulated link sessions. They are
+not BLE airtime, controller activity, wakeups, battery energy, or a proxy for
+any of those quantities. Together with delivery, latency, and storage
+high-water fields, they make baseline and research-strategy replays
+comparable without fabricating physical measurements. A valid experiment must
+still use identical seeds, schedules, workloads, and explicit physical
+instrumentation for radio or energy claims.
+
 ## Verification
 
 The two simulator tests pin the fixed-hazard invariant and the idealized gain
