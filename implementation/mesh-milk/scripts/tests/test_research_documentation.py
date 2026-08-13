@@ -22,6 +22,10 @@ class ResearchDocumentationTests(unittest.TestCase):
         # shipped heavy-tail control as an unimplemented SLAW task.
         self.assertIn("bounded-heavy-tail-clustered", "".join(handoff.split()))
         self.assertIn("PARTIALLY DONE / RESEARCH-ONLY", agile)
+        self.assertIn("existing 1k tier", agile)
+        self.assertIn("10k tier from the", agile)
+        self.assertIn("remains deferred", agile)
+        self.assertNotIn("existing 1k/10k tiers", agile)
         self.assertIn("uniform-random, periodic-clustered, social-clustered, and", simulation)
         self.assertIn("bounded-heavy-tail-clustered", simulation)
 

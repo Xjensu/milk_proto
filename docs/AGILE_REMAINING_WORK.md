@@ -193,8 +193,10 @@ remaining work by the project priority queue.
 - **Scope:** the bounded uniform, periodic, social-cluster, and heavy-tail
   clustered controls are implemented for deterministic paired replays. The
   remaining gate is trace calibration plus latency, storage, delivery, and
-  survivability validation at the existing 1k/10k tiers. Uniform quota/store
-  measurements are not a substitute for clustered latency.
+  survivability validation at the existing 1k tier; the 10k tier from the
+  performance model remains deferred until a scalable clustered model and
+  execution budget are available. Uniform quota/store measurements are not a
+  substitute for clustered latency.
 - **Acceptance:** fixed seeds, published distributions/confidence intervals,
   baseline comparison, and a reproducible CI/nightly command.
 
