@@ -109,6 +109,19 @@ pub(crate) fn event_channel() -> (event_queue::EventSender, mpsc::Receiver<TalEv
     event_queue::event_channel()
 }
 
+/// Create the ingress with a terminal callback for a dropped public event
+/// receiver.  The Linux backend uses this to fence BlueZ admission and retire
+/// links when no host consumer remains.
+#[cfg(target_os = "linux")]
+pub(crate) fn event_channel_with_close_handler<F>(
+    on_closed: F,
+) -> (event_queue::EventSender, mpsc::Receiver<TalEvent>)
+where
+    F: FnOnce(event_queue::EventSender) + Send + 'static,
+{
+    event_queue::event_channel_with_close_handler(on_closed)
+}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

@@ -13,4 +13,9 @@ Linux notifications use a 250 ms per-chunk writability deadline. A timed-out
 notification retires the link and returns `PeriphError::NotifyTimeout`, keeping
 a stalled BlueZ peer from blocking the host drive loop or shutdown path.
 
+Dropping the public event receiver is also terminal: the Linux backend fences
+new admission, signals shutdown, and retires active BlueZ links through the
+same bounded lifecycle path. This prevents a host that stopped consuming
+events from retaining GATT tasks and radio resources indefinitely.
+
 See `docs/IMPLEMENTATION_HANDBOOK.md` §4.1 and `specification/09-transport-ble.md`.

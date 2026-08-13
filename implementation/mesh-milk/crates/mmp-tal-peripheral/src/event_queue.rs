@@ -101,6 +101,19 @@ pub(crate) enum ControlEnqueueError {
 }
 
 pub(crate) fn event_channel() -> (EventSender, tokio::sync::mpsc::Receiver<TalEvent>) {
+    event_channel_with_close_handler(|_| {})
+}
+
+/// Create the ingress and invoke `on_closed` when the public event receiver
+/// is dropped.  A backend uses this as a terminal lifecycle signal: once the
+/// host no longer consumes events, keeping GATT callbacks and links alive
+/// would retain radio and task resources with no consumer.
+pub(crate) fn event_channel_with_close_handler<F>(
+    on_closed: F,
+) -> (EventSender, tokio::sync::mpsc::Receiver<TalEvent>)
+where
+    F: FnOnce(EventSender) + Send + 'static,
+{
     let (public_tx, public_rx) = tokio::sync::mpsc::channel(TOTAL_CAPACITY);
     let inner = Arc::new(Inner {
         state: Mutex::new(State::default()),
@@ -108,7 +121,11 @@ pub(crate) fn event_channel() -> (EventSender, tokio::sync::mpsc::Receiver<TalEv
         sender_count: AtomicUsize::new(1),
         control_events_dropped: std::sync::atomic::AtomicU64::new(0),
     });
-    tokio::spawn(dispatch(inner.clone(), public_tx));
+    tokio::spawn(dispatch(
+        inner.clone(),
+        public_tx,
+        Some(Box::new(on_closed)),
+    ));
     (EventSender(inner), public_rx)
 }
 
@@ -434,7 +451,11 @@ fn purge_link(state: &mut State, link: LinkId) {
     state.data.retain(|record| record.link != link);
 }
 
-async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEvent>) {
+async fn dispatch(
+    inner: Arc<Inner>,
+    public_tx: tokio::sync::mpsc::Sender<TalEvent>,
+    mut on_closed: Option<Box<dyn FnOnce(EventSender) + Send + 'static>>,
+) {
     loop {
         let notified = inner.notify.notified();
         let event = {
@@ -467,10 +488,21 @@ async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEve
             if inner.sender_count.load(Ordering::Acquire) == 0 {
                 return;
             }
-            notified.await;
+            tokio::select! {
+                _ = public_tx.closed() => {
+                    if let Some(on_closed) = on_closed.take() {
+                        on_closed(EventSender(inner.clone()));
+                    }
+                    return;
+                }
+                _ = notified => {}
+            }
             continue;
         };
         if public_tx.send(event).await.is_err() {
+            if let Some(on_closed) = on_closed.take() {
+                on_closed(EventSender(inner.clone()));
+            }
             return;
         }
     }
@@ -478,8 +510,13 @@ async fn dispatch(inner: Arc<Inner>, public_tx: tokio::sync::mpsc::Sender<TalEve
 
 #[cfg(test)]
 mod tests {
-    use super::{event_channel, DataEnqueueError, StreamStamp, CONTROL_CAPACITY, DATA_CAPACITY};
+    use super::{
+        event_channel, event_channel_with_close_handler, DataEnqueueError, StreamStamp,
+        CONTROL_CAPACITY, DATA_CAPACITY,
+    };
     use mmp_tal::{LinkQuality, TalEvent};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
     use tokio::time::{timeout, Duration};
 
     fn data(byte: u8) -> TalEvent {
@@ -501,6 +538,26 @@ mod tests {
             generation,
             side: 1,
         }
+    }
+
+    #[tokio::test]
+    async fn dropped_public_receiver_invokes_terminal_close_handler() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let closed_for_handler = closed.clone();
+        let (tx, rx) = event_channel_with_close_handler(move |producer| {
+            closed_for_handler.store(true, Ordering::Release);
+            drop(producer);
+        });
+        drop(rx);
+
+        timeout(Duration::from_millis(100), async {
+            while !closed.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dispatcher must report a dropped public receiver");
+        drop(tx);
     }
 
     #[tokio::test]

@@ -55,9 +55,9 @@ use crate::lifecycle::{
     LinkLifecycle, StreamSide, StreamToken,
 };
 use crate::{
-    bounded_notify, ensure_not_shutting_down, event_channel, mint_link_id, validate_beacon, LinkId,
-    LinkQuality, NotifyWaitTimeout, PeriphError, TalEvent, DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
-    DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
+    bounded_notify, ensure_not_shutting_down, event_channel_with_close_handler, mint_link_id,
+    validate_beacon, LinkId, LinkQuality, NotifyWaitTimeout, PeriphError, TalEvent,
+    DEV_CENTRAL_RX_CHARACTERISTIC_UUID, DEV_CENTRAL_TX_CHARACTERISTIC_UUID, DEV_SERVICE_UUID,
 };
 
 /// Per-link state between `LinkUp` and `LinkDown`. Reader and writer endpoint
@@ -152,7 +152,6 @@ impl PeripheralRole {
         };
         let app_handle = adapter.serve_gatt_application(app).await?;
 
-        let (tx, rx) = event_channel();
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let links: Links = Arc::new(AsyncMutex::new(LinkRegistry {
             lifecycle: LinkLifecycle::default(),
@@ -160,6 +159,22 @@ impl PeripheralRole {
         }));
         let event_gate = Arc::new(AsyncMutex::new(()));
         let shutting_down = Arc::new(AtomicBool::new(false));
+
+        let close_links = links.clone();
+        let close_event_gate = event_gate.clone();
+        let close_shutting_down = shutting_down.clone();
+        let close_shutdown_tx = shutdown_tx.clone();
+        let (tx, rx) = event_channel_with_close_handler(move |tx| {
+            // A dropped public receiver is terminal: without a host consumer
+            // there is no safe owner for lifecycle events, so stop admission
+            // and retire every BlueZ link through the same bounded shutdown
+            // path used by explicit shutdown.
+            close_shutting_down.store(true, Ordering::Release);
+            let _ = close_shutdown_tx.send(true);
+            tokio::spawn(async move {
+                shutdown_links(&close_links, &close_event_gate, &tx).await;
+            });
+        });
 
         tokio::spawn(run_control(
             write_ctl,
