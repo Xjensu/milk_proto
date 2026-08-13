@@ -13,6 +13,9 @@ mod nvmc_backend;
 pub use nvmc_backend::{NvmcJournalBackend, NvmcJournalError};
 pub use nvmc_backend::{NvmcRegion, NvmcRegionError};
 
+#[cfg(target_arch = "arm")]
+use mmp_embedded_provider::{JournalLayout, JournaledFixedStore, ProviderError};
+
 /// Stable implementation identifier for the Nordic PCA10056 development kit.
 pub const BOARD_ID: &str = "nrf52840-dk-pca10056";
 
@@ -24,6 +27,39 @@ pub const FLASH_CAPACITY_BYTES: usize = 1_048_576;
 
 /// Documented nRF52840 on-chip RAM capacity in bytes (256 KiB).
 pub const RAM_CAPACITY_BYTES: usize = 262_144;
+
+/// Target provider composed from the board's NVMC adapter and the generic
+/// two-slot fixed-store journal provider.
+#[cfg(target_arch = "arm")]
+pub type NvmcFixedStore<'d, const SLOTS: usize, const BUNDLE_BYTES: usize, const TOTAL_BYTES: u64> =
+    JournaledFixedStore<NvmcJournalBackend<'d>, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>;
+
+/// Recover a fixed-capacity provider from a caller-selected NVMC region.
+///
+/// The caller remains responsible for supplying a region derived from the
+/// linked image and board reservation. This helper only validates the region,
+/// constructs the provider-neutral layout relative to that region, and runs
+/// the existing snapshot/authenticity recovery path. It does not choose a
+/// linker address, bootloader reservation, or storage policy.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    let backend = NvmcJournalBackend::new(flash, region);
+    let layout = JournalLayout::new(&backend, 0, slot_bytes, max_payload_bytes)
+        .map_err(ProviderError::Layout)?;
+    JournaledFixedStore::recover(backend, layout, provider, image)
+}
 
 /// The small, evidence-backed portion of the board profile that is safe to
 /// expose before linker and storage geometry are selected.

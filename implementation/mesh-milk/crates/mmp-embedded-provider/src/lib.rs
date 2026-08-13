@@ -587,6 +587,7 @@ const fn align_up(value: usize, alignment: usize) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::Cell;
     use mmp_core::{BundleMeta, EmbeddedBundleStore, SlotState};
     use mmp_crypto::Identity;
     use mmp_flash_journal::{BackendError, Geometry};
@@ -602,6 +603,10 @@ mod tests {
     struct MemoryBackend {
         bytes: [u8; CAPACITY],
         fail_next_write: bool,
+        fail_next_read: Cell<bool>,
+        fail_next_erase: bool,
+        partial_write: Option<(usize, usize)>,
+        write_count: usize,
     }
 
     impl MemoryBackend {
@@ -609,7 +614,15 @@ mod tests {
             Self {
                 bytes: [0xff; CAPACITY],
                 fail_next_write: false,
+                fail_next_read: Cell::new(false),
+                fail_next_erase: false,
+                partial_write: None,
+                write_count: 0,
             }
+        }
+
+        fn fail_partial_write_at_call(&mut self, call: usize, bytes: usize) {
+            self.partial_write = Some((call, bytes));
         }
 
         fn check(&self, offset: usize, len: usize) -> Result<(), BackendError> {
@@ -635,6 +648,9 @@ mod tests {
 
         fn read(&self, offset: usize, out: &mut [u8]) -> Result<(), Self::Error> {
             self.check(offset, out.len())?;
+            if self.fail_next_read.replace(false) {
+                return Err(BackendError::InjectedFailure);
+            }
             out.copy_from_slice(&self.bytes[offset..offset + out.len()]);
             Ok(())
         }
@@ -644,6 +660,8 @@ mod tests {
             if !offset.is_multiple_of(4) || !bytes.len().is_multiple_of(4) {
                 return Err(BackendError::Unaligned);
             }
+            let call = self.write_count;
+            self.write_count = self.write_count.saturating_add(1);
             if self.fail_next_write {
                 self.fail_next_write = false;
                 return Err(BackendError::InjectedFailure);
@@ -652,6 +670,16 @@ mod tests {
                 value | self.bytes[offset + index] != self.bytes[offset + index]
             }) {
                 return Err(BackendError::ProgramViolation);
+            }
+            if let Some((target, limit)) = self.partial_write {
+                if target == call {
+                    self.partial_write = None;
+                    let written = limit.min(bytes.len());
+                    for (index, value) in bytes[..written].iter().enumerate() {
+                        self.bytes[offset + index] &= *value;
+                    }
+                    return Err(BackendError::InjectedFailure);
+                }
             }
             for (index, value) in bytes.iter().enumerate() {
                 self.bytes[offset + index] &= *value;
@@ -663,6 +691,10 @@ mod tests {
             self.check(offset, len)?;
             if !offset.is_multiple_of(256) || !len.is_multiple_of(256) {
                 return Err(BackendError::Unaligned);
+            }
+            if self.fail_next_erase {
+                self.fail_next_erase = false;
+                return Err(BackendError::InjectedFailure);
             }
             self.bytes[offset..offset + len].fill(0xff);
             Ok(())
@@ -793,5 +825,168 @@ mod tests {
                 JournalTransactionError::Quarantined { generation: 1 }
             ))
         ));
+    }
+
+    #[test]
+    fn erase_failure_quarantines_and_recovery_proves_not_committed() {
+        let mut backend = MemoryBackend::new();
+        backend.fail_next_erase = true;
+        let journal_layout = layout(&backend);
+        let (mut image, mut payload, mut scratch) = buffers();
+        let mut provider = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+        let bundle = signed_bundle(42, b"erase fault");
+        let wire = bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&bundle), &wire)
+            .unwrap();
+
+        assert!(matches!(
+            provider.commit_snapshot(&mut image, &mut payload, &mut scratch),
+            Err(ProviderError::Erase {
+                generation: 1,
+                slot: 1,
+                source: BackendError::InjectedFailure,
+            })
+        ));
+        assert_eq!(
+            provider.transaction_state(),
+            JournalTransactionState::Quarantined { generation: 1 }
+        );
+        assert_eq!(
+            provider.recover_in_place(&mut image).unwrap(),
+            CommitOutcome::NotCommitted { generation: 1 }
+        );
+        assert_eq!(provider.transaction_state(), JournalTransactionState::Ready);
+        assert_eq!(provider.generation(), 0);
+        // Recovery replaces the uncommitted in-memory view with the durable
+        // empty journal state; the failed snapshot is not published.
+        assert_eq!(provider.store().len(), 0);
+    }
+
+    #[test]
+    fn torn_commit_write_quarantines_and_does_not_promote_partial_marker() {
+        let mut backend = MemoryBackend::new();
+        // An empty provider emits one body write followed by one final
+        // commit-marker write. Mutate only the first marker byte, then report
+        // failure, modelling a torn physical write.
+        backend.fail_partial_write_at_call(1, 1);
+        let journal_layout = layout(&backend);
+        let (mut image, mut payload, mut scratch) = buffers();
+        let mut provider = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+        let bundle = signed_bundle(43, b"torn write");
+        let wire = bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&bundle), &wire)
+            .unwrap();
+
+        assert!(matches!(
+            provider.commit_snapshot(&mut image, &mut payload, &mut scratch),
+            Err(ProviderError::Write {
+                generation: 1,
+                slot: 1,
+                source: JournalWriteError::CommitWrite(BackendError::InjectedFailure),
+            })
+        ));
+        assert_eq!(
+            provider.transaction_state(),
+            JournalTransactionState::Quarantined { generation: 1 }
+        );
+        assert_eq!(
+            provider.recover_in_place(&mut image).unwrap(),
+            CommitOutcome::NotCommitted { generation: 1 }
+        );
+        assert_eq!(provider.transaction_state(), JournalTransactionState::Ready);
+        assert_eq!(provider.generation(), 0);
+        assert_eq!(provider.store().len(), 0);
+    }
+
+    #[test]
+    fn post_write_read_failure_quarantines_then_recovery_commits() {
+        let backend = MemoryBackend::new();
+        let journal_layout = layout(&backend);
+        let (mut image, mut payload, mut scratch) = buffers();
+        let mut provider = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+        let bundle = signed_bundle(44, b"read fault");
+        let wire = bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&bundle), &wire)
+            .unwrap();
+
+        // The append succeeds, but the first verification read fails before
+        // the provider can classify the generation.
+        provider.backend.fail_next_read.set(true);
+        assert!(matches!(
+            provider.commit_snapshot(&mut image, &mut payload, &mut scratch),
+            Err(ProviderError::Read {
+                slot: 0,
+                source: BackendError::InjectedFailure,
+            })
+        ));
+        assert_eq!(
+            provider.transaction_state(),
+            JournalTransactionState::Quarantined { generation: 1 }
+        );
+
+        // A retry with healthy reads proves the committed generation and
+        // publishes the validated snapshot.
+        assert_eq!(
+            provider.recover_in_place(&mut image).unwrap(),
+            CommitOutcome::Committed { generation: 1 }
+        );
+        assert_eq!(provider.transaction_state(), JournalTransactionState::Ready);
+        assert_eq!(provider.generation(), 1);
+        assert_eq!(provider.store().len(), 1);
+        let mut read = [0u8; 512];
+        assert_eq!(
+            provider
+                .store()
+                .read_bundle(&bundle.id(), &mut read)
+                .unwrap(),
+            wire.len()
+        );
+        assert_eq!(&read[..wire.len()], wire.as_slice());
+    }
+
+    #[test]
+    fn recovery_read_failure_keeps_provider_quarantined_until_a_clean_retry() {
+        let backend = MemoryBackend::new();
+        let journal_layout = layout(&backend);
+        let (mut image, mut payload, mut scratch) = buffers();
+        let mut provider = Provider::recover(backend, journal_layout, 7, &mut image).unwrap();
+        let bundle = signed_bundle(45, b"quarantine");
+        let wire = bundle.encode();
+        provider
+            .store_mut()
+            .try_put(bundle_meta(&bundle), &wire)
+            .unwrap();
+
+        provider.backend.fail_next_read.set(true);
+        let _ = provider.commit_snapshot(&mut image, &mut payload, &mut scratch);
+        assert_eq!(
+            provider.transaction_state(),
+            JournalTransactionState::Quarantined { generation: 1 }
+        );
+
+        provider.backend.fail_next_read.set(true);
+        assert!(matches!(
+            provider.recover_in_place(&mut image),
+            Err(ProviderError::Read {
+                slot: 0,
+                source: BackendError::InjectedFailure,
+            })
+        ));
+        assert_eq!(
+            provider.transaction_state(),
+            JournalTransactionState::Quarantined { generation: 1 }
+        );
+        assert_eq!(
+            provider.recover_in_place(&mut image).unwrap(),
+            CommitOutcome::Committed { generation: 1 }
+        );
+        assert_eq!(provider.transaction_state(), JournalTransactionState::Ready);
+        assert_eq!(provider.store().len(), 1);
     }
 }

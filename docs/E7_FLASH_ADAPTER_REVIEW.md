@@ -132,3 +132,17 @@ This board adapter does not choose a linker map or journal offset, connect the
 persist the generation floor, or validate recovered bundle authenticity. The
 complete board provider remains deferred until those board and recovery inputs
 exist.
+
+## nRF52840 provider-composition slice
+
+The board crate now exposes a target-only `NvmcFixedStore` alias and
+`recover_nvmc_fixed_store`. These bind the validated NVMC region to the generic
+`mmp-embedded-provider::JournaledFixedStore`, derive a region-relative
+two-slot layout, and reuse FBS1 snapshot validation plus journal quarantine.
+No linker geometry or production storage policy is selected by this helper.
+
+The host provider fault matrix now covers erase failure, a torn commit-marker
+write, post-write read failure, and repeated recovery-read failure. All cases
+remain fail-closed and require clean recovery before a new commit is allowed.
+This is the strongest current host evidence for the composition seam; target
+power-cycle and linked-image evidence remain open.

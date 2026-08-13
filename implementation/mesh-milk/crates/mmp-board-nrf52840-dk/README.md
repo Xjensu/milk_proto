@@ -22,6 +22,12 @@ already-pinned Embassy nRF52840 internal-NVMC driver to the provider-neutral
 page-aligned subregion; it does not choose a flash map or provide durability,
 power-loss atomicity, or snapshot authenticity.
 
+On ARM, `recover_nvmc_fixed_store` composes that adapter with the generic
+`mmp-embedded-provider::JournaledFixedStore`. It derives a two-slot layout
+relative to the supplied region and reuses FBS1 snapshot validation and
+quarantine. The caller still supplies the region, slot size, payload bound,
+and caller-owned recovery image; no linker geometry is selected here.
+
 After a board linker map and provider contract are approved, a board-specific
 crate can place `StorageConfig::validate()` in a `const` assertion. No such
 assertion is enabled here because this profile intentionally has no selected
@@ -45,6 +51,7 @@ cargo check -p mmp-board-nrf52840-dk \
 cargo check -p mmp-board-nrf52840-dk --locked
 cargo clippy -p mmp-board-nrf52840-dk --target thumbv7em-none-eabihf \
   --no-default-features --locked -- -D warnings
+cargo test -p mmp-embedded-provider --all-targets --locked --offline
 ```
 
 The host check validates the allocation-free constants only; it does not

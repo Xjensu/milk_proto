@@ -428,7 +428,32 @@ quarantine the transaction; `recover_in_place` must prove `NotCommitted` or
 
 The crate uses caller-owned image, payload, and record-scratch buffers and
 does not claim flash-controller atomicity, durable anti-rollback, snapshot
-MAC/authentication for local metadata, or a linked nRF52 image. Its four host
-tests cover signed-bundle restart recovery, inactive-slot write failure and
-quarantine, retry fencing, and layout bounds. This is the reference provider
-boundary; board geometry and hardware fault evidence remain open.
+MAC/authentication for local metadata, or a linked nRF52 image. Its eight host
+tests cover signed-bundle restart recovery, erase/write/read faults, a torn
+commit-marker write, quarantine/retry fencing, and layout bounds. This is the
+reference provider boundary; board geometry and hardware fault evidence remain
+open.
+
+## nRF52840 provider-composition slice (2026-08-13)
+
+The board crate now exposes a target-only `NvmcFixedStore` type alias and
+`recover_nvmc_fixed_store` constructor. The constructor binds a caller-owned
+Embassy `Nvmc` instance to a validated `NvmcRegion`, derives a region-relative
+`JournalLayout`, and delegates recovery to `JournaledFixedStore`. It therefore
+connects the real NVMC I/O boundary to the already-tested FBS1 validation and
+quarantine path without selecting a linker address, bootloader reservation,
+or storage policy.
+
+This is a compile-checked composition seam, not a linked board image. The
+provider remains unusable for own-origin durable producers until the linked
+flash reservation, durable generation-floor policy, coordinated producer
+checkpoint, and power-cycle/HIL evidence are supplied.
+
+Focused evidence:
+
+```text
+cargo test -p mmp-board-nrf52840-dk --all-targets --locked --offline  # 7 passed
+cargo check -p mmp-board-nrf52840-dk \
+  --target thumbv7em-none-eabihf --no-default-features --locked --offline
+cargo test -p mmp-embedded-provider --all-targets --locked --offline  # 8 passed
+```
