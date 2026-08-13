@@ -25,8 +25,12 @@ power-loss atomicity, or snapshot authenticity.
 On ARM, `recover_nvmc_fixed_store` composes that adapter with the generic
 `mmp-embedded-provider::JournaledFixedStore`. It derives a two-slot layout
 relative to the supplied region and reuses FBS1 snapshot validation and
-quarantine. The caller still supplies the region, slot size, payload bound,
-and caller-owned recovery image; no linker geometry is selected here.
+quarantine. The additive `recover_nvmc_fixed_store_with_durable_floor`
+variant also passes a caller-owned persisted generation floor into recovery,
+rejecting an older checksum-valid image. Neither helper persists the floor or
+selects a linker geometry; the caller still supplies the region, slot size,
+payload bound, recovery image, and (for the guarded variant) the independently
+durable floor.
 
 After a board linker map and provider contract are approved, a board-specific
 crate can place `StorageConfig::validate()` in a `const` assertion. No such

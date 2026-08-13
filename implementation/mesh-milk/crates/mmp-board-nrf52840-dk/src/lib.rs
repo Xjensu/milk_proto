@@ -55,10 +55,45 @@ pub fn recover_nvmc_fixed_store<
     max_payload_bytes: usize,
     image: &mut [u8],
 ) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    recover_nvmc_fixed_store_with_durable_floor(
+        flash,
+        region,
+        provider,
+        slot_bytes,
+        max_payload_bytes,
+        image,
+        0,
+    )
+}
+
+/// Recover a fixed-capacity provider while enforcing a caller-owned durable
+/// generation floor.
+///
+/// The floor must come from a separate crash-safe board record that advances
+/// with the published snapshot. A non-zero floor rejects an older but
+/// checksum-valid journal image instead of silently accepting rollback. The
+/// helper does not persist or authenticate the floor itself; those policies
+/// remain board-specific and must be completed before own-origin producers are
+/// enabled.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store_with_durable_floor<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+    durable_floor: u64,
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
     let backend = NvmcJournalBackend::new(flash, region);
     let layout = JournalLayout::new(&backend, 0, slot_bytes, max_payload_bytes)
         .map_err(ProviderError::Layout)?;
-    JournaledFixedStore::recover(backend, layout, provider, image)
+    JournaledFixedStore::recover_with_durable_floor(backend, layout, provider, image, durable_floor)
 }
 
 /// The small, evidence-backed portion of the board profile that is safe to

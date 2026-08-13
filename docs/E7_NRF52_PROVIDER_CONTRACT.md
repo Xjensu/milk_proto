@@ -277,11 +277,14 @@ Implementation order:
 5. Run the host fault matrix, Cortex-M compile, then hardware gates in order.
 
 The host reference provider now includes `recover_with_durable_floor`, which
-enforces a floor supplied by a separate provider-owned crash-safe record. This
-closes the comparison seam only; it does not make the journal's in-memory
-`GenerationFloor` durable. A board implementation must still define where the
-floor is stored, how it advances with the snapshot, and how power loss is
-tested before own-origin producers are enabled.
+enforces a floor supplied by a separate provider-owned crash-safe record. The
+nRF52840 board composition also exposes
+`recover_nvmc_fixed_store_with_durable_floor`, so a board adapter cannot
+accidentally use the legacy floor-zero helper when it has a persisted floor.
+This closes the comparison seam only; it does not make the journal's
+in-memory `GenerationFloor` durable. A board implementation must still define
+where the floor is stored, how it advances with the snapshot, and how power
+loss is tested before own-origin producers are enabled.
 
 The MMP/1 specification remains frozen throughout these steps.
 

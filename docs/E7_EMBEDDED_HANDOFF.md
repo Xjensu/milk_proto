@@ -439,10 +439,12 @@ open.
 The board crate now exposes a target-only `NvmcFixedStore` type alias and
 `recover_nvmc_fixed_store` constructor. The constructor binds a caller-owned
 Embassy `Nvmc` instance to a validated `NvmcRegion`, derives a region-relative
-`JournalLayout`, and delegates recovery to `JournaledFixedStore`. It therefore
-connects the real NVMC I/O boundary to the already-tested FBS1 validation and
-quarantine path without selecting a linker address, bootloader reservation,
-or storage policy.
+`JournalLayout`, and delegates recovery to `JournaledFixedStore`. The additive
+`recover_nvmc_fixed_store_with_durable_floor` variant passes a separately
+persisted generation floor into the same fail-closed recovery path. It
+therefore connects the real NVMC I/O boundary to the already-tested FBS1
+validation, rollback guard, and quarantine path without selecting a linker
+address, bootloader reservation, or storage policy.
 
 This is a compile-checked composition seam, not a linked board image. The
 provider remains unusable for own-origin durable producers until the linked
