@@ -1005,8 +1005,10 @@ provider and HIL requirements.
 The release-evidence audit produced `b54f4e3`. Security, roadmap, and backlog
 documents now distinguish workflow-wired checks from unobserved remote CI,
 declared MSRV from an unpinned rolling stable toolchain, durable non-secret
-authority snapshots from still-open keystore secrets, and the 17 committed
-vectors from deferred X3DH deterministic-RNG coverage. A documentation
+authority snapshots from still-open keystore secrets, and the 18 committed
+vectors from the now-shipped public-only X3DH deterministic-RNG artifact (whose
+CK0 fingerprint still requires the bilateral crypto property test for independent
+verification). A documentation
 regression suite prevents those closed-gap claims from becoming stale again.
 
 Final verification for this continuation: full workspace tests, workspace

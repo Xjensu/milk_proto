@@ -165,9 +165,13 @@ artifact to a specification section and evidence string.
 The artifact inventory and its stable IDs are authoritative in `vectors/coverage.json`. Secret
 MAC keys are intentionally omitted from public vectors; secrets never appear in a vector.
 
-**Deferred, not faked** (`vectors/README.md`'s own list): an X3DH-agreement vector still needs
-deterministic-RNG plumbing for the ephemeral key (the property is covered today by
-`mmp-crypto::prekey_agreement_matches_both_sides`). The overlarge-S/non-canonical Ed25519
+The deterministic public-only X3DH-adapted agreement artifact is now committed as
+`prekey_agreement.json`. It uses a byte-exact test RNG, asserts bilateral CK0 agreement during
+generation, and publishes only the signed public batch, ephemeral public key, prekey id, and a
+one-way CK0 fingerprint. Because private inputs are intentionally omitted, a second
+implementation can independently validate the public batch and wire bytes, but cannot recompute
+the CK0 fingerprint from the artifact alone; the full cryptographic property remains covered by
+`mmp-crypto::prekey_agreement_matches_both_sides`. The overlarge-S/non-canonical Ed25519
 negative is no longer deferred: `noncanonical_s_negative.json` is committed and independently
 checked, with strict verification covered by `mmp-crypto::sign_verify_and_cross_domain_rejects`.
 

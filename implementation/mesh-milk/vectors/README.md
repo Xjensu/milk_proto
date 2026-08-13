@@ -1,6 +1,6 @@
 # vectors/ — golden test vectors (doc 10 §6.4, doc 12 §7.1, handbook §4.7)
 
-Fixed-seed, wall-clock-free, RNG-free vectors that a **second** MMP/1
+Fixed-seed, wall-clock-free, deterministic vectors that a **second** MMP/1
 implementation must reproduce byte-for-byte. They are the anti-ossification
 tool (roadmap risk #7): with only one implementation, spec ambiguities silently
 resolve to "whatever this code does", and these files pin that behavior so a
@@ -74,6 +74,9 @@ Positive:
   wire bytes, signature.
 - `receipt.json` — receipt MAC over a fixed conversation root (the derived MAC
   key is a secret and is intentionally omitted).
+- `prekey_agreement.json` — deterministic X3DH-adapted prekey agreement with
+  the signed public batch, ephemeral public key, and one-way CK0 fingerprint;
+  private keys and the derived chain key are intentionally omitted.
 - `envelope.json` — link envelope framing `[len u16 LE][type u8][payload]`.
 - `frames.json` — deterministic payload and envelope bytes for all 17
   registered session frame types; the HS sample carries the same deterministic
@@ -121,12 +124,6 @@ Negative (each states the rejection/invariant it pins):
 No private key, ratchet secret, or MAC key appears in any vector — only public
 keys, signatures, hashes, ciphertext, and fixed public inputs. Same boundary as
 the FFI surface.
-
-## Deferred (not faked)
-
-- **X3DH agreement vector** — needs deterministic-RNG plumbing for the ephemeral
-  key; the property is covered today by `mmp-crypto`'s
-  `prekey_agreement_matches_both_sides`.
 
 The overlarge-S / non-canonical Ed25519 negative is no longer deferred: it is
 pinned by `noncanonical_s_negative.json`, and the `mmp-cli` strict-verification

@@ -25,6 +25,7 @@ const VECTOR_NAMES: &[&str] = &[
     "hello.json",
     "lifetime_reset_negative.json",
     "noncanonical_s_negative.json",
+    "prekey_agreement.json",
     "reserved_bits_negative.json",
     "rbsr_fingerprint.json",
     "receipt.json",
@@ -611,16 +612,16 @@ fn committed_vector_inventory_is_explicit_and_complete() {
 fn coverage_manifest_maps_every_committed_vector() {
     let json = vector("coverage.json");
     assert_eq!(json_string(&json, "schema"), "mmp-e5-s4-coverage-v1");
-    assert_eq!(json_u64(&json, "entry_count"), 38);
+    assert_eq!(json_u64(&json, "entry_count"), 39);
 
     let ids = json_all_strings(&json, "id");
     let artifacts = json_all_strings(&json, "artifact");
     let sources = json_all_strings(&json, "source");
     let evidence = json_all_strings(&json, "evidence");
-    assert_eq!(ids.len(), 38);
-    assert_eq!(artifacts.len(), 38);
-    assert_eq!(sources.len(), 38);
-    assert_eq!(evidence.len(), 38);
+    assert_eq!(ids.len(), 39);
+    assert_eq!(artifacts.len(), 39);
+    assert_eq!(sources.len(), 39);
+    assert_eq!(evidence.len(), 39);
     assert!(sources
         .iter()
         .all(|source| source.starts_with("specification/")));

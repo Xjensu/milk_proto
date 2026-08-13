@@ -1,6 +1,6 @@
 //! Golden test vectors (E5-S4; doc 10 §6.4, doc 12 §7.1, handbook §4.7).
 //!
-//! Fixed-seed, wall-clock-free, RNG-free vectors that a SECOND MMP/1
+//! Fixed-seed, wall-clock-free, deterministic vectors that a SECOND MMP/1
 //! implementation must reproduce byte-for-byte — the anti-ossification tool
 //! (roadmap risk #7). Every expected byte here is produced by the real
 //! `mmp-types`/`mmp-crypto` codecs at generation time, never hand-authored, so
@@ -19,12 +19,20 @@
 //! conversation root (a throwaway fixed test value) and the resulting MAC, but
 //! never the derived MAC key.
 //!
-//! The X3DH agreement vector remains deliberately deferred (it needs
-//! deterministic-RNG plumbing for the ephemeral key). The non-canonical
-//! Ed25519 negative is now emitted as a deterministic S+L fixture below;
+//! The X3DH agreement vector uses a local fixed-byte `CryptoRng`; no private
+//! prekey, identity, ephemeral, or derived chain key is emitted. The vector
+//! publishes only the signed public batch, public agreement values, and a
+//! one-way CK0 fingerprint. A second implementation can validate the public
+//! batch and wire bytes; the bilateral CK0 check remains a local crypto oracle
+//! because private inputs are intentionally omitted. The non-canonical
+//! Ed25519 negative is emitted as a deterministic S+L fixture below;
 //! `mmp-crypto`'s strict verifier remains the executable rejection oracle.
 
-use mmp_crypto::{merkle, receipt, Identity};
+use mmp_crypto::{
+    merkle,
+    prekey::{recipient_agree, sender_agree, PrekeyStore},
+    receipt, Identity,
+};
 use mmp_types::authcert::{scope_id_of, AnnouncementBody, AuthCert, CAP_ANNOUNCE};
 use mmp_types::beacon::Beacon;
 use mmp_types::bundle::{class, prio, Bundle, FLAG_WANTS_RECEIPT};
@@ -44,6 +52,7 @@ use mmp_types::ids::{Id16, Key32, Sig64};
 use mmp_types::manifest::{FileEntry, FileManifest};
 use mmp_types::payload::{DirectPayload, GroupPayload, ReceiptPayload, SymbolPayload};
 use mmp_types::tlv::{encode_exts, Ext, TLV_SCOPE_INFO};
+use rand::{CryptoRng, RngCore};
 
 /// One generated vector file: a stable filename and its exact JSON contents
 /// (already newline-terminated). Filenames are the wire contract with other
@@ -52,6 +61,50 @@ pub struct VectorFile {
     pub name: &'static str,
     pub json: String,
 }
+
+/// A byte-exact RNG for the X3DH vector. `rand::rngs::StdRng` is deliberately
+/// not used: its algorithm is not promised to remain stable across rand
+/// releases, while a golden vector must be reproducible by independent
+/// implementations. The stream is test-only and never used for production
+/// cryptography.
+#[derive(Clone, Copy)]
+struct VectorRng {
+    next: u8,
+}
+
+impl VectorRng {
+    const fn new(seed: u8) -> Self {
+        Self { next: seed }
+    }
+}
+
+impl RngCore for VectorRng {
+    fn next_u32(&mut self) -> u32 {
+        let mut bytes = [0u8; 4];
+        self.fill_bytes(&mut bytes);
+        u32::from_le_bytes(bytes)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut bytes = [0u8; 8];
+        self.fill_bytes(&mut bytes);
+        u64::from_le_bytes(bytes)
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        for byte in dest {
+            *byte = self.next;
+            self.next = self.next.wrapping_add(1);
+        }
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand::Error> {
+        self.fill_bytes(dest);
+        Ok(())
+    }
+}
+
+impl CryptoRng for VectorRng {}
 
 /// Lowercase hex, no `0x` — the one encoding used for every byte string in
 /// every vector file.
@@ -547,6 +600,7 @@ pub fn generate() -> Vec<VectorFile> {
         hello_vector(),
         claim_vector(),
         receipt_vector(),
+        prekey_agreement_vector(),
         envelope_vector(),
         rbsr_fingerprint_vector(),
         cross_domain_negative_vector(),
@@ -973,6 +1027,65 @@ delivered_id). The derived key is a secret and is intentionally omitted.\",\n  \
     }
 }
 
+/// Deterministic X3DH-adapted prekey agreement. Private material is used only
+/// while constructing the case; the artifact contains public batch data and a
+/// one-way CK0 fingerprint, never a private key or chain key.
+fn prekey_agreement_vector() -> VectorFile {
+    let sender = Identity::from_seed(&[0x51; 32]);
+    let recipient = Identity::from_seed(&[0x52; 32]);
+    let mut prekey_rng = VectorRng::new(0x10);
+    let store = PrekeyStore::generate(&mut prekey_rng, 4);
+    let batch = store.batch(&recipient);
+    let mut agreement_rng = VectorRng::new(0x90);
+    let sender_agreement = sender_agree(
+        &mut agreement_rng,
+        &sender,
+        &recipient.public(),
+        &batch,
+        Some(2),
+    )
+    .expect("fixed vector prekey agreement must succeed");
+    let recipient_ck0 = recipient_agree(
+        &store,
+        &recipient,
+        &sender.public(),
+        &sender.exchange_public(),
+        &sender_agreement.eph_pub,
+        sender_agreement.prekey_id,
+    )
+    .expect("fixed vector recipient agreement must succeed");
+    assert_eq!(
+        *sender_agreement.ck0, *recipient_ck0,
+        "sender and recipient must derive the same CK0"
+    );
+    let ck0_fingerprint = blake3::derive_key("mmp1 vector ck0 fingerprint", &*sender_agreement.ck0);
+    let prekeys = batch
+        .prekeys
+        .iter()
+        .map(|key| format!("\"{}\"", hex(&key.0)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let json = format!(
+        "{{\n  \"description\": \"deterministic X3DH-adapted prekey agreement (doc 08 \\u00a74.2): public batch, ephemeral key, and one-way CK0 fingerprint\",\n  \"sender_identity_pubkey\": \"{}\",\n  \"sender_exchange_pubkey\": \"{}\",\n  \"recipient_identity_pubkey\": \"{}\",\n  \"recipient_exchange_pubkey\": \"{}\",\n  \"signed_prekey\": \"{}\",\n  \"one_time_prekeys\": [{}],\n  \"batch_signed_object\": \"{}\",\n  \"batch_signature\": \"{}\",\n  \"batch_wire\": \"{}\",\n  \"ephemeral_pubkey\": \"{}\",\n  \"prekey_id\": {},\n  \"ck0_fingerprint\": \"{}\"\n}}\n",
+        hex(&sender.public().0),
+        hex(&sender.exchange_public().0),
+        hex(&recipient.public().0),
+        hex(&recipient.exchange_public().0),
+        hex(&batch.signed_prekey.0),
+        prekeys,
+        hex(&batch.signed_object()),
+        hex(&batch.spk_sig.0),
+        hex(&batch.encode()),
+        hex(&sender_agreement.eph_pub.0),
+        sender_agreement.prekey_id,
+        hex(&ck0_fingerprint),
+    );
+    VectorFile {
+        name: "prekey_agreement.json",
+        json,
+    }
+}
+
 fn envelope_vector() -> VectorFile {
     let payload = b"golden frame payload";
     let wire = try_write_envelope(FT_BUNDLE, payload).expect("trusted committed vector fixture");
@@ -1333,6 +1446,12 @@ fn coverage_manifest_vector() -> VectorFile {
             "production_mac_invariant",
         ),
         (
+            "prekey.agreement.v1",
+            "prekey_agreement.json",
+            "specification/08-crypto-spec.md §4.2",
+            "deterministic_public_batch+production_both_sides+ck0_fingerprint",
+        ),
+        (
             "rbsr.fingerprint.v1",
             "rbsr_fingerprint.json",
             "specification/06-sync-spec.md §9",
@@ -1547,6 +1666,18 @@ mod tests {
             assert_eq!(x.name, y.name);
             assert_eq!(x.json, y.json, "vector {} is not reproducible", x.name);
         }
+    }
+
+    #[test]
+    fn prekey_agreement_vector_is_public_and_bilateral() {
+        let vector = prekey_agreement_vector();
+        assert_eq!(vector.name, "prekey_agreement.json");
+        assert!(vector.json.contains("\"batch_signature\""));
+        assert!(vector.json.contains("\"ephemeral_pubkey\""));
+        assert!(vector.json.contains("\"ck0_fingerprint\""));
+        assert!(!vector.json.contains("private_key"));
+        assert!(!vector.json.contains("chain_key"));
+        assert!(!vector.json.contains("\"ck0\""));
     }
 
     /// Drift guard: the committed `vectors/*.json` must byte-match what the

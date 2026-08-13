@@ -25,6 +25,19 @@ fn bounded_store_flush_reports_provider_failure() {
     assert!(node.last_persist_error().is_some());
 }
 
+#[test]
+fn zero_store_limit_is_rejected_before_opening_the_snapshot_path() {
+    let dir = TempDir::new("zero-limit");
+    let path = dir.file("zero.mmp");
+
+    let result = MmpNode::new_with_store_limit(vec![0x63; 32], FfiTier::Relay, path.clone(), 0);
+    assert!(matches!(result, Err(FfiError::BadArg)));
+    assert!(
+        !std::path::Path::new(&path).exists(),
+        "invalid constructor arguments must not create a snapshot path"
+    );
+}
+
 struct TempDir(std::path::PathBuf);
 
 impl TempDir {

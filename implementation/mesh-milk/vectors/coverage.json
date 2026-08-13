@@ -1,7 +1,7 @@
 {
   "schema": "mmp-e5-s4-coverage-v1",
   "description": "normative requirement coverage for committed MMP/1 vectors",
-  "entry_count": 38,
+  "entry_count": 39,
   "entries": [
     {"id": "beacon.codec.v1", "artifact": "beacon.json", "source": "specification/10-message-format.md §5", "evidence": "independent_fixed_reader+production_roundtrip" },
     {"id": "bundle.compat.class1.v1", "artifact": "bundle.json", "source": "specification/10-message-format.md §3", "evidence": "independent_outer_reader+production_signature" },
@@ -39,6 +39,7 @@
     {"id": "frame.type.0x7e.error.v1", "artifact": "frames.json", "source": "specification/10-message-format.md §2", "evidence": "independent_payload_grammar+production_roundtrip" },
     {"id": "frame.type.0x7f.close.v1", "artifact": "frames.json", "source": "specification/10-message-format.md §2", "evidence": "independent_payload_grammar+production_roundtrip" },
     {"id": "receipt.mac.v1", "artifact": "receipt.json", "source": "specification/05-routing-spec.md §7", "evidence": "production_mac_invariant" },
+    {"id": "prekey.agreement.v1", "artifact": "prekey_agreement.json", "source": "specification/08-crypto-spec.md §4.2", "evidence": "deterministic_public_batch+production_both_sides+ck0_fingerprint" },
     {"id": "rbsr.fingerprint.v1", "artifact": "rbsr_fingerprint.json", "source": "specification/06-sync-spec.md §9", "evidence": "production_fingerprint_invariant" },
     {"id": "coverage.manifest.v1", "artifact": "coverage.json", "source": "specification/12-rust-blueprint.md §7", "evidence": "machine_readable_manifest_completeness" }
   ]
