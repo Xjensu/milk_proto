@@ -13,6 +13,7 @@ import type {
   NodeIdHex,
   NodeMetrics,
   NodeStatus,
+  OutFrame,
   PublicKeyB64,
   ScopeIdHex,
   Tier,
@@ -132,6 +133,27 @@ export class BetaTestSession {
   /** Explicitly persist the native store; never called implicitly by this helper. */
   flush(): Promise<void> {
     return this.client.flush();
+  }
+
+  /** Drain up to the native bounded batch limit of outbound frames in FIFO order. */
+  pollSendBatch(maxItems = 64): Promise<OutFrame[]> {
+    this.requireStarted();
+    return this.client.pollSendBatch(maxItems);
+  }
+
+  /**
+   * Drain native application events in FIFO order. Polled events are independent
+   * of the client's event listeners and this facade's bounded report history.
+   */
+  pollEventBatch(maxItems = 64): Promise<MmpEvent[]> {
+    this.requireStarted();
+    return this.client.pollEventBatch(maxItems);
+  }
+
+  /** Drain transport-local close actions in FIFO order. */
+  pollCloseBatch(maxItems = 64): Promise<number[]> {
+    this.requireStarted();
+    return this.client.pollCloseBatch(maxItems);
   }
 
   /** Return the current secret-free status without requiring the mesh to run. */

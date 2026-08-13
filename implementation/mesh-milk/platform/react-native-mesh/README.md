@@ -99,6 +99,17 @@ tier argument wins), and a `stop()` issued while startup is pending waits for
 that operation before stopping it. A failed startup removes the listener and
 leaves the session stopped.
 
+For a host-owned beta transport harness, a started session also exposes
+`pollSendBatch(maxItems = 64)`, `pollEventBatch(maxItems = 64)`, and
+`pollCloseBatch(maxItems = 64)`. Each method delegates to the corresponding
+`MmpClient` bounded poll and preserves native FIFO order and clamping semantics;
+the default matches the native batch bound of 64. `pollEventBatch` drains the
+native event queue independently of `onEvent` listeners and the session's
+bounded report history, so applications must not assume polled events will also
+appear in either stream. These methods return only normalized `OutFrame`,
+`MmpEvent`, and numeric link values; they do not expose raw BLE input or alter
+session ownership.
+
 The facade delegates validation of IDs, base64 values, authority policy, file
 limits, and enum spellings to `MmpClient`/native. Unknown capabilities and
 delivery states therefore fail closed rather than being coerced. `nodeId()` and
