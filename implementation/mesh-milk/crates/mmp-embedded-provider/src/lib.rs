@@ -554,7 +554,14 @@ where
             Ok(recovered) => recovered,
             Err(error) => {
                 self.quarantine(generation)?;
-                return Err(error);
+                return Err(match error {
+                    ProviderError::Read { slot, source } => ProviderError::RecoveryRead {
+                        generation,
+                        slot,
+                        source,
+                    },
+                    other => other,
+                });
             }
         };
         let classification = self
@@ -898,6 +905,22 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn initial_recovery_read_failure_remains_distinct_from_post_write_failure() {
+        let backend = MemoryBackend::new();
+        backend.fail_next_read.set(true);
+        let journal_layout = layout(&backend);
+        let mut image = [0u8; CAPACITY];
+
+        assert!(matches!(
+            Provider::recover(backend, journal_layout, 7, &mut image),
+            Err(ProviderError::Read {
+                slot: 0,
+                source: BackendError::InjectedFailure,
+            })
+        ));
+    }
+
     fn floor_authority(backend: &MemoryBackend) -> FloorAuthority {
         let mut selected = [None; 2];
         for (slot, selected_generation) in selected.iter_mut().enumerate() {
@@ -1150,7 +1173,8 @@ mod tests {
         provider.backend.fail_next_read.set(true);
         assert!(matches!(
             provider.commit_snapshot(&mut image, &mut payload, &mut scratch),
-            Err(ProviderError::Read {
+            Err(ProviderError::RecoveryRead {
+                generation: 1,
                 slot: 0,
                 source: BackendError::InjectedFailure,
             })
@@ -1203,7 +1227,8 @@ mod tests {
         provider.backend.fail_next_read.set(true);
         assert!(matches!(
             provider.recover_in_place(&mut image),
-            Err(ProviderError::Read {
+            Err(ProviderError::RecoveryRead {
+                generation: 1,
                 slot: 0,
                 source: BackendError::InjectedFailure,
             })
