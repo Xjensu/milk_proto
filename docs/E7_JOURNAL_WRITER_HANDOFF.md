@@ -76,7 +76,13 @@ that performs canonical snapshot decoding, bundle signature/metadata checks,
 and any profile-specific integrity check, then apply its durable rollback and
 indeterminate-write policy.
 
-Focused evidence:
+The initial implementation slice had four focused provider tests. The current
+provider matrix has fourteen tests, including equal-generation ambiguity,
+torn-newer-slot recovery, attempted-generation fencing, reserved-generation
+rejection, and durable-floor rollback checks; the current command is recorded
+in `docs/E7_EMBEDDED_HANDOFF.md`.
+
+Historical focused evidence for the initial slice:
 
 ```text
 cargo test -p mmp-flash-journal --all-targets --locked --offline
@@ -106,7 +112,7 @@ gates.
 Focused evidence:
 
 ```text
-cargo test -p mmp-embedded-provider --all-targets --offline  # 4 passed
+cargo test -p mmp-embedded-provider --all-targets --offline  # 4 passed at initial slice
 cargo clippy -p mmp-embedded-provider --all-targets --offline -- -D warnings
 cargo check -p mmp-embedded-provider \
   --target thumbv7em-none-eabihf --no-default-features --offline

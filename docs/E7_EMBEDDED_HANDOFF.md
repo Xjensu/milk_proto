@@ -461,5 +461,5 @@ Focused evidence:
 cargo test -p mmp-board-nrf52840-dk --all-targets --locked --offline  # 7 passed
 cargo check -p mmp-board-nrf52840-dk \
   --target thumbv7em-none-eabihf --no-default-features --locked --offline
-cargo test -p mmp-embedded-provider --all-targets --locked --offline  # 13 passed
+cargo test -p mmp-embedded-provider --all-targets --locked --offline  # 14 passed
 ```
