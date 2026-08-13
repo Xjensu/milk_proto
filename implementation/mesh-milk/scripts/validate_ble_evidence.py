@@ -305,6 +305,12 @@ def validate_manifest(path: Path) -> list[str]:
     if not _is_mapping(document):
         return ["manifest root must be an object"]
 
+    # Evidence files must be independent artifacts.  The manifest itself
+    # contains every required marker string and is therefore able to satisfy
+    # the log checks without proving that either host produced a log.  Reject
+    # it explicitly before recording any evidence paths.
+    manifest_path = path.resolve()
+
     if document.get("schema") != SCHEMA:
         errors.append(f"schema must be {SCHEMA!r}")
     for key in ("run_id", "commit"):
@@ -330,6 +336,17 @@ def validate_manifest(path: Path) -> list[str]:
 
     def record_evidence_path(candidate: Path | None, label: str) -> None:
         if candidate is None:
+            return
+        try:
+            is_manifest = candidate.samefile(manifest_path)
+        except OSError:
+            # The candidate was already proven to exist.  If a transient
+            # filesystem error prevents an inode comparison, retain the
+            # canonical-path guard rather than failing open on the common
+            # direct-reference case.
+            is_manifest = candidate == manifest_path
+        if is_manifest:
+            errors.append(f"{label} must not reference the manifest itself")
             return
         previous = evidence_paths.get(candidate)
         if previous is not None:

@@ -291,6 +291,53 @@ class BleEvidenceTests(unittest.TestCase):
                 errors,
             )
 
+    def test_manifest_cannot_be_reused_as_host_or_store_evidence(self) -> None:
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._manifest(root)
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][0]["log"] = path.name
+            data["stores"]["peripheral_inspect"] = path.name
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[0].log must not reference the manifest itself",
+                errors,
+            )
+            self.assertIn(
+                "stores.peripheral_inspect must not reference the manifest itself",
+                errors,
+            )
+
+    def test_hardlink_to_manifest_cannot_be_used_as_evidence(self) -> None:
+        import os
+        import sys
+
+        sys.path.insert(0, str(ROOT))
+        from validate_ble_evidence import validate_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = self._manifest(root)
+            alias = root / "manifest-alias.json"
+            try:
+                os.link(path, alias)
+            except (OSError, NotImplementedError):
+                self.skipTest("hard links unavailable on this platform")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["hosts"][0]["log"] = alias.name
+            path.write_text(json.dumps(data), encoding="utf-8")
+            errors = validate_manifest(path)
+            self.assertIn(
+                "hosts[0].log must not reference the manifest itself",
+                errors,
+            )
+
     def test_evidence_symlink_is_rejected_even_when_target_stays_inside_package(self) -> None:
         import sys
 
