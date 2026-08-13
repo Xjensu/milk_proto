@@ -62,3 +62,14 @@ Select and record one exact board/HAL profile, then define its flash geometry,
 snapshot schema, reservation/quarantine policy, generation-floor handling, and
 power-loss recovery mapping. Only after those inputs are reviewed should a
 board-specific provider transaction adapter be implemented.
+
+## Configuration validation slice
+
+The `mmp-board-nrf52840-dk` profile now exposes a `const fn`-compatible
+`StorageConfig` gate. It validates caller-supplied linker/provider values for
+zero capacities, program/erase alignment, checked region bounds, slot/index
+consistency, bundle-slot fit, complete snapshot payload limits, and encoded
+journal-frame plus program-unit alignment against the region size. It does not
+select a flash map, allocator, HAL geometry, executor, radio backend, or
+durability policy. The slice is therefore **FIXED** as a configuration guard,
+while the board provider itself remains deferred.

@@ -11,6 +11,19 @@ target triple, and documented total SoC capacities.  Total capacity is not
 application space: boot/vector reservations, linker sections, radio firmware,
 journal geometry, and wear policy remain unselected.
 
+It also exposes `StorageConfig::validate`, a `const fn` gate for a future
+board-specific profile. The caller supplies the linker-derived region,
+program/erase units, fixed-capacity accounting, and snapshot limits. The gate
+rejects zero capacities, unaligned regions, checked-arithmetic overflow,
+out-of-range regions, slot/index mismatches, and snapshots that do not fit the
+journal payload or aligned region. It deliberately does not select any of
+those values and does not provide a flash driver or durability guarantee.
+
+After a board linker map and provider contract are approved, a board-specific
+crate can place `StorageConfig::validate()` in a `const` assertion. No such
+assertion is enabled here because this profile intentionally has no selected
+flash region or provider geometry.
+
 ## Verification
 
 From `implementation/mesh-milk`:

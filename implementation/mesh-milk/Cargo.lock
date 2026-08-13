@@ -1437,6 +1437,7 @@ name = "mmp-board-nrf52840-dk"
 version = "0.0.0"
 dependencies = [
  "embassy-nrf",
+ "mmp-flash-journal",
 ]
 
 [[package]]

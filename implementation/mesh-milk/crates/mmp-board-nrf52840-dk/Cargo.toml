@@ -17,6 +17,9 @@ path = "src/lib.rs"
 [lints]
 workspace = true
 
+[dependencies]
+mmp-flash-journal = { path = "../mmp-flash-journal" }
+
 # Keep the HAL target-only.  The board profile is deliberately not a host
 # radio implementation, and this avoids claiming that embassy-nrf is a
 # desktop dependency.  The exact chip feature is selected here rather than
