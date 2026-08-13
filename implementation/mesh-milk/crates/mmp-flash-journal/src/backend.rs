@@ -86,6 +86,8 @@ mod tests {
         bytes: [u8; CAPACITY],
         geometry: Geometry,
         fail_after: Option<usize>,
+        fail_at_call: Option<(usize, usize)>,
+        write_count: usize,
     }
 
     impl<const CAPACITY: usize> PartialNor<CAPACITY> {
@@ -94,11 +96,17 @@ mod tests {
                 bytes: [0xff; CAPACITY],
                 geometry: Geometry::new(CAPACITY, 1, 1).unwrap(),
                 fail_after: None,
+                fail_at_call: None,
+                write_count: 0,
             }
         }
 
         fn fail_after(&mut self, bytes: usize) {
             self.fail_after = Some(bytes);
+        }
+
+        fn fail_at_call_after(&mut self, call: usize, bytes: usize) {
+            self.fail_at_call = Some((call, bytes));
         }
 
         fn check_range(&self, offset: usize, len: usize) -> Result<(), BackendError> {
@@ -131,7 +139,15 @@ mod tests {
             }) {
                 return Err(BackendError::ProgramViolation);
             }
-            let failure = self.fail_after.take();
+            let call = self.write_count;
+            self.write_count = self.write_count.saturating_add(1);
+            let failure = match self.fail_at_call {
+                Some((target, limit)) if target == call => {
+                    self.fail_at_call = None;
+                    Some(limit)
+                }
+                _ => self.fail_after.take(),
+            };
             let written = failure.map_or(bytes.len(), |limit| limit.min(bytes.len()));
             for (index, value) in bytes[..written].iter().enumerate() {
                 self.bytes[offset + index] &= *value;
@@ -314,6 +330,41 @@ mod tests {
             if cut == second_len {
                 // An error after all bytes were programmed is an unknown
                 // outcome: recovery may legitimately select the new record.
+                assert_eq!(result.selected.unwrap().generation, 2);
+            } else {
+                assert_eq!(result.selected.unwrap().generation, 1);
+                assert_eq!(result.selected.unwrap().payload, b"keep");
+            }
+        }
+    }
+
+    #[test]
+    fn write_record_partial_commit_call_recovers_previous_generation() {
+        for cut in 0..=crate::COMMIT_MARKER.len() {
+            let mut nor = PartialNor::<256>::new();
+            let mut first_scratch = [0u8; 128];
+            let first_padded =
+                crate::write_record(&mut nor, 0, 1, b"keep", &mut first_scratch).unwrap();
+
+            let mut second_scratch = [0u8; 128];
+            // With byte-programmable geometry, write_record emits the body
+            // first and the four-byte marker in the next call. Fail only in
+            // that final call after mutating `cut` bytes.
+            nor.fail_at_call_after(3, cut);
+            assert_eq!(
+                crate::write_record(&mut nor, first_padded, 2, b"newer", &mut second_scratch,),
+                Err(crate::JournalWriteError::CommitWrite(
+                    BackendError::InjectedFailure,
+                ))
+            );
+
+            let mut image = [0xff; 256];
+            nor.read(0, &mut image).unwrap();
+            let result = scan(&image);
+            if cut == crate::COMMIT_MARKER.len() {
+                // The provider reported an error after all marker bytes were
+                // programmed, so recovery may legitimately select the newer
+                // record despite the indeterminate write outcome.
                 assert_eq!(result.selected.unwrap().generation, 2);
             } else {
                 assert_eq!(result.selected.unwrap().generation, 1);
