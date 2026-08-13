@@ -1,0 +1,25 @@
+[package]
+name = "mmp-board-nrf52840-dk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Compile-time nRF52840 DK profile for the MMP embedded workspace"
+readme = "README.md"
+categories = ["embedded", "no-std", "hardware-support"]
+keywords = ["nrf52840", "embassy", "embedded", "ble"]
+
+[lib]
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+# Keep the HAL target-only.  The board profile is deliberately not a host
+# radio implementation, and this avoids claiming that embassy-nrf is a
+# desktop dependency.  The exact chip feature is selected here rather than
+# relying on embassy-nrf defaults (which include `rt`).
+[target.'cfg(target_arch = "arm")'.dependencies]
+embassy-nrf = { version = "=0.11.0", default-features = false, features = ["nrf52840"] }

@@ -52,7 +52,7 @@ copied into a release image without filling every **TBD** field.
 | `TARGET` | `thumbv7em-none-eabihf` | Existing repository policy; target check must pass |
 | `FLASH_CAPACITY` | `1_048_576` bytes | SoC capacity from [L1]; usable application range is TBD |
 | `RAM_CAPACITY` | `262_144` bytes | SoC capacity from [L1]; reserved/runtime regions are TBD |
-| `HAL` | `embassy-nrf` 0.11.0 candidate, `nrf52840` feature | Candidate from [L4]; pin and audit dependency before merge |
+| `HAL` | `embassy-nrf` 0.11.0, `nrf52840` feature | Pinned in the board compile-probe crate; target closure passed with the locked workspace dependency graph. Hardware APIs remain unselected |
 | `HAL_DEFAULT_FEATURES` | `false` unless an explicit feature is justified | Project policy to protect the no-std closure; verify against selected HAL version |
 | `RUNTIME` | `no_std`; executor **TBD** | Embassy supports either blocking or async use [L4]; no executor is selected |
 | `RADIO_BACKEND` | **TBD** | Must be selected only after the BLE/TAL contract and board test exist |
@@ -90,10 +90,11 @@ DK.
 The repository already contains Embassy-oriented embedded shells. Embassy's
 versioned documentation exposes an nRF52840 feature and states that the HAL can
 be used with blocking or async APIs and with a chosen executor. That is a good
-fit for keeping MMP's sans-IO core independent of runtime policy. The candidate
-must still be evaluated for MSRV, `no_std` feature closure, flash API semantics,
-radio/TAL coverage, and dependency supply-chain risk before it is added to a
-manifest. [L4]
+fit for keeping MMP's sans-IO core independent of runtime policy. The
+compile-probe dependency has been evaluated for the repository MSRV and
+`no_std` target closure, and is now pinned in the workspace manifest. Flash API
+semantics, radio/TAL coverage, and hardware supply-chain evidence remain
+outside this profile. [L4]
 
 ### Tooling rationale
 
@@ -123,6 +124,9 @@ gates:
    checked configuration record. Keep the `specification/` tree unchanged.
 2. Add a board-specific target check for the selected Embassy feature and the
    existing fixed-capacity crates. The check must not silently enable `std`.
+   The `mmp-board-nrf52840-dk` compile probe now passes for
+   `thumbv7em-none-eabihf` with `--no-default-features --locked`; this proves
+   dependency/target closure only, not a linked image or hardware behavior.
 3. Produce a minimal linked image with a linker map. Record code, static RAM,
    stack reserve, vector table, and every reserved flash range.
 4. Select internal NVMC or external QSPI only after recording program/erase
@@ -224,14 +228,15 @@ not the final product assumption; MMP/Phi research remains separate from MMP/1.
 ## 8. Decision and handoff
 
 **Decision:** adopt `nrf52840-dk-pca10056` with `thumbv7em-none-eabihf` and an
-`embassy-nrf` `nrf52840` feature as implementation candidates, subject to the
-gates above. Keep all storage geometry, reservations, linker details, runtime,
-and production tooling unselected until evidence exists.
+`embassy-nrf` `nrf52840` feature as the implementation compile-probe profile.
+The locked target build is verified; keep all storage geometry, reservations,
+linker details, runtime, and production tooling unselected until evidence
+exists.
 
-**State:** `FIXED` as a documentation proposal. This document does not claim
-that the hardware path is implemented or production-ready.
+**State:** `FIXED` as an implementation profile with a verified compile probe;
+the hardware path is not implemented or production-ready.
 
 **Next owner action:** produce the exact board configuration record and linked
-image before modifying the embedded manifests. Any manifest change must be
-reviewed for MSRV, `no_std`, license, allocation behavior, and frozen-wire
-compatibility.
+image before adding executor, radio, or storage providers. Any further manifest
+change must be reviewed for MSRV, `no_std`, license, allocation behavior, and
+frozen-wire compatibility.
