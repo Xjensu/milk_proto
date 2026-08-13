@@ -542,6 +542,20 @@ mod tests {
     }
 
     #[test]
+    fn provisional_friendship_wire_layout_is_byte_stable() {
+        let f = Friendship {
+            friend: Key32([0xa5; 32]),
+            since: 0x0102_0304_0506_0708,
+            countersig: Sig64([0x5a; 64]),
+        };
+        let bytes = f.encode();
+        assert_eq!(bytes.len(), 104);
+        assert_eq!(&bytes[..32], &[0xa5; 32]);
+        assert_eq!(&bytes[32..40], &0x0102_0304_0506_0708u64.to_le_bytes());
+        assert_eq!(&bytes[40..], &[0x5a; 64]);
+    }
+
+    #[test]
     fn friendship_decode_rejects_truncated_body() {
         let bytes = Friendship {
             friend: Key32([2; 32]),
