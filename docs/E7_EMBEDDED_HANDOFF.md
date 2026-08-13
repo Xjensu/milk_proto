@@ -30,11 +30,14 @@ pre-fence feature tree selected `mmp-core` `default`/`std` for
 defaults.
 This is an E7-S1/E7-S3 dependency-closure gap, not an Embassy compiler bug.
 
-The existing root CI `no-std-size-gate` intentionally excludes both E7 crates
-and measures only per-crate `.rlib` archives for the lower protocol crates. It
-does not prove a linked nRF52 image, static RAM, executor stack, or radio
-backend footprint. The documented `<=256 KiB` flash / `<=48 KiB` RAM numbers
-therefore remain target acceptance criteria, not current measurements.
+The existing root CI `no-std-size-gate` explicitly checks `mmp-node-embassy`,
+`mmp-tal-embedded`, `mmp-flash-journal`, and `mmp-store` for the
+`thumbv7em-none-eabihf` dependency closure. It then measures only per-crate
+`.rlib` archives for the lower protocol crates. This proves target compilation
+and catches archive-size regressions; it does not prove a linked nRF52 image,
+static RAM, executor stack, or radio-backend footprint. The documented
+`<=256 KiB` flash / `<=48 KiB` RAM numbers therefore remain target acceptance
+criteria, not current measurements.
 
 ## Reproducible host checks
 
@@ -42,7 +45,7 @@ Run from `implementation/mesh-milk` with the repository's stable toolchain and
 the installed `thumbv7em-none-eabihf` target:
 
 ```powershell
-# TAL placeholder: this is the only E7 crate currently cross-checkable.
+# E7 TAL shell: target compilation only; no radio backend or target binary.
 cargo check -p mmp-tal-embedded --target thumbv7em-none-eabihf --no-default-features
 
 # Lower no_std proof used by the existing size gate.
