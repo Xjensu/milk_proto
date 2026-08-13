@@ -36,6 +36,112 @@ pub struct Record<'a> {
     pub payload: &'a [u8],
 }
 
+/// Four-byte marker for the board-owned durable generation-floor payload.
+///
+/// This payload is intentionally separate from the ordinary snapshot record:
+/// a board may place it in a different journal region and advance it using
+/// its own power-loss policy. The framing checksum remains unauthenticated.
+pub const GENERATION_FLOOR_MAGIC: [u8; 4] = *b"GFL1";
+
+/// Canonical payload length of a durable generation-floor record.
+pub const GENERATION_FLOOR_PAYLOAD_LEN: usize = GENERATION_FLOOR_MAGIC.len() + 8;
+
+/// Errors returned by the bounded durable generation-floor codec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GenerationFloorRecordError {
+    /// The caller-provided output buffer is too short for the canonical image.
+    OutputTooSmall {
+        /// Number of bytes required by the canonical payload.
+        required: usize,
+    },
+    /// The payload ended before its complete marker and generation.
+    Truncated,
+    /// The payload contains bytes after its canonical generation field.
+    Trailing,
+    /// The payload marker is not [`GENERATION_FLOOR_MAGIC`].
+    InvalidMagic,
+    /// The generation is reserved or otherwise unusable for a durable floor.
+    InvalidGeneration,
+    /// The journal framing generation differs from the payload generation.
+    GenerationMismatch {
+        /// Generation stored in the journal record header.
+        outer: u64,
+        /// Generation stored in the canonical payload.
+        inner: u64,
+    },
+}
+
+/// A decoded durable generation-floor payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GenerationFloorRecord {
+    /// The validated non-reserved generation.
+    pub generation: u64,
+}
+
+impl GenerationFloorRecord {
+    /// Encode the canonical `GFL1 || generation_le_u64` payload.
+    ///
+    /// This codec only provides framing and value validation. It does not
+    /// authenticate the floor or couple it atomically to another journal.
+    pub fn encode(self, out: &mut [u8]) -> Result<&[u8], GenerationFloorRecordError> {
+        validate_floor_generation(self.generation)?;
+        if out.len() < GENERATION_FLOOR_PAYLOAD_LEN {
+            return Err(GenerationFloorRecordError::OutputTooSmall {
+                required: GENERATION_FLOOR_PAYLOAD_LEN,
+            });
+        }
+        out[..GENERATION_FLOOR_MAGIC.len()].copy_from_slice(&GENERATION_FLOOR_MAGIC);
+        out[GENERATION_FLOOR_MAGIC.len()..GENERATION_FLOOR_PAYLOAD_LEN]
+            .copy_from_slice(&self.generation.to_le_bytes());
+        Ok(&out[..GENERATION_FLOOR_PAYLOAD_LEN])
+    }
+
+    /// Decode one complete canonical `GFL1 || generation_le_u64` payload.
+    pub fn decode(payload: &[u8]) -> Result<Self, GenerationFloorRecordError> {
+        if payload.len() < GENERATION_FLOOR_PAYLOAD_LEN {
+            return Err(GenerationFloorRecordError::Truncated);
+        }
+        if payload.len() > GENERATION_FLOOR_PAYLOAD_LEN {
+            return Err(GenerationFloorRecordError::Trailing);
+        }
+        if payload[..GENERATION_FLOOR_MAGIC.len()] != GENERATION_FLOOR_MAGIC {
+            return Err(GenerationFloorRecordError::InvalidMagic);
+        }
+        let generation = u64::from_le_bytes(
+            payload[GENERATION_FLOOR_MAGIC.len()..GENERATION_FLOOR_PAYLOAD_LEN]
+                .try_into()
+                .expect("canonical floor width"),
+        );
+        validate_floor_generation(generation)?;
+        Ok(Self { generation })
+    }
+
+    /// Validate a journal record and bind its payload generation to the
+    /// record's outer generation header.
+    ///
+    /// The journal checksum and commit marker prove only structural integrity;
+    /// this function does not provide authentication or atomic coupling with
+    /// a separate snapshot journal.
+    pub fn validate_record(record: Record<'_>) -> Result<Self, GenerationFloorRecordError> {
+        validate_floor_generation(record.generation)?;
+        let decoded = Self::decode(record.payload)?;
+        if decoded.generation != record.generation {
+            return Err(GenerationFloorRecordError::GenerationMismatch {
+                outer: record.generation,
+                inner: decoded.generation,
+            });
+        }
+        Ok(decoded)
+    }
+}
+
+fn validate_floor_generation(generation: u64) -> Result<(), GenerationFloorRecordError> {
+    if generation == 0 || generation == u64::MAX {
+        return Err(GenerationFloorRecordError::InvalidGeneration);
+    }
+    Ok(())
+}
+
 /// Result of scanning a journal image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScanResult<'a> {
@@ -783,6 +889,124 @@ mod tests {
         image[*used..*used + encoded.len()].copy_from_slice(encoded);
         *used += encoded.len();
         encoded.len()
+    }
+
+    #[test]
+    fn generation_floor_record_has_exact_golden_bytes() {
+        let generation = 0x0102_0304_0506_0708;
+        let mut encoded = [0xa5; GENERATION_FLOOR_PAYLOAD_LEN];
+        let payload = GenerationFloorRecord { generation }
+            .encode(&mut encoded)
+            .unwrap();
+        assert_eq!(
+            payload,
+            &[b'G', b'F', b'L', b'1', 0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,]
+        );
+        assert_eq!(
+            GenerationFloorRecord::decode(payload),
+            Ok(GenerationFloorRecord { generation })
+        );
+    }
+
+    #[test]
+    fn generation_floor_record_rejects_short_long_and_invalid_values() {
+        let generation = 9;
+        let mut canonical = [0; GENERATION_FLOOR_PAYLOAD_LEN];
+        GenerationFloorRecord { generation }
+            .encode(&mut canonical)
+            .unwrap();
+
+        for length in 0..GENERATION_FLOOR_PAYLOAD_LEN {
+            assert_eq!(
+                GenerationFloorRecord::decode(&canonical[..length]),
+                Err(GenerationFloorRecordError::Truncated)
+            );
+        }
+
+        let mut trailing = [0; GENERATION_FLOOR_PAYLOAD_LEN + 1];
+        trailing[..GENERATION_FLOOR_PAYLOAD_LEN].copy_from_slice(&canonical);
+        assert_eq!(
+            GenerationFloorRecord::decode(&trailing),
+            Err(GenerationFloorRecordError::Trailing)
+        );
+
+        canonical[0] ^= 1;
+        assert_eq!(
+            GenerationFloorRecord::decode(&canonical),
+            Err(GenerationFloorRecordError::InvalidMagic)
+        );
+        canonical[..GENERATION_FLOOR_MAGIC.len()].copy_from_slice(&GENERATION_FLOOR_MAGIC);
+
+        canonical[GENERATION_FLOOR_MAGIC.len()..].fill(0);
+        assert_eq!(
+            GenerationFloorRecord::decode(&canonical),
+            Err(GenerationFloorRecordError::InvalidGeneration)
+        );
+        canonical[GENERATION_FLOOR_MAGIC.len()..].copy_from_slice(&u64::MAX.to_le_bytes());
+        assert_eq!(
+            GenerationFloorRecord::decode(&canonical),
+            Err(GenerationFloorRecordError::InvalidGeneration)
+        );
+    }
+
+    #[test]
+    fn generation_floor_record_encode_rejects_small_output_and_reserved_values() {
+        for length in 0..GENERATION_FLOOR_PAYLOAD_LEN {
+            let mut out = [0; GENERATION_FLOOR_PAYLOAD_LEN];
+            assert_eq!(
+                GenerationFloorRecord { generation: 1 }.encode(&mut out[..length]),
+                Err(GenerationFloorRecordError::OutputTooSmall {
+                    required: GENERATION_FLOOR_PAYLOAD_LEN,
+                })
+            );
+        }
+        for generation in [0, u64::MAX] {
+            let mut out = [0; GENERATION_FLOOR_PAYLOAD_LEN];
+            assert_eq!(
+                GenerationFloorRecord { generation }.encode(&mut out),
+                Err(GenerationFloorRecordError::InvalidGeneration)
+            );
+        }
+    }
+
+    #[test]
+    fn generation_floor_record_binds_inner_and_outer_generations() {
+        let mut payload = [0; GENERATION_FLOOR_PAYLOAD_LEN];
+        GenerationFloorRecord { generation: 7 }
+            .encode(&mut payload)
+            .unwrap();
+        assert_eq!(
+            GenerationFloorRecord::validate_record(Record {
+                generation: 8,
+                payload: &payload,
+            }),
+            Err(GenerationFloorRecordError::GenerationMismatch { outer: 8, inner: 7 })
+        );
+        assert_eq!(
+            GenerationFloorRecord::validate_record(Record {
+                generation: 7,
+                payload: &payload,
+            }),
+            Ok(GenerationFloorRecord { generation: 7 })
+        );
+    }
+
+    #[test]
+    fn generation_floor_record_validates_through_single_slot_scan() {
+        let generation = 13;
+        let mut payload = [0; GENERATION_FLOOR_PAYLOAD_LEN];
+        let payload = GenerationFloorRecord { generation }
+            .encode(&mut payload)
+            .unwrap();
+        let mut backend = TraceBackend::<128>::new(8);
+        let mut scratch = [0; 96];
+        let written = write_record(&mut backend, 0, generation, payload, &mut scratch).unwrap();
+
+        let result = scan_first_validated(&backend.bytes[..written], |record| {
+            GenerationFloorRecord::validate_record(record).map(|_| ())
+        })
+        .unwrap();
+        assert_eq!(result.selected.unwrap().generation, generation);
     }
 
     #[test]

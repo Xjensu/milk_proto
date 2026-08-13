@@ -13,8 +13,9 @@ store:
   `Vec`-returning reads and infallible `put` cannot prove the handbook §4.9
   requirement of no allocation growth after initialization.
 * `mmp-flash-journal` supplies allocation-free framing, checksums, scanning,
-  and a provider-neutral aligned-I/O trait. It deliberately does not select
-  board geometry or promise power-loss atomicity.
+  a provider-neutral aligned-I/O trait, and a bounded `GFL1` generation-floor
+  codec. It deliberately does not select board geometry, authenticate local
+  metadata, or promise power-loss atomicity.
 * `mmp-node-embassy` and `mmp-tal-embedded` are bounded queue shells; neither
   is a flash provider or a board backend.
 
@@ -283,10 +284,14 @@ enforces a floor supplied by a separate provider-owned crash-safe record. The
 nRF52840 board composition also exposes
 `recover_nvmc_fixed_store_with_durable_floor`, so a board adapter cannot
 accidentally use the legacy floor-zero helper when it has a persisted floor.
-This closes the comparison seam only; it does not make the journal's
-in-memory `GenerationFloor` durable. A board implementation must still define
-where the floor is stored, how it advances with the snapshot, and how power
-loss is tested before own-origin producers are enabled.
+The journal also exposes `GenerationFloorRecord`, a canonical, no-alloc
+`GFL1 || generation_le_u64` payload validator that binds the inner generation
+to the outer journal header. This closes the structural comparison seam only;
+it does not make the journal's in-memory `GenerationFloor` durable. The
+checksum remains unauthenticated and the separate floor and snapshot regions
+remain non-atomic. A board implementation must still define where the floor is
+stored, how it advances with the snapshot, how cross-region mismatches fail
+closed, and how power loss is tested before own-origin producers are enabled.
 
 The MMP/1 specification remains frozen throughout these steps.
 

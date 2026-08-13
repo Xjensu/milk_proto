@@ -19,6 +19,21 @@ The current production-safe boundary remains:
 - receive-only operation until auxiliary replay/cryptographic state shares the
   same durable commit boundary.
 
+## Bounded floor-record primitive (2026-08-13)
+
+`mmp-flash-journal` now provides a provider-neutral, allocation-free
+`GenerationFloorRecord` codec for a board-owned floor region. Its canonical
+payload is `GFL1 || generation_le_u64`; it rejects reserved generations,
+malformed lengths, invalid markers, and any mismatch between the payload
+generation and the enclosing journal generation. The codec is a structural
+validation seam only. The journal checksum is unkeyed corruption detection,
+not authentication, and the codec does not couple a floor write atomically to
+the snapshot journal. A board adapter must therefore keep the floor in a
+separately specified crash-safe region, select only fully validated records,
+and fail closed on cross-region generation mismatches. Until those policies
+are implemented and fault-tested, this primitive must not be used to claim
+durable anti-rollback or producer checkpoint continuity.
+
 ## Evidence and threat model
 
 An attacker who can alter local journal bytes can recompute the unkeyed journal
