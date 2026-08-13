@@ -445,9 +445,11 @@ is no disk-streaming encode path yet, so very large hosts should keep call sites
 | Bundle store (queued/in-mesh messages, gossiped claims-as-bundles, your own outgoing messages) | **Yes** | it *is* the `SnapshotStore` contents |
 | `ClaimStore` (every claim currently held, not just what re-arrives as class-3 gossip) | **Yes** | persisted alongside the bundle store, one claim per record, re-verified on load — a claim whose signature no longer checks out is dropped exactly like a corrupt record (handbook §4.3 step 1) |
 | Group membership (which groups you're in, current epoch, admin flag) | **Yes** | persisted as an opaque per-group blob (handbook §4.3 step 2) |
-| `SeenIndex` (dedup/replay window) | No | rebuilds from mesh traffic; a duplicate re-offer after restart is deduped again once re-seen |
-| `ReceiptFilter` | No | same — receipts re-propagate |
-| Session/ratchet state (X3DH state, conversation ratchets, group sender-key ratchets — including group members' sender-key distributions) | No — **intentional** | doc 04 §7 "the network is the backup": a restarted node re-establishes sessions and re-derives a fresh local sender key per group exactly like a freshly-met/freshly-invited peer would. Persisting a chain seed or ratchet position would weaken forward secrecy if the disk is captured and risks message-key reuse on the sending side. See `docs/IMPLEMENTATION_HANDBOOK.md` §4.3 for the open PCS-vs-persistence design question if you're considering changing this. |
+| `SeenIndex` (dedup/replay window) | **Yes** | typed snapshot record; restores the replay window so a post-restart duplicate is rejected |
+| `ReceiptFilter` | **Yes** | typed snapshot record; restores receipt deduplication across restart |
+| Receiver-local authority admission state (pinned roots, verified certificates, subscriptions, revocations) | **Yes** | validated authority snapshot; contains no secret key material |
+| Explicit local blocklist | **Yes** | validated receiver-local snapshot; restored before new sessions are admitted |
+| Session/ratchet/prekey secret state (X3DH state, conversation ratchets, group sender-key ratchets and distributions) | **No — not yet wired through mobile** | A platform-keystore-backed provider is required before this secret material can survive restart. This secret material is not persisted by the current mobile FFI path; sessions and sender-key state are re-established through normal protocol traffic. |
 
 ## 7. What is NOT yet in this surface (as of this writing)
 

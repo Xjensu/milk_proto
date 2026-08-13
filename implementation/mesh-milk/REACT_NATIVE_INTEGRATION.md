@@ -566,10 +566,10 @@ class MmpMeshModule(reactContext: ReactApplicationContext) :
             try {
                 if (node == null) {
                     val seed = Keystore.loadOrCreateSeed(reactApplicationContext)
-                    // Bundles (queued/in-mesh, including our own outgoing sends) survive
-                    // process death via this path; SeenIndex/receipts/ratchet state
-                    // intentionally do not (doc 04 §7 drop-and-redownload) — see MmpNode's
-                    // own constructor doc comment in mmp-ffi/src/lib.rs.
+                    // The file-backed snapshot restores bundles, claims, group membership,
+                    // SeenIndex, ReceiptFilter, authority admission state, and blocklist.
+                    // Secret session/ratchet/prekey state (including sender keys) still needs
+                    // a platform-keystore provider and is not persisted by this mobile FFI path.
                     val storePath = reactApplicationContext.filesDir.resolve("mmp").path
                     node = MmpNode(seed, tierOf(tier), storePath)
                     reactApplicationContext.addLifecycleEventListener(this)
@@ -749,10 +749,10 @@ class MmpMesh: RCTEventEmitter, CBCentralManagerDelegate, CBPeripheralManagerDel
         driveQueue.async {
             if self.node == nil {
                 let seed = Keychain.loadOrCreateSeed()
-                // Bundles (queued/in-mesh, including our own outgoing sends) survive process
-                // death via this path; SeenIndex/receipts/ratchet state intentionally do not
-                // (doc 04 §7 drop-and-redownload) — see MmpNode's constructor doc comment in
-                // mmp-ffi/src/lib.rs.
+                // The file-backed snapshot restores bundles, claims, group membership,
+                // SeenIndex, ReceiptFilter, authority admission state, and blocklist.
+                // Secret session/ratchet/prekey state (including sender keys) still needs
+                // a platform-keystore provider and is not persisted by this mobile FFI path.
                 let storePath = FileManager.default
                     .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                     .appendingPathComponent("mmp").path
@@ -918,9 +918,12 @@ gives an in-memory-only node, same as before persistence was wired up) backs the
 file-backed store under the app's private data directory (`filesDir` on Android, Application
 Support on iOS), created and owned by the native module — same as `MOBILE_INTEGRATION.md`
 §4/§5's `Node.new(..., storePath, ...)` calls. This persists queued/in-mesh bundles
-(including our own outgoing sends) across restart; `SeenIndex`, receipts, and
-session/ratchet state intentionally do not survive — the network is the backup, and a
-restarted node re-establishes sessions the same way a freshly-met peer would (doc 04 §7).
+(including our own outgoing sends), claims, group membership, `SeenIndex`, `ReceiptFilter`,
+receiver-local authority admission state, and the explicit blocklist across restart. Secret
+session/ratchet/prekey state (including sender-key material) still requires a platform-keystore
+provider and is not persisted by this mobile FFI path; a restarted node re-establishes sessions
+and re-syncs that state through normal protocol traffic. The JS layer never receives these
+secret values.
 RN's JS layer never touches the path directly; if you need bundle-count-style diagnostics
 (e.g. showing storage usage in a settings screen), use `MmpClient.storeLen()` rather than
 exposing a raw path string.

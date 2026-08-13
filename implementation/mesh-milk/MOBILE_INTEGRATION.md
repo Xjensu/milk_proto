@@ -140,11 +140,13 @@ The exported surface (stable across languages):
 ```
 MmpNode(seed: bytes32, tier: Tier, storePath: string?)
   // storePath: null => in-memory MemStore, nothing survives process death.
-  // Some(path) => file-backed SnapshotStore: bundles (queued/in-mesh/our own
-  // outgoing sends) survive restart; SeenIndex/receipts/session-ratchet state
-  // intentionally do not (doc 04 §7 drop-and-redownload) — a restarted node
-  // re-establishes sessions and re-syncs claims the same way a freshly-met
-  // peer would. Persisted periodically by tick() and on demand by flush().
+  // Some(path) => file-backed SnapshotStore. Bundles, claims, group membership,
+  // SeenIndex, ReceiptFilter, authority admission state, and the explicit
+  // blocklist survive restart. Secret session/ratchet/prekey state (including
+  // sender-key material) still requires a platform-keystore provider and is
+  // not persisted by this mobile FFI path; a restarted node re-establishes
+  // sessions and re-syncs that state through normal protocol traffic.
+  // Persisted periodically by tick() and on demand by flush().
   .nodeId() -> bytes16              // BLAKE3(identity_pk)[0..16]
   .publicKey() -> bytes32
   .ownClaims() -> List<bytes>       // for QR verification / bootstrap exchange
@@ -159,7 +161,9 @@ MmpNode(seed: bytes32, tier: Tier, storePath: string?)
   .sendBody(peer: bytes16, apptype: u8, payload: bytes) -> bytes16
   .messageState(id: bytes16) -> FfiDeliveryState?
   .createGroup() -> bytes16
-  .groupInvite(gid, peer) / .groupSend(gid, text) / .groupRemove(gid, member) -> u16 (new epoch)
+  .groupInvite(gid: bytes16, peer: bytes16)                     // throws FfiError; no return
+  .groupSend(gid: bytes16, text: string) -> bytes16             // throws FfiError; BundleID
+  .groupRemove(gid: bytes16, member: bytes16) -> u16            // throws FfiError; new epoch
   .groupSendBody(gid, apptype: u8, payload: bytes) -> bytes16
   .groupMembers(gid) -> List<bytes16>
   .requestFriendship(peerPublicKey: bytes32) / .allowFriendshipFrom(peerPublicKey: bytes32)

@@ -103,6 +103,74 @@ class MobileDocumentationContractTests(unittest.TestCase):
             self.assertIn("--bin uniffi-bindgen", command, language)
             self.assertIn(f"--language {language}", command, language)
 
+    def test_persistence_and_group_return_contracts_are_aligned(self) -> None:
+        """Keep mobile-facing docs aligned with the current SnapshotStore boundary."""
+        docs = {
+            "api": self.api_reference,
+            "mobile": self.mobile,
+            "react_native": self.react_native,
+        }
+        persistence_markers = (
+            "seenindex",
+            "receiptfilter",
+            "authority admission state",
+            "blocklist",
+            "session/ratchet",
+            "prekey",
+            "platform-keystore",
+            "not persist",
+        )
+        for name, document in docs.items():
+            with self.subTest(document=name):
+                document = document.lower()
+                for marker in persistence_markers:
+                    self.assertIn(marker, document, marker)
+
+        # The API reference is the normative wording for each persisted record.
+        self.assertIn(
+            "| `SeenIndex` (dedup/replay window) | **Yes** |", self.api_reference
+        )
+        self.assertIn("| `ReceiptFilter` | **Yes** |", self.api_reference)
+        self.assertIn("| Explicit local blocklist | **Yes** |", self.api_reference)
+        self.assertIn(
+            "| Session/ratchet/prekey secret state",
+            self.api_reference,
+        )
+
+        # Group methods have deliberately different return shapes in every host
+        # binding: invite is void, send returns a BundleID, and remove returns
+        # the new epoch.
+        group_shapes = {
+            "api": (
+                "node.groupInvite(gid: bytes16, peer: bytes16)",
+                "node.groupSend(gid: bytes16, text: string) -> bytes16",
+                "node.groupRemove(gid: bytes16, member: bytes16) -> u16",
+            ),
+            "mobile": (
+                ".groupInvite(gid: bytes16, peer: bytes16)",
+                ".groupSend(gid: bytes16, text: string) -> bytes16",
+                ".groupRemove(gid: bytes16, member: bytes16) -> u16",
+            ),
+            "react_native": (
+                "groupInvite(gid: GroupIdHex, peer: NodeIdHex): Promise<void>",
+                "groupSend(gid: GroupIdHex, text: string): Promise<MsgIdHex>",
+                "groupRemove(gid: GroupIdHex, member: NodeIdHex): Promise<number>",
+            ),
+        }
+        for name, markers in group_shapes.items():
+            with self.subTest(group_document=name):
+                for marker in markers:
+                    self.assertIn(marker, docs[name], marker)
+
+        self.assertNotIn(
+            ".groupInvite(gid, peer) / .groupSend(gid, text) / .groupRemove",
+            self.mobile,
+        )
+        self.assertNotIn(
+            "`SeenIndex`, receipts, and\nsession/ratchet state intentionally do not survive",
+            self.react_native,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
