@@ -10,6 +10,19 @@ use mmp_types::ids::Id16;
 use crate::embedded_store::EmbeddedBundleStore;
 use crate::store::{BundleMeta, StorePutOutcome, StoreReadError};
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+static NEXT_INSTANCE_ID: AtomicUsize = AtomicUsize::new(1);
+
+fn allocate_instance_id() -> Option<u64> {
+    NEXT_INSTANCE_ID
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            current.checked_add(1)
+        })
+        .ok()
+        .map(|id| id as u64)
+}
+
 /// Construction and local admission errors for [`FixedBundleStore`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FixedStoreError {
@@ -31,6 +44,7 @@ pub enum FixedStoreError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FixedReservation {
     provider: u64,
+    instance: u64,
     nonce: u64,
     id: Id16,
     declared_size: u32,
@@ -64,6 +78,7 @@ pub struct FixedBundleStore<const SLOTS: usize, const B: usize, const TOTAL: u64
     reserved_slots: usize,
     next_nonce: u64,
     provider: u64,
+    instance: u64,
 }
 
 impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOTS, B, TOTAL> {
@@ -72,6 +87,7 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOT
         if SLOTS == 0 || B == 0 || TOTAL == 0 || B > MAX_BUNDLE {
             return Err(FixedStoreError::InvalidConfiguration);
         }
+        let instance = allocate_instance_id().ok_or(FixedStoreError::InvalidConfiguration)?;
         Ok(Self {
             slots: [None; SLOTS],
             reservations: [None; SLOTS],
@@ -80,6 +96,7 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOT
             reserved_slots: 0,
             next_nonce: 0,
             provider,
+            instance,
         })
     }
 
@@ -164,6 +181,7 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOT
             .ok_or(FixedStoreError::Capacity)?;
         let token = FixedReservation {
             provider: self.provider,
+            instance: self.instance,
             nonce,
             id: meta.id,
             declared_size: meta.size,
@@ -241,7 +259,7 @@ impl<const SLOTS: usize, const B: usize, const TOTAL: u64> FixedBundleStore<SLOT
     /// Abort a reservation. Repeating abort for an already-consumed token is
     /// harmless; a token from another provider is rejected.
     pub fn abort_reservation(&mut self, token: &FixedReservation) -> Result<(), FixedStoreError> {
-        if token.provider != self.provider {
+        if token.provider != self.provider || token.instance != self.instance {
             return Err(FixedStoreError::InvalidToken);
         }
         let Some(index) = self.pending_index(token) else {
@@ -512,6 +530,28 @@ mod tests {
         assert_eq!(
             other.abort_reservation(&token),
             Err(FixedStoreError::InvalidToken)
+        );
+    }
+
+    #[test]
+    fn same_provider_namespace_cannot_cross_instance() {
+        let mut first = Store::new(7).unwrap();
+        let token = first.try_reserve(meta(1, 4, 100)).unwrap();
+
+        let mut second = Store::new(7).unwrap();
+        let second_token = second.try_reserve(meta(1, 4, 100)).unwrap();
+        assert_ne!(token, second_token);
+        assert_eq!(
+            second.commit_reserved(&token, meta(1, 4, 100), &[1; 4]),
+            Err(FixedStoreError::InvalidToken)
+        );
+        assert_eq!(
+            second.abort_reservation(&token),
+            Err(FixedStoreError::InvalidToken)
+        );
+        assert_eq!(
+            second.commit_reserved(&second_token, meta(1, 4, 100), &[1; 4]),
+            Ok(StorePutOutcome::Inserted)
         );
     }
 
