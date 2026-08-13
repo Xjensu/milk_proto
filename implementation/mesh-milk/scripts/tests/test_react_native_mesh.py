@@ -57,6 +57,9 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "sendText",
             "sendBody",
             "messageState",
+            "pollSendBatch",
+            "pollEventBatch",
+            "pollCloseBatch",
             "sendFile",
             "fetchFile",
             "cancelFetch",
@@ -159,12 +162,15 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("this.resolvedNative = requireMmpNativeModule(this.usesDefaultNative ? undefined : this.nativeSource)", self.client)
         self.assertIn("The exported default client is lazy", self.readme)
 
-    def test_raw_ble_bytes_do_not_cross_the_js_surface(self) -> None:
+    def test_batched_polling_uses_opaque_base64_frames(self) -> None:
         lowered = self.client.lower()
-        for forbidden in ("linkdata", "linkup", "linkdown", "pollsend", "outframe"):
+        for forbidden in ("linkdata", "linkup", "linkdown"):
             self.assertNotIn(forbidden, lowered)
-        self.assertIn("raw BLE frames never cross", self.client)
-        self.assertIn("never be sent through the React Native JS bridge", self.readme)
+        self.assertIn("export interface OutFrame", self.client)
+        self.assertIn("bytes: Base64Value", self.client)
+        self.assertIn("mapNativeOutFrame", self.client)
+        self.assertIn("raw BLE input", self.readme)
+        self.assertIn("OutFrame.bytes` as base64", self.readme)
 
     def test_turbo_module_surface_is_documented(self) -> None:
         for method in (
@@ -186,6 +192,9 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "sendText",
             "sendBody",
             "messageState",
+            "pollSendBatch",
+            "pollEventBatch",
+            "pollCloseBatch",
             "sendFile",
             "fetchFile",
             "cancelFetch",
@@ -433,13 +442,27 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             "linkData(",
             "linkDown(",
             "onBeacon(",
-            "pollSend(",
-            "pollEvent(",
-            "pollClose(",
             "tick(",
         ):
             self.assertNotIn(forbidden, self.client)
-        self.assertIn("native radio/clock owner", self.readme)
+        for method in ("pollSendBatch", "pollEventBatch", "pollCloseBatch"):
+            self.assertIn(f"{method}(maxItems: number)", self.client)
+        self.assertIn("native module owns the BLE radio", self.readme)
+
+    def test_bounded_polling_preserves_fifo_contract_and_fail_closed_mapping(self) -> None:
+        for signature in (
+            "pollSendBatch(maxItems: number): Promise<OutFrame[]>",
+            "pollEventBatch(maxItems: number): Promise<MmpEvent[]>",
+            "pollCloseBatch(maxItems: number): Promise<number[]>",
+        ):
+            self.assertIn(signature, self.client)
+        self.assertIn("mapNativeOutFrame(frame)", self.client)
+        self.assertIn("mapNativeEvent(event)", self.client)
+        self.assertIn("requireNativeLink(link, 'close link')", self.client)
+        self.assertIn("pollSendBatch(maxItems: number): Promise<OutFrame[]>", self.turbo)
+        self.assertIn("pollEventBatch(maxItems: number): Promise<NativePollEvent[]>", self.turbo)
+        self.assertIn("pollCloseBatch(maxItems: number): Promise<number[]>", self.turbo)
+        self.assertIn("fixed\nlimit of 64", self.readme)
 
     def test_file_failure_enum_mapping_is_explicit(self) -> None:
         self.assertIn("export type NativeFileFailReason = 'HashMismatch' | 'Abandoned'", self.client)
@@ -453,7 +476,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("Generic lower-casing is not valid", self.readme)
 
     def test_file_failure_events_are_normalized_at_the_client_boundary(self) -> None:
-        self.assertIn("if (event.type === 'fileFailed')", self.client)
+        self.assertIn("case 'fileFailed':", self.client)
         self.assertIn("reason: mapNativeFileFailReason", self.client)
         self.assertIn("NativeFileFailReason", self.client)
 
@@ -461,12 +484,12 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("export function mapNativeFileOffer", self.client)
         self.assertIn("thumbRoot === undefined || thumbRoot === null", self.client)
         self.assertIn("thumbRoot: thumbRoot === undefined || thumbRoot === null", self.client)
-        self.assertIn("if (event.type === 'fileOffered')", self.client)
+        self.assertIn("case 'fileOffered':", self.client)
         self.assertIn("entries.map((entry) => mapNativeFileOffer(entry))", self.client)
         self.assertIn("Malformed native fileOffered entries", self.client)
-        self.assertIn("if (event.type === 'fileReady')", self.client)
-        self.assertIn("requireNativeString(ready.root, 'root')", self.client)
-        self.assertIn("requireNativeString(ready.path, 'path')", self.client)
+        self.assertIn("case 'fileReady':", self.client)
+        self.assertIn("requireNativeString(event.root, 'root')", self.client)
+        self.assertIn("requireNativeString(event.path, 'path')", self.client)
         self.assertIn("export {", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
         self.assertIn("mapNativeFileOffer", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
 
@@ -495,7 +518,8 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         ):
             self.assertIn(f"case '{event_type}':", self.client)
         self.assertIn("Unknown native event type", self.client)
-        self.assertIn("mapNativeEventType(event);", self.client)
+        self.assertIn("handler(mapNativeEvent(event));", self.client)
+        self.assertIn("events.map((event) => mapNativeEvent(event))", self.client)
         self.assertIn("mapNativeEventType", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
 
     def test_delivery_state_mapping_is_exhaustive_and_fail_closed(self) -> None:
@@ -521,14 +545,14 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
             self.assertIn(f"return '{public}';", self.client)
         self.assertIn("Unknown native delivery state", self.client)
         self.assertIn("throw new MmpNativeModuleError", self.client)
-        self.assertIn("mapNativeDeliveryState((event as unknown as { state: unknown }).state)", self.client)
+        self.assertIn("state: mapNativeDeliveryState(event.state)", self.client)
         self.assertIn("messageState(id: MsgIdHex): Promise<string | null>", self.client)
 
     def test_delivery_state_is_normalized_at_query_and_event_boundaries(self) -> None:
         self.assertIn("mapNativeDeliveryState(value)", self.client)
         self.assertIn("value === null ? null", self.client)
-        self.assertIn("event.type !== 'deliveryProgress'", self.client)
-        self.assertIn("handler(event)", self.client)
+        self.assertIn("case 'deliveryProgress':", self.client)
+        self.assertIn("handler(mapNativeEvent(event));", self.client)
         self.assertIn("mapNativeDeliveryState", (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8"))
         self.assertIn("historical lower-case spellings `inmesh` and", self.readme)
         self.assertIn("generated Kotlin spellings `QUEUED`, `IN_MESH`", self.readme)
@@ -544,7 +568,7 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("Unknown native tier", self.client)
         self.assertIn("return this.native.status().then((value) => mapNativeStatus(value));", self.client)
         self.assertIn("status: mapNativeStatus(value.status)", self.client)
-        self.assertIn("tier: mapNativeTier((event as unknown as { tier: unknown }).tier)", self.client)
+        self.assertIn("tier: mapNativeTier(event.tier)", self.client)
         index = (PACKAGE / "src" / "index.ts").read_text(encoding="utf-8")
         self.assertIn("mapNativeTier", index)
         self.assertIn("NativeTier", index)

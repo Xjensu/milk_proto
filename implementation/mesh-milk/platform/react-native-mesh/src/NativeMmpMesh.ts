@@ -45,6 +45,56 @@ type FileProgress = {
   stripes: number;
 };
 
+type OutFrame = {
+  link: number;
+  /** Base64-encoded encrypted/framed bytes; binary arrays never cross JS. */
+  bytes: string;
+};
+
+type NativeFileOffer = {
+  nameB64: string;
+  mimeB64: string;
+  size: number;
+  root: string;
+  thumbRoot: string | null;
+};
+
+/**
+ * Tagged native event record returned by bounded polling. Optional fields keep
+ * the Codegen declaration self-contained while preserving every known FfiEvent
+ * payload field for MmpClient's explicit fail-closed normalization.
+ */
+type NativePollEvent = {
+  type: string;
+  conv?: string;
+  from?: string;
+  id?: string;
+  body?: string;
+  apptype?: number;
+  parents?: string[];
+  state?: string;
+  owner?: string;
+  field?: number;
+  peer?: string;
+  since?: number;
+  successor?: string | null;
+  gid?: string;
+  epoch?: number;
+  tier?: string;
+  scope?: string;
+  annType?: number;
+  notAfter?: number;
+  text?: string;
+  official?: boolean;
+  effectivePriority?: number;
+  scopeNameHint?: string | null;
+  sharer?: string;
+  entries?: NativeFileOffer[];
+  root?: string;
+  path?: string;
+  reason?: string;
+};
+
 /** TurboModule codegen surface; native implementations validate string enums. */
 export interface Spec extends TurboModule {
   start(tier: string): Promise<string>;
@@ -83,6 +133,9 @@ export interface Spec extends TurboModule {
   fetchFile(root: string, dest: string): Promise<void>;
   cancelFetch(root: string): Promise<void>;
   fileProgress(root: string): Promise<FileProgress | null>;
+  pollSendBatch(maxItems: number): Promise<OutFrame[]>;
+  pollEventBatch(maxItems: number): Promise<NativePollEvent[]>;
+  pollCloseBatch(maxItems: number): Promise<number[]>;
   createGroup(): Promise<string>;
   groupInvite(gid: string, peer: string): Promise<void>;
   groupSend(gid: string, text: string): Promise<string>;

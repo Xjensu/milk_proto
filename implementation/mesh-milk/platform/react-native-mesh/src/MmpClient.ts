@@ -226,9 +226,56 @@ export function mapNativeFileFailReason(value: unknown): FileFailReason {
 
 function requireNativeString(value: unknown, field: string): string {
   if (typeof value !== 'string') {
-    throw new MmpNativeModuleError(`Malformed native file event field: ${field}`);
+    throw new MmpNativeModuleError(`Malformed native field: ${field}`);
   }
   return value;
+}
+
+function requireNativeLink(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new MmpNativeModuleError(`Malformed native link value: ${field}`);
+  }
+  return value;
+}
+
+function requireNativeNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new MmpNativeModuleError(`Malformed native event field: ${field}`);
+  }
+  return value;
+}
+
+function requireNativeBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== 'boolean') {
+    throw new MmpNativeModuleError(`Malformed native event field: ${field}`);
+  }
+  return value;
+}
+
+function requireNativeStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new MmpNativeModuleError(`Malformed native event field: ${field}`);
+  }
+  return value.map((entry) => requireNativeString(entry, field));
+}
+
+function requireOptionalNativeString(value: unknown, field: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return requireNativeString(value, field);
+}
+
+/** Normalize one outbound frame without allowing binary values to leak as arrays. */
+export function mapNativeOutFrame(value: unknown): OutFrame {
+  if (value === null || typeof value !== 'object') {
+    throw new MmpNativeModuleError('Malformed native outbound frame');
+  }
+  const raw = value as Record<string, unknown>;
+  return {
+    link: requireNativeLink(raw.link, 'link'),
+    bytes: requireNativeString(raw.bytes, 'bytes'),
+  };
 }
 
 /**
@@ -265,6 +312,124 @@ export function mapNativeEventType(value: unknown): MmpEvent['type'] {
       return type;
     default:
       throw new MmpNativeModuleError(`Unknown native event type: ${String(type)}`);
+  }
+}
+
+/**
+ * Normalize one native event for both emitter delivery and bounded polling.
+ * Every discriminator and enum conversion is explicit; an adapter event that
+ * is not understood by this package is rejected before it reaches the app.
+ */
+export function mapNativeEvent(value: unknown): MmpEvent {
+  const type = mapNativeEventType(value);
+  const event = value as Record<string, unknown>;
+  switch (type) {
+    case 'messageReceived':
+      return {
+        type,
+        conv: requireNativeString(event.conv, 'conv'),
+        from: requireNativeString(event.from, 'from'),
+        id: requireNativeString(event.id, 'id'),
+        body: requireNativeString(event.body, 'body'),
+        apptype: requireNativeNumber(event.apptype, 'apptype'),
+      };
+    case 'messageGap':
+      return {
+        type,
+        conv: requireNativeString(event.conv, 'conv'),
+        parents: requireNativeStringArray(event.parents, 'parents'),
+      };
+    case 'delivered':
+      return { type, id: requireNativeString(event.id, 'id') };
+    case 'deliveryProgress':
+      return {
+        type,
+        id: requireNativeString(event.id, 'id'),
+        state: mapNativeDeliveryState(event.state),
+      };
+    case 'claimUpdated':
+      return {
+        type,
+        owner: requireNativeString(event.owner, 'owner'),
+        field: requireNativeNumber(event.field, 'field'),
+      };
+    case 'compromiseWarning':
+      return { type, owner: requireNativeString(event.owner, 'owner') };
+    case 'friendshipEstablished':
+      return {
+        type,
+        peer: requireNativeString(event.peer, 'peer'),
+        since: requireNativeNumber(event.since, 'since'),
+      };
+    case 'peerRevoked':
+      return {
+        type,
+        peer: requireNativeString(event.peer, 'peer'),
+        successor: requireOptionalNativeString(event.successor, 'successor'),
+      };
+    case 'contactSeen':
+      return { type, peer: requireNativeString(event.peer, 'peer') };
+    case 'established':
+      return { type, peer: requireNativeString(event.peer, 'peer') };
+    case 'groupInvite':
+      return {
+        type,
+        gid: requireNativeString(event.gid, 'gid'),
+        from: requireNativeString(event.from, 'from'),
+      };
+    case 'groupMessage':
+      return {
+        type,
+        gid: requireNativeString(event.gid, 'gid'),
+        from: requireNativeString(event.from, 'from'),
+        id: requireNativeString(event.id, 'id'),
+        apptype: requireNativeNumber(event.apptype, 'apptype'),
+        body: requireNativeString(event.body, 'body'),
+      };
+    case 'groupEpochChanged':
+      return {
+        type,
+        gid: requireNativeString(event.gid, 'gid'),
+        epoch: requireNativeNumber(event.epoch, 'epoch'),
+      };
+    case 'tierChanged':
+      return { type, tier: mapNativeTier(event.tier) };
+    case 'announcement':
+      return {
+        type,
+        id: requireNativeString(event.id, 'id'),
+        scope: requireNativeString(event.scope, 'scope'),
+        annType: requireNativeNumber(event.annType, 'annType'),
+        notAfter: requireNativeNumber(event.notAfter, 'notAfter'),
+        text: requireNativeString(event.text, 'text'),
+        from: requireNativeString(event.from, 'from'),
+        official: requireNativeBoolean(event.official, 'official'),
+        effectivePriority: requireNativeNumber(event.effectivePriority, 'effectivePriority'),
+        scopeNameHint: requireOptionalNativeString(event.scopeNameHint, 'scopeNameHint'),
+      };
+    case 'fileOffered':
+      if (!Array.isArray(event.entries)) {
+        throw new MmpNativeModuleError('Malformed native fileOffered entries');
+      }
+      return {
+        type,
+        conv: requireNativeString(event.conv, 'conv'),
+        from: requireNativeString(event.from, 'from'),
+        sharer: requireNativeString(event.sharer, 'sharer'),
+        entries: event.entries.map((entry) => mapNativeFileOffer(entry)),
+      };
+    case 'fileReady':
+      return {
+        type,
+        root: requireNativeString(event.root, 'root'),
+        path: requireNativeString(event.path, 'path'),
+      };
+    case 'fileFailed':
+      return {
+        type,
+        root: requireNativeString(event.root, 'root'),
+        reason: mapNativeFileFailReason(event.reason),
+      };
   }
 }
 
@@ -318,6 +483,26 @@ export interface FileOffer {
   thumbRoot: FileRootHex | null;
 }
 
+/**
+ * One outbound frame exposed to a host-owned beta transport.  The link handle
+ * is numeric at the React Native boundary and the already encrypted/framed
+ * bytes use the package-wide base64 convention.  No byte array crosses JS.
+ */
+export interface OutFrame {
+  link: number;
+  bytes: Base64Value;
+}
+
+/** Native spelling of an outbound frame; kept separate for boundary checks. */
+export type NativeOutFrame = OutFrame;
+
+/**
+ * Native event records returned by a bounded poll.  The discriminator and
+ * payload fields are normalized by `mapNativeEvent`; keeping the input opaque
+ * prevents an adapter from bypassing the fail-closed event mapping.
+ */
+export type NativePollEvent = Record<string, unknown>;
+
 export type MmpEvent =
   | { type: 'messageReceived'; conv: MsgIdHex; from: NodeIdHex; id: MsgIdHex; body: string; apptype: number }
   | { type: 'messageGap'; conv: MsgIdHex; parents: MsgIdHex[] }
@@ -349,7 +534,7 @@ export type MmpEvent =
   | { type: 'fileReady'; root: FileRootHex; path: string }
   | { type: 'fileFailed'; root: FileRootHex; reason: FileFailReason };
 
-/** The native methods consumed by this package. Link bytes are intentionally absent. */
+/** The native methods consumed by this package. Host-owned batch polling uses base64 bytes. */
 export interface MmpMeshNative {
   // Lifecycle. Idempotent: if a node already exists for this seed/store, returns its id.
   start(tier: Tier): Promise<NodeIdHex>;
@@ -408,6 +593,11 @@ export interface MmpMeshNative {
   sendBody(peer: NodeIdHex, apptype: number, payloadB64: Base64Value): Promise<MsgIdHex>;
   /** Returns a native enum string; MmpClient validates and normalizes it. */
   messageState(id: MsgIdHex): Promise<string | null>;
+
+  // Host-owned bounded polling. Native implementations clamp maxItems to 64.
+  pollSendBatch(maxItems: number): Promise<NativeOutFrame[]>;
+  pollEventBatch(maxItems: number): Promise<NativePollEvent[]>;
+  pollCloseBatch(maxItems: number): Promise<number[]>;
 
   // File transfer. Data and variable-length manifest fields use base64;
   // content-addressed IDs use lowercase hex. Full files are explicit-pull.
@@ -476,6 +666,9 @@ const REQUIRED_NATIVE_METHODS = [
   'sendText',
   'sendBody',
   'messageState',
+  'pollSendBatch',
+  'pollEventBatch',
+  'pollCloseBatch',
   'sendFile',
   'fetchFile',
   'cancelFetch',
@@ -655,6 +848,23 @@ export class MmpClient {
     );
   }
 
+  /** Drain up to the native bounded batch limit of outbound frames in FIFO order. */
+  pollSendBatch(maxItems: number): Promise<OutFrame[]> {
+    return this.native.pollSendBatch(maxItems).then((frames) => frames.map((frame) => mapNativeOutFrame(frame)));
+  }
+
+  /** Drain application events in FIFO order using the same mapping as onEvent. */
+  pollEventBatch(maxItems: number): Promise<MmpEvent[]> {
+    return this.native.pollEventBatch(maxItems).then((events) => events.map((event) => mapNativeEvent(event)));
+  }
+
+  /** Drain transport-local close actions in FIFO order. */
+  pollCloseBatch(maxItems: number): Promise<number[]> {
+    return this.native.pollCloseBatch(maxItems).then((links) =>
+      links.map((link) => requireNativeLink(link, 'close link')),
+    );
+  }
+
   /** Share a file; `dataB64` is decoded by the native adapter, never by the core API. */
   sendFile(peer: NodeIdHex, name: string, mime: string, dataB64: Base64Value): Promise<FileSend> {
     return this.native.sendFile(peer, name, mime, dataB64);
@@ -767,59 +977,10 @@ export class MmpClient {
     return this.native.lastPersistError();
   }
 
-  /** Subscribe only to app-level events; raw BLE frames never cross this boundary. */
+  /** Subscribe only to normalized app-level events. */
   onEvent(handler: (event: MmpEvent) => void): () => void {
     const subscription = this.emitter.addListener('mmp', (event) => {
-      mapNativeEventType(event);
-      if (event.type !== 'deliveryProgress') {
-        if (event.type === 'fileFailed') {
-          // UniFFI emits the native enum spelling (HashMismatch/Abandoned),
-          // while the JS contract intentionally uses camel-case values.
-          // Normalize at the bridge boundary so beta applications never
-          // have to handle two incompatible event schemas.
-          handler({
-            ...event,
-            reason: mapNativeFileFailReason((event as unknown as { reason: unknown }).reason),
-          });
-          return;
-        }
-        if (event.type === 'fileOffered') {
-          const entries = (event as unknown as { entries: unknown }).entries;
-          if (!Array.isArray(entries)) {
-            throw new MmpNativeModuleError('Malformed native fileOffered entries');
-          }
-          handler({
-            ...event,
-            entries: entries.map((entry) => mapNativeFileOffer(entry)),
-          });
-          return;
-        }
-        if (event.type === 'fileReady') {
-          const ready = event as unknown as { root: unknown; path: unknown };
-          handler({
-            ...event,
-            root: requireNativeString(ready.root, 'root'),
-            path: requireNativeString(ready.path, 'path'),
-          });
-          return;
-        }
-        if (event.type === 'tierChanged') {
-          handler({
-            ...event,
-            tier: mapNativeTier((event as unknown as { tier: unknown }).tier),
-          });
-          return;
-        }
-        handler(event);
-        return;
-      }
-
-      // Native event adapters may still provide Rust/legacy enum spellings;
-      // normalize only this event and preserve every unrelated payload byte.
-      handler({
-        ...event,
-        state: mapNativeDeliveryState((event as unknown as { state: unknown }).state),
-      });
+      handler(mapNativeEvent(event));
     });
     return () => subscription.remove();
   }

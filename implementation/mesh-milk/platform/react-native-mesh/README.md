@@ -5,10 +5,11 @@ It mirrors §2 of `REACT_NATIVE_INTEGRATION.md`: promise-based lifecycle, identi
 messaging, group, diagnostics, and persistence methods plus an app-level event stream.
 
 The native module owns the BLE radio, the drive queue, the monotonic clock, and the
-`MmpNode` instance. BLE advertisements, GATT frames, and other link bytes are never
-represented by this package and must never be sent through the React Native JS bridge.
-Only base64-encoded opaque values documented by the bridge and ciphertext-free app
-events cross into JavaScript.
+`MmpNode` instance. BLE advertisements, GATT input, and link lifecycle callbacks are
+never represented by this package. The optional bounded output poll used by a beta
+transport harness exposes only base64-encoded `OutFrame.bytes`; no binary array or
+secret crosses the React Native JS bridge. Ciphertext-free app events are normalized
+before they reach JavaScript.
 
 ## Authority, scope, and friendship API
 
@@ -33,13 +34,13 @@ network time. `requestFriendship` and `allowFriendshipFrom` take identity public
 keys, not 16-byte NodeIDs.
 
 The package intentionally does not expose the FFI constructors (`new` and
-`new_with_store_limit`), `tick`, beacon generation, link injection, raw wire or
-event polling, or transport close queues. Construction and storage limits are
-native configuration; `start`/`stop` are the single JS lifecycle seam. The
-remaining operations belong to the native radio/clock owner; exposing them to
-a JS app would permit raw BLE bytes, duplicate lifecycle ownership, or unsafe
-clock rewinds. A future beta harness can still drive lifecycle, status,
-metrics, capabilities, explicit persistence, and ciphertext-free app events.
+`new_with_store_limit`), `tick`, beacon generation, or link injection. Construction
+and storage limits are native configuration; `start`/`stop` remain the lifecycle
+seam. A beta transport harness may use the bounded `pollSendBatch`,
+`pollEventBatch`, and `pollCloseBatch` methods to drain host-owned queues; each
+call preserves FIFO order, treats zero as a no-op, and relies on the native fixed
+limit of 64. `pollSendBatch` returns `OutFrame.bytes` as base64 and does not grant
+the JS app ownership of the radio or session lifecycle.
 
 ## Beta-test session helper
 
@@ -102,7 +103,7 @@ The facade delegates validation of IDs, base64 values, authority policy, file
 limits, and enum spellings to `MmpClient`/native. Unknown capabilities and
 delivery states therefore fail closed rather than being coerced. `nodeId()` and
 `publicKey()` expose public identity values only; seeds, private keys, provider
-handles, raw BLE frames, and automatic uploads remain unavailable. `flush()` is
+handles, raw BLE input, and automatic uploads remain unavailable. `flush()` is
 always explicit, and `report()`/`reportJson()` are local snapshots only.
 
 Group application bodies use base64 at the bridge boundary. Decrypted
