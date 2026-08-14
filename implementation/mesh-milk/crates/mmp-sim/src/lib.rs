@@ -561,6 +561,11 @@ impl ContactSchedule {
         self.config_id
     }
 
+    /// Return the node count used to validate this schedule.
+    pub fn node_count(&self) -> usize {
+        self.node_count
+    }
+
     /// Return the simulator seed used to derive node identities for this run.
     pub fn seed(&self) -> u64 {
         self.seed
@@ -584,6 +589,129 @@ impl ContactSchedule {
         }
         Ok(sim.trace_id())
     }
+}
+
+/// One fixed application workload for a research replay.
+///
+/// The workload is intentionally limited to one direct text message. It is a
+/// host-side experiment input, not an application or wire-protocol type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedWorkload<'a> {
+    pub sender: usize,
+    pub recipient: usize,
+    pub text: &'a str,
+}
+
+/// Provenance needed to reproduce one baseline replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResearchProvenance {
+    pub node_count: usize,
+    pub seed: u64,
+    pub config_id: [u8; 16],
+    pub trace_id: [u8; 16],
+    pub workload_id: [u8; 16],
+    pub generator: ContactGeneratorKind,
+}
+
+/// One unchanged MMP/1 baseline replay result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mmp1Replay {
+    pub provenance: ResearchProvenance,
+    pub metrics: ContactScenarioMetrics,
+}
+
+/// Errors raised before a research replay can produce a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResearchExperimentError {
+    InvalidWorkload,
+    Send(mmp_node::SendError),
+    Schedule(ScheduleError),
+    TraceMismatch,
+}
+
+/// A deterministic, baseline-only research harness.
+///
+/// It replays one validated contact schedule and workload through fresh
+/// MMP/1 simulator nodes. EWS, contact-survival, and DoF remain sidecar
+/// evaluators until a separate candidate transport adapter is designed; this
+/// type never changes routing, copy budgets, wire frames, or production APIs.
+#[derive(Debug, Clone, Copy)]
+pub struct ResearchExperiment<'a> {
+    schedule: &'a ContactSchedule,
+    workload: FixedWorkload<'a>,
+    generator: ContactGeneratorKind,
+}
+
+impl<'a> ResearchExperiment<'a> {
+    pub fn new(
+        schedule: &'a ContactSchedule,
+        workload: FixedWorkload<'a>,
+        generator: ContactGeneratorKind,
+    ) -> Self {
+        Self {
+            schedule,
+            workload,
+            generator,
+        }
+    }
+
+    /// Run the unchanged MMP/1 baseline against the configured schedule.
+    pub fn run_mmp1_baseline(&self) -> Result<Mmp1Replay, ResearchExperimentError> {
+        self.validate_workload()?;
+        let mut sim = Sim::new(self.schedule.node_count(), self.schedule.seed());
+        sim.introduce(self.workload.sender, self.workload.recipient);
+        sim.try_send_text(
+            self.workload.sender,
+            self.workload.recipient,
+            self.workload.text,
+        )
+        .map_err(ResearchExperimentError::Send)?;
+        if sim.trace_id() != self.schedule.config_id() {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        let trace_id = self
+            .schedule
+            .replay(&mut sim)
+            .map_err(ResearchExperimentError::Schedule)?;
+        if trace_id != self.schedule.trace_id() {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        let metrics = sim.research_metrics(self.generator, None);
+        if metrics.trace_id != trace_id {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        Ok(Mmp1Replay {
+            provenance: ResearchProvenance {
+                node_count: self.schedule.node_count(),
+                seed: self.schedule.seed(),
+                config_id: self.schedule.config_id(),
+                trace_id,
+                workload_id: workload_id(self.workload),
+                generator: self.generator,
+            },
+            metrics,
+        })
+    }
+
+    fn validate_workload(&self) -> Result<(), ResearchExperimentError> {
+        if self.workload.sender >= self.schedule.node_count()
+            || self.workload.recipient >= self.schedule.node_count()
+            || self.workload.sender == self.workload.recipient
+            || self.workload.text.len() >= MAX_BUNDLE
+        {
+            return Err(ResearchExperimentError::InvalidWorkload);
+        }
+        Ok(())
+    }
+}
+
+fn workload_id(workload: FixedWorkload<'_>) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new_derive_key("mmp1 research workload-v1");
+    hasher.update(&(workload.sender as u64).to_le_bytes());
+    hasher.update(&(workload.recipient as u64).to_le_bytes());
+    hasher.update(&(workload.text.len() as u64).to_le_bytes());
+    hasher.update(workload.text.as_bytes());
+    trace_id(&hasher)
 }
 
 fn trace_hasher(node_count: usize, seed: u64) -> blake3::Hasher {
@@ -775,14 +903,25 @@ impl Sim {
     /// `delivery_ratio()`. Returns the BundleID so callers can also assert
     /// directly on `Event::Delivered { id }`.
     pub fn send_text(&mut self, from: usize, to: usize, text: &str) -> Id16 {
+        self.try_send_text(from, to, text)
+            .expect("peer claims known and text fits the simulator workload")
+    }
+
+    /// Fallible text-send seam for research harnesses and hostile fixtures.
+    /// The existing infallible helper remains for legacy scenario tests; new
+    /// callers should prefer this method so wire-size failures cannot panic.
+    pub fn try_send_text(
+        &mut self,
+        from: usize,
+        to: usize,
+        text: &str,
+    ) -> Result<Id16, mmp_node::SendError> {
         let peer = self.nodes[to].node_id();
-        let id = self.nodes[from]
-            .send_text(&peer, text)
-            .expect("peer claims known (introduce first)");
+        let id = self.nodes[from].send_text(&peer, text)?;
         self.tracked.insert(id);
         self.sent_at_ms.insert(id, self.now_ms);
         self.counters.messages_sent += 1;
-        id
+        Ok(id)
     }
 
     /// Run one meeting between nodes `i` and `j`: open a link, pump wire

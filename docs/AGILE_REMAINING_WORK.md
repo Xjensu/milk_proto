@@ -215,10 +215,14 @@ remaining work by the project priority queue.
 
 - **Source/status:** `MMP_PHI_EDR_HANDOFF.md`, `PROPOSAL_AUDIT_MMP_PHI.md`,
   `CONTACT_SURVIVAL_IMPLEMENTATION_PLAN.md`; `OPEN / RESEARCH-ONLY`.
-- **Scope:** implement selectable, wire-neutral strategies for Energy-Dual
-  Rendezvous, evidence-weighted spray, contact-survival scheduling, and
-  fountain/DoF transfer in the simulator. Keep the reference MMP/1 router
-  selectable and unchanged.
+- **Scope:** the simulator now has a baseline-only `ResearchExperiment` seam
+  that replays one validated `ContactSchedule` and fixed text workload through
+  unchanged MMP/1 nodes while retaining seed/config/trace/workload provenance.
+  The remaining work is to add selectable, wire-neutral candidate adapters for
+  Energy-Dual Rendezvous, evidence-weighted spray, contact-survival scheduling,
+  and fountain/DoF transfer; keep the reference MMP/1 router selectable and
+  unchanged. The existing EWS, contact-survival, and DoF modules remain
+  sidecar evaluators and must not be reported as candidate transport metrics.
 - **Acceptance:** identical seeds/workloads for baseline and candidate,
   separately reported delivery, latency, copies, bytes/airtime, storage, CPU,
   and energy-proxy distributions with confidence intervals. The “2×” claim is

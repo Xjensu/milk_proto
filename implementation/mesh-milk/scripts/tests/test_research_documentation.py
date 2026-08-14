@@ -46,6 +46,21 @@ class ResearchDocumentationTests(unittest.TestCase):
         self.assertIn("do not provide trace calibration, confidence", handoff.lower())
         self.assertIn("mmp/φ improvement claim", handoff.lower())
 
+    def test_research_baseline_seam_is_documented_as_baseline_only(self) -> None:
+        handoff = (REPO_ROOT / "docs" / "MMP_PHI_EDR_HANDOFF.md").read_text(
+            encoding="utf-8"
+        )
+        agile = (REPO_ROOT / "docs" / "AGILE_REMAINING_WORK.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ResearchExperiment", handoff)
+        self.assertIn("ResearchProvenance", handoff)
+        self.assertIn("baseline-only host harness", handoff)
+        self.assertIn("sidecar", handoff)
+        self.assertIn("baseline-only `ResearchExperiment` seam", agile)
+        self.assertIn("candidate adapters", agile)
+        self.assertIn("OPEN / RESEARCH-ONLY", agile)
+
 
 if __name__ == "__main__":
     unittest.main()

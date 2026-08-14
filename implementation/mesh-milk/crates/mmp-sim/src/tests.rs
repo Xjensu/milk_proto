@@ -388,6 +388,132 @@ fn replay_schedule_keeps_baseline_and_candidate_on_identical_trace() {
 }
 
 #[test]
+fn research_baseline_replay_reports_shared_provenance_and_is_repeatable() {
+    let schedule = crate::ContactSchedule::new(
+        4,
+        0xBACE_0001,
+        vec![
+            crate::ContactEvent {
+                left: 0,
+                right: 3,
+                gap_ms: 1_000,
+            },
+            crate::ContactEvent {
+                left: 1,
+                right: 2,
+                gap_ms: 2_000,
+            },
+            crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 3_000,
+            },
+        ],
+    )
+    .expect("valid schedule");
+    let experiment = crate::ResearchExperiment::new(
+        &schedule,
+        crate::FixedWorkload {
+            sender: 0,
+            recipient: 3,
+            text: "baseline replay",
+        },
+        crate::ContactGeneratorKind::UniformRandom,
+    );
+
+    let first = experiment.run_mmp1_baseline().expect("baseline replay");
+    let second = experiment.run_mmp1_baseline().expect("repeat replay");
+    assert_eq!(first, second);
+    assert_eq!(first.provenance.config_id, schedule.config_id());
+    assert_eq!(first.provenance.trace_id, schedule.trace_id());
+    assert_eq!(first.metrics.trace_id, schedule.trace_id());
+    assert_eq!(first.metrics.messages_sent, 1);
+    assert!(first.metrics.quota_ok);
+}
+
+#[test]
+fn research_baseline_replay_rejects_invalid_workload_before_simulation() {
+    let schedule = crate::ContactSchedule::new(
+        2,
+        0xBACE_0002,
+        vec![crate::ContactEvent {
+            left: 0,
+            right: 1,
+            gap_ms: 1_000,
+        }],
+    )
+    .expect("valid schedule");
+
+    let self_send = crate::ResearchExperiment::new(
+        &schedule,
+        crate::FixedWorkload {
+            sender: 0,
+            recipient: 0,
+            text: "invalid",
+        },
+        crate::ContactGeneratorKind::UniformRandom,
+    );
+    assert_eq!(
+        self_send.run_mmp1_baseline(),
+        Err(crate::ResearchExperimentError::InvalidWorkload)
+    );
+
+    let out_of_range = crate::ResearchExperiment::new(
+        &schedule,
+        crate::FixedWorkload {
+            sender: 0,
+            recipient: 2,
+            text: "invalid",
+        },
+        crate::ContactGeneratorKind::UniformRandom,
+    );
+    assert_eq!(
+        out_of_range.run_mmp1_baseline(),
+        Err(crate::ResearchExperimentError::InvalidWorkload)
+    );
+}
+
+#[test]
+fn research_baseline_replay_rejects_oversized_workload() {
+    let schedule =
+        crate::ContactSchedule::new(2, 0xBACE_0003, Vec::new()).expect("valid empty schedule");
+    let oversized = "x".repeat(crate::MAX_BUNDLE);
+    let experiment = crate::ResearchExperiment::new(
+        &schedule,
+        crate::FixedWorkload {
+            sender: 0,
+            recipient: 1,
+            text: &oversized,
+        },
+        crate::ContactGeneratorKind::UniformRandom,
+    );
+    assert_eq!(
+        experiment.run_mmp1_baseline(),
+        Err(crate::ResearchExperimentError::InvalidWorkload)
+    );
+}
+
+#[test]
+fn research_baseline_replay_rejects_text_that_fails_wire_framing() {
+    let schedule =
+        crate::ContactSchedule::new(2, 0xBACE_0004, Vec::new()).expect("valid empty schedule");
+    let near_limit = "x".repeat(crate::MAX_BUNDLE - 1);
+    let experiment = crate::ResearchExperiment::new(
+        &schedule,
+        crate::FixedWorkload {
+            sender: 0,
+            recipient: 1,
+            text: &near_limit,
+        },
+        crate::ContactGeneratorKind::UniformRandom,
+    );
+    assert!(matches!(
+        experiment.run_mmp1_baseline(),
+        Err(crate::ResearchExperimentError::Send(_))
+    ));
+}
+
+#[test]
 fn fresh_sims_reset_wire_and_contact_accounting() {
     let mut used = Sim::new(2, 0xACC0_0001);
     used.meet(0, 1, 1_000);

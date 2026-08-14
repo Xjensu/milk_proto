@@ -254,3 +254,23 @@ The CLI is an adapter over the mature `mmp-sim` parser rather than a second
 JSON implementation. This keeps the input contract and bounds in one place;
 the remaining production gate is still measured platform data with raw-log
 provenance and a pre-registered comparison matrix.
+
+## 2026-08-14 baseline replay provenance seam
+
+`mmp-sim::ResearchExperiment` now provides a baseline-only host harness for
+the first reproducible comparison step. It accepts one validated
+`ContactSchedule` and one bounded direct-text workload, creates fresh MMP/1
+simulator nodes, replays the schedule, and returns `Mmp1Replay` with
+`ResearchProvenance` containing the node count, seed, schedule configuration
+ID, full trace ID, generator label, and a deterministic workload ID. Invalid
+sender/recipient pairs and clearly oversized text are rejected before
+simulation state is created; final wire-framing failures are returned as a
+typed send error rather than panicking. Focused tests prove repeated runs are
+equality-identical, retain the schedule trace ID, account for one sent
+workload, and preserve quota safety.
+
+This is a baseline/provenance slice, not a candidate strategy or an EDR
+measurement. The EWS, contact-survival, and DoF modules still do not alter
+`Sim::meet`, routing, wire frames, or physical energy; they remain sidecar
+research evaluators until a separate candidate adapter and aggregation policy
+are agreed. No 2× claim follows from this seam.
