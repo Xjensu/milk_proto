@@ -1121,12 +1121,12 @@ that these hadn't been re-verified against code since early sessions:**
   exactly the R5/R6/R7/R10/R13/R14/R16/R20 items the story asks for. Marked "artifact done, human
   review still open" rather than a plain `DONE` — the review itself isn't an agent's to close, same
   shape as E3-S2's real-hardware half.
-- **E2-S1 (clippy gate) and E2-S3/S4/S5/E8-S1/S2/S3 were re-checked and confirmed genuinely still
-  open** (no clippy step in `ci.yml`'s `host` job; no `rust-version` anywhere and `rust-toolchain.toml`
-  still pins a moving `channel = "stable"`; zero per-crate READMEs; zero `#![warn(missing_docs)]`;
-  the `no-std-size-gate` job is still explicitly informational; no AAR/XCFramework CI job or script
-  exists; no `cargo-audit`/signed-artifact step exists) — these backlog entries were already
-  accurate, not stale.
+- **Historical pre-implementation snapshot (2026-07-23):** E2-S1 and
+  E2-S3/S4/S5/E8-S1/S2/S3 were recorded as open at that checkpoint (missing
+  CI gates, metadata/README coverage, `missing_docs`, the size threshold,
+  packaging jobs, and audit/signing steps). The dated sections below record
+  the subsequent closures and their remaining external verification gates;
+  this paragraph is not current status.
 - Also noted, not fixed (too small to warrant a story, but a real gap): `mmp-tal-mobile` — a
   deliberately-thin, pre-existing (present since the initial scaffold commit, `6b5d56a`) crate that
   only re-exports `mmp-tal` types and a `MOBILE_INTEGRATION.md §4/§5`-referenced `att_chunk` helper

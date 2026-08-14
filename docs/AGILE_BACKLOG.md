@@ -1,12 +1,15 @@
-# MMP/1 — Agile Backlog for AI-Agent Execution
+# MMP/1 — Historical Agile Backlog
 
 **Status:** synthesized 2026-07-15 from two verified audits. The 71-pass
 figure below is a historical baseline. At the 2026-08-08 checkpoint, the
-implementation has substantially advanced; the current serial workspace test
-matrix, exact per-crate counts, ignored cases, and remaining physical/CI gates
-are recorded in `docs/E5-S4_CONFORMANCE_HANDOFF.md`. Do not use the historical
-story counts as current evidence without a fresh workspace run.
-**Audience:** AI agents (Sonnet-class and up) executing stories under an orchestrator, per the standing directive: the orchestrator makes design decisions; agents implement against written specs.
+implementation had substantially advanced; the latest dated serial workspace
+matrix, exact per-crate counts, and ignored cases are preserved in
+`docs/E5-S4_CONFORMANCE_HANDOFF.md`, while remaining physical/CI gates are
+maintained in `docs/AGILE_REMAINING_WORK.md`. Do not use historical story
+counts as current evidence without a fresh workspace run.
+**Audience:** engineers and reviewers executing stories under the project
+orchestrator. Design decisions are made centrally; implementation follows the
+written specification and the evidence rules below.
 **Companion documents (read in this order before taking any story):**
 1. `docs/IMPLEMENTATION_HANDBOOK.md` — golden rules (§0), system map (§1), buildable specs (§4), definition of done (§6). **Binding on every story below.**
 2. `docs/ROADMAP_TO_PRODUCTION.md` — phase structure (A–E) and exit gates. This backlog refines it into stories; phases here mirror phases there.

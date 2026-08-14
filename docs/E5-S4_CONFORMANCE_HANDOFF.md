@@ -3,7 +3,10 @@
 ## Checkpoint
 
 The original transport checkpoint was commit `0343cf5` (`fix(mesh-milk): reserve control capacity for BLE lifecycle`).
-The current continuation checkpoint is commit `a931122` (`fix(mesh-milk): implement sealed async fallback safely`).
+The continuation checkpoint recorded by this historical handoff is commit
+`a931122` (`fix(mesh-milk): implement sealed async fallback safely`). It is not
+the current repository HEAD; use `docs/HANDOFF_INDEX.md` and
+`docs/AGILE_REMAINING_WORK.md` for current status and execution order.
 All commits in this handoff leave the frozen `specification/` directory unchanged.
 
 ### 2026-08-08 continuation update

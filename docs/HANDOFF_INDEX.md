@@ -87,6 +87,11 @@ These are current reference material rather than handoff status records:
   `BETA_TEST_APP_NICKNAME_API.md` — host/beta API contracts.
 - `AEAD_AD_CONFORMANCE.md`, `GROUP_CONTROL_SECURITY_AUDIT.md`, and
   `INTEROPERABILITY_TEST_GUIDE.md` — conformance and security evidence.
+- `DEVELOPMENT_REQUIREMENTS.md` — the single hardware/software prerequisite
+  inventory for platform, embedded, fuzzing, and release gates.
+- `E8-S3_STORE_COMPLIANCE.md` — the external Android/iOS store-submission
+  evidence boundary; it is not a claim that this repository contains a
+  store-ready application.
 - `E4-S5_BATTERY_RECORDING_TEMPLATE.md`, `MANUAL_BETA_TESTING.md`,
   `MANUAL_INTEROP_TESTING.md`, and `PC_MOBILE_MANUAL_TEST_GUIDE.md` —
   measurement and manual-test procedures.

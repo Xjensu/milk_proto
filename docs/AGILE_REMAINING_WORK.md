@@ -11,6 +11,32 @@ The detailed historical story record remains in `docs/AGILE_BACKLOG.md`.
 This file removes completed stories from the execution view and groups the
 remaining work by the project priority queue.
 
+## Execution record contract
+
+The queue below is the only current execution view. Every item keeps its
+evidence-backed `Source/status`, `Scope`, `Dependencies`, and `Acceptance`
+fields. Before work starts, the implementer must also record the following in
+the owning handoff or in the item's next dated update; values must come from
+repository evidence or an external gate, never from an assumed estimate:
+
+- **State:** `DISCOVER`, `DECIDE`, `IMPLEMENT`, `VERIFY`, or `CLOSE`, followed
+  by one terminal result: `FIXED`, `TEST-ONLY`, `NO-CHANGE-JUSTIFIED`, or
+  `DEFERRED-WITH-REASON`.
+- **Owner/gate:** the named repository owner, reviewer, platform, or external
+  authority. If none is assigned in the source material, write
+  `UNASSIGNED / EXTERNAL` rather than inventing a person.
+- **Evidence:** the exact handoff, command output, artifact, or external run
+  that can close the item.
+- **Verification command:** the smallest reproducible local/CI/HIL command
+  applicable to the item.
+- **Stop condition:** the concrete condition that closes the item or keeps it
+  deferred; a green surrogate test cannot close a hardware, external-review,
+  or specification-approval gate.
+
+Hardware- and software-gated work uses the single prerequisite inventory in
+`docs/DEVELOPMENT_REQUIREMENTS.md`. This contract adds process metadata only;
+it creates no new protocol requirement or backlog item.
+
 ## Definition of done for every implementation story
 
 - The change is narrowly scoped and preserves the frozen wire contract.
@@ -263,7 +289,7 @@ remaining work by the project priority queue.
 ## Dependency spine
 
 `AG-P1-01 → AG-P1-02 → Phase A exit → AG-P1-04/05 → AG-P0-02`
-`AG-P0-05 → AG-P1-08 → AG-P1-08 benchmark`
+`AG-P0-05 → AG-P1-08 (including its benchmark)`
 `E5-S4 vectors + AG-P0-04 → AG-P0-01 external review`
 `AG-P2-01/02 baseline → AG-P2-03 MMP/Φ comparison`
 

@@ -186,8 +186,9 @@ Stated here so the review isn't spent rediscovering already-tracked items:
 - **The MSRV floor is declared, but the exact compiler release is not pinned:** the workspace
   sets `rust-version = "1.96"` while `rust-toolchain.toml` intentionally follows rolling
   `stable`. Consumers requiring bit-for-bit toolchain reproducibility must pin that toolchain
-  outside this repository. Per-crate metadata/README coverage is complete for the current crates;
-  `missing_docs` remains a separate, open documentation-hardening effort.
+  outside this repository. Per-crate metadata/README coverage and the E2-S7 `missing_docs`
+  lint are complete for the current public crates; the CI/Clippy gates keep that state from
+  silently regressing. This does not close the separate external review or release-run gates.
 - **`AuthorityStore` non-secret state is durably validated and persisted** by `mmp-store`, FFI, and
   CLI snapshots. Ratchet/prekey secrets and platform-keystore integration remain intentionally
   open; those secrets must not be inferred from the checksum-only authority record.

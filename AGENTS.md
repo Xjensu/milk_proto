@@ -28,7 +28,10 @@ extension documents. Together they form the current specification inventory.
 - `specification/16`–`specification/18` — final rev-B extension documents for
   file transfer, deployment profiles, and authority announcements
 - `implementation/mesh-milk/` — the Rust workspace (reference implementation)
-- `other/` — audit reports, handoff notes, and miscellaneous files
+- `docs/` — audit reports, handoffs, decisions, roadmaps, and miscellaneous
+  implementation notes; this is the tracked documentation location.
+- `other/` — ignored local tooling/staging space; it contains no tracked
+  project artifacts and must not be treated as a source of truth.
 - Approved plan: `C:\Users\Asus\.Codex\plans\rustling-wishing-peacock.md`
 
 ## Fixed Requirements (do not re-litigate; settled in discovery)
