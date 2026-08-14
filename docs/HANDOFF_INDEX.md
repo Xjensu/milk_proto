@@ -20,6 +20,13 @@ location for traceability.
    evidence or explicitly non-normative research; their own status line is
    binding for how they may be used.
 
+The executive summary's “FINAL for v1 specification suite” label is read as
+the release index for the core 01–15 suite. The per-document phase/draft
+markers remain authoritative for document maturity in
+`docs/SPEC_STATUS_MANIFEST.json`; documents 16–18 are final rev-B extensions.
+This distinction is documentation governance only and does not modify the
+frozen specification.
+
 ## Implemented or verified handoffs
 
 These files record completed bounded slices. They are evidence, not open work
@@ -40,8 +47,6 @@ unless their “next steps” explicitly appear in `AGILE_REMAINING_WORK.md`:
 - `MOBILE_BACKPRESSURE_HANDOFF.md`
 - `MOBILE_THROWING_CONTRACT_HANDOFF.md`
 - `SEND_CHAIN_TRANSACTION_HANDOFF.md`
-- `CONTACT_SURVIVAL_IMPLEMENTATION_PLAN.md` (research-model implementation
-  plan; no production wire change)
 
 ## Designs and deferred implementation gates
 
@@ -69,6 +74,24 @@ These are not proof that a feature is production-ready:
 - `E6_S1_SOCIAL_CLUSTER_HANDOFF.md`
 - `AUTHORITY_ARITHMETIC_HANDOFF.md`
 - `E7_EMBEDDED_HANDOFF.md`
+- `CONTACT_SURVIVAL_IMPLEMENTATION_PLAN.md` (bounded research model; no
+  production wire change)
+- `MMP_PHI_SIMULATION.md` and `DOF_SPRAY_SIMULATION.md` (research models and
+  measurement scaffolding)
+
+## Supporting implementation and test documents
+
+These are current reference material rather than handoff status records:
+
+- `API_REFERENCE.md`, `BETA_TEST_APP_API.md`, and
+  `BETA_TEST_APP_NICKNAME_API.md` — host/beta API contracts.
+- `AEAD_AD_CONFORMANCE.md`, `GROUP_CONTROL_SECURITY_AUDIT.md`, and
+  `INTEROPERABILITY_TEST_GUIDE.md` — conformance and security evidence.
+- `E4-S5_BATTERY_RECORDING_TEMPLATE.md`, `MANUAL_BETA_TESTING.md`,
+  `MANUAL_INTEROP_TESTING.md`, and `PC_MOBILE_MANUAL_TEST_GUIDE.md` —
+  measurement and manual-test procedures.
+- `USER_FEATURES.md` and `MOBILE_API_MIGRATION.md` — product-facing and API
+  migration notes.
 
 The MMP/Φ documents are research hypotheses. They do not alter MMP/1 and are
 not production tasks until the baseline-and-candidate experiment gates in

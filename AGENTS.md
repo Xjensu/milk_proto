@@ -4,9 +4,17 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Project
 
-**mesh_milk** — a scientifically grounded peer-to-peer mesh communication protocol for phones, PCs, and IoT devices over BLE (WiFi Direct / UWB as future transports), operating with no Internet infrastructure. The deliverable is a 15-document RFC-quality specification suite (in `specification/`) suitable for Rust implementation, plus a `implementation/mesh-milk` Rust workspace.
+**mesh_milk** — a scientifically grounded peer-to-peer mesh communication protocol for phones, PCs, and IoT devices over BLE (WiFi Direct / UWB as future transports), operating with no Internet infrastructure. The deliverable is a frozen 01–15 core specification suite plus final rev-B extension documents 16–18 (in `specification/`) suitable for Rust implementation, plus a `implementation/mesh-milk` Rust workspace.
 
 ## Document Map
+
+The 15-document wording in the project description refers to the frozen core;
+the repository also contains final rev-B extension documents 16–18. Do not
+edit `specification/` during implementation work unless the explicit
+specification-change rule below is satisfied.
+
+The frozen core suite is documents 01–15; documents 16–18 are the final rev-B
+extension documents. Together they form the current specification inventory.
 
 - `specification/01`–`specification/15` — the specification suite, numbered by phase:
   - Phase 1: 01 (exec summary draft), 02 (research report)
@@ -17,6 +25,8 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - `specification/research/bibliography.md` — every cited source: URL, accessed date, confidence level
 - `specification/research/systems-comparison.md` — comparison matrix of prior systems
 - `specification/research/open-questions.md` — uncertainties carried between phases
+- `specification/16`–`specification/18` — final rev-B extension documents for
+  file transfer, deployment profiles, and authority announcements
 - `implementation/mesh-milk/` — the Rust workspace (reference implementation)
 - `other/` — audit reports, handoff notes, and miscellaneous files
 - Approved plan: `C:\Users\Asus\.Codex\plans\rustling-wishing-peacock.md`
@@ -42,5 +52,3 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - Adversarial persona review for major conclusions, written as explicit "Potential flaw / Alternative / Resolution" blocks: Skeptical Professor, Security Auditor, Performance Engineer, Distributed Systems Reviewer, Battery Specialist, Inventive Scientist.
 - Every citation added to a doc must also be added to `specification/research/bibliography.md` with a real, fetched URL — no citations from memory.
 - Phase gate: user reviews the phase's docs before the next phase begins.
-
-

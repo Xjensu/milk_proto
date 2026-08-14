@@ -74,6 +74,28 @@ class ResearchDocumentationTests(unittest.TestCase):
         self.assertIn("provenance-bound, wire-neutral EWS replay sidecar", agile)
         self.assertIn("paired replay", agile)
 
+    def test_repository_status_documents_shipped_file_plane_and_current_counts(self) -> None:
+        features = (REPO_ROOT / "docs" / "USER_FEATURES.md").read_text(
+            encoding="utf-8"
+        )
+        roadmap = (REPO_ROOT / "docs" / "ROADMAP_TO_PRODUCTION.md").read_text(
+            encoding="utf-8"
+        )
+        index = (REPO_ROOT / "docs" / "HANDOFF_INDEX.md").read_text(
+            encoding="utf-8"
+        )
+        agents = (REPO_ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+        self.assertIn("class-4 symbol orchestration", features)
+        self.assertIn("implemented but still bounded", features)
+        self.assertNotIn("class-4 symbol bundles aren't wired", features)
+        self.assertIn("69 active + 6 ignored", roadmap)
+        self.assertLess(
+            index.index("CONTACT_SURVIVAL_IMPLEMENTATION_PLAN.md"),
+            index.index("## Supporting implementation and test documents"),
+        )
+        self.assertIn("final rev-B extension documents 16–18", agents)
+
 
 if __name__ == "__main__":
     unittest.main()
