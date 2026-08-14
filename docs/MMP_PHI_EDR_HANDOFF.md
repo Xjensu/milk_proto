@@ -274,3 +274,20 @@ measurement. The EWS, contact-survival, and DoF modules still do not alter
 `Sim::meet`, routing, wire frames, or physical energy; they remain sidecar
 research evaluators until a separate candidate adapter and aggregation policy
 are agreed. No 2× claim follows from this seam.
+
+## 2026-08-14 EWS replay provenance adapter
+
+`mmp-sim::ews::evaluate_replay` now binds a caller-supplied EWS evidence set
+to an exact `Mmp1Replay` provenance record. It rejects mismatched seed,
+schedule, trace, workload, or generator identifiers, and independently
+rejects a replay whose metrics disagree with its trace or generator. The
+validated evidence is evaluated by the existing bounded deterministic EWS
+planner and receives an order-independent BLAKE3 fingerprint for audit
+reports.
+
+This remains a research sidecar: probabilities and costs are caller
+assumptions, the independence product is only a heuristic, and the result is
+not candidate transport evidence or a Byzantine/global copy-budget guarantee.
+The adapter does not mutate `Sim`, `mmp-router`, storage, wire frames, or the
+frozen specification. Candidate-vs-baseline delivery and energy claims still
+require paired replay aggregation with identical seeds and workloads.

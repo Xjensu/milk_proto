@@ -98,6 +98,10 @@ pub enum EwsError {
     InvalidThreshold,
     /// A derived ranking or cumulative value was not finite.
     SummaryOverflow,
+    /// Evidence was produced for a different baseline replay.
+    ProvenanceMismatch,
+    /// The replay's reported metrics do not match its provenance.
+    ReplayMetricsMismatch,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -257,6 +261,76 @@ pub fn evaluate(candidates: &[EwsCandidate], limits: EwsLimits) -> Result<EwsPla
         delivery_probability: 1.0 - residual_failure,
         total_cost,
     })
+}
+
+/// Caller-supplied EWS evidence paired with the exact baseline replay it
+/// describes. The probabilities and costs remain assumptions from the caller;
+/// this adapter does not infer them from baseline delivery metrics.
+#[derive(Debug, Clone, Copy)]
+pub struct EwsReplayEvidence<'a> {
+    pub provenance: crate::ResearchProvenance,
+    pub candidates: &'a [EwsCandidate],
+}
+
+/// A deterministic EWS sidecar result bound to one baseline replay.
+///
+/// This is research evidence only. It does not represent candidate transport
+/// metrics and does not mutate a simulator, router, store, or wire frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EwsReplayPlan {
+    pub provenance: crate::ResearchProvenance,
+    pub plan: EwsPlan,
+    pub evidence_count: usize,
+    /// BLAKE3-derived digest of the validated evidence, independent of input
+    /// order. The digest is an audit label, not a security credential.
+    pub evidence_fingerprint: [u8; 16],
+}
+
+/// Evaluate EWS evidence against one unchanged MMP/1 baseline replay.
+///
+/// Exact provenance equality prevents accidentally pairing a candidate model
+/// with a different seed, contact schedule, workload, or generator. The
+/// baseline's trace and generator are checked independently as a consistency
+/// guard. No baseline metric is used to derive `delivery_probability` or
+/// `cost`.
+pub fn evaluate_replay(
+    replay: &crate::Mmp1Replay,
+    evidence: EwsReplayEvidence<'_>,
+    limits: EwsLimits,
+) -> Result<EwsReplayPlan, EwsError> {
+    if evidence.provenance != replay.provenance {
+        return Err(EwsError::ProvenanceMismatch);
+    }
+    if replay.metrics.trace_id != replay.provenance.trace_id
+        || replay.metrics.generator != replay.provenance.generator
+    {
+        return Err(EwsError::ReplayMetricsMismatch);
+    }
+
+    let plan = evaluate(evidence.candidates, limits)?;
+    let evidence_fingerprint = fingerprint(evidence.candidates);
+    Ok(EwsReplayPlan {
+        provenance: replay.provenance,
+        plan,
+        evidence_count: evidence.candidates.len(),
+        evidence_fingerprint,
+    })
+}
+
+fn fingerprint(candidates: &[EwsCandidate]) -> [u8; 16] {
+    let mut canonical = candidates.to_vec();
+    canonical.sort_by_key(|candidate| candidate.carrier_id);
+    let mut hasher = blake3::Hasher::new_derive_key("mmp1 ews evidence-v1");
+    hasher.update(&(canonical.len() as u64).to_le_bytes());
+    for candidate in canonical {
+        hasher.update(&candidate.carrier_id.to_le_bytes());
+        hasher.update(&candidate.delivery_probability.to_bits().to_le_bytes());
+        hasher.update(&candidate.cost.to_bits().to_le_bytes());
+    }
+    let digest = hasher.finalize();
+    let mut result = [0_u8; 16];
+    result.copy_from_slice(&digest.as_bytes()[..16]);
+    result
 }
 
 #[cfg(test)]
@@ -495,5 +569,118 @@ mod tests {
             ),
             Err(EwsError::InvalidThreshold)
         );
+    }
+
+    fn baseline_replay_fixture() -> crate::Mmp1Replay {
+        let schedule = crate::ContactSchedule::new(
+            3,
+            0xE550_0001,
+            vec![crate::ContactEvent {
+                left: 0,
+                right: 1,
+                gap_ms: 1_000,
+            }],
+        )
+        .expect("valid schedule");
+        crate::ResearchExperiment::new(
+            &schedule,
+            crate::FixedWorkload {
+                sender: 0,
+                recipient: 1,
+                text: "ews replay",
+            },
+            crate::ContactGeneratorKind::UniformRandom,
+        )
+        .run_mmp1_baseline()
+        .expect("baseline replay")
+    }
+
+    #[test]
+    fn ews_replay_adapter_binds_plan_to_exact_provenance_and_order_independent_evidence() {
+        let replay = baseline_replay_fixture();
+        let first_candidates = [
+            EwsCandidate {
+                carrier_id: 7,
+                delivery_probability: 0.4,
+                cost: 1.0,
+            },
+            EwsCandidate {
+                carrier_id: 3,
+                delivery_probability: 0.6,
+                cost: 2.0,
+            },
+        ];
+        let second_candidates = [first_candidates[1], first_candidates[0]];
+        let limits = EwsLimits {
+            cost_budget: 3.0,
+            max_copies: 2,
+            min_marginal_gain_per_cost: 0.0,
+        };
+        let first = evaluate_replay(
+            &replay,
+            EwsReplayEvidence {
+                provenance: replay.provenance,
+                candidates: &first_candidates,
+            },
+            limits,
+        )
+        .expect("first sidecar plan");
+        let second = evaluate_replay(
+            &replay,
+            EwsReplayEvidence {
+                provenance: replay.provenance,
+                candidates: &second_candidates,
+            },
+            limits,
+        )
+        .expect("reordered sidecar plan");
+
+        assert_eq!(first.plan, second.plan);
+        assert_eq!(first.evidence_count, 2);
+        assert_eq!(first.evidence_fingerprint, second.evidence_fingerprint);
+        assert_eq!(first.provenance, replay.provenance);
+        assert_eq!(first.plan.selected_candidates, 2);
+    }
+
+    #[test]
+    fn ews_replay_adapter_rejects_mismatched_evidence_provenance() {
+        let replay = baseline_replay_fixture();
+        let mut mismatched = replay.provenance;
+        mismatched.workload_id[0] ^= 1;
+        let result = evaluate_replay(
+            &replay,
+            EwsReplayEvidence {
+                provenance: mismatched,
+                candidates: &[],
+            },
+            EwsLimits {
+                cost_budget: 0.0,
+                max_copies: 0,
+                min_marginal_gain_per_cost: 0.0,
+            },
+        );
+
+        assert_eq!(result, Err(EwsError::ProvenanceMismatch));
+    }
+
+    #[test]
+    fn ews_replay_adapter_rejects_inconsistent_baseline_metrics() {
+        let replay = baseline_replay_fixture();
+        let mut inconsistent = replay;
+        inconsistent.metrics.trace_id[0] ^= 1;
+        let result = evaluate_replay(
+            &inconsistent,
+            EwsReplayEvidence {
+                provenance: inconsistent.provenance,
+                candidates: &[],
+            },
+            EwsLimits {
+                cost_budget: 0.0,
+                max_copies: 0,
+                min_marginal_gain_per_cost: 0.0,
+            },
+        );
+
+        assert_eq!(result, Err(EwsError::ReplayMetricsMismatch));
     }
 }

@@ -61,6 +61,19 @@ class ResearchDocumentationTests(unittest.TestCase):
         self.assertIn("candidate adapters", agile)
         self.assertIn("OPEN / RESEARCH-ONLY", agile)
 
+    def test_ews_replay_adapter_is_documented_as_a_sidecar(self) -> None:
+        handoff = (REPO_ROOT / "docs" / "MMP_PHI_EDR_HANDOFF.md").read_text(
+            encoding="utf-8"
+        )
+        agile = (REPO_ROOT / "docs" / "AGILE_REMAINING_WORK.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("evaluate_replay", handoff)
+        self.assertIn("order-independent BLAKE3 fingerprint", handoff)
+        self.assertIn("not candidate transport evidence", handoff)
+        self.assertIn("provenance-bound, wire-neutral EWS replay sidecar", agile)
+        self.assertIn("paired replay", agile)
+
 
 if __name__ == "__main__":
     unittest.main()
