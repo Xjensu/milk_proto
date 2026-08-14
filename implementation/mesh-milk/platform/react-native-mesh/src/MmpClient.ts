@@ -224,6 +224,22 @@ export function mapNativeFileFailReason(value: unknown): FileFailReason {
   }
 }
 
+/** Map the native blob FSM explicitly; unknown states fail closed. */
+export function mapNativeBlobState(value: unknown): BlobState {
+  switch (value) {
+    case 'Wanted':
+      return 'wanted';
+    case 'Fetching':
+      return 'fetching';
+    case 'Assembled':
+      return 'assembled';
+    case 'Abandoned':
+      return 'abandoned';
+    default:
+      throw new MmpNativeModuleError(`Unknown native blob state: ${String(value)}`);
+  }
+}
+
 function requireNativeString(value: unknown, field: string): string {
   if (typeof value !== 'string') {
     throw new MmpNativeModuleError(`Malformed native field: ${field}`);
@@ -472,6 +488,28 @@ export interface FileProgress {
   totalSymbols: number;
   stripesDone: number;
   stripes: number;
+}
+
+/** Normalize a native progress record and enforce its bounded counters. */
+export function mapNativeFileProgress(value: unknown): FileProgress {
+  if (value === null || typeof value !== 'object') {
+    throw new MmpNativeModuleError('Malformed native file progress');
+  }
+  const raw = value as Record<string, unknown>;
+  const haveSymbols = requireNativeNumber(raw.haveSymbols, 'haveSymbols');
+  const totalSymbols = requireNativeNumber(raw.totalSymbols, 'totalSymbols');
+  const stripesDone = requireNativeNumber(raw.stripesDone, 'stripesDone');
+  const stripes = requireNativeNumber(raw.stripes, 'stripes');
+  if (haveSymbols > totalSymbols || stripesDone > stripes) {
+    throw new MmpNativeModuleError('Malformed native file progress counters');
+  }
+  return {
+    state: mapNativeBlobState(raw.state),
+    haveSymbols,
+    totalSymbols,
+    stripesDone,
+    stripes,
+  };
 }
 
 /** A verified file offer; name and MIME bytes retain the bridge's base64 convention. */
@@ -880,7 +918,9 @@ export class MmpClient {
   }
 
   fileProgress(root: FileRootHex): Promise<FileProgress | null> {
-    return this.native.fileProgress(root);
+    return this.native.fileProgress(root).then((value) =>
+      value === null ? null : mapNativeFileProgress(value),
+    );
   }
 
   createGroup(): Promise<GroupIdHex> {

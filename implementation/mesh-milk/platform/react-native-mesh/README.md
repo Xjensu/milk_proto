@@ -235,6 +235,10 @@ adapters MUST map them explicitly to the JavaScript values `hashMismatch` and
 mapping). Generic lower-casing is not valid because `HashMismatch` would become
 `hashmismatch`.
 
+`fileProgress` also maps the native blob state explicitly (`Wanted`, `Fetching`,
+`Assembled`, or `Abandoned`) and rejects unknown states or inconsistent
+non-negative counters before exposing the record to JavaScript.
+
 Delivery states are normalized just as explicitly. `MmpClient.messageState()` and
 `deliveryProgress` events accept the native spellings `Queued`, `InMesh`,
 `Delivered`, and `Expired`, the generated Kotlin spellings `QUEUED`, `IN_MESH`,

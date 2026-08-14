@@ -143,6 +143,9 @@ remaining work by the project priority queue.
 - **Scope:** validate a consumer build/runtime against the existing FFI
   surface, including generated native declarations, Kotlin/Swift adapters, and
   a device or emulator smoke path.
+- **Local slice completed:** the React Native facade now fail-closes unknown
+  blob-progress states and inconsistent counters at the JavaScript boundary;
+  the native consumer/device gate below remains open.
 - **Acceptance:** generated declarations match Kotlin/Swift/Rust surfaces;
   the fixture app builds and exercises the bounded event/error contract.
 

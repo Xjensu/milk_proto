@@ -8,6 +8,8 @@ export {
   mapNativeEvent,
   mapNativeFileOffer,
   mapNativeFileFailReason,
+  mapNativeBlobState,
+  mapNativeFileProgress,
   mapNativeDeliveryState,
   mapNativeOutFrame,
   mapNativeTier,

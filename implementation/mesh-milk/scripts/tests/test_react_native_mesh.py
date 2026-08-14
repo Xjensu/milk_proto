@@ -569,6 +569,18 @@ class ReactNativeMeshSourceTests(unittest.TestCase):
         self.assertIn("generated Kotlin spellings `QUEUED`, `IN_MESH`", self.readme)
         self.assertIn("Unknown native values throw `MmpNativeModuleError`", self.readme)
 
+    def test_file_progress_is_normalized_at_query_boundary(self) -> None:
+        self.assertIn("export function mapNativeBlobState", self.client)
+        for native in ("Wanted", "Fetching", "Assembled", "Abandoned"):
+            self.assertIn(f"case '{native}':", self.client)
+        for public in ("wanted", "fetching", "assembled", "abandoned"):
+            self.assertIn(f"return '{public}';", self.client)
+        self.assertIn("Unknown native blob state", self.client)
+        self.assertIn("mapNativeFileProgress", self.client)
+        self.assertIn("Malformed native file progress", self.client)
+        self.assertIn("return this.native.fileProgress(root).then((value) =>", self.client)
+        self.assertIn("mapNativeFileProgress(value)", self.client)
+
     def test_tier_enum_is_normalized_at_status_snapshot_and_event_boundaries(self) -> None:
         self.assertIn("export type NativeTier", self.client)
         self.assertIn("export function mapNativeTier", self.client)
