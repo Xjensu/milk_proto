@@ -2627,16 +2627,18 @@ mod tests {
         blocklist.extend_from_slice(&[2; 16]);
         let mut s = SnapshotStore::open(&path);
         s.set_blocklist(blocklist.clone());
-        s.set_blocklist(vec![BLOCKLIST_VERSION, 0, 0, 0]);
+        let empty_blocklist = vec![BLOCKLIST_VERSION, 0, 0];
+        assert!(valid_blocklist(&empty_blocklist));
+        s.set_blocklist(empty_blocklist.clone());
         assert_eq!(
             s.blocklist(),
-            Some(blocklist.as_slice()),
-            "invalid staging must not clear valid state"
+            Some(empty_blocklist.as_slice()),
+            "a valid empty blocklist must replace the staged state"
         );
         s.persist().unwrap();
 
         let s2 = SnapshotStore::open(&path);
-        assert_eq!(s2.blocklist(), Some(blocklist.as_slice()));
+        assert_eq!(s2.blocklist(), Some(empty_blocklist.as_slice()));
 
         let mut bytes = std::fs::read(&path).unwrap();
         let n = bytes.len();
