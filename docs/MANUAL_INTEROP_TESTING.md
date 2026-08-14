@@ -34,10 +34,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p layer-check
 ```
 
-The serial workspace test invocation is intentional on Windows: the snapshot
-store tests use temporary files and parallel processes can collide. If the
-non-serial command is used and `mmp-store` reports `NotFound` during a rename,
-rerun the serial command before diagnosing a protocol failure.
+The full workspace test invocation remains serial on Windows while workspace-
+wide fixture isolation is reviewed. The `mmp-store` package itself now owns
+unique RAII temporary directories and is safe to run with four workers; a
+storage-only check does not need the workspace-wide serial fallback.
 
 Before any radio test, also run the deterministic local smoke test:
 

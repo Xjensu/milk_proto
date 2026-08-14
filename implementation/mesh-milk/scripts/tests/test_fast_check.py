@@ -46,17 +46,17 @@ class FastCheckTests(unittest.TestCase):
         self.assertIn("--test-threads=4", command)
         self.assertNotIn("--test-threads=1", command)
 
-    def test_storage_scope_keeps_recovery_fixtures_serial(self) -> None:
+    def test_storage_scope_uses_parallel_recovery_fixtures(self) -> None:
         command = _test_command({"mmp-store"}, all_mode=False)
 
-        self.assertIn("--test-threads=1", command)
-        self.assertNotIn("--test-threads=4", command)
+        self.assertIn("--test-threads=4", command)
+        self.assertNotIn("--test-threads=1", command)
 
-    def test_mixed_scope_is_serial_when_it_contains_storage(self) -> None:
+    def test_mixed_scope_remains_parallel_when_it_contains_storage(self) -> None:
         command = _test_command({"mmp-node", "mmp-store"}, all_mode=False)
 
-        self.assertIn("--test-threads=1", command)
-        self.assertNotIn("--test-threads=4", command)
+        self.assertIn("--test-threads=4", command)
+        self.assertNotIn("--test-threads=1", command)
 
     def test_all_scope_keeps_serial_test_threads(self) -> None:
         command = _test_command(set(), all_mode=True)

@@ -1489,6 +1489,54 @@ impl BundleStore for SnapshotStore {
 mod tests {
     use super::*;
 
+    struct TestDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            use std::sync::atomic::{AtomicU64, Ordering};
+
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("mmp-store-test-{}-{sequence}", std::process::id()));
+            std::fs::create_dir(&path).unwrap_or_else(|error| {
+                panic!("create unique mmp-store test directory {:?}: {error}", path)
+            });
+            Self { path }
+        }
+    }
+
+    impl AsRef<std::path::Path> for TestDir {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    impl std::ops::Deref for TestDir {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &Self::Target {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_directories_are_unique_and_raii_cleaned() {
+        let first = TestDir::new();
+        let second = TestDir::new();
+        assert_ne!(first.as_ref(), second.as_ref());
+        assert!(first.as_ref().is_dir());
+        assert!(second.as_ref().is_dir());
+    }
+
     fn batch_meta(id: u8, size: usize) -> BundleMeta {
         BundleMeta {
             id: Id16([id; 16]),
@@ -1925,8 +1973,7 @@ mod tests {
 
     #[test]
     fn snapshot_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("snap.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -1966,8 +2013,7 @@ mod tests {
 
     #[test]
     fn persist_rejects_metadata_body_mismatch_without_replacing_primary() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("mismatched-meta.mmp");
         let tmp = path.with_extension("tmp");
         let _ = std::fs::remove_file(&path);
@@ -2034,8 +2080,7 @@ mod tests {
 
     #[test]
     fn persist_rejects_noncanonical_metadata_without_replacing_primary() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("noncanonical-meta.mmp");
         let tmp = path.with_extension("tmp");
         let _ = std::fs::remove_file(&path);
@@ -2085,8 +2130,7 @@ mod tests {
 
     #[test]
     fn tmp_suffix_primary_uses_distinct_recovery_path_on_failed_persist() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("snapshot.tmp");
         let temp = temporary_path(&path);
         assert_ne!(
@@ -2152,8 +2196,7 @@ mod tests {
 
     #[test]
     fn primary_read_error_fails_closed_before_persist() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("read-error-directory");
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(&path);
@@ -2175,8 +2218,7 @@ mod tests {
 
     #[test]
     fn unknown_primary_format_fails_closed_before_persist() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("unknown-primary-format.mmp");
         let temp = temporary_path(&path);
         let _ = std::fs::remove_file(&path);
@@ -2205,8 +2247,7 @@ mod tests {
 
     #[test]
     fn unreadable_temp_candidate_fails_closed_when_primary_is_missing() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("missing-primary.mmp");
         let temp = temporary_path(&path);
         let _ = std::fs::remove_file(&path);
@@ -2237,8 +2278,7 @@ mod tests {
 
     #[test]
     fn complete_temp_recovers_only_when_primary_is_absent() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("tmp-recovery.mmp");
         let candidate_path = dir.join("tmp-recovery-candidate.mmp");
         let temp = path.with_extension("tmp");
@@ -2292,8 +2332,7 @@ mod tests {
 
     #[test]
     fn incomplete_or_corrupt_temp_is_rejected_when_primary_is_absent() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("tmp-recovery-invalid.mmp");
         let temp = path.with_extension("tmp");
         for file in [&path, &temp] {
@@ -2353,8 +2392,7 @@ mod tests {
     /// mid-file byte-flip corruption covered by the other roundtrip tests.
     #[test]
     fn truncated_file_loads_with_no_records_and_no_panic() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
 
         // Case 1: nothing but the magic — no records to read at all.
         let path1 = dir.join("truncated-magic-only.mmp");
@@ -2403,8 +2441,7 @@ mod tests {
     /// trusted, exactly like a corrupt bundle record.
     #[test]
     fn claims_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("claims.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2441,8 +2478,7 @@ mod tests {
     /// checksum, per handbook §4.3 step 1 ("re-verify on load").
     #[test]
     fn tampered_claim_signature_is_dropped_even_with_a_valid_checksum() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("claims-tampered-sig.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2475,8 +2511,7 @@ mod tests {
     /// covered end-to-end by the `mmp-ffi` restart test.
     #[test]
     fn group_blobs_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("groups.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2509,8 +2544,7 @@ mod tests {
     /// isolation (already covered directly in `mmp-core::tests`).
     #[test]
     fn seen_index_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("seen.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2538,8 +2572,7 @@ mod tests {
     /// Mirrors `seen_index_roundtrip_and_corruption_drop` for `ReceiptFilter`.
     #[test]
     fn receipt_filter_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("receipts.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2569,8 +2602,7 @@ mod tests {
 
     #[test]
     fn authority_snapshot_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("authority.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2617,8 +2649,7 @@ mod tests {
 
     #[test]
     fn blocklist_snapshot_roundtrip_and_corruption_drop() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("blocklist.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2653,8 +2684,7 @@ mod tests {
 
     #[test]
     fn duplicate_singleton_records_keep_first_valid_state() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("duplicate-singletons.mmp");
         let _ = std::fs::remove_file(&path);
 
@@ -2720,8 +2750,7 @@ mod tests {
 
     #[test]
     fn duplicate_bundle_records_keep_first_valid_metadata() {
-        let dir = std::env::temp_dir().join("mmp-store-test");
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = TestDir::new();
         let path = dir.join("duplicate-bundles.mmp");
         let _ = std::fs::remove_file(&path);
 

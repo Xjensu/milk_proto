@@ -35,10 +35,9 @@ python scripts/fast_check.py --python
 
 For a Rust scope, the helper runs rustfmt only on changed `.rs` files inside the
 selected package(s), then package-scoped all-target tests with four bounded
-libtest workers and warnings-as-errors Clippy. The `mmp-store` scope (and any
-mixed scope containing it) deliberately uses one worker because its recovery
-tests share stable temporary fixture paths; this preserves storage invariants
-without forcing unrelated packages to run serially. This avoids unrelated
+libtest workers and warnings-as-errors Clippy. `mmp-store` recovery fixtures
+use unique RAII temporary directories, so storage scopes can use the same
+parallel local loop without cross-test state leakage. This avoids unrelated
 pre-existing formatting drift elsewhere in the workspace while shortening the
 local loop; if no Rust file changed in the selected scope, the formatting step
 is skipped.
@@ -48,10 +47,10 @@ automatically. If the root manifest, lockfile, or toolchain changes, the helper
 refuses to guess and requires an explicit `--package` or `--all`.
 
 The 10–30 second target is a budget for small changed crates and already-built
-dependency scopes. The parallel `mmp-node` package check is currently about
-10 seconds on the Windows reference host (151 tests plus Clippy; a measured run
-completed in 10.0 seconds). The normal CI workspace command remains serial for
-reproducibility and deterministic store-sensitive evidence.
+dependency scopes. Package checks, including `mmp-store`, use four workers.
+The full workspace command remains serial for reproducibility while the other
+workspace test families are reviewed independently; this is no longer required
+by the storage fixture implementation.
 
 The repository still has pre-existing rustfmt drift in several tracked Rust
 files. Package-scoped checks no longer report that unrelated drift; the `--all`
