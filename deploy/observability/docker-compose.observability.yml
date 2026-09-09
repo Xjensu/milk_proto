@@ -1,0 +1,65 @@
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    container_name: milk_schedule_prometheus
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./deploy/observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      schedule_web:
+        condition: service_healthy
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: milk_schedule_loki
+    profiles: [observability]
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./deploy/observability/loki/config.yml:/etc/loki/config.yml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+
+  fluentd:
+    build:
+      context: ./deploy/observability/fluentd
+    container_name: milk_schedule_fluentd
+    profiles: [observability]
+    depends_on:
+      - loki
+    ports:
+      - "24224:24224"
+      - "24224:24224/udp"
+    volumes:
+      - ./deploy/observability/fluentd/fluent.conf:/fluentd/etc/fluent.conf:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    container_name: milk_schedule_grafana
+    profiles: [observability]
+    depends_on:
+      - prometheus
+      - loki
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+
+volumes:
+  prometheus-data:
+  loki-data:
+  grafana-data:
