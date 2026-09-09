@@ -1,6 +1,13 @@
 services:
   prometheus:
-    image: prom/prometheus:v3.5.0
+    image: prom/prometheus:v3.3.0
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      no_proxy: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
     container_name: milk_schedule_prometheus
     profiles: [observability]
     command:
@@ -18,6 +25,13 @@ services:
 
   loki:
     image: grafana/loki:3.5.0
+    environment:
+      NO_PROXY: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      no_proxy: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
     container_name: milk_schedule_loki
     profiles: [observability]
     command: -config.file=/etc/loki/config.yml
@@ -42,7 +56,7 @@ services:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
 
   grafana:
-    image: grafana/grafana:12.1.1
+    image: grafana/grafana:11.6.0
     container_name: milk_schedule_grafana
     profiles: [observability]
     depends_on:
@@ -50,6 +64,12 @@ services:
       - loki
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "false"
+      NO_PROXY: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      no_proxy: "localhost,127.0.0.1,127.0.0.0/8,172.18.0.0/16,prometheus,loki,schedule_web,api_geteway"
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      http_proxy: ""
+      https_proxy: ""
       GF_AUTH_DISABLE_LOGIN_FORM: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
