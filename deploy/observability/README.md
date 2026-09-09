@@ -29,3 +29,5 @@ docker compose -f docker-compose.yml -f deploy/observability/docker-compose.obse
 ```
 
 The named `prometheus-data`, `loki-data` and `grafana-data` volumes preserve history and dashboard state. Remove them only as an intentional local reset.
+
+The overlay clears inherited HTTP proxy variables inside Prometheus, Loki, Fluentd and Grafana because these containers communicate over the Docker network. The current image tags are pinned to the locally verified Prometheus 3.3.0 and Grafana 11.6.0 images; update them deliberately when the deployment registry is reachable and repeat the health checks.
