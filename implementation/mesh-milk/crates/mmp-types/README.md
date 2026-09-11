@@ -9,4 +9,4 @@ lengths, and non-ascending/reserved TLV bits.
 any other `mmp-*` crate, exactly one external dependency (`blake3`). Everything else
 in the workspace depends on this crate, directly or transitively.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §2.1 and `specification/10-message-format.md`.
+See `docs/implementation/README.md` §2.1 and `docs/spec/bundles.md`.

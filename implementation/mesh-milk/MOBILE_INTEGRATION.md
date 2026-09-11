@@ -2,7 +2,7 @@
 
 **How to embed the mesh_milk protocol as a transport in mobile (and desktop) applications.**
 Audience: app engineers integrating the Rust core on Android, iOS, React Native, Flutter, Kotlin Multiplatform, and PC.
-Companion documents: `../../docs/API_REFERENCE.md` (exported events and UI-facing contract), `../../docs/MANUAL_BETA_TESTING.md` (runtime/test duties), `../../specification/12-rust-blueprint.md` §5–§6 (normative API surface), `../../specification/09-transport-ble.md` (BLE mapping). The former `other/HANDOFF_MOBILE.md` reference is historical; that file is not present in the repository.
+Companion documents: `../../docs/internal/release-evidence/API_REFERENCE.md` (exported events and UI-facing contract), `../../docs/internal/release-evidence/MANUAL_BETA_TESTING.md` (runtime/test duties), `../../docs/implementation/rust-layout.md` §5–§6 (normative API surface), `../../docs/spec/ble-transport.md` (BLE mapping), and `../../docs/internal/handoff/current-state.md` (current platform status).
 
 ---
 
@@ -53,14 +53,14 @@ first-contact asynchronous send, wait for the authenticated receipt (or a corres
 conversation-establishment state, not a malformed argument or a reason to create duplicate
 bundles.
 
-Every screen is a projection of `poll_event()` (see `../../docs/API_REFERENCE.md` §4 for the current event contract and `../../docs/MANUAL_BETA_TESTING.md` for runtime evidence duties):
+Every screen is a projection of `poll_event()` (see `../../docs/internal/release-evidence/API_REFERENCE.md` §4 for the current event contract and `../../docs/internal/release-evidence/MANUAL_BETA_TESTING.md` for runtime evidence duties):
 
 | Event | Meaning | Minimum UI duty |
 |---|---|---|
 | `MessageReceived{conv, from, id, body, apptype}` | decrypted, DAG-ordered inbound message | insert by DAG order, notify |
 | `MessageGap{conv, parents}` | a causal parent is still in transit | gap marker; auto-repairs via WANT — never an error |
 | `Delivered{id}` | **cryptographic** delivery proof (receipt MAC verified) | flip to ✓✓ |
-| `DeliveryProgress{id, state}` | Queued → InMesh → Delivered / Expired | status glyphs (`../../docs/API_REFERENCE.md` §4) |
+| `DeliveryProgress{id, state}` | Queued → InMesh → Delivered / Expired | status glyphs (`../../docs/internal/release-evidence/API_REFERENCE.md` §4) |
 | `ClaimUpdated{owner, field}` | nickname/avatar/key claim adopted | refresh profile |
 | `CompromiseWarning{owner}` | equal-seq conflicting claims — possible key compromise | **normative**: non-dismissable banner (doc 07 §6.4) |
 | `PeerRevoked{peer, successor}` | identity tombstone adopted; successor is an optional 32-byte public key | refuse new sessions and offer explicit trust-successor UX |
@@ -87,7 +87,7 @@ xcodebuild -create-xcframework -library ... -output MmpCore.xcframework
 cargo build -p mmp-ffi --release
 ```
 
-**docs/AGILE_BACKLOG.md E2-S5** turns the Android and iOS steps above into real,
+**docs/internal/release-evidence/research-release-gates.md E2-S5** turns the Android and iOS steps above into real,
 one-command-reproducible artifacts, and CI (`.github/workflows/ci.yml`'s
 `android-aar` / `ios-xcframework` jobs) produces them on every push:
 
@@ -278,7 +278,7 @@ Platform duties checklist:
 
 ## 5. iOS (Swift) — the honest leaf
 
-Background iOS cannot relay; design for **leaf + foreground bursts** (doc 04; see `../../docs/MANUAL_BETA_TESTING.md` §6 for the current platform boundary).
+Background iOS cannot relay; design for **leaf + foreground bursts** (doc 04; see `../../docs/internal/release-evidence/MANUAL_BETA_TESTING.md` §6 for the current platform boundary).
 
 * **State restoration is mandatory** (`CBCentralManagerOptionRestoreIdentifierKey`): it is what lets an Android/PC anchor dial a pocketed iPhone.
 * Background: scan for the MMP service UUID only (works via overflow area), stay a connectable peripheral publishing the TX/RX characteristics. Advertise the beacon in service data; accept that backgrounded advertising moves the UUID to the overflow area — Android anchors compensate (doc 09 §6).

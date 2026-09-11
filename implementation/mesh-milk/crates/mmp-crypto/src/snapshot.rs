@@ -37,7 +37,7 @@ pub const MAX_ENVELOPE_BYTES: usize = HEADER_LEN + MAX_PLAINTEXT_BYTES + TAG_LEN
 /// Snapshot envelope kind for the complete node secret-state aggregate.
 pub const KIND_NODE_SECRET_STATE: u8 = 1;
 
-/// Default freshness bound from specification/08 §5.3 (72 hours).
+/// Default freshness bound from docs/spec/cryptography.md §5.3 (72 hours).
 pub const DEFAULT_TTL_MS: u64 = 72 * 60 * 60 * 1_000;
 
 fn snapshot_error() -> CryptoError {

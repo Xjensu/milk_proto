@@ -7,7 +7,7 @@ REPO_ROOT = Path(__file__).parents[4]
 
 class InteropGuideTests(unittest.TestCase):
     def test_pc_ble_guide_matches_supported_role_matrix(self) -> None:
-        guide = (REPO_ROOT / "docs" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
+        guide = (REPO_ROOT / "docs" / "internal" / "release-evidence" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
             encoding="utf-8"
         )
 
@@ -32,7 +32,7 @@ class InteropGuideTests(unittest.TestCase):
         )
 
     def test_pc_ble_guide_passes_snapshot_files_not_directories(self) -> None:
-        guide = (REPO_ROOT / "docs" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
+        guide = (REPO_ROOT / "docs" / "internal" / "release-evidence" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
             encoding="utf-8"
         )
 
@@ -46,10 +46,10 @@ class InteropGuideTests(unittest.TestCase):
         self.assertNotIn("mkdir -p /tmp/mmp-bob.store", guide)
 
     def test_release_preflight_is_described_as_revision_exact(self) -> None:
-        guide = (REPO_ROOT / "docs" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
+        guide = (REPO_ROOT / "docs" / "internal" / "release-evidence" / "INTEROPERABILITY_TEST_GUIDE.md").read_text(
             encoding="utf-8"
         )
-        manual = (REPO_ROOT / "docs" / "MANUAL_INTEROP_TESTING.md").read_text(
+        manual = (REPO_ROOT / "docs" / "internal" / "release-evidence" / "MANUAL_INTEROP_TESTING.md").read_text(
             encoding="utf-8"
         )
 
@@ -60,7 +60,7 @@ class InteropGuideTests(unittest.TestCase):
         self.assertIn("requires it to equal the checkout's current `HEAD`", manual)
 
     def test_manual_inspect_examples_follow_host_store_paths(self) -> None:
-        manual = (REPO_ROOT / "docs" / "MANUAL_INTEROP_TESTING.md").read_text(
+        manual = (REPO_ROOT / "docs" / "internal" / "release-evidence" / "MANUAL_INTEROP_TESTING.md").read_text(
             encoding="utf-8"
         )
 

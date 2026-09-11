@@ -11,4 +11,4 @@ radio backend (and the simulator) exercises identical protocol logic.
 (`mmp-tal-btleplug`, `mmp-tal-peripheral`, `mmp-tal-embedded`, `mmp-tal-mobile`) and
 `mmp-node` itself depend on this crate.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §1.1 and `specification/09-transport-ble.md`.
+See `docs/implementation/README.md` §1.1 and `docs/spec/ble-transport.md`.

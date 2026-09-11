@@ -10,4 +10,4 @@ eclipse/bloom-poison) and scheduled-meeting scenarios for deployment-profile dri
 feature), and `mmp-crypto` directly (only the `Adversary` wrapper needs to drive a
 Noise handshake and Ed25519-sign raw frames, bypassing `Node`).
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.8/§4.12/§4.13.
+See `docs/implementation/README.md` §4.8/§4.12/§4.13.

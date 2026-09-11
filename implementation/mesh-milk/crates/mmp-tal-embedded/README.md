@@ -12,4 +12,4 @@ The hardware acceptance gate remains: ≤256 KiB flash / ≤48 KiB static RAM (d
 
 **Layering:** depends on `mmp-tal` and the existing `mmp-types` frame limits only.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.9.
+See `docs/implementation/README.md` §4.9.

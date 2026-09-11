@@ -12,7 +12,7 @@ STATUS = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(STATUS)
 
 REPO = Path(__file__).parents[4]
-MANIFEST = REPO / "docs" / "SPEC_STATUS_MANIFEST.json"
+MANIFEST = REPO / "docs" / "spec" / "status-manifest.json"
 
 
 class SpecificationStatusTests(unittest.TestCase):
@@ -26,7 +26,7 @@ class SpecificationStatusTests(unittest.TestCase):
             manifest = Path(directory) / "status.json"
             manifest.write_text(json.dumps(document), encoding="utf-8")
             errors = STATUS.validate_manifest(manifest, REPO)
-        self.assertEqual(errors, ["SHA-256 mismatch for specification/01-executive-summary.md"])
+        self.assertEqual(errors, ["SHA-256 mismatch for docs/spec/ble-transport.md"])
 
     def test_status_marker_drift_is_rejected(self) -> None:
         document = json.loads(MANIFEST.read_text(encoding="utf-8"))
@@ -37,7 +37,7 @@ class SpecificationStatusTests(unittest.TestCase):
             errors = STATUS.validate_manifest(manifest, REPO)
         self.assertEqual(
             errors,
-            ["status marker missing from header of specification/01-executive-summary.md"],
+            ["status marker missing from header of docs/spec/ble-transport.md"],
         )
 
 

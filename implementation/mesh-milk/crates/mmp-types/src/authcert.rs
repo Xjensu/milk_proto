@@ -98,7 +98,7 @@ impl AuthCert {
 /// suite-0x02 preimage must not be confusable with suite-0x01 under the same
 /// tag). The signed preimage requires `suite`, so a verifier must be able to
 /// read it back off the wire — this is a spec-precision gap in the listing,
-/// not a design choice; recorded as a `CHANGELOG.md` errata candidate rather
+/// not a design choice; recorded as a `docs/internal/release-evidence/changelog.md` errata candidate rather
 /// than silently "fixed" in the doc.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnnouncementBody {

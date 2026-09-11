@@ -21,9 +21,8 @@ class ReleaseGovernanceTests(unittest.TestCase):
                     "-r",
                     "abc123",
                     "--",
-                    "ROADMAP.md",
-                    "CHANGELOG.md",
-                    "COUNCIL-REVIEW.md",
+                    "docs/spec/index.md",
+                    "docs/internal/release-evidence/spec-reboot-report.md",
                 ),
             )
             return code, output, "tree unavailable" if code else ""
@@ -32,7 +31,9 @@ class ReleaseGovernanceTests(unittest.TestCase):
 
     def _repo(self, root: Path) -> None:
         for relative in GOVERNANCE.REQUIRED_PUBLICATION_FILES:
-            (root / relative).write_text(f"# {relative}\n", encoding="utf-8")
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(f"# {relative}\n", encoding="utf-8")
 
     def test_working_tree_and_recorded_tree_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -51,35 +52,32 @@ class ReleaseGovernanceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repo(root)
-            (root / "ROADMAP.md").unlink()
+            (root / "docs" / "spec" / "index.md").unlink()
             errors = GOVERNANCE.validate_publication_artifacts(root)
             self.assertEqual(
                 errors,
-                ["publication artifact is missing or not a regular file: ROADMAP.md"],
+                ["publication artifact is missing or not a regular file: docs/spec/index.md"],
             )
 
     def test_empty_working_tree_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repo(root)
-            (root / "CHANGELOG.md").write_text("", encoding="utf-8")
+            (root / "docs" / "internal" / "release-evidence" / "spec-reboot-report.md").write_text("", encoding="utf-8")
             errors = GOVERNANCE.validate_publication_artifacts(root)
-            self.assertEqual(errors, ["publication artifact must not be empty: CHANGELOG.md"])
+            self.assertEqual(errors, ["publication artifact must not be empty: docs/internal/release-evidence/spec-reboot-report.md"])
 
     def test_recorded_tree_missing_artifact_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._repo(root)
-            output = "\n".join(
-                f"100644 blob {'a' * 40}\t{name}"
-                for name in ("ROADMAP.md", "COUNCIL-REVIEW.md")
-            ) + "\n"
+            output = "100644 blob " + "a" * 40 + "\tdocs/spec/index.md\n"
             errors = GOVERNANCE.validate_publication_artifacts(
                 root, "abc123", self._runner(output)
             )
             self.assertEqual(
                 errors,
-                ["recorded commit abc123 is missing publication artifact: CHANGELOG.md"],
+                ["recorded commit abc123 is missing publication artifact: docs/internal/release-evidence/spec-reboot-report.md"],
             )
 
     def test_tree_inspection_failure_is_rejected(self) -> None:
@@ -99,7 +97,7 @@ class ReleaseGovernanceTests(unittest.TestCase):
             root = Path(directory)
             self._repo(root)
             output = "\n".join(
-                f"{'120000' if name == 'ROADMAP.md' else '100644'} blob {'a' * 40}\t{name}"
+                f"{'120000' if name == 'docs/spec/index.md' else '100644'} blob {'a' * 40}\t{name}"
                 for name in GOVERNANCE.REQUIRED_PUBLICATION_FILES
             ) + "\n"
             errors = GOVERNANCE.validate_publication_artifacts(
@@ -108,8 +106,8 @@ class ReleaseGovernanceTests(unittest.TestCase):
             self.assertEqual(
                 errors,
                 [
-                    "recorded commit abc123 publication artifact is not a regular blob: ROADMAP.md",
-                    "recorded commit abc123 is missing publication artifact: ROADMAP.md",
+                    "recorded commit abc123 publication artifact is not a regular blob: docs/spec/index.md",
+                    "recorded commit abc123 is missing publication artifact: docs/spec/index.md",
                 ],
             )
 
@@ -119,7 +117,7 @@ class ReleaseGovernanceTests(unittest.TestCase):
             self._repo(root)
             outside = root / "outside.md"
             outside.write_text("outside\n", encoding="utf-8")
-            path = root / "COUNCIL-REVIEW.md"
+            path = root / "docs" / "spec" / "index.md"
             path.unlink()
             try:
                 path.symlink_to(outside)
@@ -128,7 +126,7 @@ class ReleaseGovernanceTests(unittest.TestCase):
             errors = GOVERNANCE.validate_publication_artifacts(root)
             self.assertEqual(
                 errors,
-                ["publication artifact must not be a symbolic link: COUNCIL-REVIEW.md"],
+                ["publication artifact must not be a symbolic link: docs/spec/index.md"],
             )
 
 

@@ -1,4 +1,4 @@
-# docs/AGILE_BACKLOG.md E2-S3: the MSRV floor itself is declared in
+# docs/internal/release-evidence/research-release-gates.md E2-S3: the MSRV floor itself is declared in
 # [workspace.package] rust-version (Cargo.toml) — that's the portable,
 # install-nothing-extra declaration cargo itself enforces. This file is left
 # on the rolling `stable` channel deliberately: contributor/CI machines with a

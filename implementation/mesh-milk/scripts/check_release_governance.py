@@ -1,16 +1,10 @@
 #!/usr/bin/env python3
-"""Check that release-publication governance files exist in a checkout.
+"""Check that the normative specification and reboot report exist.
 
-The specification and implementation docs use three root-level documents as
-publication anchors: ``ROADMAP.md``, ``CHANGELOG.md``, and
-``COUNCIL-REVIEW.md``.  A release must check both the checkout it is about to
-publish and the tree for the recorded commit.  This is deliberately a local
-Git/tree check; it does not claim that a remote hosting service published the
-same tree and it does not replace network or hardware validation.
-
-The historical ``AUDIT.md`` wording in older specification banners is
-provenance for the reconstructed ``CHANGELOG.md``; this check does not invent
-or silently create a missing audit transcript.
+The publication anchors are ``docs/spec/index.md`` and
+``docs/internal/release-evidence/spec-reboot-report.md``. The check validates
+the checkout and the recorded Git tree; it does not claim that a remote host
+published the same revision.
 
 Usage (from ``implementation/mesh-milk``)::
 
@@ -29,7 +23,10 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 
-REQUIRED_PUBLICATION_FILES = ("ROADMAP.md", "CHANGELOG.md", "COUNCIL-REVIEW.md")
+REQUIRED_PUBLICATION_FILES = (
+    "docs/spec/index.md",
+    "docs/internal/release-evidence/spec-reboot-report.md",
+)
 GitRunner = Callable[[Path, Sequence[str]], tuple[int, str, str]]
 
 

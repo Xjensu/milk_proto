@@ -4,7 +4,7 @@
 ``validate_ble_evidence.py`` checks the manifest and its evidence files.  This
 companion gate adds repository facts that an evidence author must not be able
 to claim only by editing JSON: the recorded commit must exist, the repository
-must be a Git worktree, and the frozen ``specification/`` tree must have no
+must be a Git worktree, and the frozen ``docs/spec/`` tree must have no
 staged, unstaged, or untracked changes.  It intentionally ignores unrelated
 working-tree changes so a release check cannot destroy or silently adjudicate
 another in-progress task.
@@ -56,9 +56,9 @@ def validate_repository(repo: Path, commit: str, runner: GitRunner = _run_git) -
     errors: list[str] = []
     if not repo.is_dir():
         return [f"repository directory does not exist: {repo}"]
-    specification = repo / "specification"
+    specification = repo / "docs" / "spec"
     if not specification.is_dir():
-        errors.append(f"repository is missing specification/: {specification}")
+        errors.append(f"repository is missing docs/spec/: {specification}")
 
     code, root_output, detail = runner(repo, ("rev-parse", "--show-toplevel"))
     if code != 0 or not root_output.strip():
@@ -99,12 +99,12 @@ def validate_repository(repo: Path, commit: str, runner: GitRunner = _run_git) -
 
     # `status --porcelain` includes both index and worktree changes and the
     # explicit untracked flag covers a newly created specification file.
-    code, output, detail = runner(repo, ("status", "--porcelain=v1", "--untracked-files=all", "--", "specification"))
+    code, output, detail = runner(repo, ("status", "--porcelain=v1", "--untracked-files=all", "--", "docs/spec"))
     if code != 0:
-        errors.append(f"could not inspect specification/ status: {detail.strip() or output.strip()}")
+        errors.append(f"could not inspect docs/spec/ status: {detail.strip() or output.strip()}")
     elif output.strip():
         changed = "; ".join(line.strip() for line in output.splitlines() if line.strip())
-        errors.append(f"specification/ has staged, unstaged, or untracked changes: {changed}")
+        errors.append(f"docs/spec/ has staged, unstaged, or untracked changes: {changed}")
     return errors
 
 

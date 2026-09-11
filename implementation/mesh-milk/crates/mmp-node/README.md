@@ -13,4 +13,4 @@ this layer owns real time, storage, and (via a TAL implementation) a radio.
 `mmp-ffi`, `mmp-cli`, and `mmp-sim` all consume this crate's public API rather than
 reaching into the lower layers directly.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §1.1 and `specification/04-architecture.md`.
+See `docs/implementation/README.md` §1.1 and `docs/implementation/architecture.md`.

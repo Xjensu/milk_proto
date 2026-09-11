@@ -33,7 +33,7 @@ class SwiftMeshDriveSourceTests(unittest.TestCase):
         """The workflow default makes implementation/mesh-milk the run root."""
 
         consumer_start = self.workflow.index("  swift-consumer:")
-        consumer_end = self.workflow.index("  # docs/AGILE_BACKLOG.md E2-S5", consumer_start)
+        consumer_end = self.workflow.index("  # Packages mmp-ffi's Android cdylib", consumer_start)
         block = self.workflow[consumer_start:consumer_end]
         self.assertIn("swift test --package-path platform/swift-mesh-drive", block)
         self.assertNotIn(

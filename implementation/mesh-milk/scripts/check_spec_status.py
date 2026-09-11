@@ -19,22 +19,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-FORMAT = "mesh-milk-spec-status-v1"
-DEFAULT_MANIFEST = Path(__file__).resolve().parents[3] / "docs" / "SPEC_STATUS_MANIFEST.json"
+FORMAT = "mesh-milk-spec-status-v2"
+DEFAULT_MANIFEST = Path(__file__).resolve().parents[3] / "docs" / "spec" / "status-manifest.json"
 MAX_MANIFEST_BYTES = 256 * 1024
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
-ALLOWED_STATUSES = frozenset(
-    {
-        "final-v1-suite",
-        "research-phase-1",
-        "research-phase-5",
-        "draft-phase-2",
-        "draft-phase-3",
-        "draft-phase-4",
-        "draft-phase-5",
-        "final-extension-rev-b",
-    }
-)
+ALLOWED_STATUSES = frozenset({"normative-mmp1"})
 ROOT_KEYS = frozenset(("format", "wire_version", "generated_from", "documents", "publication_artifacts"))
 DOCUMENT_KEYS = frozenset(("path", "status", "status_marker", "sha256"))
 PUBLICATION_KEYS = frozenset(("required_present", "historical_references_not_shipped"))
@@ -114,7 +103,11 @@ def _digest(path: Path) -> str:
 def _validate_documents(repo: Path, value: Any) -> None:
     if not isinstance(value, list) or not value:
         raise ValueError("documents must be a non-empty array")
-    expected_paths = sorted(path.relative_to(repo).as_posix() for path in (repo / "specification").glob("*.md"))
+    expected_paths = sorted(
+        path.relative_to(repo).as_posix()
+        for path in (repo / "docs" / "spec").glob("*.md")
+        if path.name != "status-manifest.json"
+    )
     records: list[tuple[str, dict[str, Any]]] = []
     seen: set[str] = set()
     for index, raw_record in enumerate(value):
@@ -123,8 +116,8 @@ def _validate_documents(repo: Path, value: Any) -> None:
         _exact_keys(raw_record, DOCUMENT_KEYS, f"documents[{index}]")
         relative = _safe_repo_relative(raw_record["path"], f"documents[{index}].path")
         normalized = relative.as_posix()
-        if not normalized.startswith("specification/") or relative.suffix != ".md":
-            raise ValueError(f"documents[{index}].path must name a top-level specification Markdown file")
+        if not normalized.startswith("docs/spec/") or relative.suffix != ".md":
+            raise ValueError(f"documents[{index}].path must name a normative docs/spec Markdown file")
         if normalized in seen:
             raise ValueError(f"duplicate specification document: {normalized}")
         seen.add(normalized)
@@ -166,8 +159,6 @@ def _validate_publication(repo: Path, value: Any) -> None:
         raise ValueError("publication_artifacts.required_present must be a sorted array")
     for raw_path in required:
         relative = _safe_repo_relative(raw_path, "required publication path")
-        if len(relative.parts) != 1:
-            raise ValueError(f"required publication path must be root-level: {raw_path}")
         path = repo / relative
         if path.is_symlink() or not path.is_file() or path.stat().st_size == 0:
             raise ValueError(f"required publication artifact is missing, empty, or not regular: {raw_path}")
@@ -181,7 +172,7 @@ def _validate_publication(repo: Path, value: Any) -> None:
         _exact_keys(raw_record, HISTORICAL_KEYS, f"historical_references_not_shipped[{index}]")
         relative = _safe_repo_relative(raw_record["path"], f"historical_references_not_shipped[{index}].path")
         normalized = relative.as_posix()
-        if len(relative.parts) != 1 or normalized in seen:
+        if normalized in seen:
             raise ValueError(f"invalid historical publication path: {normalized}")
         seen.add(normalized)
         if not isinstance(raw_record["reason"], str) or not raw_record["reason"].strip():

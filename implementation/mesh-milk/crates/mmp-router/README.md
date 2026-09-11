@@ -9,4 +9,4 @@ decisions.
 **Layering:** depends on `mmp-core` (`default-features = false`) and `mmp-types`.
 `#![cfg_attr(not(feature = "std"), no_std)]`.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §2.5 and `specification/05-routing-spec.md`.
+See `docs/implementation/README.md` §2.5 and `docs/spec/routing.md`.

@@ -225,7 +225,7 @@ pub enum Tier {
     Anchor = 3,
 }
 
-/// Delivery status, mapped 1:1 to protocol facts (`docs/API_REFERENCE.md` §4.4).
+/// Delivery status, mapped 1:1 to protocol facts (`docs/internal/release-evidence/API_REFERENCE.md` §4.4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryState {
     /// Sent locally, not yet handed off to any peer.
@@ -1865,7 +1865,7 @@ impl Node {
 
     /// Return the concurrent-session admission cap for this public node API.
     ///
-    /// This is the implementation mapping of specification/11 §3's
+    /// This is the implementation mapping of docs/spec/state-machines.md §3's
     /// normative T2/T3/Core caps: the standard `Node` exposes `Leaf` as the
     /// constrained T1 profile (one session), `Relay` as T2 (two sessions),
     /// and `Anchor` as T3 (eight sessions).  The T0/Core profile is an
@@ -2025,7 +2025,7 @@ impl Node {
             TalEvent::LinkUp {
                 link, initiator, ..
             } => {
-                // Admission denial is intentionally silent (specification/11
+                // Admission denial is intentionally silent (docs/spec/state-machines.md
                 // §3): retain existing links and emit no handshake output.
                 if self.sessions.contains_key(&link) {
                     return;

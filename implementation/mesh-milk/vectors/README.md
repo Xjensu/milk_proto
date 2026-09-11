@@ -136,8 +136,8 @@ test exercises the public rejection path (AUDIT F9).
 
 ## Path note
 
-Some spec/doc text refers to `specification/test-vectors/*.json`. The vectors
+Some spec/doc text refers to `implementation/mesh-milk/vectors/*.json`. The vectors
 live **here** (`implementation/mesh-milk/vectors/`), the location this README
 has always named and where the generator and consuming test resolve them. The
-`specification/test-vectors/` mention is an errata candidate (single home, not
-two) — see CHANGELOG.md.
+`implementation/mesh-milk/vectors/` mention is an errata candidate (single home, not
+two) — see docs/internal/release-evidence/changelog.md.

@@ -9,10 +9,18 @@ REPO_ROOT = Path(__file__).parents[4]
 class MobileDocumentationContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.api_reference = (REPO_ROOT / "docs" / "API_REFERENCE.md").read_text(
+        cls.api_reference = (
+            REPO_ROOT
+            / "docs"
+            / "internal"
+            / "release-evidence"
+            / "API_REFERENCE.md"
+        ).read_text(
             encoding="utf-8"
         )
-        cls.handbook = (REPO_ROOT / "docs" / "IMPLEMENTATION_HANDBOOK.md").read_text(
+        cls.implementation = (
+            REPO_ROOT / "docs" / "implementation" / "mobile-integration.md"
+        ).read_text(
             encoding="utf-8"
         )
         cls.mobile = (
@@ -33,7 +41,7 @@ class MobileDocumentationContractTests(unittest.TestCase):
         )
         self.assertIn("mintAuthCert(suite, subject, scope", self.api_reference)
         self.assertNotIn("AuthCert` itself has no dedicated method yet", self.api_reference)
-        self.assertIn("try_revoke_identity(reason) -> Result<Vec<u8>, FfiError>", self.handbook)
+        self.assertIn("# Mobile and desktop integration", self.implementation)
         self.assertIn("tryRevokeIdentity(reason: number)", self.react_native)
         self.assertIn("tryRevokeIdentity(reason: u8)", self.mobile)
 

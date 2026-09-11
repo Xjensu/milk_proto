@@ -10,4 +10,4 @@ sealed boxes. Secrets zeroize on drop; RNG only via an injected `CryptoRngCore`.
 everything else is `no_std`+`alloc`. Downstream crates that need the embedded profile
 depend on this crate with `default-features = false`.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §2.4 and `specification/08-crypto-spec.md`.
+See `docs/implementation/README.md` §2.4 and `docs/spec/cryptography.md`.

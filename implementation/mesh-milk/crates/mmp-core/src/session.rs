@@ -23,7 +23,7 @@ use crate::rbsr::{IdSource, Reconciler, DOMAIN_REPLY_FLAG};
 /// availability) is WANT-driven in the MVP rather than range-reconciled.
 const DOMAINS: [u8; 4] = [0, 1, 2, 3];
 const RX_REASSEMBLY_CAP: usize = MAX_ENVELOPE_PAYLOAD + 3;
-/// Normative initial/replenishment window from specification/09 §5.2.
+/// Normative initial/replenishment window from docs/spec/sessions.md §5.2.
 const FRAME_CREDIT_WINDOW: u8 = 8;
 /// Keep enough receive credit for an atomic BUNDLE+BUDGET response pair;
 /// replenishing only at zero can deadlock a sender holding one credit.

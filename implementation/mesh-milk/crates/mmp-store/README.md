@@ -16,4 +16,4 @@ future embedded builds from inheriting the filesystem/Noise host graph silently.
 **Layering:** depends on `mmp-types`, `mmp-crypto` (to re-verify claim signatures on
 load), and `mmp-core`. Consumed by `mmp-node` and `mmp-ffi`.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.3.
+See `docs/implementation/README.md` §4.3.

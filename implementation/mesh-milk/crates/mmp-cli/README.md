@@ -19,4 +19,4 @@ harness from recording an adapter/backend failure as a successful session.
 `mmp-store`, `mmp-tal`, `mmp-tal-btleplug`, `mmp-tal-peripheral`, `mmp-types`, plus
 `tokio` for the radio drive loop. Hand-rolled `std::env` argument parsing, no `clap`.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.2.
+See `docs/implementation/README.md` §4.2.

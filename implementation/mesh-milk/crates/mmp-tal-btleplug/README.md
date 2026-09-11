@@ -20,4 +20,4 @@ transport-local deadline. A stalled adapter retires the affected link and
 returns an explicit timeout instead of pinning the host drive loop or leaving a
 failed session live.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.1 and `specification/09-transport-ble.md`.
+See `docs/implementation/README.md` §4.1 and `docs/spec/ble-transport.md`.

@@ -1,6 +1,6 @@
 # MMP — Product Feature Map: v2 Directions & Hidden Powers of v1
 
-Two lists with different rules. **Part I** proposes protocol-level features for MMP/2 that materially improve user experience (each traced to the research agenda in `specification/15-future-research.md`, so engineering and research stay honest with each other). **Part II** is the more interesting list: non-obvious features that need **zero wire changes** — they fall out of properties the v1 protocol already guarantees, and several of them are "wow"-grade demos.
+Two lists with different rules. **Part I** proposes protocol-level features for MMP/2 that materially improve user experience (each traced to the research agenda in `docs/research/open-questions.md`, so engineering and research stay honest with each other). **Part II** is the more interesting list: non-obvious features that need **zero wire changes** — they fall out of properties the v1 protocol already guarantees, and several of them are "wow"-grade demos.
 
 ---
 

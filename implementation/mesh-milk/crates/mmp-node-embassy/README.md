@@ -33,4 +33,4 @@ The dependency feature fence is intentional: enabling `mmp-core`'s default
 the Cortex-M graph. This crate therefore remains target-checkable while the
 hardware TAL, executor wiring, and flash persistence remain separate E7 gates.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.9.
+See `docs/implementation/README.md` §4.9.

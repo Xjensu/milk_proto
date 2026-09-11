@@ -34,7 +34,7 @@ class ReleasePreflightTests(unittest.TestCase):
 
         return run
 
-    def test_clean_specification_and_existing_commit_pass(self) -> None:
+    def test_clean_spec_tree_and_existing_commit_pass(self) -> None:
         import sys
 
         sys.path.insert(0, str(ROOT))
@@ -42,10 +42,10 @@ class ReleasePreflightTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            (repo / "specification").mkdir()
+            (repo / "docs" / "spec").mkdir(parents=True)
             self.assertEqual(validate_repository(repo, "0123456", self._runner()), [])
 
-    def test_any_specification_status_line_blocks_release(self) -> None:
+    def test_any_spec_status_line_blocks_release(self) -> None:
         import sys
 
         sys.path.insert(0, str(ROOT))
@@ -53,9 +53,9 @@ class ReleasePreflightTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            (repo / "specification").mkdir()
-            errors = validate_repository(repo, "0123456", self._runner(" M specification/03-protocol-spec.md\n"))
-            self.assertTrue(any("specification/ has staged" in error for error in errors))
+            (repo / "docs" / "spec").mkdir(parents=True)
+            errors = validate_repository(repo, "0123456", self._runner(" M docs/spec/protocol-model.md\n"))
+            self.assertTrue(any("docs/spec/ has staged" in error for error in errors))
 
     def test_missing_recorded_commit_blocks_release(self) -> None:
         import sys
@@ -65,7 +65,7 @@ class ReleasePreflightTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            (repo / "specification").mkdir()
+            (repo / "docs" / "spec").mkdir(parents=True)
             errors = validate_repository(repo, "deadbeef", self._runner(cat_file_code=1))
             self.assertTrue(any("recorded commit does not exist" in error for error in errors))
 
@@ -77,7 +77,7 @@ class ReleasePreflightTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
-            (repo / "specification").mkdir()
+            (repo / "docs" / "spec").mkdir(parents=True)
             errors = validate_repository(
                 repo,
                 "0123456",

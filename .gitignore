@@ -1,10 +1,3 @@
-# AI tooling artifacts (not part of the project deliverable)
-CLAUDE.md
-.serena/
-other/
-/.superpowers/
-/.worktrees/
-
 # Rust build artifacts
 /implementation/mesh-milk/target/
 **/*.rs.bk

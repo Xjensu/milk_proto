@@ -46,7 +46,7 @@ on Windows, and use CI's `fuzz-build`/`fuzz-run` jobs (or a Linux/WSL box) to ac
 - `fuzz-run` (weekly scheduled run or manual `workflow_dispatch`, not on every push): a 2-minute smoke run per target,
   corpus uploaded as a build artifact. This is a smoke check, not the real hardening run — doc 12
   §7's "N CPU-hours once a baseline throughput is measured" is deliberately not pre-committed here
-  (see `docs/ROADMAP_TO_PRODUCTION.md` Phase C exit gate, same discipline).
+  (see `docs/internal/release-evidence/research-release-gates.md` Phase C exit gate, same discipline).
 
 ## Deterministic seed corpus
 

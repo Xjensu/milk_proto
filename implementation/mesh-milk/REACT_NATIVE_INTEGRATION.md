@@ -4,8 +4,8 @@
 Audience: RN/mobile engineers wiring `mmp-ffi` into a JS/TS app on Android and iOS.
 Companion documents: `MOBILE_INTEGRATION.md` (the general mobile guide — read it first; this
 document assumes its §1–§2 architectural rules and does not repeat the Android/iOS
-radio-duty checklists from its §4–§5, only cross-references them), `specification/12-rust-blueprint.md`
-§5–§6 (normative FFI surface), `specification/09-transport-ble.md` (BLE mapping, MTU/credit numbers).
+radio-duty checklists from its §4–§5, only cross-references them), `docs/implementation/rust-layout.md`
+§5–§6 (normative FFI surface), `docs/spec/ble-transport.md` (BLE mapping, MTU/credit numbers).
 
 ---
 

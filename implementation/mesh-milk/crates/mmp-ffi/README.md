@@ -12,7 +12,7 @@ iOS XCFramework, plain `lib` for Rust-native consumers and this crate's own test
 The `uniffi-bindgen` CLI binary (Kotlin/Swift codegen) is gated behind the opt-in
 `cli` feature so ordinary mobile-app builds never pull in `clap`/`camino`.
 
-See `docs/API_REFERENCE.md` and `implementation/mesh-milk/MOBILE_INTEGRATION.md`.
+See `docs/internal/release-evidence/API_REFERENCE.md` and `implementation/mesh-milk/MOBILE_INTEGRATION.md`.
 
 ## Beta harness observability
 

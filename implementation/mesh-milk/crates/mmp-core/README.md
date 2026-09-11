@@ -11,5 +11,5 @@ Sans-IO throughout — no sockets, no timers, no clock of its own; time enters o
 a caller-supplied `now_ms`. `#![cfg_attr(not(feature = "std"), no_std)]`, `std`
 forwards to `mmp-crypto/std` for the Noise-backed session layer.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §2 and `specification/03-protocol-spec.md` /
-`specification/06-sync-spec.md` / `specification/11-state-machines.md`.
+See `docs/implementation/README.md` §2 and `docs/spec/protocol-model.md` /
+`docs/spec/synchronization.md` / `docs/spec/state-machines.md`.

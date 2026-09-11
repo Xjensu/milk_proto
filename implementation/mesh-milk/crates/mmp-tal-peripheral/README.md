@@ -18,4 +18,4 @@ new admission, signals shutdown, and retires active BlueZ links through the
 same bounded lifecycle path. This prevents a host that stopped consuming
 events from retaining GATT tasks and radio resources indefinitely.
 
-See `docs/IMPLEMENTATION_HANDBOOK.md` §4.1 and `specification/09-transport-ble.md`.
+See `docs/implementation/README.md` §4.1 and `docs/spec/ble-transport.md`.

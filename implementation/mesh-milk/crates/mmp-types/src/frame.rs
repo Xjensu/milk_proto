@@ -221,7 +221,7 @@ pub struct Hello {
     /// Feature/capability bitfield.
     pub flags: u16,
     /// Initial post-handshake frame credit offered to the peer
-    /// (specification/09 §5.2).
+    /// (docs/spec/sessions.md §5.2).
     pub credits: u8,
     /// L2CAP PSM (BLE) this node listens on for follow-up connections.
     pub psm: u16,
@@ -272,7 +272,7 @@ pub enum Frame {
         /// Signature proving possession of `identity`'s private key.
         sig: Sig64,
     },
-    /// Post-handshake frame-credit grant (specification/09 §5.2).
+    /// Post-handshake frame-credit grant (docs/spec/sessions.md §5.2).
     Credit(u8),
     /// RBSR reconciliation summary.
     Summary(Summary),

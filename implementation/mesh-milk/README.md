@@ -1,53 +1,29 @@
 # mesh-milk — MMP/1 reference implementation
 
-Rust workspace for the **mesh_milk (MMP/1)** peer-to-peer BLE mesh protocol.
-The specification suite lives in `../../specification/` (docs 01–18); this
-workspace implements it per `../../specification/12-rust-blueprint.md`.
+This directory contains the Rust workspace for the **mesh_milk (MMP/1)**
+peer-to-peer BLE mesh protocol. The normative specification is in
+`../../docs/spec/`; extension mechanisms are in `../../docs/extensions/`.
+The crate layout is described in `../../docs/implementation/rust-layout.md`.
 
-**Where the project actually is:** the roadmap and backlog are the
-authoritative status trackers, not this file —
-`../../docs/ROADMAP_TO_PRODUCTION.md` (phases A–E, with per-phase gap
-analysis and exit gates) and `../../docs/AGILE_BACKLOG.md` (story-level
-execution plan). `../../ROADMAP.md` is a thin pointer mapping the legacy
-"Stage N" vocabulary some spec docs still cite onto that phase structure.
-`../../docs/IMPLEMENTATION_HANDBOOK.md` has the golden rules (§0) binding on
-every change and the buildable specs for remaining work (§4).
-The current de-duplicated queue is `../../docs/AGILE_REMAINING_WORK.md`; the
-handoff/design status index is `../../docs/HANDOFF_INDEX.md`.
+Current engineering status is recorded in
+`../../docs/internal/handoff/current-state.md` and the release gates in
+`../../docs/internal/handoff/release-gates.md`. The repository document map is
+in `../../docs/README.md`.
 
-The workspace is well past the original "Stage 0 scaffold" point. Cargo
-currently reports 19 implementation crates plus the `layer-check` tool; use
-`cargo metadata` rather than a dated crate or test-count claim as the inventory
-source of truth. The latest focused Rust gates and Python validation are green;
-clippy and `layer-check` are clean. Phase A
-is implementation-complete but its exit gate — a real two-machine BLE exchange
-— still needs physical Linux/BlueZ hardware. Mobile remains an FFI/artifact
-integration seam until native Android/iOS consuming radio shells exist. See
-`../../docs/ROADMAP_TO_PRODUCTION.md` §1 for the full per-crate breakdown and
-§2 for what's still open.
+The workspace contains protocol, host, transport, and embedded-provider crates.
+`mmp-embedded-provider` provides a host-testable two-slot journal boundary;
+`mmp-tal-peripheral` implements the peripheral-role BLE path. The `vectors/`
+directory contains committed wire and conformance vectors, and
+`tools/layer-check` checks crate layering.
 
-## Layout (normative: doc 12 §1)
-
-Protocol, host, transport, and embedded-provider crates live under `crates/`;
-the `mmp-embedded-provider` crate is the host-testable two-slot journal
-reference boundary. This is alongside `mmp-tal-peripheral` (the Phase A
-peripheral-role BLE implementation), `vectors/` (committed golden
-wire/conformance vectors and `coverage.json`, see `vectors/README.md`), and
-`tools/layer-check` (the CI layer-dependency test).
-
-Layering rule: `mmp-types ← mmp-crypto ← mmp-core ← mmp-router` are `#![no_std]`
-(alloc-optional via the `alloc` feature); nothing below `mmp-node` may depend on
-tokio, std time, or any TAL implementation. Enforced by `cargo run -p layer-check`
-and CI (`../../.github/workflows/ci.yml` — note the workflow lives at the repo
-root, not under this directory, because that's the only place GitHub Actions
-discovers workflow files).
+The layering rule is `mmp-types → mmp-crypto → mmp-core → mmp-router`; these
+crates use `#![no_std]` with optional `alloc`. Crates below `mmp-node` MUST NOT
+depend on Tokio, standard-library time, or a transport implementation. CI and
+`cargo run -p layer-check` enforce this rule.
 
 ## Verify locally
 
-### Fast changed-scope loop
-
-Use the changed package (Cargo builds its dependencies automatically) instead
-of rerunning the complete workspace for every edit:
+For focused changes, run the package-scoped helper:
 
 ```sh
 python scripts/fast_check.py --package mmp-node
@@ -55,22 +31,19 @@ python scripts/fast_check.py --package mmp-types --package mmp-crypto
 python scripts/fast_check.py --python
 ```
 
-The helper runs formatting, package-scoped all-target tests, and warnings-as-
-errors Clippy. It refuses to guess after a manifest/lockfile/toolchain change;
-use `--all` deliberately in that case. See `../../docs/TESTING_LIFECYCLE.md`
-for the mandatory invariant classes and CI/nightly separation.
-
-### Full local matrix (release-style)
+For a release-style local matrix:
 
 ```sh
 cargo build --workspace --all-features
-cargo test  --workspace --all-features
+cargo test --workspace --all-features
 cargo clippy --workspace --all-targets -- -D warnings
-cargo run   -p layer-check
+cargo run -p layer-check
 cargo build --release --target thumbv7em-none-eabihf --no-default-features \
   -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
 ```
 
-Wire truth is doc 10; every signature is domain-separated (doc 10 §3.1);
-Ed25519 verification is `verify_strict` only (AUDIT F9). License is
-provisional (`MIT OR Apache-2.0`) pending a project decision.
+Wire behavior is defined in `../../docs/spec/bundles.md` and
+`../../docs/spec/sessions.md`; signature domains are defined in
+`../../docs/spec/cryptography.md`. Ed25519 verification uses strict
+verification. Mobile radio integration and physical BLE interoperability
+remain release gates.

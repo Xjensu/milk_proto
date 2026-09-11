@@ -5,9 +5,9 @@
 # way to run `xcodebuild`, so this script (like the CI job that calls it) is
 # unverifiable outside a real macOS host; first real execution in CI is the
 # actual verification, same honesty discipline as this repo's other
-# hardware/toolchain-gated stories (see docs/AGILE_BACKLOG.md E3-S2).
+# hardware/toolchain-gated stories (see docs/internal/release-evidence/research-release-gates.md E3-S2).
 #
-# docs/AGILE_BACKLOG.md E2-S5.
+# docs/internal/release-evidence/research-release-gates.md E2-S5.
 # Usage: scripts/build-ios-xcframework.sh [output-dir]  (default: mobile-artifacts/ios)
 
 set -euo pipefail

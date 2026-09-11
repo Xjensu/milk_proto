@@ -1,12 +1,12 @@
-# CI matrix per doc 12 §7.6 / docs/ROADMAP_TO_PRODUCTION.md.
+# CI matrix for the workspace and documented release gates.
 # Six targets: x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin
 # (the three host jobs), aarch64-linux-android + thumbv7em-none-eabihf (cross-check),
 # aarch64-apple-ios (ios-check) — plus cargo-deny, the layer test, MIRI on mmp-types,
-# and the flash/RAM size gate (informational until docs/AGILE_BACKLOG.md E2-S4 lands).
+# and the flash/RAM size gate (informational until the release gate is recorded).
 #
 # This workflow lives at the repo root (not implementation/mesh-milk/.github/) because
 # GitHub Actions only discovers workflows under <repo-root>/.github/workflows/ — see
-# docs/AGILE_BACKLOG.md E2-S0. All `run:` steps default into the workspace directory;
+# workspace release-gate policy. All `run:` steps default into the workspace directory;
 # `uses:` steps (checkout, cargo-deny-action, upload-artifact) are unaffected by that
 # default and are pointed at the workspace explicitly where they need a path.
 
@@ -46,7 +46,7 @@ jobs:
       # has an independent fixture/isolation review. mmp-store's own recovery
       # fixtures are now unique and parallel-safe; this is a broader policy.
       - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
-      # docs/AGILE_BACKLOG.md E2-S1: clippy was previously enforced only by
+      # Clippy is enforced by the workspace validation policy.
       # local practice, not CI. Proven locally to catch a real violation
       # (needless_bool/bool_comparison) before being wired in here.
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
@@ -138,7 +138,7 @@ jobs:
           # archive sizes are a regression proxy, not a linked-image claim.
           # Re-baseline deliberately,
           # not by nudging the multiplier, if a change legitimately needs more
-          # room (e.g. a new crypto primitive) — see docs/AGILE_BACKLOG.md E2-S4.
+          # room (e.g. a new crypto primitive) — record any change in the release evidence.
           declare -A BUDGET=(
             [libmmp_types.rlib]=754548    # baseline 628790
             [libmmp_crypto.rlib]=528104   # baseline 440086
@@ -166,7 +166,7 @@ jobs:
         with:
           manifest-path: implementation/mesh-milk/Cargo.toml
 
-  # docs/AGILE_BACKLOG.md E8-S2. Note: `deny.toml`'s `[advisories]` block
+  # Security advisories are checked in the release validation workflow. Note: `deny.toml`'s `[advisories]` block
   # (checked by the `deny` job above) already queries the same RustSec
   # advisory database `cargo-audit` does — this job exists because the story
   # names `cargo-audit` specifically, not because it adds new coverage.
@@ -234,7 +234,7 @@ jobs:
             implementation/mesh-milk/bindings/kotlin
             implementation/mesh-milk/bindings/swift
 
-  # docs/AGILE_BACKLOG.md E4-S3: validate the checked-in React Native package
+  # Validate the checked-in React Native package
   # contract and npm file allow-list. This is intentionally not a TypeScript or
   # device-build claim: the package delegates compilation to its consuming app,
   # while React Native declarations and native runners are supplied downstream.
@@ -281,7 +281,7 @@ jobs:
       # does not resolve implementation/mesh-milk twice.
       - run: swift test --package-path platform/swift-mesh-drive
 
-  # docs/AGILE_BACKLOG.md E2-S5: packages mmp-ffi's Android cdylib as a real
+  # Packages mmp-ffi's Android cdylib as a real
   # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
   # classes.jar — a standard, documented AGP dependency shape; this repo has
   # no Android app module yet to compile the Kotlin bindings into bytecode,
@@ -311,7 +311,7 @@ jobs:
           if-no-files-found: error
           path: implementation/mesh-milk/mobile-artifacts/android
 
-  # docs/AGILE_BACKLOG.md E2-S5: wraps mmp-ffi's iOS staticlib (device +
+          # Wraps mmp-ffi's iOS staticlib (device +
   # Apple-Silicon simulator) into MmpCore.xcframework via `xcodebuild`, the
   # standard Apple packaging tool for multi-platform binary frameworks — no
   # invented packaging step here, unlike the Android side's native-only-AAR
@@ -371,7 +371,7 @@ jobs:
   # Short seeded runs — weekly schedule/manual dispatch only (not on every
   # push): doc 12 §7.2's
   # "N CPU-hours once a baseline is measured" is deliberately NOT pre-committed
-  # here (docs/ROADMAP_TO_PRODUCTION.md Phase C exit gate says the same); this
+  # here; this
   # job is a smoke-level "still finds nothing in a couple minutes" check, not
   # the real corpus-hardening run.
   fuzz-run:
@@ -423,7 +423,7 @@ jobs:
       - name: run ignored simulator deployment and scale drills
         run: cargo test --release --locked -p mmp-sim --all-targets --all-features -- --ignored --test-threads=1
 
-  # docs/AGILE_BACKLOG.md E8-S2: signed release artifacts, on a version tag
+  # Signed release artifacts are produced on a version tag
   # push only. Scope decision: `mmp-cli` is this workspace's one standalone
   # consumer-facing binary today (the PC anchor node + inspection tool) — the
   # mobile artifacts (E2-S2/E2-S5) are already signed-adjacent via their own

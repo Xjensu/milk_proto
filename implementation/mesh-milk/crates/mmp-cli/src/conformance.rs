@@ -624,7 +624,7 @@ fn coverage_manifest_maps_every_committed_vector() {
     assert_eq!(evidence.len(), 39);
     assert!(sources
         .iter()
-        .all(|source| source.starts_with("specification/")));
+        .all(|source| source.starts_with("docs/")));
     assert!(evidence.iter().all(|entry| !entry.is_empty()));
 
     let mut actual = artifacts;

@@ -3,7 +3,7 @@
 # every ABI in MOBILE_INTEGRATION.md §3's cargo-ndk invocation, plus the
 # UniFFI-generated Kotlin bindings as a source zip alongside it.
 #
-# docs/AGILE_BACKLOG.md E2-S5. Prerequisites (not installed by this script):
+# docs/internal/release-evidence/research-release-gates.md E2-S5. Prerequisites (not installed by this script):
 #   - rustup targets: aarch64-linux-android, armv7-linux-androideabi, x86_64-linux-android
 #   - cargo-ndk (`cargo install cargo-ndk`)
 #   - ANDROID_NDK_HOME pointing at an installed NDK
