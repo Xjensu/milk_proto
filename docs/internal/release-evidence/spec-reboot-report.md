@@ -86,6 +86,8 @@ Deployment validation: Linux/BlueZ runtime, Android, iOS, embedded hardware, pro
 
 - `git diff --check` — passed after link and prose repair.
 - `python implementation/mesh-milk/scripts/check_spec_status.py --repo . --manifest docs/spec/status-manifest.json` — passed.
+- `python implementation/mesh-milk/scripts/check_release_governance.py --repo .` — passed.
+- Repository-wide relative Markdown link scan — no missing links.
 - `python -m unittest discover -s scripts/tests -p 'test_*.py'` from `implementation/mesh-milk` — 261 passed, 10 skipped.
 - `RUSTFLAGS=-C debuginfo=0 cargo test --locked -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router --all-targets -- --test-threads=1` — passed.
 - `RUSTFLAGS=-C debuginfo=0 cargo test --locked -p mmp-node --lib -- --test-threads=1` — passed (198 tests).
