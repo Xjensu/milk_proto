@@ -16,6 +16,16 @@ Copy-Item deploy/observability/.env.example deploy/observability/.env.local
 
 Replace `GF_SECURITY_ADMIN_PASSWORD` with a long random value and keep the file private. The local Grafana username is `admin`; Prometheus and Loki expose local operator endpoints without a separate login in this development overlay.
 
+To inspect the configured Grafana username locally without putting the password in a command line or source file:
+
+```powershell
+$grafanaEnv = Get-Content deploy/observability/.env.local
+$grafanaUser = ($grafanaEnv | Where-Object { $_ -like 'GF_SECURITY_ADMIN_USER=*' }) -replace '^GF_SECURITY_ADMIN_USER=', ''
+Write-Output "Grafana user: $grafanaUser"
+```
+
+Open `deploy/observability/.env.local` in a local editor when you need to enter the password interactively. Never paste it into tickets, logs or committed files. If Grafana was initialized earlier, changing this file alone does not rotate the stored password; use the reset procedure below with the same local value.
+
 Start it from the repository root after the application services are available:
 
 ```powershell
