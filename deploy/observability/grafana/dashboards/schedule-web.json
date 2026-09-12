@@ -50,6 +50,23 @@
       "targets": [{"expr": "{environment=\"local\"} |= \"outbox_relay\"", "refId": "A"}],
       "title": "Outbox relay events",
       "type": "logs"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 34},
+      "id": 6,
+      "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"expr": "count(ALERTS{alertstate=\"firing\"}) or vector(0)", "legendFormat": "firing alerts", "refId": "A"}],
+      "title": "Firing alerts",
+      "type": "stat"
     }
   ],
   "refresh": "15s",
