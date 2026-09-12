@@ -7,7 +7,12 @@ require "net/http"
 require "uri"
 require "yaml"
 
-query_file = ARGV.fetch(0, "docs/handoff/SOLR_EVALUATION_QUERIES.yml")
+default_query_file = if File.file?("docs/handoff/SOLR_EVALUATION_QUERIES.yml")
+                       "docs/handoff/SOLR_EVALUATION_QUERIES.yml"
+                     else
+                       "apps/schedule_web/docs/handoff/SOLR_EVALUATION_QUERIES.yml"
+                     end
+query_file = ARGV.fetch(0, default_query_file)
 solr_url = ENV.fetch("SOLR_URL", "http://localhost:8983/solr/schedule_experiment/select")
 iterations = Integer(ENV.fetch("SOLR_ITERATIONS", "20"))
 warmup = Integer(ENV.fetch("SOLR_WARMUP", "2"))
