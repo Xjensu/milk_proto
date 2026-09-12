@@ -64,6 +64,12 @@ services:
     volumes:
       - ./schemas:/schemas:ro
     logging: *default-logging
+    healthcheck:
+      test: ["CMD", "ruby", "-rsocket", "-e", "TCPSocket.new('127.0.0.1', 2300).close"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       - db
       - minio
