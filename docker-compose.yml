@@ -1,0 +1,215 @@
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+    container_name: milk_schedule_frontend
+    ports:
+      - "4173:80"
+    depends_on:
+      - api_geteway
+    logging: *default-logging
+
+  schedule_web:
+    build:
+      context: ./apps/schedule_web
+      dockerfile: Dockerfile
+    container_name: schedule_web
+    env_file:
+      - .env.local
+    environment:
+      RAILS_ENV: production
+      API_GETEWAY_URL: http://api_geteway:2300
+      # REDIS_URL comes from .env.local's env_file entry (db 0, shared with the
+      # other services). The plan calls for a dedicated db (redis://.../1) via
+      # ${REDIS_PASSWORD} substitution, but docker compose only expands ${...}
+      # in this block from the shell or a top-level ./.env file — never from
+      # values supplied through another service's env_file — so that would
+      # resolve to an empty password (verified with `docker compose config`).
+      # Adding a second .env for compose-level substitution, or hardcoding the
+      # real password here, would duplicate a secret into a file this plan
+      # does not otherwise gitignore. DB isolation can be revisited later.
+      WEB_CONCURRENCY: "2"
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api_geteway
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/up"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+
+  api_geteway:
+    build:
+      context: ./apps/api_geteway
+      dockerfile: Dockerfile
+    container_name: api_geteway
+    env_file:
+      - .env.local
+    environment:
+      AVRO_SCHEMA_DIR: /schemas/avro
+    ports:
+      - "2300:2300"
+    volumes:
+      - ./schemas:/schemas:ro
+    logging: *default-logging
+    depends_on:
+      - db
+      - minio
+      - redis
+
+  outbox_relay:
+    image: milk_schedule-api_geteway
+    container_name: outbox_relay
+    env_file:
+      - .env.local
+    environment:
+      AVRO_SCHEMA_DIR: /schemas/avro
+    volumes:
+      - ./apps/api_geteway:/app
+      - ./schemas:/schemas:ro
+    logging: *default-logging
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+    command: ["bundle", "exec", "ruby", "bin/outbox_relay"]
+
+  media_sanitizer:
+    build:
+      context: ./apps/api_geteway
+      dockerfile: Dockerfile
+    container_name: media_sanitizer
+    env_file:
+      - .env.local
+    environment:
+      AVRO_SCHEMA_DIR: /schemas/avro
+      MEDIA_REQUIRE_VIRUS_SCAN: "true"
+      MEDIA_SANITIZE_TIMEOUT: "30"
+      MEDIA_SANITIZER_POLL_INTERVAL: "5"
+      MEDIA_SANITIZER_BATCH_SIZE: "10"
+      MEDIA_SANITIZER_CONCURRENCY: "3"
+      MEDIA_SANITIZER_SCAN_TIMEOUT: "300"
+      MEDIA_SANITIZER_MAX_ATTEMPTS: "5"
+      MEDIA_IMAGE_MAX_PIXELS: "100000000"
+    volumes:
+      - ./schemas:/schemas:ro
+    logging: *default-logging
+    depends_on:
+      - db
+      - minio
+      - redis
+    restart: unless-stopped
+    command: ["bundle", "exec", "ruby", "bin/media_sanitizer"]
+
+  excel_processor:
+    build:
+      context: ./apps/excel_processor
+      dockerfile: Dockerfile
+    container_name: excel_processor
+    env_file:
+      - .env.local
+    environment:
+      AVRO_SCHEMA_DIR: /schemas/avro
+    volumes:
+      - ./schemas:/schemas:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+    logging: *default-logging
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+    command: ["sh", "-c", "python migrations/apply_migrations.py && python run.py"]
+
+
+  db:
+    image: pgrouting/pgrouting:15-3.5-develop
+    container_name: postgres
+    env_file:
+      - .env.local
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+  
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    volumes:
+      - ./storage/redis_data:/data
+    env_file:
+      - .env.local
+    ports:
+      - "6379:6379"
+    command:
+      - sh
+      - -c
+      - 'redis-server --protected-mode yes --requirepass "$$REDIS_PASSWORD"'
+  minio:
+    image: minio/minio:latest
+    container_name: hanami_minio
+    env_file:
+      - .env.local
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  minio_init:
+    image: minio/mc:latest
+    container_name: minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env.local
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
+        mc mb --ignore-existing local/$$MINIO_BUCKET &&
+        mc mb --ignore-existing local/$$MEDIA_QUARANTINE_BUCKET &&
+        mc mb --ignore-existing local/$$MEDIA_CLEAN_BUCKET &&
+        mc anonymous set none local/$$MINIO_BUCKET &&
+        mc anonymous set none local/$$MEDIA_QUARANTINE_BUCKET &&
+        mc anonymous set none local/$$MEDIA_CLEAN_BUCKET &&
+        echo 'Buckets ready and hardened (private — no anonymous access).'
+      "
+    restart: "no"
+
+volumes:
+  postgres-data:
+  minio-data:
+  web_dist:
