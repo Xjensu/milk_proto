@@ -22,9 +22,14 @@ raise ArgumentError, "SOLR_ITERATIONS must be positive" unless iterations.positi
 queries = YAML.load_file(query_file).fetch("queries")
 uri = URI(solr_url)
 
+def escape_solr(text)
+  text.to_s.gsub(/([+\-!(){}\[\]^"~*?:\\\/]|&&|\|\|)/) { |match| "\\#{match}" }
+end
+
 def request(uri, text, query_field)
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  query = query_field.empty? ? text : "#{query_field}:(#{text})"
+  escaped = escape_solr(text)
+  query = query_field.empty? ? escaped : "#{query_field}:(#{escaped})"
   params = URI.encode_www_form(q: query, rows: 5, wt: "json")
   response = Net::HTTP.get_response(URI("#{uri}?#{params}"))
   elapsed_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1_000
