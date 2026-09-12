@@ -72,6 +72,8 @@ services:
     image: grafana/grafana:11.6.0
     container_name: milk_schedule_grafana
     profiles: [observability]
+    env_file:
+      - ./deploy/observability/.env.local
     depends_on:
       prometheus:
         condition: service_healthy
