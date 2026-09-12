@@ -185,7 +185,7 @@ services:
     command:
       - sh
       - -c
-      - 'redis-server --protected-mode yes --requirepass "$$REDIS_PASSWORD"'
+      - 'redis-server --protected-mode yes --requirepass "$$REDIS_PASSWORD" --appendonly yes --appendfsync everysec'
   minio:
     image: minio/minio:latest
     container_name: hanami_minio
