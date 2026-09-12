@@ -41,6 +41,15 @@
       "targets": [{"expr": "{environment=\"local\"}", "refId": "A"}],
       "title": "Application logs",
       "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 26},
+      "id": 5,
+      "options": {"deduplication": "none", "enableLogDetails": true, "showCommonLabels": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLines": false},
+      "targets": [{"expr": "{environment=\"local\"} |= \"outbox_relay\"", "refId": "A"}],
+      "title": "Outbox relay events",
+      "type": "logs"
     }
   ],
   "refresh": "15s",
