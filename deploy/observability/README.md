@@ -18,6 +18,8 @@ docker compose -f docker-compose.yml -f deploy/observability/docker-compose.obse
 
 Open Grafana at `http://localhost:3001`, Prometheus at `http://localhost:9090`, and Loki at `http://localhost:3100/ready`. Grafana provisions the Prometheus and Loki data sources and the `Milk Schedule · Operations` dashboard automatically.
 
+Prometheus also loads the committed alert rules in `prometheus/alerts.yml`. `ScheduleWebDown` fires after two minutes without a Rails scrape; `ScheduleWebCircuitBreakerOpen` fires after five minutes with any upstream breaker open. Review the alert details in Prometheus (`/alerts`) and the corresponding breaker key in Grafana before retrying an administrator mutation.
+
 The Prometheus target is the internal Compose address `schedule_web:3000/metrics`. The dashboard uses the bounded request counters, duration sums/counts and circuit-breaker gauges already exposed by Rails; it does not use request IDs, URLs or user data as metric labels.
 
 Fluentd reads Docker JSON-file logs from the mounted Docker container directory and also accepts Fluent Forward traffic on port `24224`. On Docker Desktop, verify that the Docker data directory can be mounted by the engine. If that mount is unavailable in a deployment environment, route the service logger to Fluent Forward instead of weakening application logging or exposing the Docker socket.
