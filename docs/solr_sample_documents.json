@@ -1,0 +1,8 @@
+[
+  {"id":"teacher-ivanov","type":"teacher","name":"Иванов Иван Иванович","name_txt":"Иванов Иван Иванович"},
+  {"id":"teacher-petrova","type":"teacher","name":"Петрова Анна Сергеевна","name_txt":"Петрова Анна Сергеевна"},
+  {"id":"subject-analysis","type":"subject","name":"Математический анализ","name_txt":"Математический анализ матан"},
+  {"id":"subject-programming","type":"subject","name":"Программирование","name_txt":"Программирование"},
+  {"id":"room-204","type":"room","name":"Главный корпус 204","name_txt":"Главный корпус 204"},
+  {"id":"room-305","type":"room","name":"Лаборатория 305","name_txt":"Лаборатория 305"}
+]

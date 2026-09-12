@@ -14,6 +14,7 @@ default_query_file = if File.file?("docs/handoff/SOLR_EVALUATION_QUERIES.yml")
                      end
 query_file = ARGV.fetch(0, default_query_file)
 solr_url = ENV.fetch("SOLR_URL", "http://localhost:8983/solr/schedule_experiment/select")
+query_field = ENV.fetch("SOLR_QUERY_FIELD", "").strip
 iterations = Integer(ENV.fetch("SOLR_ITERATIONS", "20"))
 warmup = Integer(ENV.fetch("SOLR_WARMUP", "2"))
 raise ArgumentError, "SOLR_ITERATIONS must be positive" unless iterations.positive?
@@ -21,9 +22,10 @@ raise ArgumentError, "SOLR_ITERATIONS must be positive" unless iterations.positi
 queries = YAML.load_file(query_file).fetch("queries")
 uri = URI(solr_url)
 
-def request(uri, text)
+def request(uri, text, query_field)
   started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-  params = URI.encode_www_form(q: text, rows: 5, wt: "json")
+  query = query_field.empty? ? text : "#{query_field}:(#{text})"
+  params = URI.encode_www_form(q: query, rows: 5, wt: "json")
   response = Net::HTTP.get_response(URI("#{uri}?#{params}"))
   elapsed_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1_000
   raise "Solr returned #{response.code}" unless response.is_a?(Net::HTTPSuccess)
@@ -33,11 +35,11 @@ end
 
 rows = []
 queries.each do |query|
-  warmup.times { request(uri, query.fetch("text")) }
+  warmup.times { request(uri, query.fetch("text"), query_field) }
   samples = []
   response = nil
   iterations.times do
-    elapsed, response = request(uri, query.fetch("text"))
+    elapsed, response = request(uri, query.fetch("text"), query_field)
     samples << elapsed
   end
   samples.sort!
