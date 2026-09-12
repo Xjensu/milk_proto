@@ -81,8 +81,10 @@ services:
       - ./schemas:/schemas:ro
     logging: *default-logging
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
     restart: unless-stopped
     command: ["bundle", "exec", "ruby", "bin/outbox_relay"]
     healthcheck:
