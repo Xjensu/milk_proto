@@ -82,6 +82,7 @@ services:
       - .env.local
     environment:
       AVRO_SCHEMA_DIR: /schemas/avro
+      OUTBOX_STREAM_KEY: schedule:event_outbox
     volumes:
       - ./apps/api_geteway:/app
       - ./schemas:/schemas:ro
