@@ -1,0 +1,50 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "csv"
+require "json"
+require "net/http"
+require "uri"
+require "yaml"
+
+query_file = ARGV.fetch(0, "docs/handoff/SOLR_EVALUATION_QUERIES.yml")
+solr_url = ENV.fetch("SOLR_URL", "http://localhost:8983/solr/schedule_experiment/select")
+iterations = Integer(ENV.fetch("SOLR_ITERATIONS", "20"))
+warmup = Integer(ENV.fetch("SOLR_WARMUP", "2"))
+raise ArgumentError, "SOLR_ITERATIONS must be positive" unless iterations.positive?
+
+queries = YAML.load_file(query_file).fetch("queries")
+uri = URI(solr_url)
+
+def request(uri, text)
+  started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  params = URI.encode_www_form(q: text, rows: 5, wt: "json")
+  response = Net::HTTP.get_response(URI("#{uri}?#{params}"))
+  elapsed_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1_000
+  raise "Solr returned #{response.code}" unless response.is_a?(Net::HTTPSuccess)
+
+  [elapsed_ms, JSON.parse(response.body)]
+end
+
+rows = []
+queries.each do |query|
+  warmup.times { request(uri, query.fetch("text")) }
+  samples = []
+  response = nil
+  iterations.times do
+    elapsed, response = request(uri, query.fetch("text"))
+    samples << elapsed
+  end
+  samples.sort!
+  docs = response.dig("response", "docs") || []
+  rows << {
+    "id" => query.fetch("id"),
+    "entity" => query.fetch("entity"),
+    "iterations" => iterations,
+    "p50_latency_ms" => samples[(samples.length * 0.50).floor].round(2),
+    "p95_latency_ms" => samples[[(samples.length * 0.95).ceil - 1, 0].max].round(2),
+    "result_ids" => docs.filter_map { |doc| doc["id"] || doc["_id"] }
+  }
+end
+
+puts JSON.pretty_generate({ "solr_url" => solr_url, "results" => rows })
