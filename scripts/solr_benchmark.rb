@@ -59,4 +59,4 @@ queries.each do |query|
   }
 end
 
-puts JSON.pretty_generate({ "solr_url" => solr_url, "results" => rows })
+puts JSON.pretty_generate({ "solr_url" => solr_url, "query_field" => query_field, "results" => rows })
