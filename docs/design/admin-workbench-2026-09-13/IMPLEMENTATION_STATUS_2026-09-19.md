@@ -15,11 +15,12 @@ Date: 2026-09-19
 - The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing labelled choice lists, sheet editors, focused feedback, and table scrolling regions. The Schedule placement workspace deliberately retains its original compact native controls and dense planner geometry.
 - The administrator shell provides a keyboard skip link that moves focus past the persistent sidebar to the current workspace and respects reduced-motion preferences.
 - Narrow administrator navigation, monitoring, return, and sign-out actions retain at least 44px interaction height.
+- Dated lesson swaps have a two-step click, touch, and keyboard selection path in addition to drag-and-drop; both paths stage the same atomic swap confirmation.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `abac8e8` (`Increase narrow admin navigation targets`).
+- Rails runtime revision: `33362a3` (`Add keyboard path for lesson swaps`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
