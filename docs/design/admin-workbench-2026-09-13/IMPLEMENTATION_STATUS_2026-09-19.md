@@ -16,11 +16,12 @@ Date: 2026-09-19
 - The administrator shell provides a keyboard skip link that moves focus past the persistent sidebar to the current workspace and respects reduced-motion preferences.
 - Narrow administrator navigation, monitoring, return, and sign-out actions retain at least 44px interaction height.
 - Dated lesson swaps have a two-step click, touch, and keyboard selection path in addition to drag-and-drop; both paths stage the same atomic swap confirmation.
+- Administrator pages use the shared layout as their single primary `main` landmark; page-level workspace wrappers no longer create nested landmarks.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `33362a3` (`Add keyboard path for lesson swaps`).
+- Rails runtime revision: `6a76c3b` (`Keep one main landmark in admin pages`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
