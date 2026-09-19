@@ -17,11 +17,12 @@ Date: 2026-09-19
 - Narrow administrator navigation, monitoring, return, and sign-out actions retain at least 44px interaction height.
 - Dated lesson swaps have a two-step click, touch, and keyboard selection path in addition to drag-and-drop; both paths stage the same atomic swap confirmation.
 - Administrator pages use the shared layout as their single primary `main` landmark; page-level workspace wrappers no longer create nested landmarks.
+- The shared unsaved-changes alert makes the underlying sheet content inert until the administrator saves, discards, or resumes editing, keeping keyboard focus inside the active alert.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `6a76c3b` (`Keep one main landmark in admin pages`).
+- Rails runtime revision: `290cb0c` (`Trap focus in unsaved changes prompt`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
