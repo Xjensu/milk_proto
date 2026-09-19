@@ -17,7 +17,7 @@ Date: 2026-09-19
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `4eb088e` (`Link calendar navigation to transfers workspace`).
+- Rails runtime revision: `36b9b2a` (`Use canonical transfers workspace route`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
