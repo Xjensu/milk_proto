@@ -17,7 +17,7 @@ Date: 2026-09-19
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `df6a007` (`Add dated lesson transfer workspace`).
+- Rails runtime revision: `07fb63c` (`Target dropped lesson precisely for swaps`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
