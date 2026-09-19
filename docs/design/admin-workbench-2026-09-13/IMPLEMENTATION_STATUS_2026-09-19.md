@@ -13,11 +13,12 @@ Date: 2026-09-19
 - Workload creation and editing use a searchable visible activity-type catalog while retaining the radio-button request identity.
 - Calendar now separates day-wide transfers from dated lesson transfers. The latter shows two date grids, stages drag-and-drop moves or atomic swaps for confirmation, and provides a dated time editor when a lesson card is selected.
 - The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing labelled choice lists, sheet editors, focused feedback, and table scrolling regions. The Schedule placement workspace deliberately retains its original compact native controls and dense planner geometry.
+- The administrator shell provides a keyboard skip link that moves focus past the persistent sidebar to the current workspace and respects reduced-motion preferences.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `8c84523` (`Restore compact schedule builder design`).
+- Rails runtime revision: `6568977` (`Add keyboard skip link to admin shell`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
