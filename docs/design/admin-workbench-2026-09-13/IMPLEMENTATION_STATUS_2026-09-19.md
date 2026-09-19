@@ -12,12 +12,12 @@ Date: 2026-09-19
 - Schedule shows five nearby semester choices in its main context rail; the full history opens in the existing searchable sheet and keeps the same Turbo URL context.
 - Workload creation and editing use a searchable visible activity-type catalog while retaining the radio-button request identity.
 - Calendar now separates day-wide transfers from dated lesson transfers. The latter shows two date grids, stages drag-and-drop moves or atomic swaps for confirmation, and provides a dated time editor when a lesson card is selected.
-- The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing larger controls, labelled choice lists, sheet editors, focused feedback, and table scrolling regions.
+- The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing labelled choice lists, sheet editors, focused feedback, and table scrolling regions. The Schedule placement workspace deliberately retains its original compact native controls and dense planner geometry.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `a7332f9` (`Show lesson transfer data failures clearly`).
+- Rails runtime revision: `8c84523` (`Restore compact schedule builder design`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
