@@ -204,7 +204,7 @@ services:
       retries: 5
       start_period: 30s
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: hanami_minio
     env_file:
       - .env.local
@@ -221,7 +221,7 @@ services:
       retries: 3
 
   minio_init:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: minio_init
     depends_on:
       minio:

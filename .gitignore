@@ -17,3 +17,6 @@ apps/web/node_modules/
 apps/web/dist/
 apps/bff/node_modules/
 apps/bff/dist/
+
+# Subagent-driven-development scratch workspace (per-plan ledgers/briefs/reports)
+.superpowers/

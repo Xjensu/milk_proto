@@ -136,12 +136,12 @@ RSpec.describe Admin::Contracts::ScheduleEvents::CreateContract do
 
   it "accepts room_id: nil explicitly" do
     result = contract.call(base_params(room_id: nil))
-    expect(result.errors[:schedule_event, :room_id]).to be_nil
+    expect(result.errors.to_h.dig(:schedule_event, :room_id)).to be_nil
   end
 
   it "still rejects a non-integer room_id" do
     result = contract.call(base_params(room_id: "not-a-number"))
-    expect(result.errors[:schedule_event, :room_id]).not_to be_nil
+    expect(result.errors.to_h.dig(:schedule_event, :room_id)).not_to be_nil
   end
 end
 ```
@@ -168,7 +168,7 @@ RSpec.describe Admin::Contracts::ScheduleEvents::FromRecommendationContract do
 
   it "accepts room_id: nil explicitly" do
     result = contract.call(base_params(room_id: nil))
-    expect(result.errors[:recommendation, :room_id]).to be_nil
+    expect(result.errors.to_h.dig(:recommendation, :room_id)).to be_nil
   end
 end
 ```

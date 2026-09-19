@@ -63,7 +63,10 @@ contract). All negative-test contracts from `БД.txt` (`422` on missing require
 | `GET`/`POST`/`PATCH`/`DELETE` | `/admin/teachers` | `{ post_id, academic_degree_id, academic_title_id, first_name, middle_name, last_name }` — all three FKs required |
 | `GET /admin/teachers?q=` | | typeahead search by full name, for the Teacher Schedule page's teacher picker |
 | `GET`/`POST`/`DELETE` | `/admin/teacher_on_kafedras` | `{ teacher_id, kafedra_id, pochasovoy? }` |
+| `GET /admin/teachers/:id/kafedras` | | bounded direct list of one teacher's department memberships |
 | `GET /admin/kafedras/:id/teachers` | | confirmed contract — all teachers on one kafedra |
+
+`teacher_on_kafedras` enforces `UNIQUE(teacher_id, kafedra_id)`. Duplicate writes and attempts to remove a membership referenced by workload or schedule rows return `409`; database `RESTRICT` foreign keys close concurrent-delete races.
 
 Scope enforcement: `kafedra_admin` may only write kafedra-scoped resources
 (`teacher_on_kafedras`, subjects taught by their kafedra) for their own `kafedra_id`;
@@ -185,6 +188,14 @@ an existing subject/group is a normal admin workflow.
 Two read models back the **Workload** page's two modes. Both are served by dedicated
 Repository query objects (`05-backend-patterns.md §2.3`), not the raw CRUD resources
 above — they pivot data the client should never have to reassemble from N REST calls.
+
+The current Rails workload workspace consumes the established
+`GET /admin/faculties/:id/load` and `GET /admin/kafedras/:id/load` representations. It
+loads department memberships with `GET /admin/teacher_on_kafedras?kafedra_id=` and uses
+the bounded `GET /admin/search/rooms?q=` lookup. New group load is written through the
+transactional `POST /admin/student_group_semesters/:id/load`; teacher assignments and
+room references use their granular endpoints. Each group creation is its own transaction,
+so a multi-group request can report partial completion and requires a refresh before retry.
 
 ### `GET /admin/workload/faculty`
 
@@ -394,7 +405,11 @@ Confirmed baseline contract:
 ```json
 { "teacher_time_constraint": { "teacher_id": 1, "time_slot_id": 1, "week_type_id": 1, "day_of_week": 1, "semester_id": 1, "is_available": false } }
 ```
-`201`. `DELETE /admin/teacher_time_constraints/:id` removes one.
+`201`. `GET` requires positive `teacher_id` and `semester_id` query parameters and reads
+the authoritative table, so a successful write is visible immediately. A duplicate cell
+returns `409`; `day_of_week` is constrained to 1–6 in both the contract and database.
+`DELETE /admin/teacher_time_constraints/:id` removes one. An unavailable `both` row also
+blocks recommendations for matching `odd` and `even` placements.
 
 ### `POST /admin/views/refresh`
 
