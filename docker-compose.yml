@@ -82,6 +82,7 @@ services:
       - .env.local
     environment:
       AVRO_SCHEMA_DIR: /schemas/avro
+      NOTICE_EXPORT_PUBLIC_ENDPOINT: http://localhost:9000
       OUTBOX_STREAM_KEY: schedule:event_outbox
       OUTBOX_STREAM_MAXLEN: "100000"
     volumes:
@@ -128,6 +129,25 @@ services:
       - redis
     restart: unless-stopped
     command: ["bundle", "exec", "ruby", "bin/media_sanitizer"]
+
+  notice_export_worker:
+    image: milk_schedule-api_geteway
+    container_name: notice_export_worker
+    env_file:
+      - .env.local
+    environment:
+      AVRO_SCHEMA_DIR: /schemas/avro
+      NOTICE_EXPORT_PUBLIC_ENDPOINT: http://localhost:9000
+    volumes:
+      - ./schemas:/schemas:ro
+    logging: *default-logging
+    depends_on:
+      api_geteway:
+        condition: service_healthy
+      minio_init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    command: ["bundle", "exec", "ruby", "bin/notice_export_worker"]
 
   excel_processor:
     build:
@@ -234,9 +254,11 @@ services:
         mc mb --ignore-existing local/$$MINIO_BUCKET &&
         mc mb --ignore-existing local/$$MEDIA_QUARANTINE_BUCKET &&
         mc mb --ignore-existing local/$$MEDIA_CLEAN_BUCKET &&
+        mc mb --ignore-existing local/$${NOTICE_EXPORT_BUCKET:-milk-schedule-notices} &&
         mc anonymous set none local/$$MINIO_BUCKET &&
         mc anonymous set none local/$$MEDIA_QUARANTINE_BUCKET &&
         mc anonymous set none local/$$MEDIA_CLEAN_BUCKET &&
+        mc anonymous set none local/$${NOTICE_EXPORT_BUCKET:-milk-schedule-notices} &&
         echo 'Buckets ready and hardened (private — no anonymous access).'
       "
     restart: "no"
