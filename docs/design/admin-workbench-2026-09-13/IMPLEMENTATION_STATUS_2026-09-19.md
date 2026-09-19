@@ -16,13 +16,14 @@ Date: 2026-09-19
 - The administrator shell provides a keyboard skip link that moves focus past the persistent sidebar to the current workspace and respects reduced-motion preferences.
 - Narrow administrator navigation, monitoring, return, and sign-out actions retain at least 44px interaction height.
 - Dated lesson swaps have a two-step click, touch, and keyboard selection path in addition to drag-and-drop; both paths stage the same atomic swap confirmation.
+- A staged lesson-swap selection has an explicit `Отменить выбор` action in addition to toggling the selected lesson.
 - Administrator pages use the shared layout as their single primary `main` landmark; page-level workspace wrappers no longer create nested landmarks.
 - The shared unsaved-changes alert makes the underlying sheet content inert until the administrator saves, discards, or resumes editing, keeping keyboard focus inside the active alert.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `290cb0c` (`Trap focus in unsaved changes prompt`).
+- Rails runtime revision: `0da4c13` (`Add explicit lesson swap cancellation`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
