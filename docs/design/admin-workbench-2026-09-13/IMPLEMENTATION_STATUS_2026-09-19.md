@@ -17,7 +17,7 @@ Date: 2026-09-19
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `0da3a64` (`Allow dated lesson room changes`).
+- Rails runtime revision: `795dc36` (`Use visible time choices for dated lessons`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
