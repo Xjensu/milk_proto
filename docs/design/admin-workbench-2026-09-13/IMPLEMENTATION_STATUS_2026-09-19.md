@@ -11,12 +11,13 @@ Date: 2026-09-19
 - The Calendar transfer editor uses an explicit searchable group choice, preserves the global scope option, keeps the five-column transfer table, and now labels every input in Russian.
 - Schedule shows five nearby semester choices in its main context rail; the full history opens in the existing searchable sheet and keeps the same Turbo URL context.
 - Workload creation and editing use a searchable visible activity-type catalog while retaining the radio-button request identity.
+- Calendar now separates day-wide transfers from dated lesson transfers. The latter shows two date grids, stages drag-and-drop moves or atomic swaps for confirmation, and provides a dated time editor when a lesson card is selected.
 - The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing larger controls, labelled choice lists, sheet editors, focused feedback, and table scrolling regions.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `971b9b1` (`Make workload activity selection searchable`).
+- Rails runtime revision: `df6a007` (`Add dated lesson transfer workspace`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
