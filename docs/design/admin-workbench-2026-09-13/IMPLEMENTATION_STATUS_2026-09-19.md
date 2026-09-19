@@ -28,6 +28,7 @@ Date: 2026-09-19
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
+- `bundle exec rails zeitwerk:check` passes in the running Rails container.
 - No new test files were added.
 
 ## Evidence boundary
