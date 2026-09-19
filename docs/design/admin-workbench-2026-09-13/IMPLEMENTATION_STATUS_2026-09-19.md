@@ -18,13 +18,14 @@ Date: 2026-09-19
 - Dated lesson swaps have a two-step click, touch, and keyboard selection path in addition to drag-and-drop; both paths stage the same atomic swap confirmation.
 - A staged lesson-swap selection has an explicit `Отменить выбор` action in addition to toggling the selected lesson.
 - Schedule faculty search and semester-history search now expose explicit screen-reader labels instead of relying on placeholders.
+- The Workload activity filter declares its submit action explicitly while preserving the existing Russian filter flow.
 - Administrator pages use the shared layout as their single primary `main` landmark; page-level workspace wrappers no longer create nested landmarks.
 - The shared unsaved-changes alert makes the underlying sheet content inert until the administrator saves, discards, or resumes editing, keeping keyboard focus inside the active alert.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `6c3a8fd` (`Label schedule search controls`).
+- Rails runtime revision: `20e51ec` (`Declare workload filter submit action`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
