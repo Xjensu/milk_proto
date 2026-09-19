@@ -9,12 +9,13 @@ Date: 2026-09-19
 - Administrator room reservations and schedule-event placement use the same transaction-scoped placement lock. Conflicting concurrent writes return a conflict instead of silently overlapping an occupied room or slot.
 - Individual and department notice PDF export is queued as a durable job. The Rails status page reads the same job instead of resubmitting it; the worker renews its lease, saves individual files, and produces one merged batch file.
 - The Calendar transfer editor uses an explicit searchable group choice, preserves the global scope option, keeps the five-column transfer table, and now labels every input in Russian.
+- Schedule shows five nearby semester choices in its main context rail; the full history opens in the existing searchable sheet and keeps the same Turbo URL context.
 - The admin workspaces retain the existing dark sidebar and Schedule/Workload composition while sharing larger controls, labelled choice lists, sheet editors, focused feedback, and table scrolling regions.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `3c9166b` (`Label weekday transfer form fields`).
+- Rails runtime revision: `3ed7970` (`Compact schedule semester context`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
