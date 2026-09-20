@@ -1775,3 +1775,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; period, semester, reservation, holiday and transfer table structures remain intact.
 - Known remaining issue: current Playwright session has no staff authentication, and the local host proxy did not return `/up` during this rebuild check.
 - Next concrete action: retry authenticated Calendar navigation and the B04 create/delete/read-back journey when the staff browser session is available.
+
+## 2026-09-20 — Preserve selected semester in period editors
+
+- Status: source-complete; authenticated invalid-period and read-back evidence remain pending.
+- Finding: the period page and failed-save renderer always resolved the remembered/default semester, even when a valid `semester_id` was present in the URL or submitted form. A failed editor could therefore reload groups from a different semester while retaining the submitted dates.
+- Behavior: both controllers now prefer the submitted semester when it exists in the loaded catalog, then fall back to the existing remembered-semester resolver only when the request is absent or invalid. Group-semester identity and safe period drafts remain tied to the selected context.
+- Files changed: `apps/schedule_web/app/controllers/admin/period_settings/show_controller.rb`, `periods_controller.rb`.
+- Source revision: Rails `d5eff57`.
+- Runtime/source verification: Rails image rebuilt, both changed controllers returned `Syntax OK`, Rails Zeitwerk check passed, and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only period routes; authenticated invalid-range preservation and responsive evidence remain pending.
+- Table inventory: unchanged; period editor units and calendar tables retain their existing structure.
+- Known remaining issue: current browser session has no staff authentication, so invalid submission and authoritative API read-back cannot yet be observed interactively.
+- Next concrete action: continue B04 reservation and dated-transfer contract inspection, then retry authenticated period acceptance.
