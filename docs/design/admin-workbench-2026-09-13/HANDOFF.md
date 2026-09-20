@@ -1920,3 +1920,16 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged; Rooms retains its four columns in the existing order.
 - Known remaining issue: current browser session has no staff authentication, so rendered track alignment cannot yet be observed interactively.
 - Next concrete action: continue the remaining Resources track audit, then retry authenticated B03 acceptance.
+
+## 2026-09-20 — Keep Account search actions in normal flow
+
+- Status: source-complete; authenticated Account sheet geometry and update evidence remain pending.
+- Finding: the Account editor sticky-submit selector matched every nested form, including GET teacher and department search forms. Search buttons could therefore become competing sticky actions inside the modal body.
+- Behavior: only non-GET mutation forms retain the sticky primary action. Search controls remain in normal document flow while the save and password-generation actions stay reachable in long editors.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `f7ac612`.
+- Runtime/source verification: Rails image rebuilt with Propshaft precompile, Rails Zeitwerk check passed, and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only Accounts routes; authenticated modal geometry, keyboard and update evidence remain pending.
+- Table inventory: unchanged; Accounts retains its six-column report.
+- Known remaining issue: current browser session has no staff authentication, so computed modal behavior cannot yet be observed interactively.
+- Next concrete action: continue B05 keyboard/focus source verification, then retry authenticated Account acceptance.
