@@ -48,7 +48,7 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 - The aggregate context disclosure summary now has an explicit visible keyboard focus ring and hover state using the shared velvet focus treatment.
 - Rails revision: `b29b4fa`.
-- Verification: `git diff --check` passed; the rule is scoped to the aggregate administrator control and does not affect public UI.
+- Verification: `git diff --check` passed; Docker image rebuilt and `schedule_web` recreated; Zeitwerk and `/up` passed; the served fingerprinted workspace CSS contains the focus rule. The rule is scoped to the aggregate administrator control and does not affect public UI.
 
 ## Current continuation — browser evidence takes precedence
 
