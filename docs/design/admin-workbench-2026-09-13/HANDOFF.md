@@ -1124,3 +1124,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; timetable headers, axes, cells and event semantics were not modified.
 - Known remaining issue: browser connector is unavailable, so open/close, focus return and actual height reduction cannot yet be confirmed.
 - Next action: rebuild `schedule_web`, verify asset loading and run the next B01 shared-control slice against Workload.
+
+## 2026-09-20 — Normalize Schedule and Workload controls
+
+- Status: source-complete; computed-style and keyboard/touch evidence remains pending.
+- Finding: Schedule and Workload used competing 44–48px rules for ordinary context links and search controls, while the design contract calls for 40px default controls and 14px form text.
+- Behavior: ordinary Schedule/Workload selectors and search controls now share a 40px/14px role; page-specific primary actions retain their larger touch target treatment.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `66eb35e`.
+- Runtime/source verification: diff check passed; asset rebuild and Rails loading verification are pending in the current container cycle.
+- Routes, role, context, viewport: `/admin/schedule` and `/admin/workload`, staff administrator, selected context; browser measurements at 1280×900, 768×1024 and 390×844 remain pending.
+- Table inventory: unchanged; Schedule timetable and Workload five-column table retain their existing headers and row semantics.
+- Known remaining issue: browser connector is unavailable, so actual computed sizes, focus treatment and narrow layout cannot yet be confirmed.
+- Next action: rebuild the web container, run Rails/API checks, then continue with B02 workload assignment and placement verification.
