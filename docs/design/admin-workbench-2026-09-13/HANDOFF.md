@@ -1662,3 +1662,15 @@ Browser/mutation/read-back evidence paths: No authenticated session was availabl
 Table inventory comparison: Notice retains its existing `Число`, `Часы`, `Поток, группа`, `Вид занятий`, `Аудитория` columns and print semantics.
 Known remaining issue: Authenticated responsive and print evidence remains pending.
 Next concrete action: Continue final adjacent-page consistency and retry the authenticated browser journey.
+
+Batch/slice: B06 adjacent-page control targets
+Status: source-complete; runtime asset/liveness verified, authenticated visual evidence pending
+Files changed (attributable): `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`
+Source revision + dirty-scope identifier: Rails `3938377`; root pre-existing untracked files preserved.
+Runtime source/asset verification method: Rails Zeitwerk, Accounts and period-settings ERB compilation and `git diff --check` passed. The Rails image rebuilt and `schedule_web` was recreated; `/up` returned 200 and Propshaft served `_admin_workspace-1f9d99b9.css`.
+Routes, role, safe selected context, viewport: Existing Accounts, Calendar period and Observability admin routes; authenticated context and viewport remain pending.
+Checks and exact results: Scoped final rules raise Accounts filters, Calendar period controls, account search controls and monitoring service links to the shared 40px target; labels use 12px/16px. Existing table structures and monitoring data semantics were unchanged.
+Browser/mutation/read-back evidence paths: No authenticated session was available; no mutation was sent.
+Table inventory comparison: No table columns, order, grouping or report semantics changed.
+Known remaining issue: Authenticated responsive and focus evidence remains pending.
+Next concrete action: Retry staff browser access and complete the remaining B00/B02 mutation/read-back gate.
