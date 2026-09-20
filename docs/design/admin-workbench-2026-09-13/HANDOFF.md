@@ -811,3 +811,11 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - Remaining: mutation/read-back, conflict handling and browser keyboard/drag acceptance remain pending.
 
 The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.ГГГГ`) used by remaining date presenters, preventing the same missing-translation failure in future calendar/public render paths. Rails revision: `9287586`.
+
+## 2026-09-20 — Weekday-transfer validation draft retention
+
+- Status: source-complete and deployed; authenticated negative-path browser confirmation remains pending.
+- Behavior: recoverable weekday-transfer failures now carry the safe submitted date, weekday, optional group and reason back through the redirect, reopen the transfer sheet, and restore the selected controls. No credentials or unrelated data are stored.
+- Attributable source: `apps/schedule_web/app/controllers/admin/weekday_transfers_controller.rb` and `app/views/admin/weekday_transfers/index.html.erb`; Rails revision `2a78492`.
+- Verification: ERB generation, diff checks and Docker rebuild passed; the Hanami contract independently returns `422` for an invalid date/weekday payload and creates no record.
+- Remaining: authenticated Rails 422 flow, successful create/delete read-back and conflict coverage remain pending.
