@@ -855,3 +855,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/controllers/admin/semesters_controller.rb` and `app/views/admin/semesters/index.html.erb`; Rails revision `f1be325`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated 422 retention and successful semester creation/read-back evidence remain pending.
+
+## 2026-09-20 — Schedule edit draft retention
+
+- Status: source-complete and deployed; authenticated conflict/validation browser confirmation remains pending.
+- Finding: Schedule event update failures redirected with only a message, losing the submitted day, time, week, subgroup, status, room and assignment selections.
+- Behavior: failed updates now retain a safe non-secret draft in the redirect flash and rehydrate the selected event editor, including checked teacher/room assignments and fallback room identity. The existing event ID and update operation remain unchanged.
+- Attributable source: `apps/schedule_web/app/controllers/admin/schedules/update_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `0195ff0`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated invalid/conflict response, original-record preservation and authoritative reload/read-back evidence remain pending.
