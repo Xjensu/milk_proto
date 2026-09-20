@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Preserve reservation filters across pagination
+
+- Status: source-complete; authenticated reservation pagination evidence remains pending.
+- Finding: Room Reservations pagination links retained only room/date filters. Moving between pages silently dropped the active room search, teacher search and Calendar context.
+- Behavior: previous/next reservation links now carry the existing room, teacher, date and Calendar context parameters while changing only the page number. Reservation columns and API contracts are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`.
+- Source revision: Rails `7157d7d`.
+- Runtime/source verification: Reservation ERB compilation, Rails Zeitwerk and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/room_reservations`, staff schedule writer, active search/date filters; browser pagination read-back remains pending.
+- Next action: verify that a filtered page transition preserves the visible query and selected context in the authenticated browser.
+
 ### 2026-09-20 — Keep account editors in native modal sheets
 
 - Status: source-complete; authenticated overlap/read-back evidence remains pending.
