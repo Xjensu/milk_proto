@@ -1102,3 +1102,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: aggregate and Teachers presenters; Rails revision `4d29b1e`.
 - Verification: identifier-pattern scan is clean for visible fallback labels; diff check and container Ruby syntax checks passed.
 - Remaining: authenticated visual/read-back evidence remains pending.
+
+## 2026-09-20 — Remove raw identifiers from audit views
+
+- Status: source-complete and deployed; authenticated audit visual confirmation remains pending.
+- Finding: the audit list and inspector printed raw entity and actor IDs as the primary object and user labels.
+- Behavior: audit views now show the localized entity type and a readable staff context label; the existing detail action and sanitized payload still provide the audit record.
+- Attributable source: Overview presenter and audit/observability views; Rails revision `a1b1f53`.
+- Verification: diff check and container Ruby syntax check passed.
+- Remaining: authenticated audit navigation and payload read-back evidence remain pending.
