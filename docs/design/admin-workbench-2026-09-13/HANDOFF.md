@@ -1523,6 +1523,14 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser transport is still closed, so live announcement behavior cannot yet be observed.
 - Next action: retry browser acceptance when the connector recovers.
 
+## 2026-09-20 — Verify serving container liveness
+
+- Status: runtime liveness verified; authenticated browser acceptance remains pending.
+- Evidence: from inside the running `schedule_web` container, `/` returned HTTP 200 and protected administrator routes `/admin/overview`, `/admin/aggregate_schedule`, and `/admin/room_reservations` returned HTTP 302 to authentication as expected.
+- Scope: read-only requests only; no credentials, records or sessions were changed.
+- Known remaining issue: this confirms route protection and serving health, not authenticated rendering, responsive behavior, mutation success or read-back.
+- Next action: restore browser transport/authentication and execute the documented acceptance matrix.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
