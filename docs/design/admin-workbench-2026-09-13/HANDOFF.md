@@ -828,3 +828,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/views/admin/aggregate_schedules/show.html.erb`; Rails revision `072ad46`.
 - Verification: ERB generation, `git diff --check`, Docker rebuild, Rails `zeitwerk:check`, and controller syntax check passed.
 - Remaining: live keyboard filtering, selected-scope navigation and full aggregate mutation/read-back evidence remain pending.
+
+## 2026-09-20 — Notice narrow-table semantics repair
+
+- Status: source-complete and deployed; visual narrow/print browser comparison remains pending.
+- Finding: the Notice report changed from a table to block/card-like rows below 680px, hiding the table header and violating the required column-preservation rule.
+- Behavior: narrow Notice reports now remain real tables inside an explicitly horizontally scrollable region; all columns, order, headers and print rules remain unchanged.
+- Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_notice.css`; Rails revision `11130f7`.
+- Verification: stylesheet diff check, Docker asset rebuild and Rails `zeitwerk:check` passed.
+- Remaining: verify the narrow scroll affordance, keyboard reachability and desktop/narrow print output in a live browser.
