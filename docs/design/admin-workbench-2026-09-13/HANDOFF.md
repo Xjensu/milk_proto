@@ -864,3 +864,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/controllers/admin/schedules/update_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `0195ff0`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated invalid/conflict response, original-record preservation and authoritative reload/read-back evidence remain pending.
+
+## 2026-09-20 — Dated transfer draft retention
+
+- Status: source-complete and deployed; authenticated conflict/validation browser confirmation remains pending.
+- Finding: failed recurring-to-dated transfer requests redirected with only an alert and discarded the submitted dates, action, target slot, room and reason.
+- Behavior: transfer failures now preserve a separate safe draft and reopen the dated-transfer disclosure, while keeping recurring edits and dated transfers on their existing distinct operations.
+- Attributable source: `apps/schedule_web/app/controllers/admin/schedules/transfers_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `05daa46`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated invalid/conflict response, cancellation/move read-back and original-record preservation evidence remain pending.
