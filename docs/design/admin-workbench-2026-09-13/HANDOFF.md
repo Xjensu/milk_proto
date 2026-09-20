@@ -893,3 +893,5 @@ The same dated-transfer editor now offers readable room choices from the selecte
 - Attributable source: `apps/schedule_web/app/controllers/admin/schedules/swaps_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `6e81cff`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated occupied-target rejection, successful swap/read-back and original-event preservation evidence remain pending.
+
+The Schedule and dated lesson-transfer selectors now use readable teacher, room and lesson labels without exposing raw database IDs in normal controls. Request values remain unchanged. Rails revision: `69069bb`.
