@@ -1853,3 +1853,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; group-semester columns, row meaning and editor behavior remain intact.
 - Known remaining issue: current browser session has no staff authentication, so the retry state cannot yet be observed interactively.
 - Next concrete action: continue the remaining adjacent-page failure-state sweep, then retry authenticated B03/B05 acceptance.
+
+## 2026-09-20 — Collapse Schedule inspector at intermediate widths
+
+- Status: source-complete; authenticated computed-layout and placement journey evidence remain pending.
+- Finding: the Schedule planner kept its optional 300px inspector in a three-column layout through 1280px viewports. With the dark admin sidebar present, this left the timetable with an unnecessarily narrow working region even though the legacy collapse breakpoint was 1180px.
+- Behavior: at 1181–1360px the planner keeps the source-load rail and timetable columns, then moves the optional inspector below the grid. The existing two-column and mobile tiers remain unchanged; the inspector is still scrollable/sticky at wider desktop widths.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `83c88f9`.
+- Runtime/source verification: Rails image rebuilt with Propshaft precompile, the served asset was fingerprinted as `_admin_workspace-fafa21d8.css`, Rails Zeitwerk check passed, and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only Schedule route; authenticated 1280px/1360px computed-layout and mutation evidence remain pending.
+- Table inventory: unchanged; Schedule time and weekday columns remain in the same table and retain local horizontal scrolling.
+- Known remaining issue: current browser session has no staff authentication, so the intermediate-width layout cannot yet be inspected interactively.
+- Next concrete action: continue the responsive B01/B02 source pass and retry the authenticated Schedule placement journey.
