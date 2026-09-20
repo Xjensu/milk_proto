@@ -819,3 +819,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/controllers/admin/weekday_transfers_controller.rb` and `app/views/admin/weekday_transfers/index.html.erb`; Rails revision `2a78492`.
 - Verification: ERB generation, diff checks and Docker rebuild passed; the Hanami contract independently returns `422` for an invalid date/weekday payload and creates no record.
 - Remaining: authenticated Rails 422 flow, successful create/delete read-back and conflict coverage remain pending.
+
+## 2026-09-20 — Aggregate schedule context filtering repair
+
+- Status: source-complete and deployed; authenticated browser interaction remains pending with the unavailable Playwright transport.
+- Finding: faculty search and its option list were mounted as separate `choice-filter` controller instances, so typing could not filter the list and could raise a missing-target error.
+- Behavior: faculty and department aggregate-schedule catalogs now share one controller instance per search region, expose labelled Russian search fields, hide non-matching options, and show an empty-result message without changing the selected scope or table schema.
+- Attributable source: `apps/schedule_web/app/views/admin/aggregate_schedules/show.html.erb`; Rails revision `072ad46`.
+- Verification: ERB generation, `git diff --check`, Docker rebuild, Rails `zeitwerk:check`, and controller syntax check passed.
+- Remaining: live keyboard filtering, selected-scope navigation and full aggregate mutation/read-back evidence remain pending.
