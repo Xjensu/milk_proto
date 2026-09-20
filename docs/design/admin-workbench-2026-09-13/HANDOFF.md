@@ -1066,3 +1066,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`; Rails revision `328c506`.
 - Verification: diff check passed.
 - Remaining: authenticated Accounts mutation/read-back and computed viewport evidence remain pending.
+
+## 2026-09-20 — Keep Teachers create action reachable
+
+- Status: source-complete and deployed; browser bounding-box confirmation remains pending.
+- Finding: the Teachers create drawer placed its primary submit at the end of a long scrolling form without a persistent action treatment.
+- Behavior: the teacher creation action now remains reachable while the drawer body scrolls; the existing fields, draft retention and create contract remain unchanged.
+- Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_teachers.css`; Rails revision `b80d722`.
+- Verification: diff check passed.
+- Remaining: authenticated teacher mutation/read-back and computed viewport evidence remain pending.
