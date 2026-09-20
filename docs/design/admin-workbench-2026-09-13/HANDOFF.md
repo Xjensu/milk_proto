@@ -44,6 +44,12 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - Rails revision: `200d149`.
 - Verification: Docker build, forced `schedule_web` recreation, Rails Zeitwerk check, internal `/up` HTTP 200 and `git diff --check` passed. Authenticated computed-height and save/read-back evidence remain pending.
 
+## 2026-09-21 — Add aggregate disclosure focus state
+
+- The aggregate context disclosure summary now has an explicit visible keyboard focus ring and hover state using the shared velvet focus treatment.
+- Rails revision: `b29b4fa`.
+- Verification: `git diff --check` passed; the rule is scoped to the aggregate administrator control and does not affect public UI.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
