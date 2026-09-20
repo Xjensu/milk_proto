@@ -1003,3 +1003,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`; Rails revision `c4a84fa`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated period save/rejection/read-back and browser evidence remain pending.
+
+## 2026-09-20 — Keep period actions inside their editor units
+
+- Status: source-complete and deployed; authenticated period interaction remains pending.
+- Finding: the four period save forms and their delete forms were sibling grid items, allowing a delete action to appear under a different period column.
+- Behavior: each period now owns a compact unit containing its save editor and optional delete action; all period kinds, routes and payloads remain unchanged.
+- Attributable source: period settings view and Calendar stylesheet; Rails revision `8f2a777`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated period save/delete/read-back and responsive browser evidence remain pending.
