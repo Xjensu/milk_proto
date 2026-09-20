@@ -809,3 +809,5 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - Fix: replaced the unavailable localized formatter with an explicit Russian numeric date presentation while preserving the two timetable schemas, transfer controls and ISO values submitted to the API.
 - Verification: authenticated `/admin/transfers?semester_id=1&faculty_id=1&group_semester_id=1&left_date=2026-09-21&right_date=2026-09-22` now returns HTTP 200 and renders both dated grids, lessons and transfer actions. Rails revision: `b968316`.
 - Remaining: mutation/read-back, conflict handling and browser keyboard/drag acceptance remain pending.
+
+The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.ГГГГ`) used by remaining date presenters, preventing the same missing-translation failure in future calendar/public render paths. Rails revision: `9287586`.
