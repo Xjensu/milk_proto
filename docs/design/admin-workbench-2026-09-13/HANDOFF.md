@@ -1557,6 +1557,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser transport is unavailable, so context retry behavior cannot yet be observed.
 - Next action: rerun browser acceptance when the connector recovers.
 
+## 2026-09-20 — Add remaining administrator retry actions
+
+- Status: source-complete; authenticated Accounts, academic-catalog and Workload assignment evidence remain pending.
+- Finding: Accounts, Academic Catalogs and Workload room-search failures still showed passive unavailable text without recovery actions.
+- Behavior: each state now exposes a labelled retry link using the current request URL. Account drafts, catalog editors, assignment selections and API identities remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/accounts/index.html.erb`, `apps/schedule_web/app/views/admin/resources/academic_catalogs/index.html.erb`, `apps/schedule_web/app/views/admin/workload/show/_assignment.html.erb`.
+- Source revision: Rails `5a0b227`.
+- Runtime/source verification: all three changed ERB templates compiled, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: Accounts, Academic Catalogs and Workload assignment routes, staff administrator; browser retry and mutation/read-back evidence remain pending.
+- Table inventory: unchanged; account, catalog and Workload structures retain their existing schemas.
+- Known remaining issue: browser transport is unavailable, so retry interactions cannot yet be observed.
+- Next action: rerun browser acceptance when the connector recovers.
+
 ## 2026-09-20 — Add resource failure retry actions
 
 - Status: source-complete; authenticated resource and Excel failure/read-back evidence remain pending.
