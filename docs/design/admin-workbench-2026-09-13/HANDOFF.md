@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Preserve Notice export search context
+
+- Status: source-complete; authenticated PDF queue/read-back evidence remains pending.
+- Finding: the Notice PDF action submitted teacher and semester IDs but dropped the active teacher search query. A queue failure or export status return could therefore lose the operator’s current context.
+- Behavior: individual Notice export requests and status/return links now carry the bounded Russian teacher query alongside teacher, semester and period parameters. Report rows, period restrictions and batch export behavior remain unchanged.
+- Files changed: `apps/schedule_web/app/controllers/admin/notice/exports_controller.rb`, `apps/schedule_web/app/views/admin/notice/show/show.html.erb`.
+- Source revision: Rails `6d28d2d`.
+- Runtime/source verification: container Ruby syntax, Notice ERB compilation, Rails Zeitwerk and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/notice`, staff administrator, selected teacher/search/semester/period; authenticated export and status read-back remain pending.
+- Next action: rebuild `schedule_web`, then verify PDF queue failure/success returns to the same Notice context.
+
 ### 2026-09-20 — Align Schedule group search control
 
 - Status: source-complete; authenticated computed-size evidence remains pending.
