@@ -1624,3 +1624,15 @@ Next concrete action: Continue source inspection and implementation of the next 
 Runtime follow-up: Rails image `milk_schedule-schedule_web:latest` was rebuilt successfully and `schedule_web` recreated. Host/container SHA-256 for `_admin_workload.css` matched (`6af84ebf1346bfe41d4d3665b3283a4e13c84730f59111e3a09feab925f1c4f7`). Propshaft served the new `components/_admin_tokens-a2f58e62.css` (`--admin-control: 40px`) and `components/_admin_workload-9c2c278d.css` (B01 authority block). `/up` returned the healthy response; unauthenticated `/admin/schedule`, `/admin/workload`, and `/admin/aggregate_schedule` each returned the expected 302 to `/?auth=1`. Authenticated browser and mutation evidence remain pending.
 
 Runtime follow-up: Playwright MCP recovered for read-only checks. The current browser session had no staff authentication and `/admin/aggregate_schedule` redirected to `/?auth=1`; no credentials were entered. Public routes `/group` and `/group/1` rendered with zero console errors. Inside the Compose network, unauthenticated requests to both aggregate Hanami routes returned HTTP 401 (`{"error":"unauthorized"}`), confirming API-side staff protection. Hanami route loading and syntax checks passed for both occurrence actions and the aggregate repository; Rails Zeitwerk remained green.
+
+Batch/slice: Aggregate schedule shared admin primitive alignment
+Status: source-complete; unauthenticated runtime verified, authenticated read-back pending
+Files changed (attributable): `apps/schedule_web/app/views/admin/aggregate_schedules/show.html.erb`, `app/assets/stylesheets/components/_admin_workspace.css`
+Source revision + dirty-scope identifier: Rails `7ad2b51`; root pre-existing untracked files preserved.
+Runtime source/asset verification method: Aggregate ERB compilation and Rails Zeitwerk passed. The Rails image rebuilt successfully, Propshaft served `_admin_workspace-333e6d1b.css`, `/up` returned 200, and unauthenticated `/admin/aggregate_schedule` returned the expected 302 to `/?auth=1`.
+Routes, role, safe selected context, viewport: Existing staff-only aggregate route; selected date/faculty/department and viewport remain unauthenticated/unverified.
+Checks and exact results: The aggregate page now uses the shared `admin-page__header`, `admin-primary`, and `admin-secondary` primitives. Date/search inputs use the 40px default control height; the seven-column dated report and print behavior remain unchanged.
+Browser/mutation/read-back evidence paths: Current Playwright session has no staff authentication; no mutation was sent. Public browser checks had zero console errors.
+Table inventory comparison: Aggregate dated report remains seven columns in the same order: time, group, subject, activity, teacher, room, change.
+Known remaining issue: Authenticated aggregate selection, transfer/cancellation read-back and print evidence remain pending.
+Next concrete action: Continue the plan's remaining source/runtime acceptance work with an authenticated disposable-data session.
