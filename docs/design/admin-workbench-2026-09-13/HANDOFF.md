@@ -1476,6 +1476,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser connector is unavailable, so context retry behavior cannot yet be observed interactively.
 - Next action: continue Overview and Observability source verification.
 
+## 2026-09-20 — Add Teachers department-search retry
+
+- Status: source-complete; authenticated department search and teacher read-back evidence remain pending.
+- Finding: a failed department search in the Teachers workspace showed an error without a recovery action, while the surrounding catalog states already offered retry.
+- Behavior: the department-search failure now includes a labelled retry link preserving the current teacher and search context. Department membership forms and identifiers remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/teachers/show/_departments.html.erb`.
+- Source revision: Rails `6e4e325`.
+- Runtime/source verification: department partial ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/teachers`, staff administrator, selected teacher and department query; browser retry and membership read-back remain pending.
+- Table inventory: unchanged; Teachers availability and schedule structures remain intact.
+- Known remaining issue: browser connector is unavailable, so department-search retry behavior cannot yet be observed interactively.
+- Next action: finish Overview/Observability state review and run final source checks.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
