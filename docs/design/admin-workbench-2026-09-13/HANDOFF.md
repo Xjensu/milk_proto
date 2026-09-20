@@ -1801,3 +1801,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; reservation columns, row meaning and pagination remain intact.
 - Known remaining issue: current browser session has no staff authentication, so the search-preservation behavior and conflict read-back cannot yet be observed interactively.
 - Next concrete action: inspect weekday-transfer creation and deletion context, then retry the authenticated reservation journey.
+
+## 2026-09-20 — Normalize global weekday transfer scope
+
+- Status: source-complete; authenticated global/group transfer create-delete and occurrence read-back evidence remain pending.
+- Finding: the explicit `Все группы` option submitted an empty `student_group_id`, and the Rails controller passed that blank value to the API integer contract. Global transfers could therefore be rejected as invalid instead of using the supported nullable scope.
+- Behavior: weekday-transfer attributes now compact blank values before the gateway call. The global option reaches the API as an omitted/nil group scope, while selected groups retain their integer identity.
+- Files changed: `apps/schedule_web/app/controllers/admin/weekday_transfers_controller.rb`.
+- Source revision: Rails `ab1e5ea`.
+- Runtime/source verification: Rails image rebuilt, controller syntax returned `Syntax OK`, Rails Zeitwerk check passed, and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only weekday-transfer create/delete route; authenticated scope and occurrence evidence remain pending.
+- Table inventory: unchanged; transfer columns and pagination remain intact.
+- Known remaining issue: current browser session has no staff authentication, so API validation and schedule read-back cannot yet be observed interactively.
+- Next concrete action: continue the B04 occurrence/read-back contract audit, then retry authenticated Calendar acceptance.
