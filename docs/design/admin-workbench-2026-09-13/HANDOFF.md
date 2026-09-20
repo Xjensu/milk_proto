@@ -1462,3 +1462,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; period editors are form units rather than tables.
 - Known remaining issue: browser connector is unavailable, so the failure distinction and retry action cannot yet be observed interactively.
 - Next action: continue B04 holiday and calendar-context source verification.
+
+## 2026-09-20 — Add semester catalog retry action
+
+- Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
+- Finding: the Calendar semester page showed a passive unavailable message without recovery, unlike the other dated-rule pages.
+- Behavior: the unavailable semester list now exposes a labelled retry action that preserves the current URL and Turbo frame. Semester columns and creation behavior are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/semesters/index.html.erb`.
+- Source revision: Rails `2474174`.
+- Runtime/source verification: semester ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/semesters`, staff administrator, calendar context; browser retry and catalog read-back remain pending.
+- Table inventory: unchanged; semester table headers, order and row meaning remain intact.
+- Known remaining issue: browser connector is unavailable, so retry behavior cannot yet be observed interactively.
+- Next action: continue B04 holiday and calendar-context source verification.
