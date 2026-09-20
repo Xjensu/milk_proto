@@ -904,3 +904,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/lesson_transfers_controller.rb`, `app/views/admin/lesson_transfers/show.html.erb`, and `app/javascript/controllers/lesson_transfer_drag_controller.js`; Rails revision `29ef4e4`.
 - Verification: Ruby/ERB/JavaScript syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated rejected move/swap confirmation, successful read-back and original-event preservation evidence remain pending.
+
+## 2026-09-20 — Student-group create draft retention
+
+- Status: source-complete and deployed; authenticated validation/conflict browser confirmation remains pending.
+- Finding: failed student-group creation discarded the selected speciality, admission year, student count, semester duration and automatic-provisioning choice.
+- Behavior: failed creates now re-render the group catalog with safe submitted values and reopen the create sheet. Successful creation and provisioning contracts remain unchanged.
+- Attributable source: `apps/schedule_web/app/controllers/admin/student_groups_controller.rb` and `app/views/admin/student_groups/index.html.erb`; Rails revision `c9d6ab0`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated rejected-create confirmation and successful group/read-back evidence remain pending.
