@@ -37,6 +37,13 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - Rails revision: `ce75c66`.
 - Verification: Docker build, forced `schedule_web` recreation, Rails Zeitwerk check, internal `/up` HTTP 200 and `git diff --check` passed. Authenticated computed-height and keyboard evidence remain pending.
 
+## 2026-09-21 — Bound Schedule inspector assignment pickers
+
+- Finding: the Schedule inspector’s teacher and room checkbox catalogs were unbounded inside the sticky editor, so a large result set could push the confirmation action below a long scroll.
+- Behavior: `.planner-assignment-choices` now has a labelled, keyboard-reachable 248px scrolling region with readable 40px options and hover/focus states. The search fields, checked values, form names and server operations are unchanged; the existing sticky submit remains available.
+- Rails revision: `200d149`.
+- Verification: Docker build, forced `schedule_web` recreation, Rails Zeitwerk check, internal `/up` HTTP 200 and `git diff --check` passed. Authenticated computed-height and save/read-back evidence remain pending.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
