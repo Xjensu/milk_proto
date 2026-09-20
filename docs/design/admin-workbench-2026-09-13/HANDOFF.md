@@ -1215,3 +1215,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; six account columns and action semantics remain intact.
 - Known remaining issue: browser connector is unavailable, so actual sheet bounds and modal focus behavior cannot yet be observed.
 - Next action: rebuild `schedule_web`, verify Accounts assets, then continue B05 failure/read-back review.
+
+## 2026-09-20 — Preserve manual account logins
+
+- Status: source-complete; authenticated create/edit failure and read-back evidence remains pending.
+- Finding: typing a name regenerated and overwrote an existing or manually edited account email on every change.
+- Behavior: login generation now acts as a suggestion. It updates an empty or previously generated value, while an existing/manual value is preserved until the administrator changes it deliberately.
+- Files changed: `apps/schedule_web/app/javascript/controllers/account_login_controller.js`, `apps/schedule_web/app/views/admin/accounts/index.html.erb`.
+- Source revision: Rails `7b79a8c`.
+- Runtime/source verification: Node syntax check, Rails Erubi template compilation and diff check passed.
+- Routes, role, context, viewport: `/admin/accounts`, staff account manager, create and edit sheets; browser manual-login and mutation evidence remain pending.
+- Table inventory: unchanged; account columns and filters remain intact.
+- Known remaining issue: browser connector is unavailable, so manual override behavior cannot yet be observed interactively.
+- Next action: rebuild `schedule_web`, then continue B05 failure-state and one-time credential review.
