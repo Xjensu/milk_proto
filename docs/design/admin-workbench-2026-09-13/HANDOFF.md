@@ -8,6 +8,7 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - Browser evidence: Playwright opened `/schedule?group=1` at a 390×844 viewport. The rendered page exposed the date field and “По дате” action, weekday links, subgroup and week selectors, the event card, print action, and the disabled “Переносы 0” state. The page returned no console errors.
 - Administrator access: navigating to `/admin/workload` redirected to `/?auth=1` and showed the normal login dialog. No credentials were entered and no business mutation was sent.
 - Source/runtime context: Rails and Hanami containers remain healthy; the public route exercised the current running Rails revision. This evidence does not certify the staff-only B00/B02 journey, resource CRUD, calendar mutations or account read-back.
+- API read-back: the running Hanami service returned HTTP 200 for `/public/groups/1/schedule?date=2026-09-20` with `meta.anchor_date = 2026-09-20`, one semester descriptor, seven occurrences, and explicit `transfers` and `holidays` arrays.
 - Next action: obtain an already authenticated staff browser session, then execute the documented workload → assignment → placement → edit → reload journey before claiming final acceptance.
 
 ## Current continuation — browser evidence takes precedence
