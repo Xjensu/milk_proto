@@ -782,3 +782,12 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - Runtime provenance: rebuilt `api_geteway` and `schedule_web` through Docker Compose; Rails `/up` returned 200, the aggregate route returned 200 for an authenticated faculty request and rendered two date-resolved occurrences, and unauthenticated access returned 302. Hanami routes, Rails routes and changed Ruby/JavaScript syntax checks passed.
 - Attributable revisions: Rails `e3e3408`, `c915abc`; API `abb2dcd`, `27c31f9`.
 - Remaining: verify department authorization/printing with a scoped account, moved/cancelled fixtures, copied URL Back/Forward behavior in a live browser, and continue B01/B04–B06 visual/runtime slices. Performance and availability measurements remain deferred by product decision.
+
+## 2026-09-20 — Narrow-shell disclosure and heading consistency
+
+- Status: source-complete and deployed.
+- Finding addressed: secondary Grafana/Prometheus/Loki links consumed the narrow administrator shell, and Teachers/Schedule headings used larger page-specific scales than the shared workbench.
+- Attributable source: `apps/schedule_web/app/views/admin/shared/_sidebar.html.erb`, `app/javascript/controllers/monitoring_disclosure_controller.js`, and `app/assets/stylesheets/components/_admin_workspace.css`.
+- Behavior: monitoring links remain open on desktop and become an accessible collapsed disclosure at widths up to 760px; Schedule, aggregate Schedule and Teachers headings use the shared 24px/32px desktop role and 20px/28px narrow role.
+- Runtime provenance: rebuilt and recreated `schedule_web`; `/up` returned 200, the served page contains the new Stimulus controller fingerprints, and the aggregate route still renders its date table.
+- Remaining: browser-computed narrow measurements and the complete B01/B04–B06 acceptance matrix still require a functioning authenticated Playwright session.
