@@ -1137,3 +1137,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; Schedule timetable and Workload five-column table retain their existing headers and row semantics.
 - Known remaining issue: browser connector is unavailable, so actual computed sizes, focus treatment and narrow layout cannot yet be confirmed.
 - Next action: rebuild the web container, run Rails/API checks, then continue with B02 workload assignment and placement verification.
+
+## 2026-09-20 — Announce staged Schedule drag actions
+
+- Status: source-complete; authenticated drag, keyboard and read-back evidence remains pending.
+- Finding: typed Schedule drag sources selected a destination through the existing URL flow, but provided no live feedback about the selected load/event or staged destination.
+- Behavior: the existing typed load/event drag path now announces source and destination state in a shared `aria-live` status region; click/tap links, destination URLs and save operations remain unchanged.
+- Files changed: `apps/schedule_web/app/javascript/controllers/planner_drag_controller.js`, `apps/schedule_web/app/views/admin/schedules/show/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `9b2b846`.
+- Runtime/source verification: Node syntax check, Rails Erubi template compilation and diff check passed; rebuilt asset verification remains pending.
+- Routes, role, context, viewport: `/admin/schedule`, staff administrator, selected group; browser drag/keyboard checks at 1280×900 and 390×844 remain pending.
+- Table inventory: unchanged; timetable axes, headers, cells and event links remain intact.
+- Known remaining issue: browser connector is unavailable, so live announcements and destination validation cannot yet be observed.
+- Next action: rebuild `schedule_web` with the staged-drag assets, then continue the B02 placement/edit source audit.
