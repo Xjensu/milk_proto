@@ -1410,3 +1410,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; the seven-day Schedule grid and its columns remain intact.
 - Known remaining issue: browser connector is unavailable, so searchable Schedule interaction and the complete create/edit/read-back journey cannot yet be observed interactively.
 - Next action: continue B02 placement and draft-retention source review.
+
+## 2026-09-20 — Clarify Calendar reservation dependency failures
+
+- Status: source-complete; authenticated reservation reads and conflict/read-back evidence remain pending.
+- Finding: the Calendar reservation page collapsed failures from the reservation list, room catalog and time-slot catalog into one generic message, making the known unavailable-data state difficult to diagnose.
+- Behavior: the page now identifies the failed required dependency or dependencies in Russian and keeps all reservation editors withheld until those reads succeed. Existing filters, retry URL and API contracts are unchanged.
+- Files changed: `apps/schedule_web/app/controllers/admin/room_reservations_controller.rb`, `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`.
+- Source revision: Rails `5104f44`.
+- Runtime/source verification: controller Ruby syntax, reservation ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/room_reservations`, staff schedule writer, current room/date filters; browser dependency-failure and retry evidence remain pending.
+- Table inventory: unchanged; reservation columns, ordering and row semantics remain intact.
+- Known remaining issue: browser connector is unavailable, so the failing dependency cannot yet be confirmed against an authenticated live response.
+- Next action: continue B04 period and dated-rule source verification, then return to the disposable core journey when browser access is restored.
