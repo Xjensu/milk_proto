@@ -30,6 +30,13 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - The schedule table remained displayed, the mobile agenda was hidden, the date input/navigation controls were suppressed by print CSS, and the rendered date field still held `2026-09-15` before print. No console errors were reported.
 - This verifies the public group print contract only; authenticated aggregate print preview remains pending.
 
+## 2026-09-21 — Collapse aggregate context picker
+
+- Finding: the aggregate faculty/department catalog was permanently expanded above the report, creating an unnecessary tall context wall after a scope had already been selected.
+- Behavior: the catalog is now inside an accessible native `<details>` disclosure. The summary keeps the selected Russian scope label visible; opening it exposes the existing scope tabs, search field and bounded option list. Report columns, URL parameters and API identity remain unchanged.
+- Rails revision: `ce75c66`.
+- Verification: Docker build, forced `schedule_web` recreation, Rails Zeitwerk check, internal `/up` HTTP 200 and `git diff --check` passed. Authenticated computed-height and keyboard evidence remain pending.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
