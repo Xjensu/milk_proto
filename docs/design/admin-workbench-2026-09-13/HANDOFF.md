@@ -985,3 +985,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/room_reservations_controller.rb`; Rails revision `41f4a1c`.
 - Verification: diff check and container Ruby syntax check passed.
 - Remaining: authenticated reservation list/create/edit conflict and read-back evidence remain pending.
+
+## 2026-09-20 — Remove room catalog fallback identifiers
+
+- Status: source-complete and deployed; authenticated resource visual confirmation remains pending.
+- Finding: room create/edit building choices exposed a raw building ID when the catalog had no display number.
+- Behavior: incomplete building labels now use a catalog-context message while preserving the internal relationship value.
+- Attributable source: `apps/schedule_web/app/views/admin/resources/rooms/index.html.erb`; Rails revision `ed012b0`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated resource CRUD/read-back and narrow browser evidence remain pending.
