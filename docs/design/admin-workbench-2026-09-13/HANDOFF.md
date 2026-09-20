@@ -792,3 +792,12 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - Behavior: monitoring links remain open on desktop and become an accessible collapsed disclosure at widths up to 760px; Schedule, aggregate Schedule and Teachers headings use the shared 24px/32px desktop role and 20px/28px narrow role.
 - Runtime provenance: rebuilt and recreated `schedule_web`; `/up` returned 200, the served page contains the new Stimulus controller fingerprints, and the aggregate route still renders its date table.
 - Remaining: browser-computed narrow measurements and the complete B01/B04–B06 acceptance matrix still require a functioning authenticated Playwright session.
+
+## 2026-09-20 — Workload editor primary action reachability
+
+- Status: source-complete and deployed.
+- Finding addressed: long workload create/edit/assignment sheets required scrolling to reach their primary save action.
+- Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_workload.css`.
+- Behavior: the existing server-backed primary action remains inside the editor form and now stays available at the bottom of the sheet while its body scrolls; no form fields, contracts or table columns changed.
+- Runtime provenance: Rails image rebuilt and recreated; `/up` returned 200 and `rails zeitwerk:check` passed. Rails revision: `32e6a1a`.
+- Remaining: browser bounding-box confirmation and complete workload failure/read-back coverage remain pending.
