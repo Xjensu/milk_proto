@@ -846,3 +846,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/controllers/admin/holidays_controller.rb` and `app/views/admin/holidays/index.html.erb`; Rails revision `a1c634f`.
 - Verification: Rails Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated 422 retention, successful holiday create/delete read-back and conflict evidence remain pending.
+
+## 2026-09-20 — Semester editor draft retention
+
+- Status: source-complete and deployed; authenticated negative-path browser confirmation remains pending.
+- Finding: invalid or conflicting semester creation redirected away and discarded the submitted academic years and semester number.
+- Behavior: failed semester creation now re-renders the Calendar page with safe submitted values, reopens the editor, and maps conflict/permission failures to Russian feedback. Successful creation still selects the new semester.
+- Attributable source: `apps/schedule_web/app/controllers/admin/semesters_controller.rb` and `app/views/admin/semesters/index.html.erb`; Rails revision `f1be325`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated 422 retention and successful semester creation/read-back evidence remain pending.
