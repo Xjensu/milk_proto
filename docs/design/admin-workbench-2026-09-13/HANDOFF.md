@@ -1012,3 +1012,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: period settings view and Calendar stylesheet; Rails revision `8f2a777`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated period save/delete/read-back and responsive browser evidence remain pending.
+
+## 2026-09-20 — Expose reservation pagination
+
+- Status: source-complete and deployed; authenticated reservation navigation remains pending.
+- Finding: the reservation API request was paginated at 50 rows, but the Calendar view had no controls to reach later pages.
+- Behavior: accessible previous/next links now preserve room and date filters while changing only the reservation page.
+- Attributable source: `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`; Rails revision `172d8b4`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated reservation list/create/edit conflict and read-back evidence remain pending.
