@@ -1093,3 +1093,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: workload, Notice and Teachers presenters; Rails revision `bfb1cb4`.
 - Verification: raw-ID fallback scan is clean; diff check and container Ruby syntax checks passed.
 - Remaining: authenticated visual/read-back evidence remains pending.
+
+## 2026-09-20 — Remove catalog identifier display fallbacks
+
+- Status: source-complete and deployed; authenticated visual confirmation remains pending.
+- Finding: aggregate catalogs, duplicate time-slot labels and Teachers reference options still displayed raw IDs in incomplete or duplicate-label cases.
+- Behavior: these labels now use catalog-context or ordinal wording; internal IDs and ordering remain unchanged.
+- Attributable source: aggregate and Teachers presenters; Rails revision `4d29b1e`.
+- Verification: identifier-pattern scan is clean for visible fallback labels; diff check and container Ruby syntax checks passed.
+- Remaining: authenticated visual/read-back evidence remains pending.
