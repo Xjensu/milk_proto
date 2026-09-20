@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Align Schedule group search control
+
+- Status: source-complete; authenticated computed-size evidence remains pending.
+- Finding: the Schedule group selector search field retained a 36px legacy height while the shared administrator control contract requires 40px ordinary controls.
+- Behavior: the group search field now uses the same 40px height as the surrounding context controls. Group filtering, checkbox selection and URL parameters are unchanged.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `15681ee`.
+- Runtime/source verification: Rails Zeitwerk, `git diff --check`, Docker build, Propshaft precompile, `schedule_web` recreation and `/up` health response passed.
+- Routes, role, context, viewport: `/admin/schedule`, staff administrator, selected faculty/group context; authenticated desktop and narrow measurements remain pending.
+- Next action: measure the Schedule context controls and complete the core authenticated read-back journey.
+
 ### 2026-09-20 — Align searchable administrator controls
 
 - Status: source-complete; computed-size browser evidence remains pending.
