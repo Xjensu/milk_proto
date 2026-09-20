@@ -1907,3 +1907,16 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged; Workload retains its five-column report table and row semantics.
 - Known remaining issue: current browser session has no staff authentication, so creation draft preservation cannot yet be observed interactively.
 - Next concrete action: retry authenticated B02 creation and edit journeys when a staff browser session is available.
+
+## 2026-09-20 — Align Rooms resource table tracks
+
+- Status: source-complete; authenticated Rooms rendering and CRUD evidence remain pending.
+- Finding: Rooms renders four report columns, but inherited the generic three-track resource grid. The final action cell therefore created an implicit track and could misalign headers, values and actions.
+- Behavior: the Rooms resource table now declares four explicit tracks with a bounded local minimum width: building, room type, room identity and actions. Existing column order, row meaning and horizontal access remain unchanged.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_resources.css`.
+- Source revision: Rails `4fd7465`.
+- Runtime/source verification: Rails image rebuilt with Propshaft precompile, Rails Zeitwerk check passed, and the recreated `schedule_web` container was healthy after startup.
+- Routes, role, safe selected context, viewport: existing staff-only Rooms catalog; authenticated computed-track and CRUD evidence remain pending.
+- Table inventory: unchanged; Rooms retains its four columns in the existing order.
+- Known remaining issue: current browser session has no staff authentication, so rendered track alignment cannot yet be observed interactively.
+- Next concrete action: continue the remaining Resources track audit, then retry authenticated B03 acceptance.
