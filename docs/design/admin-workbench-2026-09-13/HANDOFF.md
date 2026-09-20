@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Keep account editors in native modal sheets
+
+- Status: source-complete; authenticated overlap/read-back evidence remains pending.
+- Finding: the legacy `.account-editor { position: relative; }` rule still matched the new native account `<dialog>` editors. That allowed the editor to inherit table-layout positioning and reproduced the Accounts overlap risk from V07.
+- Behavior: account editors now explicitly use fixed positioning inside the shared modal-sheet contract. The six-column account table, row actions, role scopes and password handling are unchanged.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `3c81c35`.
+- Runtime/source verification: Rails Zeitwerk, Accounts ERB compilation, `git diff --check`, Docker image build, Propshaft precompile and `schedule_web` recreation passed.
+- Routes, role, context, viewport: `/admin/accounts`, staff account manager, existing account row; desktop and narrow modal geometry remain pending without an authenticated browser session.
+- Next action: verify the account editor's computed position, internal scroll and Escape/focus return in the authenticated browser, then continue the remaining reservation dependency read-back.
+
 ### 2026-09-18 — academic-structure catalogs added to the Rails checkout (runtime verification pending)
 
 The current schedule-filling handoff identified the missing administrative path for the reference data that precedes group creation and workload allocation. Source tracing confirmed that Hanami already exposes authorized CRUD actions and contracts for faculties, departments (`kafedras`) and specialities, while Rails had no routes or resource tabs for them. Existing subject, activity-type, time-slot, week-type and student-group catalog tabs already cover the other required reference data. Curriculum streams were deliberately not surfaced as a new catalog: the current workload workflow creates and manages schedule load requirements directly, and the schedule-filling handoff does not require manual stream creation.
