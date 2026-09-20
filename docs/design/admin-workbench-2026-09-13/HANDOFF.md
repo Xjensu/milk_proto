@@ -2,6 +2,14 @@
 
 Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focused UI pass. Existing UI implementation is partial and already present in the dirty worktrees. Read the current status below before the preserved historical entries.
 
+## 2026-09-21 — Retry live browser acceptance
+
+- Status: public schedule read-only evidence refreshed; staff administrator mutation/read-back remains pending.
+- Browser evidence: Playwright opened `/schedule?group=1` at a 390×844 viewport. The rendered page exposed the date field and “По дате” action, weekday links, subgroup and week selectors, the event card, print action, and the disabled “Переносы 0” state. The page returned no console errors.
+- Administrator access: navigating to `/admin/workload` redirected to `/?auth=1` and showed the normal login dialog. No credentials were entered and no business mutation was sent.
+- Source/runtime context: Rails and Hanami containers remain healthy; the public route exercised the current running Rails revision. This evidence does not certify the staff-only B00/B02 journey, resource CRUD, calendar mutations or account read-back.
+- Next action: obtain an already authenticated staff browser session, then execute the documented workload → assignment → placement → edit → reload journey before claiming final acceptance.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
