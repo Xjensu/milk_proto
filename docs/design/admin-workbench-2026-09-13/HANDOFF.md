@@ -801,3 +801,11 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - Behavior: the existing server-backed primary action remains inside the editor form and now stays available at the bottom of the sheet while its body scrolls; no form fields, contracts or table columns changed.
 - Runtime provenance: Rails image rebuilt and recreated; `/up` returned 200 and `rails zeitwerk:check` passed. Rails revision: `32e6a1a`.
 - Remaining: browser bounding-box confirmation and complete workload failure/read-back coverage remain pending.
+
+## 2026-09-20 — Lesson-transfer calendar rendering repair
+
+- Status: fixed and runtime-verified.
+- Finding: the dated lesson-transfer workspace called the missing `ru.date.formats.long` translation and returned HTTP 500 whenever two dates and a group were selected.
+- Fix: replaced the unavailable localized formatter with an explicit Russian numeric date presentation while preserving the two timetable schemas, transfer controls and ISO values submitted to the API.
+- Verification: authenticated `/admin/transfers?semester_id=1&faculty_id=1&group_semester_id=1&left_date=2026-09-21&right_date=2026-09-22` now returns HTTP 200 and renders both dated grids, lessons and transfer actions. Rails revision: `b968316`.
+- Remaining: mutation/read-back, conflict handling and browser keyboard/drag acceptance remain pending.
