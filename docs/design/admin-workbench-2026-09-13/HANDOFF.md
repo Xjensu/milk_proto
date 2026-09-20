@@ -781,6 +781,7 @@ Acceptance impact: The shared sheet now has one authoritative success/read-back 
 - UX slice: made the Schedule frame commit its selected context to browser history and constrained the planner inspector with its own viewport and sticky primary action so long editors remain operable.
 - Runtime provenance: rebuilt `api_geteway` and `schedule_web` through Docker Compose; Rails `/up` returned 200, the aggregate route returned 200 for an authenticated faculty request and rendered two date-resolved occurrences, and unauthenticated access returned 302. Hanami routes, Rails routes and changed Ruby/JavaScript syntax checks passed.
 - Attributable revisions: Rails `e3e3408`, `c915abc`; API `abb2dcd`, `27c31f9`.
+- Runtime follow-up: direct authenticated API checks returned 200 for both faculty and department occurrence windows, 422 for an invalid ISO date, and 401 without a token. Rails rendered the department page with the selected department label and two lessons for the selected date.
 - Remaining: verify department authorization/printing with a scoped account, moved/cancelled fixtures, copied URL Back/Forward behavior in a live browser, and continue B01/B04–B06 visual/runtime slices. Performance and availability measurements remain deferred by product decision.
 
 ## 2026-09-20 — Narrow-shell disclosure and heading consistency
