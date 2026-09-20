@@ -1075,3 +1075,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_teachers.css`; Rails revision `b80d722`.
 - Verification: diff check passed.
 - Remaining: authenticated teacher mutation/read-back and computed viewport evidence remain pending.
+
+## 2026-09-20 — Remove workload assignment identifier fallbacks
+
+- Status: source-complete and deployed; authenticated workload search/read-back remains pending.
+- Finding: workload assignment options exposed a raw teacher ID when a teacher label was unavailable, and an empty room label could be rendered for incomplete search data.
+- Behavior: assignment choices now use readable catalog-context fallbacks while retaining membership and room identifiers in the submitted replacement set.
+- Attributable source: workload presenter and assignment partial; Rails revision `966269c`.
+- Verification: diff check, Ruby syntax and container ERB compilation passed.
+- Remaining: authenticated multi-selection, failed-save retention and authoritative workload read-back remain pending.
