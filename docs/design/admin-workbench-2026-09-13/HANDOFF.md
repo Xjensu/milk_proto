@@ -1280,3 +1280,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; building, room and room-type columns remain in their existing order and row meaning.
 - Known remaining issue: browser connector is unavailable, so search filtering, submit/read-back and CRUD failure retention cannot yet be observed interactively.
 - Next action: continue B03 resource form and dependency-state review, then perform the complete CRUD acceptance path when browser access is available.
+
+## 2026-09-20 — Add searchable student-group specialization selectors
+
+- Status: source-complete; authenticated group CRUD and responsive evidence remains pending.
+- Finding: student-group create/edit used an unfiltered specialization card wall even though the catalog can grow beyond a small stable enumeration.
+- Behavior: both forms now provide a bounded searchable specialization list with readable labels and an explicit no-match state; the existing `speciality_id` request field and group table remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/student_groups/index.html.erb`.
+- Source revision: Rails `727916b`.
+- Runtime/source verification: Rails ERB compilation and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/student_groups`, super administrator, create/edit group sheets; browser selection, failure retention and read-back remain pending.
+- Table inventory: unchanged; group specialization, admission year and action columns remain intact.
+- Known remaining issue: browser connector is unavailable, so search and CRUD behavior cannot yet be observed interactively.
+- Next action: continue B03 dependency and form-state review, then verify the full Resource CRUD journeys.
