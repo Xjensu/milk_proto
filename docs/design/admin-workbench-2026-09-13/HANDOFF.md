@@ -1489,6 +1489,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser connector is unavailable, so department-search retry behavior cannot yet be observed interactively.
 - Next action: finish Overview/Observability state review and run final source checks.
 
+## 2026-09-20 — Clarify empty Observability metrics
+
+- Status: source-complete; authenticated responsive and monitoring-state evidence remains pending.
+- Finding: empty breaker, request and duration collections rendered blank table bodies, and the audit failure message was not exposed as a status region.
+- Behavior: each metric table now has an explicit Russian empty row with the correct unchanged column span, and audit unavailability is announced through `role="status"`. Metric schemas, headings and scroll regions remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/observability/show.html.erb`.
+- Source revision: Rails `64eda37`.
+- Runtime/source verification: Observability ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/observability`, super administrator, empty and audit-failure states; browser accessibility and responsive evidence remain pending.
+- Table inventory: unchanged; all three metric tables and the audit table retain their original columns and ordering.
+- Known remaining issue: browser connector is unavailable, so empty-state announcement and narrow table behavior cannot yet be observed interactively.
+- Next action: run final source-level checks across Rails and API, then retry the browser acceptance matrix.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
