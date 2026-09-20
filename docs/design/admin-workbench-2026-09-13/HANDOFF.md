@@ -1293,3 +1293,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; group specialization, admission year and action columns remain intact.
 - Known remaining issue: browser connector is unavailable, so search and CRUD behavior cannot yet be observed interactively.
 - Next action: continue B03 dependency and form-state review, then verify the full Resource CRUD journeys.
+
+## 2026-09-20 — Add searchable Calendar context selectors
+
+- Status: source-complete; authenticated period configuration and responsive evidence remains pending.
+- Finding: Periods context rendered faculty and group-semester catalogs as unfiltered choice walls, making larger catalogs difficult to scan and inconsistent with the fixed selector rules.
+- Behavior: faculty and group-semester context now expose bounded searchable lists with readable labels and explicit no-match states. Existing context parameters, automatic submit behavior and period semantics remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_calendar.css`.
+- Source revision: Rails `469688f`.
+- Runtime/source verification: Rails ERB compilation and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/operations`, staff administrator, faculty/semester/group context; browser search, context retention and period read-back remain pending.
+- Table inventory: unchanged; four period editor units and their field meanings remain intact.
+- Known remaining issue: browser connector is unavailable, so selector behavior and context history cannot yet be observed interactively.
+- Next action: continue B04 reservation dependency diagnosis and Calendar failure-state review.
