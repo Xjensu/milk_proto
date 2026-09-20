@@ -1189,3 +1189,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; holiday three-column and weekday-transfer five-column structures remain intact.
 - Known remaining issue: authenticated read failures and retry behavior cannot be observed until the browser connector is available.
 - Next action: rebuild `schedule_web`, then move to B05 Accounts editor overlap and scope selection.
+
+## 2026-09-20 — Add removable account scope chips
+
+- Status: source-complete; authenticated account mutation/read-back and editor-overlap evidence remains pending.
+- Finding: Accounts scope search could append a faculty or department scope, but neither existing nor newly added scopes had an explicit remove action.
+- Behavior: every visible scope is now a removable labelled chip. Removal deletes only the matching hidden scope input; untouched scopes remain in the complete replacement collection sent by the existing account contract.
+- Files changed: `apps/schedule_web/app/javascript/controllers/account_scope_picker_controller.js`, `apps/schedule_web/app/views/admin/accounts/index.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `d12db99`.
+- Runtime/source verification: Node syntax check, Rails Erubi template compilation and diff check passed.
+- Routes, role, context, viewport: `/admin/accounts`, staff account manager, existing account row and preserved filter context; browser chip, failure and read-back evidence remain pending.
+- Table inventory: unchanged; all six account columns remain intact.
+- Known remaining issue: browser connector is unavailable, so scope removal and editor positioning cannot yet be observed.
+- Next action: rebuild `schedule_web`, then finish the B05 editor state review.
