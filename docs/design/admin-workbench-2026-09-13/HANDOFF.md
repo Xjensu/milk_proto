@@ -11,6 +11,12 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - API read-back: the running Hanami service returned HTTP 200 for `/public/groups/1/schedule?date=2026-09-20` with `meta.anchor_date = 2026-09-20`, one semester descriptor, seven occurrences, and explicit `transfers` and `holidays` arrays.
 - Next action: obtain an already authenticated staff browser session, then execute the documented workload → assignment → placement → edit → reload journey before claiming final acceptance.
 
+## 2026-09-21 — Reconcile F01 source status
+
+- The older `docs/TZ_COMPLIANCE_AUDIT_2026-09-20.md` was written before the aggregate schedule slice and still describes faculty/department schedules as missing. That file is preserved as historical audit evidence.
+- Current source status: Hanami exposes staff-protected date-resolved reads at `GET /admin/faculties/:faculty_id/schedule/occurrences` and `GET /admin/kafedras/:kafedra_id/schedule/occurrences`; both use the shared occurrence query with semester clipping, transfers, cancellations and holidays. Rails routes these through `AggregateScheduleGateway`, `AggregateSchedule` operation/presenter and `/admin/aggregate_schedule`, with a selected-date print path.
+- Assessment: F01 is source-complete and runtime-liveness verified, while authenticated scope, dated transfer/cancellation read-back and print evidence remain pending. The old audit must not be used as proof that the feature is still absent.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
