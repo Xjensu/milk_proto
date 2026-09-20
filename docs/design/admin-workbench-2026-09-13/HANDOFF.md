@@ -1788,3 +1788,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; period editor units and calendar tables retain their existing structure.
 - Known remaining issue: current browser session has no staff authentication, so invalid submission and authoritative API read-back cannot yet be observed interactively.
 - Next concrete action: continue B04 reservation and dated-transfer contract inspection, then retry authenticated period acceptance.
+
+## 2026-09-20 — Preserve reservation drafts during search
+
+- Status: source-complete; authenticated reservation search, conflict and read-back evidence remain pending.
+- Finding: the create reservation sheet used separate GET forms for room and teacher searches. Those requests carried the search text but omitted the current room, teacher, date, time-slot and purpose fields, so a Turbo response could silently reset selections already made in the editor.
+- Behavior: a scoped `reservation-draft` Stimulus controller captures the editor values into the search request. The controller restores a permitted draft on the server before rendering the reservation frame, while the existing room/teacher IDs and API contract remain unchanged.
+- Files changed: `apps/schedule_web/app/javascript/controllers/reservation_draft_controller.js`, `app/controllers/admin/room_reservations_controller.rb`, `app/views/admin/room_reservations/index.html.erb`.
+- Source revision: Rails `ecb1a20`.
+- Runtime/source verification: JavaScript syntax, controller syntax, reservation ERB compilation, Rails Zeitwerk check and `git diff --check` passed. Rails image rebuilt and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only reservation create/edit routes; authenticated search interaction and responsive evidence remain pending.
+- Table inventory: unchanged; reservation columns, row meaning and pagination remain intact.
+- Known remaining issue: current browser session has no staff authentication, so the search-preservation behavior and conflict read-back cannot yet be observed interactively.
+- Next concrete action: inspect weekday-transfer creation and deletion context, then retry the authenticated reservation journey.
