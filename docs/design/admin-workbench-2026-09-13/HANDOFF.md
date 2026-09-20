@@ -1840,3 +1840,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; group columns, row meaning and pagination remain intact.
 - Known remaining issue: current browser session has no staff authentication, so the retry state cannot yet be observed interactively.
 - Next concrete action: continue the resource/catalog failure-state sweep, then retry authenticated B03/B05 acceptance.
+
+## 2026-09-20 — Add group-semester catalog retry
+
+- Status: source-complete; authenticated group-semester failure and edit/read-back evidence remain pending.
+- Finding: the Student Group Semesters detail page still rendered a passive dependency failure without a recovery action.
+- Behavior: the failure state now exposes a labelled retry link targeting the existing `resources-workspace` Turbo frame and preserving the current group URL.
+- Files changed: `apps/schedule_web/app/views/admin/student_groups/semesters.html.erb`.
+- Source revision: Rails `3e686e0`.
+- Runtime/source verification: Rails image rebuilt, the changed ERB compiled in the container, Rails Zeitwerk check passed, and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only group-semester route; authenticated retry and edit/read-back evidence remain pending.
+- Table inventory: unchanged; group-semester columns, row meaning and editor behavior remain intact.
+- Known remaining issue: current browser session has no staff authentication, so the retry state cannot yet be observed interactively.
+- Next concrete action: continue the remaining adjacent-page failure-state sweep, then retry authenticated B03/B05 acceptance.
