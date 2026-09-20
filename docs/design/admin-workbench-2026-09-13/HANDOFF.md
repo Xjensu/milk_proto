@@ -1879,3 +1879,5 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; Workload retains its five-column report table and assignment semantics.
 - Known remaining issue: current browser session has no staff authentication, so staged-room preservation cannot yet be observed interactively.
 - Next concrete action: continue the B02 assignment draft audit for teacher/room collection retention, then retry authenticated workload-to-schedule acceptance.
+
+Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fields before each repeated room search, preventing duplicate query values while preserving the same retained collection behavior. JavaScript syntax and `git diff --check` passed.
