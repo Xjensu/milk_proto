@@ -24,6 +24,12 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - Rails revision: `e8f9f65`.
 - Verification: Docker image rebuild, forced `schedule_web` recreation, Rails Zeitwerk check and internal `/up` HTTP 200 passed. Authenticated print preview remains pending.
 
+## 2026-09-21 — Verify public selected-date print state
+
+- Playwright emulated print media on `/schedule?group=1&date=2026-09-15`.
+- The schedule table remained displayed, the mobile agenda was hidden, the date input/navigation controls were suppressed by print CSS, and the rendered date field still held `2026-09-15` before print. No console errors were reported.
+- This verifies the public group print contract only; authenticated aggregate print preview remains pending.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
