@@ -940,3 +940,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/teachers/show/show.html.erb`; Rails revision `80e88d9`.
 - Verification: ERB syntax check, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: complete Teachers mutation/read-back and responsive browser acceptance remain pending.
+
+## 2026-09-20 — Teacher create draft retention
+
+- Status: source-complete and deployed; authenticated validation/conflict browser confirmation remains pending.
+- Finding: failed teacher creation redirected away and discarded names, post, academic degree/title, part-time status and department selections.
+- Behavior: failed creates now retain a safe draft, reopen the teacher drawer, and restore all submitted controls. Passwords are not part of this operation or draft.
+- Attributable source: `apps/schedule_web/app/controllers/admin/teachers/create_controller.rb`, `app/controllers/admin/teachers/mutation_controller.rb`, and `app/views/admin/teachers/show/_create.html.erb`; Rails revision `ba375f0`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated rejected-create confirmation and successful teacher/read-back evidence remain pending.
