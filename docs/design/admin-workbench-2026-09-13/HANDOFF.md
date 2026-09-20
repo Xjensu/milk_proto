@@ -1345,3 +1345,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; breaker, request, duration and audit schemas remain intact.
 - Known remaining issue: browser connector is unavailable, so narrow overflow and keyboard reachability cannot yet be observed interactively.
 - Next action: complete remaining B06 source checks and rerun the final source verification matrix.
+
+## 2026-09-20 — Preserve initial department aggregate context
+
+- Status: source-complete; authenticated aggregate navigation and read-back evidence remains pending.
+- Finding: switching the staff aggregate workspace from Faculty to Department carried `scope_id=0`, so the first department-mode request returned a 404 even when the selected faculty had departments.
+- Behavior: when department mode has no explicit department yet, the operation selects the first available department from the already loaded faculty catalog. Explicit department selections remain unchanged; API authorization still evaluates the selected department.
+- Files changed: `apps/schedule_web/app/lib/operations/admin/load_aggregate_schedule.rb`.
+- Source revision: Rails `7c8c77c`.
+- Runtime/source verification: Ruby syntax, Rails Zeitwerk and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/aggregate_schedule`, staff administrator, faculty-to-department mode switch; browser URL/history and date-resolved read-back remain pending.
+- Table inventory: unchanged; seven aggregate schedule columns remain intact.
+- Known remaining issue: browser connector is unavailable, so the mode switch and selected-date transfer/cancellation rendering cannot yet be observed interactively.
+- Next action: continue F01 source review for date/print semantics and authorization edge cases.
