@@ -1254,3 +1254,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged.
 - Known remaining issue: browser connector is unavailable, so interactive disclosure and narrow-navigation behavior cannot yet be observed.
 - Next action: continue B06 source review and perform browser acceptance when the connector is available.
+
+## 2026-09-20 — Normalize disclosure focus states
+
+- Status: source-complete; keyboard and responsive browser evidence remains pending.
+- Finding: navigation group and monitoring disclosure summaries had no shared visible focus treatment.
+- Behavior: keyboard focus now uses the admin almond outline with a consistent offset on both disclosure types.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `bf9f68b`.
+- Runtime/source verification: in-container Rails Zeitwerk check passed; CSS diff is scoped to shared admin disclosure selectors.
+- Routes, role, context, viewport: all staff admin routes; desktop and narrow sidebar navigation; browser evidence remains pending.
+- Table inventory: unchanged.
+- Known remaining issue: browser connector is unavailable, so keyboard focus visibility cannot yet be observed interactively.
+- Next action: complete B06 source review and run the planned browser acceptance pass when the connector is available.
