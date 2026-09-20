@@ -1674,3 +1674,15 @@ Browser/mutation/read-back evidence paths: No authenticated session was availabl
 Table inventory comparison: No table columns, order, grouping or report semantics changed.
 Known remaining issue: Authenticated responsive and focus evidence remains pending.
 Next concrete action: Retry staff browser access and complete the remaining B00/B02 mutation/read-back gate.
+
+Batch/slice: B01/V02 Workload committed-context disclosure
+Status: source-complete; runtime asset/liveness verified, authenticated interaction evidence pending
+Files changed (attributable): `apps/schedule_web/app/views/admin/workload/show/show.html.erb`, `app/assets/stylesheets/components/_admin_workload.css`
+Source revision + dirty-scope identifier: Rails `e648166`; root pre-existing untracked files preserved.
+Runtime source/asset verification method: Workload ERB compilation, Rails Zeitwerk and `git diff --check` passed. The Rails image rebuilt and `schedule_web` was recreated; `/up` returned 200 and Propshaft served `_admin_workload-f540cb0d.css`.
+Routes, role, safe selected context, viewport: Existing `/admin/workload` staff workspace; authenticated context and viewport remain pending.
+Checks and exact results: Once semester/faculty/department or teacher context is valid, the page presents one readable Russian summary band and an explicit `Изменить контекст` disclosure. Existing searchable semester, faculty, department, teacher and group controls remain inside the disclosure; workload table columns and request parameters are unchanged.
+Browser/mutation/read-back evidence paths: No authenticated session was available; no mutation was sent.
+Table inventory comparison: Workload keeps `Кафедра`, `Дисциплина и группа`, `Вид занятия`, `Часы`, `Назначение` in the same order.
+Known remaining issue: Browser computed-height, disclosure keyboard behavior and full workload-to-schedule read-back remain pending.
+Next concrete action: Retry staff browser access and verify context disclosure plus the complete B02 journey.
