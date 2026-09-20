@@ -1358,3 +1358,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; seven aggregate schedule columns remain intact.
 - Known remaining issue: browser connector is unavailable, so the mode switch and selected-date transfer/cancellation rendering cannot yet be observed interactively.
 - Next action: continue F01 source review for date/print semantics and authorization edge cases.
+
+## 2026-09-20 — Remove raw group-semester identifiers from the table
+
+- Status: source-complete; authenticated group-semester read-back remains pending.
+- Finding: the group-semester table visibly rendered the database row ID and fell back to a raw `semester_id` when catalog context was incomplete.
+- Behavior: the five-column table now shows a readable `Группа-семестр` label and semantic semester fallback text. Internal row IDs remain only in form/action targets and request values.
+- Files changed: `apps/schedule_web/app/views/admin/student_groups/semesters.html.erb`.
+- Source revision: Rails `45b36df`.
+- Runtime/source verification: Rails ERB compilation and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/student_groups/:id/semesters`, super administrator, group-semester list and editor; browser read-back remains pending.
+- Table inventory: unchanged at five columns; only the first column's visible wording was made semantic.
+- Known remaining issue: browser connector is unavailable, so the readable labels and Calendar link context cannot yet be observed interactively.
+- Next action: continue the final raw-identifier audit without changing table schemas.
