@@ -1866,3 +1866,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; Schedule time and weekday columns remain in the same table and retain local horizontal scrolling.
 - Known remaining issue: current browser session has no staff authentication, so the intermediate-width layout cannot yet be inspected interactively.
 - Next concrete action: continue the responsive B01/B02 source pass and retry the authenticated Schedule placement journey.
+
+## 2026-09-20 — Retain staged Workload rooms during search
+
+- Status: source-complete; authenticated assignment search, save and read-back evidence remain pending.
+- Finding: the Workload assignment sheet replaced its room fieldset through a Turbo frame, but the room search request omitted rooms already checked in the draft. A search could therefore silently remove a staged room before the collection-replacing assignment PUT.
+- Behavior: a scoped `assignment-search-context` controller carries checked `room_ids[]` into `selected_room_ids[]`. The Workload presenter restores those IDs as retained room choices after the search, and the final form submits the complete retained collection. Existing teacher selections, room authorization and API contracts remain unchanged.
+- Files changed: `apps/schedule_web/app/javascript/controllers/assignment_search_context_controller.js`, `app/controllers/admin/workload/show_controller.rb`, `app/lib/presenters/admin/workload_workspace.rb`, `app/views/admin/workload/show/_assignment.html.erb`.
+- Source revision: Rails `8f014e8`.
+- Runtime/source verification: JavaScript syntax, controller syntax, presenter syntax, assignment ERB compilation and Rails Zeitwerk check passed. The Rails image rebuilt with Propshaft precompile and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only Workload assignment route; authenticated search/save/read-back and responsive evidence remain pending.
+- Table inventory: unchanged; Workload retains its five-column report table and assignment semantics.
+- Known remaining issue: current browser session has no staff authentication, so staged-room preservation cannot yet be observed interactively.
+- Next concrete action: continue the B02 assignment draft audit for teacher/room collection retention, then retry authenticated workload-to-schedule acceptance.
