@@ -1650,3 +1650,15 @@ Browser/mutation/read-back evidence paths: No authenticated session was availabl
 Table inventory comparison: Teacher availability grid and day schedule preview retain their existing axes, rows and columns.
 Known remaining issue: Authenticated computed-style, keyboard and narrow viewport evidence remains pending.
 Next concrete action: Continue B06 Notice/adjacent-page consistency and retry the authenticated browser journey.
+
+Batch/slice: B06 Notice workspace shared shell alignment
+Status: source-complete; runtime asset/liveness verified, authenticated visual and print evidence pending
+Files changed (attributable): `apps/schedule_web/app/assets/stylesheets/components/_admin_notice.css`
+Source revision + dirty-scope identifier: Rails `af6aacf`; root pre-existing untracked files preserved.
+Runtime source/asset verification method: Notice ERB compilation, Rails Zeitwerk and `git diff --check` passed. The Rails image rebuilt and `schedule_web` was recreated; `/up` returned 200 and Propshaft served `_admin_notice-403fe669.css`.
+Routes, role, safe selected context, viewport: Existing `/admin/notice` staff workspace; authenticated teacher/semester context, desktop/narrow rendering and print remain pending.
+Checks and exact results: Notice context/report headers, labels, links and actions now use the shared 40px/14px control rhythm while the five-column notice report and print-specific table rules remain unchanged.
+Browser/mutation/read-back evidence paths: No authenticated session was available; no export mutation was sent.
+Table inventory comparison: Notice retains its existing `Число`, `Часы`, `Поток, группа`, `Вид занятий`, `Аудитория` columns and print semantics.
+Known remaining issue: Authenticated responsive and print evidence remains pending.
+Next concrete action: Continue final adjacent-page consistency and retry the authenticated browser journey.
