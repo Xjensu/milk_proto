@@ -994,3 +994,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/resources/rooms/index.html.erb`; Rails revision `ed012b0`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated resource CRUD/read-back and narrow browser evidence remain pending.
+
+## 2026-09-20 — Remove period context fallback identifiers
+
+- Status: source-complete and deployed; authenticated period configuration confirmation remains pending.
+- Finding: period context labels exposed a raw group-semester ID when the catalog lacked a display name.
+- Behavior: context and group selectors now use a catalog-context label while preserving the group-semester identifier internally.
+- Attributable source: `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`; Rails revision `c4a84fa`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated period save/rejection/read-back and browser evidence remain pending.
