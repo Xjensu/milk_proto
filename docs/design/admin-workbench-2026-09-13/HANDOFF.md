@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Remove legacy account disclosure styles
+
+- Status: source-complete; authenticated modal geometry evidence remains pending.
+- Finding: obsolete `<details>` account-editor rules remained in shared and Accounts CSS after editors moved to native dialogs. Those rules duplicated positioning, padding and open-state layout and could override the common sheet contract.
+- Behavior: the former disclosure rules are removed. Native account dialogs now use the shared sheet styles plus the scoped fixed-position guard; account table columns, actions and form contracts are unchanged.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`, `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `22380ad`.
+- Runtime/source verification: Rails Zeitwerk and `git diff --check` passed; a fresh Docker/Propshaft build remains the deployment check for this CSS-only slice.
+- Routes, role, context, viewport: `/admin/accounts`, staff account manager, existing account row; desktop and narrow sheet geometry remain pending without authenticated browser access.
+- Next action: rebuild `schedule_web`, then verify the editor’s computed modal geometry and internal scroll.
+
 ### 2026-09-20 — Preserve reservation filters across pagination
 
 - Status: source-complete; authenticated reservation pagination evidence remains pending.
