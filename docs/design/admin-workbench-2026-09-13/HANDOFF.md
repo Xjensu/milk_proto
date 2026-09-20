@@ -1039,3 +1039,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/holidays/index.html.erb`; Rails revision `be55a39`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated holiday create/delete/read-back and conflict evidence remain pending.
+
+## 2026-09-20 — Preserve blank resource relationships
+
+- Status: source-complete and deployed; authenticated resource validation confirmation remains pending.
+- Finding: shared academic catalogs and dedicated room/building/type editors used truthy relationship fallbacks, so a failed blank selection could be replaced by the persisted relationship.
+- Behavior: submitted relationship keys now take precedence, including blank values; persisted nested labels remain the fallback for normal read-only rows.
+- Attributable source: shared academic catalog form and room/building/room-type editors; Rails revision `b605552`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated resource 422/conflict and successful CRUD read-back evidence remain pending.
