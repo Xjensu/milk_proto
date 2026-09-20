@@ -1814,3 +1814,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Table inventory: unchanged; transfer columns and pagination remain intact.
 - Known remaining issue: current browser session has no staff authentication, so API validation and schedule read-back cannot yet be observed interactively.
 - Next concrete action: continue the B04 occurrence/read-back contract audit, then retry authenticated Calendar acceptance.
+
+## 2026-09-20 — Respect group-scoped transfers on holidays
+
+- Status: source-complete; authenticated occurrence read-back remains pending.
+- Finding: occurrence expansion skipped a holiday only when there were no transfers at all. A group-scoped transfer on a holiday therefore allowed unaffected groups to match their ordinary weekday schedule.
+- Behavior: holiday filtering now runs per template. A global weekday transfer permits all groups; a group-scoped transfer permits only its matching group; unaffected groups remain suppressed for the holiday. Existing weekday precedence and dated event-transfer handling are unchanged.
+- Files changed: `apps/api_geteway/lib/api_geteway/queries/schedule_occurrences.rb`.
+- API source revision: `0d91ab3`.
+- Runtime/source verification: API syntax returned `Syntax OK`, the Hanami image rebuilt, the API container was recreated and became healthy, and `git diff --check` passed.
+- Routes, role, safe selected context, viewport: existing staff/public occurrence consumers; authenticated or seeded occurrence comparisons remain pending.
+- Table inventory: unchanged; no UI table or report structure changed.
+- Known remaining issue: the current browser session has no staff authentication and no disposable seeded holiday/group-transfer read-back has been executed.
+- Next concrete action: continue API occurrence contract inspection for cancellation/move precedence, then run authenticated schedule acceptance when the session is available.
