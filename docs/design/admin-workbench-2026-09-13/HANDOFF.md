@@ -1638,3 +1638,15 @@ Known remaining issue: Authenticated aggregate selection, transfer/cancellation 
 Next concrete action: Continue the plan's remaining source/runtime acceptance work with an authenticated disposable-data session.
 
 Browser follow-up after rebuild: Playwright loaded the public home at `http://localhost:3000/` with HTTP 200, zero console errors/warnings, and all 38 observed document/static requests returned 200, including the current application bundles and `_admin_workspace-333e6d1b.css`. The tab has no authenticated staff session, so protected administrator rendering and mutations remain unclaimed.
+
+Batch/slice: B06 Teachers workspace shared shell alignment
+Status: source-complete; runtime asset/liveness verified, authenticated visual evidence pending
+Files changed (attributable): `apps/schedule_web/app/assets/stylesheets/components/_admin_teachers.css`
+Source revision + dirty-scope identifier: Rails `560316d`; root pre-existing untracked files preserved.
+Runtime source/asset verification method: Rails Zeitwerk, Teachers ERB compilation, JavaScript syntax and `git diff --check` passed. The Rails image rebuilt and `schedule_web` was recreated; `/up` returned 200 and Propshaft served `_admin_teachers-121ac18f.css`.
+Routes, role, safe selected context, viewport: Existing `/admin/teachers` staff workspace; authenticated role, teacher selection and viewport remain pending.
+Checks and exact results: The custom Teachers header now uses the shared 82px desktop shell, 24/32 heading (20/28 narrow), 14px action text, 12px labels and 40px ordinary controls. Constraint and six-day schedule tables were not altered.
+Browser/mutation/read-back evidence paths: No authenticated session was available; no mutation was sent.
+Table inventory comparison: Teacher availability grid and day schedule preview retain their existing axes, rows and columns.
+Known remaining issue: Authenticated computed-style, keyboard and narrow viewport evidence remains pending.
+Next concrete action: Continue B06 Notice/adjacent-page consistency and retry the authenticated browser journey.
