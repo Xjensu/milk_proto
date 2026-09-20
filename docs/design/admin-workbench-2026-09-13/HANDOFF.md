@@ -958,3 +958,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/teachers/update_controller.rb`, `app/controllers/admin/teachers/mutation_controller.rb`, and `app/views/admin/teachers/show/_profile.html.erb`; Rails revision `139a5a3`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated rejected-update confirmation and successful teacher profile/read-back evidence remain pending.
+
+## 2026-09-20 — Preserve intentionally blank teacher profile drafts
+
+- Status: source-complete and deployed; authenticated negative-path browser confirmation remains pending.
+- Finding: the profile draft path claimed to preserve a cleared middle name, but the view used presence fallback and restored the persisted name instead.
+- Behavior: submitted profile values now take precedence whenever the draft contains the field, including an intentionally blank middle name and empty optional selections.
+- Attributable source: `apps/schedule_web/app/views/admin/teachers/show/_profile.html.erb`; Rails revision `a8566d6`.
+- Verification: ERB generation and Ruby syntax checks passed.
+- Remaining: authenticated rejected-update confirmation and successful teacher profile/read-back evidence remain pending.
