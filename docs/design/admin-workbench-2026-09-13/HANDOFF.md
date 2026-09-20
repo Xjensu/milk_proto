@@ -1163,3 +1163,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; reservation columns, order and row semantics remain intact.
 - Known remaining issue: the browser connector is unavailable, and the underlying authenticated reservation failure has not yet been reproduced live.
 - Next action: rebuild `schedule_web`, then continue B04 context and dated-rule verification.
+
+## 2026-09-20 — Fix period context field semantics
+
+- Status: source-complete; authenticated keyboard and context-switch evidence remains pending.
+- Finding: Periods wrapped fieldsets containing radio labels inside outer `<label>` elements, creating invalid nested label semantics and unreliable accessible grouping.
+- Behavior: faculty and semester context controls now use explicit labelled field groups; radio inputs, context parameters and automatic submit behavior remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_calendar.css`.
+- Source revision: Rails `0a3ff81`.
+- Runtime/source verification: Rails Erubi template compilation and diff check passed.
+- Routes, role, context, viewport: `/admin/operations`, staff administrator, faculty/semester/group context; keyboard and responsive evidence remain pending.
+- Table inventory: unchanged; period editor units and their four period kinds remain intact.
+- Known remaining issue: browser connector is unavailable, so focus order and context disclosure behavior cannot yet be observed.
+- Next action: rebuild `schedule_web`, verify Calendar assets, then continue B04 dated-rule state handling.
