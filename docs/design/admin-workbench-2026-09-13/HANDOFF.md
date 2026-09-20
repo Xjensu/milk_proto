@@ -1371,3 +1371,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged at five columns; only the first column's visible wording was made semantic.
 - Known remaining issue: browser connector is unavailable, so the readable labels and Calendar link context cannot yet be observed interactively.
 - Next action: continue the final raw-identifier audit without changing table schemas.
+
+## 2026-09-20 — Add Observability audit retry action
+
+- Status: source-complete; authenticated failure and responsive evidence remains pending.
+- Finding: an unavailable audit read showed a passive message without a recovery action.
+- Behavior: the Observability audit section now exposes a Russian `Повторить` link using the current request URL, preserving route state and surrounding monitoring context.
+- Files changed: `apps/schedule_web/app/views/admin/observability/show.html.erb`.
+- Source revision: Rails `feb954a`.
+- Runtime/source verification: Rails ERB compilation and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/observability`, super administrator, audit failure state; browser retry evidence remains pending.
+- Table inventory: unchanged; audit columns and scroll region remain intact.
+- Known remaining issue: browser connector is unavailable, so retry behavior cannot yet be observed interactively.
+- Next action: continue final B06 failure-state and print source review.
