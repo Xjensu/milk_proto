@@ -931,3 +931,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/student_groups_controller.rb` and `app/views/admin/student_groups/index.html.erb`; Rails revision `40a05f8`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated rejected-edit confirmation and successful group update/read-back evidence remain pending.
+
+## 2026-09-20 — Teacher search label cleanup
+
+- Status: source-complete and deployed; authenticated browser visual confirmation remains pending.
+- Finding: Teachers search results displayed a raw database ID beside every readable teacher label.
+- Behavior: result labels now show the teacher name and role only; the existing link still carries the internal identifier server-side.
+- Attributable source: `apps/schedule_web/app/views/admin/teachers/show/show.html.erb`; Rails revision `80e88d9`.
+- Verification: ERB syntax check, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: complete Teachers mutation/read-back and responsive browser acceptance remain pending.
