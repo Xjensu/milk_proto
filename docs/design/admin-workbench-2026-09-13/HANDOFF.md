@@ -1030,3 +1030,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/weekday_transfers/index.html.erb`; Rails revision `bdd0249`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated transfer create/delete/read-back and conflict evidence remain pending.
+
+## 2026-09-20 — Expose holiday pagination
+
+- Status: source-complete and deployed; authenticated holiday navigation remains pending.
+- Finding: the holiday endpoint was paginated at 50 rows, but the Calendar table exposed only the current page.
+- Behavior: previous/next controls now preserve Calendar context and change only the holiday page.
+- Attributable source: `apps/schedule_web/app/views/admin/holidays/index.html.erb`; Rails revision `be55a39`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated holiday create/delete/read-back and conflict evidence remain pending.
