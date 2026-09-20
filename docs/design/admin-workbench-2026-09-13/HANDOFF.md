@@ -1332,3 +1332,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; teacher availability grid and schedule preview semantics remain intact.
 - Known remaining issue: browser connector is unavailable, so actual computed dimensions and responsive wrapping cannot yet be observed.
 - Next action: complete B06 Notice/Observability source review and run browser acceptance when available.
+
+## 2026-09-20 — Label Observability table scroll regions
+
+- Status: source-complete; responsive and keyboard browser evidence remains pending.
+- Finding: three Observability metric tables relied on card-level overflow without a labelled, keyboard-reachable scrolling region; only the audit table had a dedicated wrapper.
+- Behavior: all four monitoring tables now use explicit labelled scroll regions, retain their existing columns, and expose scoped table headers. Card overflow no longer absorbs the scroll semantics.
+- Files changed: `apps/schedule_web/app/views/admin/observability/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `435d550`.
+- Runtime/source verification: Rails ERB compilation, Zeitwerk check and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/observability`, staff administrator, desktop and narrow widths; browser scrolling and focus evidence remain pending.
+- Table inventory: unchanged; breaker, request, duration and audit schemas remain intact.
+- Known remaining issue: browser connector is unavailable, so narrow overflow and keyboard reachability cannot yet be observed interactively.
+- Next action: complete remaining B06 source checks and rerun the final source verification matrix.
