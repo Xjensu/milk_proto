@@ -1436,3 +1436,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; reservation columns and row semantics remain intact.
 - Known remaining issue: browser connector is still unavailable, so room filtering and the underlying reservation read failure cannot yet be observed interactively.
 - Next action: continue B04 period and dated-rule source verification.
+
+## 2026-09-20 — Expose weekday-transfer group catalog failures
+
+- Status: source-complete; authenticated dated-rule creation and read-back evidence remain pending.
+- Finding: the day-transfer controller converted a failed student-group catalog read into an empty list, making a dependency failure indistinguishable from a legitimate global-scope transfer.
+- Behavior: session expiry now covers both transfer and group reads. The empty-state copy distinguishes an unavailable group catalog from a genuinely empty catalog and explicitly states the resulting global scope.
+- Files changed: `apps/schedule_web/app/controllers/admin/lesson_transfers_controller.rb`, `apps/schedule_web/app/views/admin/weekday_transfers/index.html.erb`.
+- Source revision: Rails `86f697d`.
+- Runtime/source verification: controller syntax, weekday-transfer ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/transfers?mode=days`, super administrator, global or group-scoped dated transfer; browser failure-state and read-back evidence remain pending.
+- Table inventory: unchanged; the five transfer columns and row semantics remain intact.
+- Known remaining issue: browser connector is unavailable, so group-catalog failure and explicit global-scope behavior cannot yet be observed interactively.
+- Next action: continue B04 period-editor source verification.
