@@ -1531,6 +1531,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: this confirms route protection and serving health, not authenticated rendering, responsive behavior, mutation success or read-back.
 - Next action: restore browser transport/authentication and execute the documented acceptance matrix.
 
+## 2026-09-20 — Add Workload subject-search retry
+
+- Status: source-complete; authenticated Workload creation and draft/read-back evidence remain pending.
+- Finding: a failed subject search in the new workload editor displayed passive text without the recovery action used by other high-cardinality searches.
+- Behavior: the subject-search failure now exposes a labelled retry link using the current request URL. Existing selected groups, search context and creation contract remain unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/workload/show/_create_record.html.erb`.
+- Source revision: Rails `9216c11`.
+- Runtime/source verification: workload creation ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/workload`, staff administrator, new workload editor and subject query; browser retry and creation/read-back evidence remain pending.
+- Table inventory: unchanged; Workload retains its existing table columns and semantics.
+- Known remaining issue: browser transport is unavailable, so the retry interaction cannot yet be observed.
+- Next action: retry the browser acceptance matrix when the connector recovers.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
