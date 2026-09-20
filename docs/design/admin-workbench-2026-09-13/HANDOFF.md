@@ -4,6 +4,16 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Align searchable administrator controls
+
+- Status: source-complete; computed-size browser evidence remains pending.
+- Finding: several searchable catalog fields and Calendar reservation row actions still used 36px controls, below the shared 40px default target.
+- Behavior: Accounts, Calendar, Resources and Workload search controls now use 40px fields; reservation row actions also use 40px. Table row density, schemas and primary touch actions remain unchanged.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`, `app/assets/stylesheets/components/_admin_calendar.css`, `app/assets/stylesheets/components/_admin_resources.css`, `app/assets/stylesheets/components/_admin_workload.css`.
+- Source revision: Rails `f4d4402`.
+- Runtime/source verification: Rails Zeitwerk and `git diff --check` passed. Docker/Propshaft deployment and authenticated computed-size verification remain pending.
+- Next action: rebuild `schedule_web`, then measure the focused search and reservation controls in the authenticated browser.
+
 ### 2026-09-20 — Remove legacy account disclosure styles
 
 - Status: source-complete; authenticated modal geometry evidence remains pending.
