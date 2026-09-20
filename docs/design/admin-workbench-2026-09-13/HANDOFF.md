@@ -1306,3 +1306,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; four period editor units and their field meanings remain intact.
 - Known remaining issue: browser connector is unavailable, so selector behavior and context history cannot yet be observed interactively.
 - Next action: continue B04 reservation dependency diagnosis and Calendar failure-state review.
+
+## 2026-09-20 — Add searchable account faculty scope selector
+
+- Status: source-complete; authenticated role/scope mutation and responsive evidence remains pending.
+- Finding: super-admin account creation exposed faculty scope choices as an unfiltered radio-card wall, unlike the existing searched teacher and department selectors.
+- Behavior: the faculty scope now has a bounded searchable list and explicit no-match state; hidden scope identity and role-driven submission behavior are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/accounts/index.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `1c45190`.
+- Runtime/source verification: Rails ERB compilation and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/accounts`, super administrator, create sheet and faculty-admin role; browser selection, failure and read-back evidence remain pending.
+- Table inventory: unchanged; all six account columns remain intact.
+- Known remaining issue: browser connector is unavailable, so scope filtering and role-specific form behavior cannot yet be observed interactively.
+- Next action: continue final B05 account state review and then complete B06 acceptance source checks.
