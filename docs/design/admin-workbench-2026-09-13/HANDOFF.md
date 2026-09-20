@@ -1463,6 +1463,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser connector is unavailable, so the failure distinction and retry action cannot yet be observed interactively.
 - Next action: continue B04 holiday and calendar-context source verification.
 
+## 2026-09-20 — Add Notice context retry actions
+
+- Status: source-complete; authenticated Notice failure and report read-back evidence remain pending.
+- Finding: Notice displayed retryable search/report failures, but failed teacher and semester context reads had no recovery action.
+- Behavior: failed teacher and semester context states now expose the same labelled retry action while preserving the current query and selected context. Report schema and print/export controls are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/notice/show/show.html.erb`.
+- Source revision: Rails `6df5f20`.
+- Runtime/source verification: Notice ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/notice`, staff administrator, teacher search and semester context; browser retry and report evidence remain pending.
+- Table inventory: unchanged; Notice retains its five report columns and print semantics.
+- Known remaining issue: browser connector is unavailable, so context retry behavior cannot yet be observed interactively.
+- Next action: continue Overview and Observability source verification.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
