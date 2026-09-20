@@ -913,3 +913,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/student_groups_controller.rb` and `app/views/admin/student_groups/index.html.erb`; Rails revision `c9d6ab0`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated rejected-create confirmation and successful group/read-back evidence remain pending.
+
+## 2026-09-20 — Group-semester edit draft retention
+
+- Status: source-complete and deployed; authenticated validation/conflict browser confirmation remains pending.
+- Finding: failed updates to a group-semester's student count or duration redirected away and discarded the edited row values.
+- Behavior: failed updates now re-render the selected group's semester list, preserve the submitted values for the affected row, and reopen that row editor. Successful updates retain their existing redirect and identity.
+- Attributable source: `apps/schedule_web/app/controllers/admin/student_groups_controller.rb` and `app/views/admin/student_groups/semesters.html.erb`; Rails revision `5908d7e`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated rejected-update confirmation and successful group-semester read-back evidence remain pending.
