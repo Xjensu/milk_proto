@@ -1636,3 +1636,5 @@ Browser/mutation/read-back evidence paths: Current Playwright session has no sta
 Table inventory comparison: Aggregate dated report remains seven columns in the same order: time, group, subject, activity, teacher, room, change.
 Known remaining issue: Authenticated aggregate selection, transfer/cancellation read-back and print evidence remain pending.
 Next concrete action: Continue the plan's remaining source/runtime acceptance work with an authenticated disposable-data session.
+
+Browser follow-up after rebuild: Playwright loaded the public home at `http://localhost:3000/` with HTTP 200, zero console errors/warnings, and all 38 observed document/static requests returned 200, including the current application bundles and `_admin_workspace-333e6d1b.css`. The tab has no authenticated staff session, so protected administrator rendering and mutations remain unclaimed.
