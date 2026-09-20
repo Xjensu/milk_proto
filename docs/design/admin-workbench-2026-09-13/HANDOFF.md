@@ -967,3 +967,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/teachers/show/_profile.html.erb`; Rails revision `a8566d6`.
 - Verification: ERB generation and Ruby syntax checks passed.
 - Remaining: authenticated rejected-update confirmation and successful teacher profile/read-back evidence remain pending.
+
+## 2026-09-20 — Preserve blank Calendar and group drafts
+
+- Status: source-complete and deployed; authenticated negative-path browser confirmation remains pending.
+- Finding: invalid blank numeric/date submissions in semester and student-group editors could be replaced by fresh defaults or persisted row values on re-render.
+- Behavior: when a draft contains a field, its submitted value now remains visible, including blank values; fresh editors still receive the existing defaults.
+- Attributable source: semester and student-group ERB editors; Rails revision `320b089`.
+- Verification: ERB generation, Ruby syntax and diff checks passed.
+- Remaining: authenticated rejected-create/update confirmation and successful read-back evidence remain pending.
