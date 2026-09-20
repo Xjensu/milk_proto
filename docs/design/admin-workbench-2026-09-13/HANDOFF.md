@@ -1510,6 +1510,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: the authenticated Playwright transport still closes before a browser session can be used, so the B00 core journey, responsive matrix, authorization matrix and print/read-back acceptance cannot be claimed complete.
 - Next action: rerun the same acceptance matrix when the browser transport is available; performance and availability measurement remain deferred by product decision.
 
+## 2026-09-20 — Announce empty Overview audit state
+
+- Status: source-complete; authenticated accessibility and responsive evidence remains pending.
+- Finding: the empty audit journal state lacked a status role, unlike the unavailable state and adjacent monitoring surfaces.
+- Behavior: the empty audit message is now announced with `role="status"`; audit filtering, pagination, table columns and inspector behavior are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/overview/show.html.erb`.
+- Source revision: Rails `01270c8`.
+- Runtime/source verification: Overview ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/overview`, staff administrator, empty audit journal; browser accessibility evidence remains pending.
+- Table inventory: unchanged; the four-column audit table remains intact.
+- Known remaining issue: browser transport is still closed, so live announcement behavior cannot yet be observed.
+- Next action: retry browser acceptance when the connector recovers.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
