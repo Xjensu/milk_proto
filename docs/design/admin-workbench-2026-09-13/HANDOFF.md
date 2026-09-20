@@ -1544,6 +1544,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser transport is unavailable, so the retry interaction cannot yet be observed.
 - Next action: retry the browser acceptance matrix when the connector recovers.
 
+## 2026-09-20 — Add Period Settings context retry links
+
+- Status: source-complete; authenticated period-context and persistence evidence remain pending.
+- Finding: failed faculty and semester catalog reads in Period Settings showed passive hints without recovery actions.
+- Behavior: both context failures now expose labelled retry links that preserve the current URL and Turbo frame. Period selection, group identity and date editors are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`.
+- Source revision: Rails `e12e565`.
+- Runtime/source verification: Period Settings ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/operations`, staff administrator, faculty/semester/group context; browser retry and persistence evidence remain pending.
+- Table inventory: unchanged; period editors retain their existing form structure.
+- Known remaining issue: browser transport is unavailable, so context retry behavior cannot yet be observed.
+- Next action: rerun browser acceptance when the connector recovers.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
