@@ -1084,3 +1084,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: workload presenter and assignment partial; Rails revision `966269c`.
 - Verification: diff check, Ruby syntax and container ERB compilation passed.
 - Remaining: authenticated multi-selection, failed-save retention and authoritative workload read-back remain pending.
+
+## 2026-09-20 — Remove remaining administrator identifier labels
+
+- Status: source-complete and deployed; authenticated visual confirmation remains pending.
+- Finding: four presenter fallbacks still exposed raw teacher or department IDs when catalog labels were missing.
+- Behavior: workload, Notice and Teachers presenters now use readable catalog-context labels for incomplete data; internal IDs remain available to operations and links.
+- Attributable source: workload, Notice and Teachers presenters; Rails revision `bfb1cb4`.
+- Verification: raw-ID fallback scan is clean; diff check and container Ruby syntax checks passed.
+- Remaining: authenticated visual/read-back evidence remains pending.
