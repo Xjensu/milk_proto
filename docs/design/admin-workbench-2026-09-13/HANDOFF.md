@@ -949,3 +949,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/controllers/admin/teachers/create_controller.rb`, `app/controllers/admin/teachers/mutation_controller.rb`, and `app/views/admin/teachers/show/_create.html.erb`; Rails revision `ba375f0`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated rejected-create confirmation and successful teacher/read-back evidence remain pending.
+
+## 2026-09-20 — Teacher profile draft retention
+
+- Status: source-complete and deployed; authenticated validation/conflict browser confirmation remains pending.
+- Finding: failed teacher profile updates discarded submitted names, academic selections and part-time status, reverting the visible form to the persisted record.
+- Behavior: failed updates now preserve a separate safe profile draft and rehydrate the selected teacher editor, including an intentionally blank middle name.
+- Attributable source: `apps/schedule_web/app/controllers/admin/teachers/update_controller.rb`, `app/controllers/admin/teachers/mutation_controller.rb`, and `app/views/admin/teachers/show/_profile.html.erb`; Rails revision `139a5a3`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated rejected-update confirmation and successful teacher profile/read-back evidence remain pending.
