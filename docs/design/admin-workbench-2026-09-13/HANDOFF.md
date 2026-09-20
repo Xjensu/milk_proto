@@ -875,3 +875,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Remaining: authenticated invalid/conflict response, cancellation/move read-back and original-record preservation evidence remain pending.
 
 The same dated-transfer editor now offers readable room choices from the selected workload (with a current-room fallback) instead of exposing a raw room-ID input. Rails revision: `e1adf79`.
+
+## 2026-09-20 — Schedule create draft retention
+
+- Status: source-complete and deployed; authenticated occupied-slot/validation browser confirmation remains pending.
+- Finding: failed Schedule event creation redirected with an alert and discarded the staged assignment, room, slot and period inputs.
+- Behavior: failed creates now preserve a safe draft through the redirect and rehydrate the same selected-cell editor, including multi-teacher/multi-room selections and period-specific date values. The create operation and load identity remain unchanged.
+- Attributable source: `apps/schedule_web/app/controllers/admin/schedules/events_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `aedae5b`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated occupied-slot rejection, successful create/read-back and remaining-hours verification remain pending.
