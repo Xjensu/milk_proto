@@ -1557,6 +1557,19 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser transport is unavailable, so context retry behavior cannot yet be observed.
 - Next action: rerun browser acceptance when the connector recovers.
 
+## 2026-09-20 — Announce Workload unavailable state
+
+- Status: source-complete; authenticated Workload failure and read-back evidence remain pending.
+- Finding: the Workload unavailable-load state had a retry action but lacked a status role for assistive technology.
+- Behavior: the state now uses `role="status"`; retry URL, context retention and workload table semantics are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/workload/show/show.html.erb`.
+- Source revision: Rails `2747dea`.
+- Runtime/source verification: Workload ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/workload`, staff administrator, unavailable load state; browser announcement and retry evidence remain pending.
+- Table inventory: unchanged; Workload retains its existing five-column table.
+- Known remaining issue: browser transport is unavailable, so live status announcement cannot yet be observed.
+- Next action: rerun browser acceptance when the connector recovers.
+
 ## 2026-09-20 — Add remaining administrator retry actions
 
 - Status: source-complete; authenticated Accounts, academic-catalog and Workload assignment evidence remain pending.
