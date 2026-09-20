@@ -1502,6 +1502,14 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Known remaining issue: browser connector is unavailable, so empty-state announcement and narrow table behavior cannot yet be observed interactively.
 - Next action: run final source-level checks across Rails and API, then retry the browser acceptance matrix.
 
+## 2026-09-20 — Final source-level verification pass
+
+- Status: source verification complete for the implemented slices; runtime mutation/read-back and responsive browser evidence remain pending.
+- Checks: all 35 Rails administrator ERB templates compiled in the running `schedule_web` container; Rails `zeitwerk:check` passed; Hanami routes loaded successfully; aggregate faculty/department occurrence routes and administrator reservation routes are present; the aggregate occurrence repository passed Ruby syntax validation.
+- Scope: no source changes in this verification pass; existing Rails, API and root untracked files were preserved.
+- Known remaining issue: the authenticated Playwright transport still closes before a browser session can be used, so the B00 core journey, responsive matrix, authorization matrix and print/read-back acceptance cannot be claimed complete.
+- Next action: rerun the same acceptance matrix when the browser transport is available; performance and availability measurement remain deferred by product decision.
+
 ## 2026-09-20 — Add semester catalog retry action
 
 - Status: source-complete; authenticated semester catalog and creation/read-back evidence remain pending.
