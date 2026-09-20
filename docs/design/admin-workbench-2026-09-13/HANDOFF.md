@@ -4,6 +4,17 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 
 ## Current continuation — browser evidence takes precedence
 
+### 2026-09-20 — Preserve batch Notice workload context
+
+- Status: source-complete; authenticated batch PDF queue/read-back evidence remains pending.
+- Finding: the department batch Notice export returned to a reduced workload URL containing only department and semester, dropping faculty, selected groups and the workload query.
+- Behavior: batch export forms and status/return links now preserve faculty, selected group IDs and the bounded workload query while keeping the existing department/semester/period contract for the API job.
+- Files changed: `apps/schedule_web/app/controllers/admin/notice/exports_controller.rb`, `apps/schedule_web/app/views/admin/workload/show/show.html.erb`.
+- Source revision: Rails `b81b8bf`.
+- Runtime/source verification: container Ruby syntax, Workload ERB compilation, Rails Zeitwerk and `git diff --check` passed.
+- Routes, role, context, viewport: Workload department mode and `/admin/notice/export_batch`, staff administrator, selected faculty/groups/query/semester; authenticated batch export status remains pending.
+- Next action: rebuild `schedule_web`, then verify queue failure and completion return to the same department workload context.
+
 ### 2026-09-20 — Preserve Notice export search context
 
 - Status: source-complete; authenticated PDF queue/read-back evidence remains pending.
