@@ -1048,3 +1048,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: shared academic catalog form and room/building/room-type editors; Rails revision `b605552`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated resource 422/conflict and successful CRUD read-back evidence remain pending.
+
+## 2026-09-20 — Normalize shared context typography
+
+- Status: source-complete and deployed; browser computed-style confirmation remains pending.
+- Finding: shared Schedule/Calendar context labels and period controls still used 10px text, below the design-system minimum for context and primary controls.
+- Behavior: those shared admin roles now use 12px text while preserving existing spacing, control heights, table schemas and page-specific layouts.
+- Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`; Rails revision `60b3626`.
+- Verification: diff check passed.
+- Remaining: computed-style checks at required viewports and complete browser acceptance remain pending.
