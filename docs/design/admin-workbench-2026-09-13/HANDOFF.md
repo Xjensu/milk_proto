@@ -895,3 +895,12 @@ The same dated-transfer editor now offers readable room choices from the selecte
 - Remaining: authenticated occupied-target rejection, successful swap/read-back and original-event preservation evidence remain pending.
 
 The Schedule and dated lesson-transfer selectors now use readable teacher, room and lesson labels without exposing raw database IDs in normal controls. Request values remain unchanged. Rails revision: `69069bb`.
+
+## 2026-09-20 — Calendar dated-transfer draft recovery
+
+- Status: source-complete and deployed; authenticated conflict/read-back browser confirmation remains pending.
+- Finding: the two-date Calendar move/swap dialog was client-staged, so a rejected API mutation returned to the page without the submitted operation values.
+- Behavior: move and swap failures now carry a separate safe draft through the redirect; the Stimulus dialog restores the correct operation, event identity, dates, target slot/lesson, room, and reason before reopening. Move and swap remain distinct server operations.
+- Attributable source: `apps/schedule_web/app/controllers/admin/lesson_transfers_controller.rb`, `app/views/admin/lesson_transfers/show.html.erb`, and `app/javascript/controllers/lesson_transfer_drag_controller.js`; Rails revision `29ef4e4`.
+- Verification: Ruby/ERB/JavaScript syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated rejected move/swap confirmation, successful read-back and original-event preservation evidence remain pending.
