@@ -1894,3 +1894,16 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged; Workload retains its five-column report table and row semantics.
 - Known remaining issue: current browser session has no staff authentication, so dirty-editor preservation cannot yet be observed interactively.
 - Next concrete action: inspect Workload creation search for the same draft-loss pattern, then retry the authenticated B02 journey.
+
+## 2026-09-20 — Preserve Workload creation drafts during search
+
+- Status: source-complete; authenticated creation search, POST validation and read-back evidence remain pending.
+- Finding: the Workload creation sheet’s subject search navigated the full workspace while selected groups, activity type, split mode and hour values remained only in the form DOM. Searching could discard a dirty creation draft.
+- Behavior: the existing `workload-editor-draft` bridge now carries creation fields and checked groups through `editor_draft[]` parameters. The presenter restores those values, including an explicit empty-group selection, before the create form is rendered again. The create operation and group identity contract remain unchanged.
+- Files changed: `apps/schedule_web/app/javascript/controllers/workload_editor_draft_controller.js`, `app/controllers/admin/workload/show_controller.rb`, `app/lib/presenters/admin/workload_workspace.rb`, `app/views/admin/workload/show/_create_record.html.erb`.
+- Source revision: Rails `ae9cc47`.
+- Runtime/source verification: JavaScript syntax, controller syntax, presenter syntax, create/edit ERB compilation and Rails Zeitwerk check passed. The Rails image rebuilt with Propshaft precompile and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only Workload creation route; authenticated draft/search/POST/read-back and responsive evidence remain pending.
+- Table inventory: unchanged; Workload retains its five-column report table and row semantics.
+- Known remaining issue: current browser session has no staff authentication, so creation draft preservation cannot yet be observed interactively.
+- Next concrete action: retry authenticated B02 creation and edit journeys when a staff browser session is available.
