@@ -1267,3 +1267,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged.
 - Known remaining issue: browser connector is unavailable, so keyboard focus visibility cannot yet be observed interactively.
 - Next action: complete B06 source review and run the planned browser acceptance pass when the connector is available.
+
+## 2026-09-20 — Add searchable Resource relationship selectors
+
+- Status: source-complete; authenticated Resource CRUD and responsive evidence remains pending.
+- Finding: room and building editors rendered relationship catalogs as unfiltered radio-card walls, and room rows could expose raw relationship IDs when nested labels were unavailable.
+- Behavior: building types, buildings, room types and activity types now use bounded searchable choice lists with readable Russian labels and an explicit empty result state. Room table fallbacks use translated context text instead of database IDs; submitted relationship identifiers and existing contracts are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/resources/buildings/index.html.erb`, `apps/schedule_web/app/views/admin/resources/rooms/index.html.erb`, `apps/schedule_web/app/views/admin/resources/room_types/index.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_resources.css`.
+- Source revision: Rails `e2606fa`.
+- Runtime/source verification: ERB compilation for all three templates, Rails Zeitwerk check and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/buildings`, `/admin/rooms`, `/admin/room_types`, super administrator; create/edit relationship selection and narrow sheets require browser verification.
+- Table inventory: unchanged; building, room and room-type columns remain in their existing order and row meaning.
+- Known remaining issue: browser connector is unavailable, so search filtering, submit/read-back and CRUD failure retention cannot yet be observed interactively.
+- Next action: continue B03 resource form and dependency-state review, then perform the complete CRUD acceptance path when browser access is available.
