@@ -1111,3 +1111,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: Overview presenter and audit/observability views; Rails revision `a1b1f53`.
 - Verification: diff check and container Ruby syntax check passed.
 - Remaining: authenticated audit navigation and payload read-back evidence remain pending.
+
+## 2026-09-20 — Compact committed Schedule context
+
+- Status: source-complete; authenticated computed-height and interaction evidence remains pending.
+- Finding: after a valid semester/faculty/group selection, Schedule kept all three catalog selectors expanded as a tall context wall, pushing the timetable below the working-space budget.
+- Behavior: the committed state now presents one readable semester/faculty/group summary and an explicit `Изменить контекст` disclosure. Existing selectors, search behavior, identifiers and URL parameters remain unchanged inside the disclosure.
+- Files changed: `apps/schedule_web/app/lib/presenters/admin/schedule_workspace.rb`, `apps/schedule_web/app/views/admin/schedules/show/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `9672a27`; root worktree source remains limited to the handoff update.
+- Runtime/source verification: template compiled through Rails' Erubi handler; presenter syntax and diff checks passed; rebuilt asset verification remains required after the next container build.
+- Routes, role, context, viewport: `/admin/schedule`, staff administrator, selected semester/faculty/group; browser measurements at 1280×900 and 390×844 remain pending.
+- Table inventory: unchanged; timetable headers, axes, cells and event semantics were not modified.
+- Known remaining issue: browser connector is unavailable, so open/close, focus return and actual height reduction cannot yet be confirmed.
+- Next action: rebuild `schedule_web`, verify asset loading and run the next B01 shared-control slice against Workload.
