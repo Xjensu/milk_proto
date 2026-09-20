@@ -873,3 +873,5 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/controllers/admin/schedules/transfers_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `05daa46`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated invalid/conflict response, cancellation/move read-back and original-record preservation evidence remain pending.
+
+The same dated-transfer editor now offers readable room choices from the selected workload (with a current-room fallback) instead of exposing a raw room-ID input. Rails revision: `e1adf79`.
