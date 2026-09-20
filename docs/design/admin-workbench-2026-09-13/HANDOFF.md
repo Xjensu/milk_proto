@@ -1021,3 +1021,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`; Rails revision `172d8b4`.
 - Verification: diff check and container ERB compilation passed.
 - Remaining: authenticated reservation list/create/edit conflict and read-back evidence remain pending.
+
+## 2026-09-20 — Expose weekday-transfer pagination
+
+- Status: source-complete and deployed; authenticated transfer navigation remains pending.
+- Finding: weekday transfers were fetched in 50-row pages, but the five-column table had no controls for subsequent pages.
+- Behavior: previous/next navigation now preserves the day-transfer mode while changing only the page.
+- Attributable source: `apps/schedule_web/app/views/admin/weekday_transfers/index.html.erb`; Rails revision `bdd0249`.
+- Verification: diff check and container ERB compilation passed.
+- Remaining: authenticated transfer create/delete/read-back and conflict evidence remain pending.
