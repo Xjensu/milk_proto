@@ -1202,3 +1202,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; all six account columns remain intact.
 - Known remaining issue: browser connector is unavailable, so scope removal and editor positioning cannot yet be observed.
 - Next action: rebuild `schedule_web`, then finish the B05 editor state review.
+
+## 2026-09-20 — Align account editor sheet geometry
+
+- Status: source-complete; authenticated overlap and focus-return evidence remains pending.
+- Finding: the Accounts fixed dialog inherited the native `<dialog>` margin and content-box sizing, allowing the declared 520px sheet to render wider than its available track.
+- Behavior: the edit sheet now uses border-box viewport sizing, zero native margin, no duplicate border and a bounded viewport height while retaining the shared modal controller.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revision: Rails `b535bf3`.
+- Runtime/source verification: diff check passed; asset rebuild and computed geometry verification remain pending.
+- Routes, role, context, viewport: `/admin/accounts`, staff account manager, existing account row; browser overlap checks at 1280×900 and 390×844 remain pending.
+- Table inventory: unchanged; six account columns and action semantics remain intact.
+- Known remaining issue: browser connector is unavailable, so actual sheet bounds and modal focus behavior cannot yet be observed.
+- Next action: rebuild `schedule_web`, verify Accounts assets, then continue B05 failure/read-back review.
