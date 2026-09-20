@@ -17,6 +17,13 @@ Updated: 2026-09-13 after authenticated Playwright MCP inspection and the focuse
 - Current source status: Hanami exposes staff-protected date-resolved reads at `GET /admin/faculties/:faculty_id/schedule/occurrences` and `GET /admin/kafedras/:kafedra_id/schedule/occurrences`; both use the shared occurrence query with semester clipping, transfers, cancellations and holidays. Rails routes these through `AggregateScheduleGateway`, `AggregateSchedule` operation/presenter and `/admin/aggregate_schedule`, with a selected-date print path.
 - Assessment: F01 is source-complete and runtime-liveness verified, while authenticated scope, dated transfer/cancellation read-back and print evidence remain pending. The old audit must not be used as proof that the feature is still absent.
 
+## 2026-09-21 — Remove aggregate print shell gap
+
+- Finding: aggregate print CSS hid the sidebar and context panels but left the two-column admin shell active, which could reserve an empty sidebar track in print output.
+- Behavior: the aggregate print rule now switches `.admin-shell` and `.admin-main` to a block print layout with no viewport minimum height. The selected-date report table, columns and transfer/cancellation styling remain unchanged.
+- Rails revision: `e8f9f65`.
+- Verification: Docker image rebuild, forced `schedule_web` recreation, Rails Zeitwerk check and internal `/up` HTTP 200 passed. Authenticated print preview remains pending.
+
 ## Current continuation — browser evidence takes precedence
 
 ### 2026-09-20 — Preserve batch Notice workload context
