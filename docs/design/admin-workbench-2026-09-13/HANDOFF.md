@@ -1384,3 +1384,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; audit columns and scroll region remain intact.
 - Known remaining issue: browser connector is unavailable, so retry behavior cannot yet be observed interactively.
 - Next action: continue final B06 failure-state and print source review.
+
+## 2026-09-20 — Add searchable Workload group selectors
+
+- Status: source-complete; authenticated multi-group creation/filter/read-back evidence remains pending.
+- Finding: Workload faculty filtering and new-record creation rendered groups in bounded scroll walls without search, despite groups being a high-cardinality entity.
+- Behavior: both group surfaces now provide a labelled searchable filter with an explicit no-match state. Existing multi-select checkboxes, retained selections, group IDs and create contract are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/workload/show/show.html.erb`, `apps/schedule_web/app/views/admin/workload/show/_create_record.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_workload.css`.
+- Source revision: Rails `cb7c049`.
+- Runtime/source verification: ERB compilation for both templates, Rails Zeitwerk check and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/workload`, staff administrator, faculty filter and create sheet; browser search, draft retention and authoritative read-back remain pending.
+- Table inventory: unchanged; Workload retains its existing five columns and dense table behavior.
+- Known remaining issue: browser connector is unavailable, so multi-group filtering and create/read-back cannot yet be observed interactively.
+- Next action: continue B02 assignment draft and placement source review.
