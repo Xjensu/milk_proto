@@ -1228,3 +1228,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; account columns and filters remain intact.
 - Known remaining issue: browser connector is unavailable, so manual override behavior cannot yet be observed interactively.
 - Next action: rebuild `schedule_web`, then continue B05 failure-state and one-time credential review.
+
+## 2026-09-20 — Add Notice search retry action
+
+- Status: source-complete; authenticated Notice failure and print evidence remains pending.
+- Finding: a failed Notice teacher search showed only `Повторите запрос позже` and had no retry action.
+- Behavior: the existing query and semester context now remain available through a Russian `Повторить` action inside the Notice frame; report columns and print controls are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/notice/show/show.html.erb`.
+- Source revision: Rails `24dd440`.
+- Runtime/source verification: Rails Erubi template compilation and diff check passed.
+- Routes, role, context, viewport: `/admin/notice`, staff administrator, teacher query and semester context; browser retry and print evidence remain pending.
+- Table inventory: unchanged; Notice retains its five report columns and print-only schema.
+- Known remaining issue: browser connector is unavailable, so retry interaction and print layout cannot yet be observed.
+- Next action: rebuild `schedule_web`, then complete B06 shared-state and responsive source review.
