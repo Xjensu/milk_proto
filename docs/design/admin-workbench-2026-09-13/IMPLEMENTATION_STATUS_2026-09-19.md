@@ -1,6 +1,6 @@
 # Administrator workbench implementation status
 
-Date: 2026-09-19
+Date: 2026-09-20
 
 ## Delivered behaviour
 
@@ -21,11 +21,13 @@ Date: 2026-09-19
 - The Workload activity filter declares its submit action explicitly while preserving the existing Russian filter flow.
 - Administrator pages use the shared layout as their single primary `main` landmark; page-level workspace wrappers no longer create nested landmarks.
 - The shared unsaved-changes alert makes the underlying sheet content inert until the administrator saves, discards, or resumes editing, keeping keyboard focus inside the active alert.
+- The administrator sidebar now groups routes into collapsible `Кафедра`, `Факультеты`, and `Система` domains. The active domain opens automatically; narrow layouts preserve the compact navigation rail.
+- Resource edit and delete actions recede until row hover or focus, then use compact icon controls while preserving their Russian accessible names. Shared Schedule context controls have more breathing room and clearer hover states.
 
 ## Current runtime evidence
 
 - Root runtime revision: `bca6311`.
-- Rails runtime revision: `20e51ec` (`Declare workload filter submit action`).
+- Rails runtime revision: `db3d316` (`Group administrator navigation by domain`).
 - API runtime revision: `212c763` (`Serialize reservation edits with timetable placement`).
 - The rebuilt `schedule_web` container is healthy and `GET /up` returns HTTP 200.
 - Rails assets precompiled successfully during the rebuild.
@@ -41,4 +43,4 @@ The supplied development database was not modified for verification. At this sna
 3. Submit a dated transfer and verify its result in the selected-date public schedule.
 4. Queue an individual and a batch notice export, wait for completion, and open the generated private download links.
 
-Firefox automation was not used for this snapshot after the user chose to perform browser testing directly. The remaining work is acceptance evidence on real disposable data, not fixture cleanup or a database reset.
+Firefox Playwright verification completed against the rebuilt runtime: authenticated admin navigation loaded, Schedule context rendered, the Faculty resources domain opened automatically, and row actions were hidden at rest and visible on hover. No database mutation was performed. Remaining work is acceptance evidence on real disposable data, not fixture cleanup or a database reset.
