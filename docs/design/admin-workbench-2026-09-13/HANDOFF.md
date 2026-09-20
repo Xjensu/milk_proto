@@ -1150,3 +1150,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; timetable axes, headers, cells and event links remain intact.
 - Known remaining issue: browser connector is unavailable, so live announcements and destination validation cannot yet be observed.
 - Next action: rebuild `schedule_web` with the staged-drag assets, then continue the B02 placement/edit source audit.
+
+## 2026-09-20 — Add retry state for reservation reads
+
+- Status: source-complete; authenticated dependency failure and read-back evidence remains pending.
+- Finding: when reservations, rooms or time slots failed to load, Calendar showed only a static unavailable sentence and offered no recovery action.
+- Behavior: the reservation workspace now distinguishes the unavailable state, preserves the current URL filters and exposes a Russian `Повторить` action inside the Calendar frame. Create/edit controls remain withheld until required read dependencies succeed.
+- Files changed: `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`.
+- Source revision: Rails `a52d490`.
+- Runtime/source verification: Rails Erubi template compilation and diff check passed.
+- Routes, role, context, viewport: `/admin/room_reservations`, staff schedule writer, current room/date filters; browser retry and responsive evidence remain pending.
+- Table inventory: unchanged; reservation columns, order and row semantics remain intact.
+- Known remaining issue: the browser connector is unavailable, and the underlying authenticated reservation failure has not yet been reproduced live.
+- Next action: rebuild `schedule_web`, then continue B04 context and dated-rule verification.
