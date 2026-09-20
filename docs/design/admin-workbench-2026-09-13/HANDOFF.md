@@ -1449,3 +1449,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; the five transfer columns and row semantics remain intact.
 - Known remaining issue: browser connector is unavailable, so group-catalog failure and explicit global-scope behavior cannot yet be observed interactively.
 - Next action: continue B04 period-editor source verification.
+
+## 2026-09-20 — Show period catalog read failures
+
+- Status: source-complete; authenticated period persistence and read-back evidence remain pending.
+- Finding: a failed period read was converted into an empty period collection, leaving blank date editors and obscuring the unavailable state.
+- Behavior: the period page now distinguishes a valid group with no configured periods from a failed period read and offers a retry action while preserving the selected context. Failed period form drafts continue to use the existing re-render path.
+- Files changed: `apps/schedule_web/app/controllers/admin/period_settings/show_controller.rb`, `apps/schedule_web/app/controllers/admin/period_settings/periods_controller.rb`, `apps/schedule_web/app/views/admin/period_settings/show/show.html.erb`.
+- Source revision: Rails `00fecb5`.
+- Runtime/source verification: both controller syntax checks, period ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/operations`, staff administrator, selected faculty/semester/group; browser retry and period persistence evidence remain pending.
+- Table inventory: unchanged; period editors are form units rather than tables.
+- Known remaining issue: browser connector is unavailable, so the failure distinction and retry action cannot yet be observed interactively.
+- Next action: continue B04 holiday and calendar-context source verification.
