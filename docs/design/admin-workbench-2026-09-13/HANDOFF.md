@@ -1881,3 +1881,16 @@ Next concrete action: Retry staff browser access and verify context disclosure p
 - Next concrete action: continue the B02 assignment draft audit for teacher/room collection retention, then retry authenticated workload-to-schedule acceptance.
 
 Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fields before each repeated room search, preventing duplicate query values while preserving the same retained collection behavior. JavaScript syntax and `git diff --check` passed.
+
+## 2026-09-20 — Preserve Workload editor drafts during subject search
+
+- Status: source-complete; authenticated editor search, validation and read-back evidence remain pending.
+- Finding: the Workload edit sheet’s subject search navigated the whole workspace without carrying unsaved activity type, split strategy or hour values. Searching could therefore discard a dirty editor before the user submitted the PATCH.
+- Behavior: a scoped `workload-editor-draft` controller serializes the current subject, activity, split and hour fields into the search request. The controller and presenter restore those values after the result reload, while the update operation and subject identity contract remain unchanged.
+- Files changed: `apps/schedule_web/app/javascript/controllers/workload_editor_draft_controller.js`, `app/controllers/admin/workload/show_controller.rb`, `app/lib/presenters/admin/workload_workspace.rb`, `app/views/admin/workload/show/_edit_record.html.erb`.
+- Source revision: Rails `8712498`.
+- Runtime/source verification: JavaScript syntax, controller syntax, presenter syntax, edit-template ERB compilation and Rails Zeitwerk check passed. The Rails image rebuilt with Propshaft precompile and the recreated `schedule_web` container became healthy.
+- Routes, role, safe selected context, viewport: existing staff-only Workload edit route; authenticated draft/search/PATCH/read-back and responsive evidence remain pending.
+- Table inventory: unchanged; Workload retains its five-column report table and row semantics.
+- Known remaining issue: current browser session has no staff authentication, so dirty-editor preservation cannot yet be observed interactively.
+- Next concrete action: inspect Workload creation search for the same draft-loss pattern, then retry the authenticated B02 journey.
