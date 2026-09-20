@@ -1176,3 +1176,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; period editor units and their four period kinds remain intact.
 - Known remaining issue: browser connector is unavailable, so focus order and context disclosure behavior cannot yet be observed.
 - Next action: rebuild `schedule_web`, verify Calendar assets, then continue B04 dated-rule state handling.
+
+## 2026-09-20 — Add retry states for dated Calendar reads
+
+- Status: source-complete; authenticated failure and read-back evidence remains pending.
+- Finding: Holidays and weekday transfers rendered a static unavailable message without a recovery action.
+- Behavior: both pages now expose a Russian `Повторить` action that preserves the current URL context, mode and page while keeping create/delete controls hidden until the read succeeds.
+- Files changed: `apps/schedule_web/app/views/admin/holidays/index.html.erb`, `apps/schedule_web/app/views/admin/weekday_transfers/index.html.erb`.
+- Source revision: Rails `5e742d0`.
+- Runtime/source verification: Rails Erubi compilation for both templates and diff check passed.
+- Routes, role, context, viewport: `/admin/holidays` and `/admin/transfers?mode=days`, staff administrator; browser retry and responsive evidence remain pending.
+- Table inventory: unchanged; holiday three-column and weekday-transfer five-column structures remain intact.
+- Known remaining issue: authenticated read failures and retry behavior cannot be observed until the browser connector is available.
+- Next action: rebuild `schedule_web`, then move to B05 Accounts editor overlap and scope selection.
