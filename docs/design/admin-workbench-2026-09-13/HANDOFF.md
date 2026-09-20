@@ -1762,3 +1762,16 @@ Browser/mutation/read-back evidence paths: No authenticated session was availabl
 Table inventory comparison: Workload keeps `Кафедра`, `Дисциплина и группа`, `Вид занятия`, `Часы`, `Назначение` in the same order.
 Known remaining issue: Browser computed-height, disclosure keyboard behavior and full workload-to-schedule read-back remain pending.
 Next concrete action: Retry staff browser access and verify context disclosure plus the complete B02 journey.
+
+## 2026-09-20 — Unify Calendar workspace navigation
+
+- Status: source-complete; authenticated Calendar navigation and CRUD read-back evidence remain pending.
+- Finding: the five Calendar workspaces duplicated their destination navigation, allowing active-state and transfer-route behavior to drift between pages.
+- Behavior: a scoped `admin/calendar_navigation` partial now owns the five Calendar destinations, shared calendar context links, Turbo frame targeting and active-page semantics. Periods, semesters, reservations, holidays and weekday transfers pass their active key; the weekday-transfer destination consistently opens day-transfer mode.
+- Files changed: `apps/schedule_web/app/views/admin/_calendar_navigation.html.erb`, `holidays/index.html.erb`, `period_settings/show/show.html.erb`, `room_reservations/index.html.erb`, `semesters/index.html.erb`, `weekday_transfers/index.html.erb`.
+- Source revision: Rails `8a374ef`.
+- Runtime/source verification: Rails image rebuilt, Propshaft precompiled, schedule_web recreated, Rails Zeitwerk check passed, and all six changed ERB templates compiled in the rebuilt container. The container reported healthy status; host `/up` was temporarily answered by the local proxy with HTTP 502 despite the healthy container.
+- Routes, role, safe selected context, viewport: existing staff-only Calendar routes and session calendar context; authenticated navigation and responsive evidence remain pending.
+- Table inventory: unchanged; period, semester, reservation, holiday and transfer table structures remain intact.
+- Known remaining issue: current Playwright session has no staff authentication, and the local host proxy did not return `/up` during this rebuild check.
+- Next concrete action: retry authenticated Calendar navigation and the B04 create/delete/read-back journey when the staff browser session is available.
