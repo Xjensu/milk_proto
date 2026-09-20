@@ -976,3 +976,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: semester and student-group ERB editors; Rails revision `320b089`.
 - Verification: ERB generation, Ruby syntax and diff checks passed.
 - Remaining: authenticated rejected-create/update confirmation and successful read-back evidence remain pending.
+
+## 2026-09-20 — Remove reservation fallback identifiers
+
+- Status: source-complete and deployed; authenticated reservation read/write confirmation remains pending.
+- Finding: reservation room and teacher option fallbacks exposed raw database IDs when catalog labels were incomplete.
+- Behavior: fallback labels now communicate catalog context without showing identifiers; internal room and teacher values remain unchanged for the API contracts.
+- Attributable source: `apps/schedule_web/app/controllers/admin/room_reservations_controller.rb`; Rails revision `41f4a1c`.
+- Verification: diff check and container Ruby syntax check passed.
+- Remaining: authenticated reservation list/create/edit conflict and read-back evidence remain pending.
