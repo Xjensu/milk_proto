@@ -1423,3 +1423,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; reservation columns, ordering and row semantics remain intact.
 - Known remaining issue: browser connector is unavailable, so the failing dependency cannot yet be confirmed against an authenticated live response.
 - Next action: continue B04 period and dated-rule source verification, then return to the disposable core journey when browser access is restored.
+
+## 2026-09-20 — Add searchable Calendar reservation room lists
+
+- Status: source-complete; authenticated reservation search and read-back evidence remain pending.
+- Finding: reservation filtering and create/edit forms rendered the loaded room catalog as long radio-card walls, despite rooms being high-cardinality and server search already being available.
+- Behavior: filter, create and edit room lists now expose labelled local search with explicit no-match states. Selected room values, hidden identity fields, picker controllers and reservation request contracts are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/room_reservations/index.html.erb`.
+- Source revision: Rails `fc30fdf`.
+- Runtime/source verification: reservation ERB compilation, controller syntax, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/room_reservations`, staff schedule writer, create/edit/filter room selectors; browser search and mutation/read-back remain pending.
+- Table inventory: unchanged; reservation columns and row semantics remain intact.
+- Known remaining issue: browser connector is still unavailable, so room filtering and the underlying reservation read failure cannot yet be observed interactively.
+- Next action: continue B04 period and dated-rule source verification.
