@@ -1241,3 +1241,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; Notice retains its five report columns and print-only schema.
 - Known remaining issue: browser connector is unavailable, so retry interaction and print layout cannot yet be observed.
 - Next action: rebuild `schedule_web`, then complete B06 shared-state and responsive source review.
+
+## 2026-09-20 — Collapse secondary monitoring navigation
+
+- Status: source-complete; authenticated responsive navigation evidence remains pending.
+- Finding: the shared sidebar rendered monitoring links expanded on every admin page, consuming vertical space despite being secondary navigation.
+- Behavior: monitoring services now render as a collapsed native disclosure and remain available from the same sidebar location when opened.
+- Files changed: `apps/schedule_web/app/views/admin/shared/_sidebar.html.erb`.
+- Source revision: Rails `549954c`.
+- Runtime/source verification: in-container Rails ERB compilation and diff check passed.
+- Routes, role, context, viewport: all staff admin routes; sidebar at desktop and narrow widths; browser evidence remains pending.
+- Table inventory: unchanged.
+- Known remaining issue: browser connector is unavailable, so interactive disclosure and narrow-navigation behavior cannot yet be observed.
+- Next action: continue B06 source review and perform browser acceptance when the connector is available.
