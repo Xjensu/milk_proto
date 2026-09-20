@@ -1319,3 +1319,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; all six account columns remain intact.
 - Known remaining issue: browser connector is unavailable, so scope filtering and role-specific form behavior cannot yet be observed interactively.
 - Next action: continue final B05 account state review and then complete B06 acceptance source checks.
+
+## 2026-09-20 — Normalize Teachers header and search controls
+
+- Status: source-complete; browser computed-style and responsive evidence remains pending.
+- Finding: Teachers retained a 34–74px display heading and oversized search controls, unlike the shared admin header and Notice control roles.
+- Behavior: the Teachers heading now uses a bounded 24–42px scale, and the search input/button use the shared 40px control height while preserving the dark search panel and existing workspace composition.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_teachers.css`.
+- Source revision: Rails `28a5a52`.
+- Runtime/source verification: Rails Zeitwerk check and `git diff --check` passed.
+- Routes, role, context, viewport: `/admin/teachers`, staff administrator, teacher search and selected workspace; computed-style and narrow/desktop browser evidence remain pending.
+- Table inventory: unchanged; teacher availability grid and schedule preview semantics remain intact.
+- Known remaining issue: browser connector is unavailable, so actual computed dimensions and responsive wrapping cannot yet be observed.
+- Next action: complete B06 Notice/Observability source review and run browser acceptance when available.
