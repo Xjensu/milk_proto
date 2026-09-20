@@ -1057,3 +1057,12 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`; Rails revision `60b3626`.
 - Verification: diff check passed.
 - Remaining: computed-style checks at required viewports and complete browser acceptance remain pending.
+
+## 2026-09-20 — Keep Accounts create action reachable
+
+- Status: source-complete and deployed; browser bounding-box confirmation remains pending.
+- Finding: the Accounts create form is nested inside role-selection controller markup, so the shared sheet-body sticky-action rule did not keep its primary action visible during long-form scrolling.
+- Behavior: create and edit account form submissions now use the same reachable sticky action treatment within the Accounts sheet; fields and account contracts remain unchanged.
+- Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`; Rails revision `328c506`.
+- Verification: diff check passed.
+- Remaining: authenticated Accounts mutation/read-back and computed viewport evidence remain pending.
