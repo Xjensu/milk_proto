@@ -884,3 +884,12 @@ The same dated-transfer editor now offers readable room choices from the selecte
 - Attributable source: `apps/schedule_web/app/controllers/admin/schedules/events_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `aedae5b`.
 - Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
 - Remaining: authenticated occupied-slot rejection, successful create/read-back and remaining-hours verification remain pending.
+
+## 2026-09-20 — Schedule swap draft retention
+
+- Status: source-complete and deployed; authenticated conflict/read-back browser confirmation remains pending.
+- Finding: rejected dated swaps discarded the source date, target lesson, target date and reason.
+- Behavior: failed swaps now preserve a separate draft and reopen the swap disclosure without merging it with recurring edits or dated transfers.
+- Attributable source: `apps/schedule_web/app/controllers/admin/schedules/swaps_controller.rb` and `app/views/admin/schedules/show/show.html.erb`; Rails revision `6e81cff`.
+- Verification: Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated occupied-target rejection, successful swap/read-back and original-event preservation evidence remain pending.
