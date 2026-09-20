@@ -1397,3 +1397,16 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; Workload retains its existing five columns and dense table behavior.
 - Known remaining issue: browser connector is unavailable, so multi-group filtering and create/read-back cannot yet be observed interactively.
 - Next action: continue B02 assignment draft and placement source review.
+
+## 2026-09-20 — Add searchable Schedule group and assignment selectors
+
+- Status: source-complete; authenticated schedule group and inline assignment interaction evidence remains pending.
+- Finding: the Schedule workspace rendered its group selector and inline lesson teacher/room collections without the searchable controls already used by Workload, despite these being high-cardinality entities.
+- Behavior: Schedule now provides a labelled local group filter plus searchable teacher and room assignment lists in both create and edit inspectors. Existing checkbox names, IDs, retained selections, and event mutation routes are unchanged.
+- Files changed: `apps/schedule_web/app/views/admin/schedules/show/show.html.erb`, `apps/schedule_web/app/assets/stylesheets/components/_admin_workspace.css`.
+- Source revision: Rails `fb059a2`.
+- Runtime/source verification: Schedule ERB compilation, Rails Zeitwerk check and `git diff --check` passed in the running `schedule_web` container.
+- Routes, role, context, viewport: `/admin/schedule`, staff administrator, selected faculty/group grid and create/edit inspectors; browser search and authoritative read-back remain pending.
+- Table inventory: unchanged; the seven-day Schedule grid and its columns remain intact.
+- Known remaining issue: browser connector is unavailable, so searchable Schedule interaction and the complete create/edit/read-back journey cannot yet be observed interactively.
+- Next action: continue B02 placement and draft-retention source review.
