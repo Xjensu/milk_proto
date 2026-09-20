@@ -837,3 +837,12 @@ The Russian locale now also defines the shared `date.formats.long` (`ДД.ММ.�
 - Attributable source: `apps/schedule_web/app/assets/stylesheets/components/_admin_notice.css`; Rails revision `11130f7`.
 - Verification: stylesheet diff check, Docker asset rebuild and Rails `zeitwerk:check` passed.
 - Remaining: verify the narrow scroll affordance, keyboard reachability and desktop/narrow print output in a live browser.
+
+## 2026-09-20 — Holiday editor draft retention and labels
+
+- Status: source-complete and deployed; authenticated negative-path browser confirmation remains pending.
+- Finding: a failed holiday create redirected away from the editor and discarded the submitted date/name; both controls also lacked visible labels.
+- Behavior: recoverable holiday failures now re-render the Calendar page with the submitted date and name, reopen the editor, and show Russian field labels. Successful creation and delete routes remain unchanged.
+- Attributable source: `apps/schedule_web/app/controllers/admin/holidays_controller.rb` and `app/views/admin/holidays/index.html.erb`; Rails revision `a1c634f`.
+- Verification: Rails Ruby/ERB syntax checks, diff check, Docker rebuild and `rails zeitwerk:check` passed.
+- Remaining: authenticated 422 retention, successful holiday create/delete read-back and conflict evidence remain pending.
