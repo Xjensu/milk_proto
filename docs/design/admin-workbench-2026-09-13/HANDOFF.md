@@ -1608,3 +1608,15 @@ The Schedule and dated lesson-transfer selectors now use readable teacher, room 
 - Table inventory: unchanged; semester table headers, order and row meaning remain intact.
 - Known remaining issue: browser connector is unavailable, so retry behavior cannot yet be observed interactively.
 - Next action: continue B04 holiday and calendar-context source verification.
+
+Batch/slice: B01 shared control contract and B02 failed placement draft retention
+Status: source-complete; runtime/browser verification pending
+Files changed (attributable): `apps/schedule_web/app/assets/stylesheets/components/_admin_tokens.css`, `_admin_components.css`, `_admin_workspace.css`, `_admin_workload.css`, `app/javascript/controllers/admin_context_history_controller.js`, `app/controllers/admin/schedules/events_controller.rb`
+Source revision + dirty-scope identifier: Rails `e6560d0`; root pre-existing untracked files were preserved and not staged.
+Runtime source/asset verification method: Rails controller syntax, ERB compilation, Zeitwerk loading, JavaScript syntax and `git diff --check` passed. The running browser connector remains unavailable, so computed-style and authenticated mutation evidence are pending.
+Routes, role, safe selected context, viewport: Existing staff-only Schedule and Workload routes; runtime role, selected data and viewport remain unverified.
+Checks and exact results: Admin ordinary controls now use the prescribed 40px baseline, 14px body text, compact 36px row controls and 44px primary actions; Schedule headings use 24/32 desktop and 20/28 narrow roles; Workload context/editor spacing is reduced after the legacy page rules while its five-column table remains unchanged. Schedule frame history stores the requested same-origin URL before frame navigation and uses the response URL on completion. Failed event creation now redirects with `selected_load` retained so the safe draft remains visible in the same placement inspector.
+Browser/mutation/read-back evidence paths: None available; no write was sent.
+Table inventory comparison: Schedule time plus weekday columns and Workload `Кафедра`, `Дисциплина и группа`, `Вид занятия`, `Часы`, `Назначение` remain unchanged.
+Known remaining issue: The browser connector is still unavailable; full B00/B02 journey, computed control sizes, asset fingerprints and failure read-back remain unverified.
+Next concrete action: Continue source inspection and implementation of the next plan delta, then retry authenticated runtime verification when the browser session is available.
