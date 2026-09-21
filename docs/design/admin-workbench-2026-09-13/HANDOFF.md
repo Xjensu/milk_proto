@@ -2412,3 +2412,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: authenticated `/admin/overview` renders the select with `Все объекты`, localized options and localized rows for period and workload events. Existing journal columns and pagination remain unchanged; browser console errors: zero.
 - Checks: container Zeitwerk passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Localized audit field summaries
+
+- Batch/slice: B06 adjacent administrator UX, event journal inspector.
+- Finding: the audit inspector summarized changes with raw snake-case backend keys, which made the Russian staff UI difficult to scan.
+- Fix: common audit fields now render Russian labels; the existing expandable sanitized payload preserves the detailed technical representation for inspection.
+- Source revision: Rails `f25a33f`.
+- Runtime evidence: authenticated event `119` now reports `Связанные аудитории`, `Связанные занятия`, `Связанные назначения`, `Связанные назначения преподавателей` and `Требование нагрузки`; browser console errors: zero. Journal table and inspector structure are unchanged.
+- Checks: Propshaft assets rebuilt, `schedule_web` restarted healthy, and container Zeitwerk remains passing.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
