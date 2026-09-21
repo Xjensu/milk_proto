@@ -2180,6 +2180,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged Schedule grid axes and Workload table columns.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture.
 
+## 2026-09-21 — Calendar period validation and read-back
+
+- Batch/slice: B04 period settings.
+- Runtime verification: submitted an invalid lecture-week range (`2027-02-01` through `2027-01-01`) for group-semester `1`. The page retained both submitted dates, preserved the selected context URL and showed “Даты периода некорректны.”; no period was created.
+- Mutation/read-back: saved a disposable lecture-week period (`2027-01-11` through `2027-01-15`), read the same dates back from the rendered editor after redirect, then deleted it through the explicit confirmation. Success feedback was shown for save and delete, and the persisted period was gone afterward.
+- Browser console errors: zero. Table structures and four-period editor composition were unchanged.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture.
+
 ## 2026-09-21 — Adjacent-page 320px containment
 
 - Batch/slice: B06 adjacent-page responsive verification.
