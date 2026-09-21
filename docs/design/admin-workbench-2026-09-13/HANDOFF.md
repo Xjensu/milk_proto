@@ -2286,3 +2286,11 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Print evidence: the selected-date button invoked the existing print controller; the report table remains the print surface while the admin shell is excluded by the shared print rules.
 - Finding/fix: the seeded catalog included a zero-ID faculty row that rendered as `UNKNOWN` and could trigger an invalid `/0` request. Rails now filters non-positive catalog IDs and chooses the first positive ID when establishing default context (Rails `ccd89a2`).
 - Browser console errors: zero during faculty, department and date-switch checks. No table axes or report semantics changed.
+
+## 2026-09-21 — Workload assignment editor keyboard entry
+
+- Batch/slice: B02 editor accessibility and safe navigation.
+- Finding: the assignment side sheet was visually fixed and scrollable, but rendered as a plain `section` without dialog semantics and left focus on `BODY` after navigation.
+- Fix: workload create, edit and assignment partials now expose `role="dialog"`, `aria-modal="true"` and an explicit labelled heading. The shared Stimulus controller focuses the close action on entry and maps `Escape` to the existing safe close URL; no form field or API contract changed (Rails `d1d5899`).
+- Runtime evidence: authenticated assignment editor for requirement `2` measured 500×900 at desktop, reported the dialog semantics, focused `Закрыть назначение`, and an Escape key event returned to the same workload context without saving or changing data. Browser console errors were zero.
+- Table inventory and assignment identity remain unchanged.
