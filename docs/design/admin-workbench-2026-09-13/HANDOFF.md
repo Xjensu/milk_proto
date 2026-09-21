@@ -2153,6 +2153,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Known remaining issue: scoped-role denial still lacks a second scoped administrator fixture; generated credential evidence remains deliberately unlogged.
 - Next concrete action: complete final responsive/print and adjacent-page matrix, then rerun the core workload-to-schedule journey after this Accounts CSS/controller change.
 
+## 2026-09-21 — Reservation conflict draft retention
+
+- Batch/slice: B04 Calendar mutation failure handling.
+- Runtime verification: created a disposable reservation for room `173`, `2026-12-22`, slot `3`, then submitted a second reservation for the same room/date/slot with purpose `Codex conflict draft`. The API rejected it as a conflict; the editor reopened with room ID, teacher ID, date, selected slot and purpose intact, while the original row remained unchanged.
+- Cleanup: closed the failed editor, deleted the original disposable reservation through the confirmation flow, and verified the empty-state message returned. Browser console errors were zero.
+- Known interaction note: while the failed editor is intentionally open, its modal backdrop correctly blocks background row actions until the editor is closed.
+- Next concrete action: finish the final responsive/print matrix and rerun the core journey after the Accounts changes.
+
 ## 2026-09-21 — Adjacent-page 320px containment
 
 - Batch/slice: B06 adjacent-page responsive verification.
