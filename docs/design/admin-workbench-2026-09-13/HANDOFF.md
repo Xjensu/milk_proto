@@ -2121,3 +2121,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Evidence: workload creation reported “Записи нагрузки созданы.”; assignment reported “Назначение нагрузки сохранено.”; placement reported “Занятие создано.”; edit reported “Занятие изменено.”; direct reload retained day `2`, slot `5`, status `modified` and teacher ID `1`; cleanup reported “Нагрузка и связанные занятия удалены.” and no temporary row remained.
 - Responsive check: the direct event read-back remained within a 320px document width with no page overflow. Browser errors were zero.
 - Next concrete action: complete the remaining Calendar mutation failure/read-back matrix and then audit the final adjacent-page regression set.
+
+## 2026-09-21 — Weekday transfer failure draft retention
+
+- Batch/slice: B04 Calendar mutation failure handling.
+- Finding: an invalid weekday-transfer submission displayed the error alert but closed the editor and discarded the entered date and reason. The custom `weekday_transfer_draft` key had been passed as an unrecognized top-level redirect option instead of Rails flash data.
+- Fix: the controller now passes the complete notice/alert/draft hash through `flash:` while retaining the current calendar context.
+- Source revision: Rails `691495f`.
+- Runtime verification: submitted an invalid transfer with date `2026-12-12` and reason `Draft transfer failure`, with no weekday selected. The page retained the context URL, showed “Не удалось изменить перенос дня.”, reopened the editor, preserved both values, and created no transfer. Syntax and Zeitwerk checks passed; browser errors were zero.
+- Next concrete action: finish the remaining adjacent-page and final responsive/print matrix.
