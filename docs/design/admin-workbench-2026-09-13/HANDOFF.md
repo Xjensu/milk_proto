@@ -2081,3 +2081,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: `/admin/subjects?q=Авто` returned two matching rows; an unmatched query returned “По запросу «zzzzzzzz» ничего не найдено.”; a two-character query retained the paginated catalog and displayed the minimum-length hint. At 320px document and body width remained 320px. Rails syntax checks and `bundle exec rails zeitwerk:check` passed; no browser errors were observed.
 - Table inventory: unchanged three columns (`Название`, `Короткое название`, `Действия`) and existing row actions.
 - Next concrete action: continue B03 CRUD failure/read-back coverage for Rooms and the remaining resource families before broadening calendar work.
+
+## 2026-09-21 — Room CRUD deletion contract
+
+- Batch/slice: B03 Resources, room CRUD failure/read-back.
+- Finding: deleting a room returned HTTP 500 because `slices/admin/contracts/rooms/destroy_contract.rb` contained the same Dry Validation contract definition twice. Hanami raised `DuplicateSchemaError` before the action could authorize or delete the record.
+- Fix: removed the duplicate definition and rebuilt the API image. Source revision: API `b52aa51`.
+- Runtime verification: created disposable room `992 / Codex Room 20260921`, edited it to `Codex Room Updated 20260921`, then deleted it through the authenticated Rooms UI. The UI reported “Аудитория удалена.”, the row disappeared, and the API completed `DELETE /admin/rooms/2` with HTTP 204. No browser errors were observed; the disposable record is absent after cleanup.
+- Table inventory: Rooms retains the existing four meanings (`Здание`, `Тип`, `Номер / название`, `Действия`).
+- Next concrete action: exercise a rejected room create/update with preserved draft values, then continue the remaining resource families.
