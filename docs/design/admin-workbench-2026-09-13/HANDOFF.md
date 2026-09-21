@@ -2070,3 +2070,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Evidence: at 320×844, Schedule/Workload, Accounts and Notice each kept both document and body width at 320px with no page-level horizontal overflow. Workload's required 850px table remains inside its labelled local scroller; Accounts keeps its resource table bounded to its own region. Notice retains the compact parameter state at this width and does not expand the document.
 - Fix: the Schedule top bar now stacks its title and live-status badge below 380px so the status text cannot force a 357px page on a 320px viewport. Source revision: Rails pending commit.
 - Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, and authenticated Playwright checks completed on all three routes. No new test files were added.
+
+## 2026-09-21 — Searchable Subjects resource catalog
+
+- Batch/slice: B03 resource browser, high-cardinality catalog search.
+- Status: runtime-verified.
+- Change: the Subjects workspace now uses the existing authorized `/admin/search/disciplines` endpoint for queries of three or more characters. The search keeps readable subject names and short names, hides pagination while filtered, preserves a Russian empty result state, and falls back to the paginated catalog for shorter input. A bounded search toolbar was added without changing table columns or row meaning.
+- Files changed: `apps/schedule_web/app/controllers/admin/resources/posts_controller.rb`, `app/lib/gateways/admin/teachers_workspace_gateway.rb`, `app/views/admin/resources/posts/index.html.erb`, `app/assets/stylesheets/components/_admin_resources.css`.
+- Source revision: Rails `6312f69`.
+- Runtime verification: `/admin/subjects?q=Авто` returned two matching rows; an unmatched query returned “По запросу «zzzzzzzz» ничего не найдено.”; a two-character query retained the paginated catalog and displayed the minimum-length hint. At 320px document and body width remained 320px. Rails syntax checks and `bundle exec rails zeitwerk:check` passed; no browser errors were observed.
+- Table inventory: unchanged three columns (`Название`, `Короткое название`, `Действия`) and existing row actions.
+- Next concrete action: continue B03 CRUD failure/read-back coverage for Rooms and the remaining resource families before broadening calendar work.
