@@ -2063,3 +2063,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 
 - Scope audit follow-up: the authenticated creation editor currently exposes only one faculty catalog entry (`Строительный факультет`, id 1), and the database has no second faculty fixture suitable for a cross-scope denial check. The Hanami policy source was inspected directly: non-super-admin account management requires matching teacher membership or faculty/kafedra scope, and scope creation is constrained to the actor’s allowed faculty. Runtime denial remains intentionally unclaimed rather than simulated with an invented catalog record.
 - Remaining acceptance: explicit conflict rejection and failed reservation draft read-back, period validation persistence, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
+
+## 2026-09-21 — 320px narrow-shell verification
+
+- Status: the plan's narrowest responsive threshold was checked after the shared shell pass.
+- Evidence: at 320×844, Schedule/Workload, Accounts and Notice each kept both document and body width at 320px with no page-level horizontal overflow. Workload's required 850px table remains inside its labelled local scroller; Accounts keeps its resource table bounded to its own region. Notice retains the compact parameter state at this width and does not expand the document.
+- Fix: the Schedule top bar now stacks its title and live-status badge below 380px so the status text cannot force a 357px page on a 320px viewport. Source revision: Rails pending commit.
+- Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, and authenticated Playwright checks completed on all three routes. No new test files were added.
