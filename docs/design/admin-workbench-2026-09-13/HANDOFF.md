@@ -2068,7 +2068,7 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 
 - Status: the plan's narrowest responsive threshold was checked after the shared shell pass.
 - Evidence: at 320×844, Schedule/Workload, Accounts and Notice each kept both document and body width at 320px with no page-level horizontal overflow. Workload's required 850px table remains inside its labelled local scroller; Accounts keeps its resource table bounded to its own region. Notice retains the compact parameter state at this width and does not expand the document.
-- Fix: the Schedule top bar now stacks its title and live-status badge below 380px so the status text cannot force a 357px page on a 320px viewport. Source revision: Rails pending commit.
+- Fix: the Schedule top bar now stacks its title and live-status badge below 380px so the status text cannot force a 357px page on a 320px viewport. Source revision: Rails `a2e5622`.
 - Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, and authenticated Playwright checks completed on all three routes. No new test files were added.
 
 ## 2026-09-21 — Searchable Subjects resource catalog
@@ -2147,7 +2147,7 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Batch/slice: B05 Accounts editor failure/read-back.
 - Finding: the shared resource hover rule made the Accounts edit trigger `opacity: 0` and `pointer-events: none` until row hover. The native sheet was therefore intercepted by its table row in the authenticated desktop flow. A rejected create also discarded the safe full-name input used for login generation.
 - Fix: Accounts edit triggers are now always visible and actionable; the editor remains a fixed native sheet. Create and edit failures retain safe full-name inputs alongside email, while password fields remain empty.
-- Source revision: Rails pending commit.
+- Source revision: Rails `4612984`.
 - Runtime verification: a rejected teacher-account create preserved `Codex Draft Account` and its email, reopened the editor and cleared the password. A disposable teacher account was then created with a searched teacher identity, edited to disabled, reloaded and read back with the same email, teacher and status. A rejected edit preserved `Codex Edit Draft` and the attempted email while clearing the password. The disposable account was removed from the local database after verification.
 - Table inventory: unchanged six meanings (`Email`, `Роль`, `Статус`, `Преподаватель`, `Область`, `Действия`). At 1280px document/body width remained 1280px; browser console errors were zero.
 - Known remaining issue: scoped-role denial still lacks a second scoped administrator fixture; generated credential evidence remains deliberately unlogged.
@@ -2174,7 +2174,7 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Batch/slice: B02 regression gate plus Schedule presenter correction.
 - Finding: a disposable subject whose database `short_name` was the numeric value `5342` appeared in the Schedule load panel as `5342`, although the Workload page correctly showed the human-readable name `авто`.
 - Fix: Schedule load entries, recommendation labels and event labels now prefer the subject name and fall back to the short name only when the name is absent.
-- Source revision: Rails pending commit.
+- Source revision: Rails `272d23e`.
 - Runtime journey: created workload requirement `7` for group СИ-1/subject `авто`, assigned Кожедуб Сергей Сергеевич, selected it for Monday slot 5, created event `13`, edited the same event to Tuesday slot 4 with status `modified`, reloaded the direct event URL and read back day `2`, slot `4`, status `modified` and teacher ID `1`. The Schedule load panel showed `авто` throughout. The event and workload were then deleted through their explicit confirmations.
 - Evidence: creation, assignment, placement, edit and deletion each returned their Russian success feedback; no temporary workload/event remained. At 320px document/body width remained 320px and browser console errors were zero.
 - Table inventory: unchanged Schedule grid axes and Workload table columns.
@@ -2200,6 +2200,6 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Batch/slice: B06 adjacent-page responsive verification.
 - Finding: at 320px the Teachers action row forced a 329px document because the create link and live-status badge stayed on one line. The Observability grid cards also inherited the minimum width of their long audit table, expanding the document to 541px despite the table's existing local scroller.
 - Fix: the Teachers action row wraps below 540px while keeping both controls visible, and Observability cards now permit grid shrinkage so each labelled table region owns its horizontal scrolling.
-- Source revision: Rails pending commit.
+- Source revision: Rails `4d70826`.
 - Runtime verification: authenticated `/admin/teachers` and `/admin/observability` both measured 320px document/body width at 320px and 1280px at desktop width. Observability table regions retained their full column sets with local scroll widths of 326–594px. Browser console errors were zero.
 - Table inventory: no columns, order, headings, grouping, row meaning or report semantics changed.
