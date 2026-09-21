@@ -2112,3 +2112,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: `/admin/transfers?mode=days&faculty_id=1&semester_id=1&group_id=1` rendered all five navigation links with the same context and included the context hidden fields in the create form. Lesson-transfer links preserved `semester_id=1`, `faculty_id=1`, `group_semester_id=1`, and both dates. Both desktop and document widths remained 1280px with no browser errors.
 - Table inventory: weekday transfers retains its five columns; lesson-transfer grids and existing axes remain unchanged.
 - Next concrete action: verify Calendar mutation failure retention after this context pass, then rerun the core workload-to-schedule journey.
+
+## 2026-09-21 — Core journey rerun after Calendar changes
+
+- Batch/slice: B00/B02 regression gate after shared Calendar and resource changes.
+- Status: runtime-verified.
+- Journey: created disposable workload requirement `6` for group СИ-1 and subject `авто`, assigned Кожедуб Сергей Сергеевич, placed event `12` on Monday slot 4, edited the same event to Tuesday slot 5 with status “Изменено”, opened its direct event URL, and read back the same event ID, teacher, placement and status. The event and requirement were then deleted through their explicit UI confirmations.
+- Evidence: workload creation reported “Записи нагрузки созданы.”; assignment reported “Назначение нагрузки сохранено.”; placement reported “Занятие создано.”; edit reported “Занятие изменено.”; direct reload retained day `2`, slot `5`, status `modified` and teacher ID `1`; cleanup reported “Нагрузка и связанные занятия удалены.” and no temporary row remained.
+- Responsive check: the direct event read-back remained within a 320px document width with no page overflow. Browser errors were zero.
+- Next concrete action: complete the remaining Calendar mutation failure/read-back matrix and then audit the final adjacent-page regression set.
