@@ -2351,3 +2351,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `8c6b4a3`.
 - Runtime evidence: authenticated 1280×900 selected-load editor reports an 868px inspector with `overflow-y: auto`; after the page reaches the inspector, the submit action is visible at viewport y 788–832. Document/body width remains 1280px and browser errors remain zero.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Narrow Schedule inspector regression check
+
+- Batch/slice: B02 responsive regression after intermediate inspector containment.
+- Runtime evidence: authenticated selected-load Schedule at 390×844 keeps document/body width at exactly 390px; the inspector remains bounded to the viewport (`max-height: 812px`, local vertical scrolling) and its submit action remains inside the scrollable editor. Browser console errors: zero.
+- Table inventory: Schedule time axis and six weekday columns remain unchanged.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
