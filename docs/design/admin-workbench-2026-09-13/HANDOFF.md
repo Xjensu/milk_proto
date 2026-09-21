@@ -2432,3 +2432,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Browser console errors: zero. Table columns remain `Файл`, `Структура`, `Семестр`, `Обновлён`, `Статус`, `Действия`.
 - Checks: Rails container Zeitwerk passed; all services remained healthy. The existing processed fixture file was not modified.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Notice period context preservation
+
+- Batch/slice: B06 Notice report navigation and export context.
+- Finding: opening `/admin/notice?period=lecture_week`, searching for a teacher and selecting the result dropped the period parameter, silently switching the report back to the semester-wide range.
+- Fix: notice search, teacher-result and semester links now retain the selected period while changing their own context value (Rails `22d7ebc`).
+- Runtime evidence: authenticated lecture-week flow for `Кожедуб Сергей Сергеевич` preserved `period=lecture_week`, rendered the `Лекционная неделя` report label and kept the period navigation selected. The current fixture has zero lecture-week rows, so PDF remains correctly disabled by the existing empty-report guard.
+- Browser console errors: zero. Notice table columns remain `Число`, `Часы`, `Поток, группа`, `Вид занятий`, `Аудитория`; print/export contracts were unchanged.
+- Known remaining issue: a populated lecture-week/exam-session fixture is still needed for successful PDF worker read-back; scoped-role denial requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
