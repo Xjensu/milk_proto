@@ -2224,3 +2224,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Failure read-back: a deliberately bypassed overlong update returned the normal “Не удалось сохранить тип аудитории.” alert, reopened the editor with the long draft intact, and left the original `лекционная` row unchanged. Browser console errors were zero.
 - Table inventory: unchanged two data meanings (`Вид занятия`, `Название`) plus `Действия`.
 - Remaining B03 work: complete CRUD failure/read-back coverage for time slots and student groups; scoped-role denial still requires a separate administrator fixture.
+
+## 2026-09-21 — Time-slot CRUD and chronological validation
+
+- Batch/slice: B03 Resources, time-slot editor failure/read-back.
+- Finding: the existing time-slot contract accepted an end time before its start time, so the catalog could contain an impossible slot (`19:00–18:00`).
+- Fix: API create/update contracts now reject an end time that is not strictly after the start time. Rails already retained the submitted form values and translated the failure; no table or editor structure changed.
+- Source revision: API `df555f4`.
+- Runtime verification: a rejected disposable create (`98`, `19:00`, `18:00`) reopened the editor with all three values intact and showed “Не удалось создать временной слот.”; no row was created. A valid disposable slot was created (`98`, `18:00–18:45`), edited to `97`, `18:05–18:50`, reloaded and read back, then deleted through confirmation. The catalog returned to its original five rows.
+- Table inventory: unchanged three meanings (`Время`, `Номер`, `Действия`). Browser console errors were zero.
+- Remaining B03 work: complete CRUD failure/read-back coverage for student groups and their group-semester editor; scoped-role denial still requires a separate administrator fixture.
