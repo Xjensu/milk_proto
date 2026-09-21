@@ -2342,6 +2342,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revisions: Rails `af00fc9`; workspace handoff `5a0643e`.
 - Known remaining issue: staff-only acceptance is complete for the available environment. A scoped-role denial requires a separate scoped administrator fixture; performance and availability optimization remain deferred by instruction.
 
+## 2026-09-21 — Weekday-transfer context controls and Turbo boundary
+
+- Batch/slice: B04 transfer context interaction repair.
+- Finding: the transfer context still used three dropdowns. The group selector carried a group-semester identity while the dated-rule API contract requires the base student-group identity. The reported applied-context URL was also a Turbo-frame failure risk when entered from an older cached page state.
+- Fix: replaced the three selects with keyboard-operable radio-card choices. Faculty and group choice lists expose search once their catalogs exceed the bounded visible list. The context form is a deliberate top-level navigation (`data-turbo="false"`, `_top`), and calendar navigation now retains `group_semester_id`. The selected group-semester identity is translated once to its base student-group ID at the Rails boundary before the dated-rule create form submits it.
+- Source revision: Rails `16ec036`.
+- Runtime evidence: authenticated `http://localhost:3000/admin/transfers?mode=days&semester_id=1&faculty_id=1&group_semester_id=1&commit=Применить` rendered the selected semester, faculty, group-semester and base-group identities, zero select elements and no `Content missing` text. Clicking `Применить контекст` performed the same top-level request without a Turbo error. At 390px the document remained 390px wide with no horizontal overflow; browser console errors were zero.
+
 ## 2026-09-21 — Aggregate schedule narrow table containment
 
 - Batch/slice: B06 aggregate schedule responsive verification.
