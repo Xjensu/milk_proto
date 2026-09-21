@@ -2323,3 +2323,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime checks: Rails syntax and Zeitwerk checks passed; Propshaft assets were rebuilt and `schedule_web` restarted healthy. Browser console errors remained zero in the authenticated session.
 - Table inventory: unchanged across all resource families.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Holiday create, duplicate failure and cleanup
+
+- Batch/slice: B04 Calendar holiday mutation matrix.
+- Runtime verification: created disposable holiday `2026-12-24` with the Russian title `Проверка праздничного дня`; the list showed the persisted date and title.
+- Failure evidence: submitted the same date again with title `Дубликат`; the page retained both submitted values, reopened the editor and showed `Проверьте дату и название нерабочего дня.` while leaving the original row unchanged.
+- Cleanup: deleted the disposable holiday through the explicit confirmation; the list returned to `Нерабочие дни не добавлены.`.
+- Browser console errors: zero. Table inventory remains three meanings (`Дата`, `Название`, `Действия`).
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
