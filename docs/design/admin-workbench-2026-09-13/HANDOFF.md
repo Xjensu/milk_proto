@@ -1991,3 +1991,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revisions: Rails `bb15593`, `3b3809b`, `3c68eae`.
 - Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, API and PostgreSQL healthy, and authenticated Playwright read-back completed on 127.0.0.1. No credentials were recorded in evidence or documentation.
 - Remaining acceptance: no destructive mutation was performed against fixture data. A disposable workload create/assignment and lesson transfer/edit should be exercised next, followed by responsive computed-layout checks for Schedule, Workload, Resources and Accounts.
+
+## 2026-09-21 — Disposable workload-to-schedule journey and responsive shell pass
+
+- Status: B00/B02 functional anchor completed against disposable records and cleaned up after read-back.
+- Journey evidence: created temporary workload requirement `5` for group СИ-1, assigned Кожедуб Сергей Сергеевич, selected it in Schedule, placed event `9` on Monday slot 4, edited the same event to Tuesday slot 5 with status “Изменено”, reloaded the direct event URL, and confirmed the same event ID, teacher, day, time and status. The remaining load changed from 2/2 to 0, then returned after the event and requirement were deleted. The created requirement and event are absent after cleanup.
+- Responsive evidence: at 390×844 Schedule and Workload keep document width at 390px; Workload retains its 850px five-column table inside the labelled local scroller. Accounts keeps 390px document width, 20px heading, 44px primary controls and no page overflow. At 1280×900 Accounts keeps the role options in a local horizontal rail and document width at 1280px instead of expanding to 1419px.
+- Fixes: the final shared admin skin now applies the 20px narrow heading role after domain styles, and the desktop Accounts role/status option rail is bounded to its own scroller.
+- Files changed: `apps/schedule_web/app/assets/stylesheets/components/_admin_studio.css`, `apps/schedule_web/app/assets/stylesheets/components/_admin_accounts.css`.
+- Source revisions: Rails `924e6a2`, `68a4176`.
+- Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, Rails Zeitwerk check passed, and authenticated Playwright console errors remained at zero on the verified pages. No fixture records remain from the journey.
+- Remaining acceptance: complete the calendar/resource/account failure-state and print matrix, then rerun the core journey after those batches. Performance and availability optimization remain deferred by instruction.
