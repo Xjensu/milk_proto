@@ -2393,3 +2393,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Fix: semester, faculty, group-semester, time-slot and room catalogs used by the transfer workspace now retain only positive identifiers, while preserving the existing request identity and table structures (Rails `dc7e9b5`).
 - Runtime evidence: authenticated transfer context now renders only `Строительный факультет` with faculty value `1`; no `Unknown` option or `/0` context is present. At 390px document/body width remains exactly 390px and browser console errors are zero.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Reservation conflict draft retention
+
+- Batch/slice: B04 Calendar reservation failure matrix.
+- Runtime verification: authenticated staff created a disposable reservation for room `173 · Лаборатория кафедры ПСИЭТО`, teacher `Кожедуб Сергей Сергеевич`, `2026-12-30`, slot `1`, then submitted a second reservation for the same room/date/slot.
+- Failure evidence: the API conflict was rendered as `Комната уже занята на эту дату и время. Проверьте черновик и выберите другой слот.`; the create editor reopened and retained room ID `1`, teacher ID `1`, date `2026-12-30`, slot `1` and purpose `Temporary conflict duplicate`.
+- Cleanup: the original disposable reservation was removed through the UI confirmation and its authoritative row is now `cancelled`; no fixture reservation was changed.
+- Browser console errors: zero. Reservation table columns remain `Аудитория`, `Дата / слот`, `Преподаватель`, `Назначение`, `Действия`.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
