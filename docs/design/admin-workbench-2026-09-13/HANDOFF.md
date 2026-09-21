@@ -2367,3 +2367,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Fix: Rails now removes blank optional swap reasons before calling the API, matching the dated-move normalization (Rails `273e986`).
 - Table inventory: both transfer grids retain their existing `Время` and `Занятие` columns. Browser console errors were zero.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Compact administrator navigation labels
+
+- Batch/slice: B06 responsive navigation accessibility.
+- Finding: at narrow widths non-active sidebar links collapse to icon-only controls, but their labels were not explicit attributes for hover discovery or assistive technology.
+- Fix: shared sidebar links and unavailable navigation items now expose their Russian label through `title` and `aria-label`; active-route styling and desktop composition remain unchanged.
+- Source revision: Rails `e66a153`.
+- Runtime evidence: authenticated Workload at 390px reports 390px document/body width; every compact navigation item exposes matching `title` and `aria-label`, and `Нагрузка` retains `aria-current="page"`. Browser console errors: zero.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
