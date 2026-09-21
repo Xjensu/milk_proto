@@ -2313,3 +2313,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 
 - Runtime evidence: cancelled disposable event `11` for `25.09.2026` through the same Schedule editor with no destination date. The API accepted the normalized optional fields, the faculty/department occurrence window retained the row with state `cancelled`, and the aggregate report displayed `Отменено`.
 - Cleanup: removed the exact disposable cancellation row and verified `event_transfers` returned to zero rows. Browser console errors were zero.
+
+## 2026-09-21 — Resource action-specific failure feedback
+
+- Batch/slice: B03 shared resource editor feedback.
+- Finding: generic resource delete failures were reported with the update verb (“Не удалось изменить …”), which obscured the operation that failed.
+- Fix: resource redirects now pass the operation kind and produce Russian create/update/delete failure verbs while preserving existing conflict, forbidden and session-expiry handling.
+- Source revision: Rails `ce5b020`.
+- Runtime checks: Rails syntax and Zeitwerk checks passed; Propshaft assets were rebuilt and `schedule_web` restarted healthy. Browser console errors remained zero in the authenticated session.
+- Table inventory: unchanged across all resource families.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
