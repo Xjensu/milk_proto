@@ -2161,6 +2161,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Known interaction note: while the failed editor is intentionally open, its modal backdrop correctly blocks background row actions until the editor is closed.
 - Next concrete action: finish the final responsive/print matrix and rerun the core journey after the Accounts changes.
 
+## 2026-09-21 — Final adjacent narrow-shell rerun after Accounts changes
+
+- Routes: `/admin/accounts`, `/admin/teachers`, `/admin/notice?q=Кожедуб`, `/admin/overview`, `/admin/observability`.
+- Viewport: authenticated Playwright at 320×844; every route measured document and body width exactly 320px. The Observability table columns remained inside their labelled local scrolling regions.
+- Browser console: zero errors across the matrix.
+- Source checks: Rails `zeitwerk:check`, changed-controller syntax check and `git diff --check` passed after rebuilding the Rails image with current Propshaft assets.
+- Remaining acceptance: a final full workload-to-schedule mutation rerun after the Accounts-only change and the separately documented scoped-role fixture limitation.
+
 ## 2026-09-21 — Adjacent-page 320px containment
 
 - Batch/slice: B06 adjacent-page responsive verification.
