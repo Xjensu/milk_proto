@@ -2180,6 +2180,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged Schedule grid axes and Workload table columns.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture.
 
+## 2026-09-21 — Remaining resource-family render matrix
+
+- Routes checked at authenticated 1280×900: `/admin/buildings`, `/admin/room_types`, `/admin/time_slots`, and `/admin/student_groups`.
+- Evidence: each route rendered its existing table and action set, with no dependency error state, no document/body overflow and zero browser console errors. Student-group creation exposes readable specialty choices and no raw database ID field.
+- Table inventory: Buildings (`Тип здания`, `Номер`, `Действия`), Room types (`Вид занятия`, `Название`, `Действия`), Time slots (`Время`, `Номер`, `Действия`) and Student groups (`Специальность`, `Год набора`, `Действия`) remain unchanged.
+- Known remaining issue: full CRUD failure/read-back coverage for these additional families is still pending; scoped-role denial still requires a separate administrator fixture.
+
 ## 2026-09-21 — Calendar period validation and read-back
 
 - Batch/slice: B04 period settings.
