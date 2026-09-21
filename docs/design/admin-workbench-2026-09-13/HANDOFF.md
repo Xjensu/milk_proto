@@ -2263,3 +2263,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Print-media evidence: with Playwright print emulation, the admin sidebar and all `.notice-screen-only` controls computed to `display: none`; the table wrapper became visible overflow, the header computed as `table-header-group`, and sampled rows retained `break-inside: avoid`.
 - Export note: the PDF control correctly remained disabled for the unconfigured lecture-week period; an authenticated semester report is printable but the export contract intentionally supports only lecture-week/exam-session periods. No PDF artifact was generated.
 - Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Generated account credential flow
+
+- Batch/slice: B05 one-time credential behavior.
+- Runtime verification: created a disposable teacher account with a searched teacher identity and an empty password. The authenticated response rendered the dedicated `Временный пароль` page with an `output[aria-label="Временный пароль"]`; only the presence and length of the one-time output were checked, and the credential value was never read, logged or recorded. The page URL contained no password or credential query data.
+- Cleanup: removed the disposable account by its exact email from the local database and confirmed the account search returned no row. No fixture account was changed.
+- Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
