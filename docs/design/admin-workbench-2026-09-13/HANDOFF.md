@@ -2254,3 +2254,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Responsive/runtime check: the reloaded Schedule surface measured 1280px document/body width at desktop; browser console errors were zero. The existing 320px core check remains recorded in the earlier regression entries.
 - Source/runtime: current Rails image was rebuilt with Propshaft assets and current API image was rebuilt before this rerun. No new tests or table changes were introduced.
 - Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture; a saved PDF artifact for Notice export is optional and was not generated. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Notice responsive and print acceptance
+
+- Batch/slice: B06 final Notice verification.
+- Runtime route: authenticated `/admin/notice?q=Кожедуб&teacher_id=1&semester_id=1&period=semester` with 73 report rows.
+- Responsive evidence: at 390×844 the document and body remained exactly 390px wide; the report table retained its 760px schema inside the labelled `.notice-table-wrap` scroller (`overflow-x: auto`, 360px viewport). No columns were hidden or reordered. Browser console errors were zero.
+- Print-media evidence: with Playwright print emulation, the admin sidebar and all `.notice-screen-only` controls computed to `display: none`; the table wrapper became visible overflow, the header computed as `table-header-group`, and sampled rows retained `break-inside: avoid`.
+- Export note: the PDF control correctly remained disabled for the unconfigured lecture-week period; an authenticated semester report is printable but the export contract intentionally supports only lecture-week/exam-session periods. No PDF artifact was generated.
+- Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
