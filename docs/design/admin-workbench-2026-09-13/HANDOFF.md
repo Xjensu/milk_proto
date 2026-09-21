@@ -2130,3 +2130,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `691495f`.
 - Runtime verification: submitted an invalid transfer with date `2026-12-12` and reason `Draft transfer failure`, with no weekday selected. The page retained the context URL, showed “Не удалось изменить перенос дня.”, reopened the editor, preserved both values, and created no transfer. Syntax and Zeitwerk checks passed; browser errors were zero.
 - Next concrete action: finish the remaining adjacent-page and final responsive/print matrix.
+
+## 2026-09-21 — Adjacent-page 320px containment
+
+- Batch/slice: B06 adjacent-page responsive verification.
+- Finding: at 320px the Teachers action row forced a 329px document because the create link and live-status badge stayed on one line. The Observability grid cards also inherited the minimum width of their long audit table, expanding the document to 541px despite the table's existing local scroller.
+- Fix: the Teachers action row wraps below 540px while keeping both controls visible, and Observability cards now permit grid shrinkage so each labelled table region owns its horizontal scrolling.
+- Source revision: Rails pending commit.
+- Runtime verification: authenticated `/admin/teachers` and `/admin/observability` both measured 320px document/body width at 320px and 1280px at desktop width. Observability table regions retained their full column sets with local scroll widths of 326–594px. Browser console errors were zero.
+- Table inventory: no columns, order, headings, grouping, row meaning or report semantics changed.
