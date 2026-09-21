@@ -2245,3 +2245,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Group-semester runtime: submitting `students_now=-1` for an existing disposable editor path returned 422, showed “Не удалось обновить параметры семестра группы. Проверьте значения.”, reopened the same group-semester editor with `-1` and `18` intact, and left the authoritative row at `1` and `18` after reload. Browser console errors were zero.
 - Table inventory: student groups retains `Специальность`, `Год набора`, `Действия`; group-semesters retains `Группа-семестр`, `Семестр`, `Студентов`, `Параметры`, `Действия`.
 - B03 status: all listed resource families have now had at least one runtime render/readback pass; focused CRUD matrix evidence exists for Buildings, Rooms, Room types, Time slots and Student groups. Scoped-role denial still requires a separate administrator fixture.
+
+## 2026-09-21 — Final core journey rerun after Accounts and resource changes
+
+- Batch/slice: B00/B02 regression gate after the latest Rails/API revisions.
+- Runtime journey: created disposable workload requirement `8` for group СИ-1 and readable subject `авто`, assigned Кожедуб Сергей Сергеевич, selected it in Schedule, placed event `14` on Monday slot 5, edited the same event to Tuesday slot 4 with status `modified`, reloaded the event and read back the same event ID, teacher, placement and status, then deleted the event and requirement through their explicit UI confirmations.
+- Evidence: Russian success feedback appeared for workload creation, assignment, placement, edit and cleanup. Schedule showed `авто` rather than the numeric short name. Reloaded event controls reported day `2`, slot `4`, status `modified` and teacher membership `1`; the grid cell carried `slot_day=2` and `slot_time=4`. The disposable requirement/event no longer appeared after cleanup.
+- Responsive/runtime check: the reloaded Schedule surface measured 1280px document/body width at desktop; browser console errors were zero. The existing 320px core check remains recorded in the earlier regression entries.
+- Source/runtime: current Rails image was rebuilt with Propshaft assets and current API image was rebuilt before this rerun. No new tests or table changes were introduced.
+- Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture; a saved PDF artifact for Notice export is optional and was not generated. Performance/availability optimization remains deferred by instruction.
