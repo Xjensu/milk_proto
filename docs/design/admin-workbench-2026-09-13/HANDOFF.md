@@ -2294,3 +2294,9 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Fix: workload create, edit and assignment partials now expose `role="dialog"`, `aria-modal="true"` and an explicit labelled heading. The shared Stimulus controller focuses the close action on entry, maps `Escape` to the existing safe close URL, and confirms before discarding a changed form (Rails `d1d5899`, `45ba066`).
 - Runtime evidence: authenticated assignment editor for requirement `2` measured 500×900 at desktop, reported the dialog semantics, focused `Закрыть назначение`, and a dirty Escape attempt opened the Russian discard confirmation; cancelling it kept the same URL and editor draft. Browser console errors were zero.
 - Table inventory and assignment identity remain unchanged.
+
+## 2026-09-21 — Schedule URL and reservation state rerun
+
+- Schedule context: selecting the available `СИ-1` group from `/admin/schedule?faculty_id=1&semester_id=9` committed `/admin/schedule?semester_id=1&faculty_id=1&groups[]=1`. A fresh navigation to that exact URL restored the committed context, period tabs, load panel and timetable grid; the old V03 stale-address behavior did not reproduce.
+- Reservation state: authenticated `/admin/room_reservations` now rendered its searchable room filter (`173 · Лаборатория кафедры ПСИЭТО`) and the explicit empty state `Бронирований по выбранному фильтру нет.` with no dependency alert. This is an empty catalog state, not an unavailable-data fallback.
+- Browser console errors: zero during both checks. Existing table and route semantics were preserved.
