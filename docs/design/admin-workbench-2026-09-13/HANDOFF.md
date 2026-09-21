@@ -2308,3 +2308,8 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Fix: the Rails transfer controller now resolves `gateways.admin.schedule_workspace` and removes blank optional transfer attributes before the API call (Rails `25fe8ba`).
 - Runtime evidence: moved disposable event `7` from `24.09.2026` to `27.09.2026` through the Schedule UI. The UI showed `Изменение занятия сохранено.`. The faculty aggregate showed zero lessons on the original date and one row on the destination date with `Перенесено на эту дату`. The exact disposable transfer row was then removed and verified absent.
 - Browser console errors: zero after the fix. No recurring event, table schema or transfer API contract was changed.
+
+## 2026-09-21 — Dated cancellation through aggregate schedule
+
+- Runtime evidence: cancelled disposable event `11` for `25.09.2026` through the same Schedule editor with no destination date. The API accepted the normalized optional fields, the faculty/department occurrence window retained the row with state `cancelled`, and the aggregate report displayed `Отменено`.
+- Cleanup: removed the exact disposable cancellation row and verified `event_transfers` returned to zero rows. Browser console errors were zero.
