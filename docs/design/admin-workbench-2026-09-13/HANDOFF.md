@@ -2441,3 +2441,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: authenticated lecture-week flow for `Кожедуб Сергей Сергеевич` preserved `period=lecture_week`, rendered the `Лекционная неделя` report label and kept the period navigation selected. The current fixture has zero lecture-week rows, so PDF remains correctly disabled by the existing empty-report guard.
 - Browser console errors: zero. Notice table columns remain `Число`, `Часы`, `Поток, группа`, `Вид занятий`, `Аудитория`; print/export contracts were unchanged.
 - Known remaining issue: a populated lecture-week/exam-session fixture is still needed for successful PDF worker read-back; scoped-role denial requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Department notice batch PDF read-back
+
+- Batch/slice: B06 Notice export worker and department batch print.
+- Finding: the batch job was queued and completed, but its Rails status page returned HTTP 500 because `export_return_path` called `.compact` on the URL string returned by a route helper.
+- Fix: removed the invalid string `.compact` calls from both individual and department export return paths (Rails `e137984`).
+- Runtime evidence: authenticated department workload (`Строительный факультет · ПСиЭТ`, semester 1) queued `lecture_week` batch export for the department. The API worker completed the job, produced the merged PDF and one teacher PDF, and the status page now renders `Готово`, `Файлы сформированы`, `Скачать общий PDF` and `Отдельные извещения (1)`.
+- Browser console errors: zero. The status page returns HTTP 200 and its return link preserves the department/semester context. No schedule or workload records were modified.
+- Checks: Rails image rebuilt and restarted; container Zeitwerk passed. Generated signed URLs were not copied into documentation or logs.
+- Known remaining issue: individual populated notice export and scoped-role denial still need separate acceptance coverage. Performance/availability optimization remains deferred by instruction.
