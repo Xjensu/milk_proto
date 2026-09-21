@@ -2376,3 +2376,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `e66a153`.
 - Runtime evidence: authenticated Workload at 390px reports 390px document/body width; every compact navigation item exposes matching `title` and `aria-label`, and `Нагрузка` retains `aria-current="page"`. Browser console errors: zero.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Searchable reservation teacher selectors
+
+- Batch/slice: B04 reservation editor control matrix.
+- Finding: room reservation create/edit sheets provided bounded room search, but teacher choices were an unfiltered long list despite teachers being a high-cardinality entity.
+- Fix: both teacher fieldsets now use the shared `choice-filter` controller with a labelled search input and explicit no-match state. Hidden teacher person IDs and the reservation write contract remain unchanged.
+- Source revision: Rails `0733312`.
+- Runtime evidence: authenticated reservation create sheet renders the teacher search field (`Фамилия или имя`) alongside the room search; at 390px document/body width remains exactly 390px and browser console errors are zero.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
