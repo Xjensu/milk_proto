@@ -2090,3 +2090,5 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: created disposable room `992 / Codex Room 20260921`, edited it to `Codex Room Updated 20260921`, then deleted it through the authenticated Rooms UI. The UI reported “Аудитория удалена.”, the row disappeared, and the API completed `DELETE /admin/rooms/2` with HTTP 204. No browser errors were observed; the disposable record is absent after cleanup.
 - Table inventory: Rooms retains the existing four meanings (`Здание`, `Тип`, `Номер / название`, `Действия`).
 - Next concrete action: exercise a rejected room create/update with preserved draft values, then continue the remaining resource families.
+
+- Failure evidence follow-up: submitted a room create with the required catalog selections deliberately cleared while retaining `draft-993` and `Draft Room Failure`. The API rejection returned the Russian message “Не удалось создать аудиторию.”, reopened the create sheet, preserved both safe values, and created no row. This confirms the resource editor's failure retention path for Rooms.
