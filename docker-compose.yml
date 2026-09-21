@@ -59,6 +59,7 @@ services:
       - .env.local
     environment:
       AVRO_SCHEMA_DIR: /schemas/avro
+      NOTICE_EXPORT_PUBLIC_ENDPOINT: http://localhost:9000
     ports:
       - "2300:2300"
     volumes:

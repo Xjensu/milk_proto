@@ -2324,6 +2324,15 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged across all resource families.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
 
+## 2026-09-21 — Public notice download endpoint
+
+- Batch/slice: B06 Notice export download boundary.
+- Finding: signed PDF links returned the internal Docker hostname `minio:9000`, so an authenticated browser could render the completed export page but could not download the file.
+- Fix: configured the API's public notice URL storage with `NOTICE_EXPORT_PUBLIC_ENDPOINT=http://localhost:9000`; private upload storage remains on the internal MinIO endpoint. The compose configuration remains valid and the API was recreated with the new environment.
+- Runtime evidence: the completed export page now emits a `localhost:9000` download link, and the authenticated browser downloaded the generated PDF successfully. Browser console errors: zero.
+- Checks: `docker compose config --quiet` passed; the API container reports the public endpoint; all services remain up.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
 ## 2026-09-21 — Holiday create, duplicate failure and cleanup
 
 - Batch/slice: B04 Calendar holiday mutation matrix.
