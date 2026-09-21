@@ -2342,3 +2342,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: authenticated Schedule at desktop reports visible controls at 40px or the intended 44px role; Workload at 390px retains 390px document/body width and its visible controls at 40px/44px. Browser console errors: zero.
 - Table inventory: Schedule and Workload axes/columns unchanged.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Intermediate schedule inspector containment
+
+- Batch/slice: B02 schedule placement editor UX.
+- Finding: at the 1181–1360px breakpoint the inspector moved below the timetable and its long form had no local height limit, forcing the confirmation action below the page content.
+- Fix: the intermediate inspector now remains sticky, bounded to the viewport and internally scrollable; the existing submit action remains sticky within the form. The timetable grid and table structure are unchanged.
+- Source revision: Rails `8c6b4a3`.
+- Runtime evidence: authenticated 1280×900 selected-load editor reports an 868px inspector with `overflow-y: auto`; after the page reaches the inspector, the submit action is visible at viewport y 788–832. Document/body width remains 1280px and browser errors remain zero.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
