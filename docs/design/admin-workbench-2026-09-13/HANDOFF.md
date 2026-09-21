@@ -2385,3 +2385,11 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `0733312`.
 - Runtime evidence: authenticated reservation create sheet renders the teacher search field (`Фамилия или имя`) alongside the room search; at 390px document/body width remains exactly 390px and browser console errors are zero.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Calendar transfer catalog filtering
+
+- Batch/slice: B04 Calendar transfer context.
+- Finding: the lesson-transfer context rendered the seeded zero-ID faculty row as `Unknown`, allowing an invalid catalog option to appear beside the valid faculty.
+- Fix: semester, faculty, group-semester, time-slot and room catalogs used by the transfer workspace now retain only positive identifiers, while preserving the existing request identity and table structures (Rails `dc7e9b5`).
+- Runtime evidence: authenticated transfer context now renders only `Строительный факультет` with faculty value `1`; no `Unknown` option or `/0` context is present. At 390px document/body width remains exactly 390px and browser console errors are zero.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
