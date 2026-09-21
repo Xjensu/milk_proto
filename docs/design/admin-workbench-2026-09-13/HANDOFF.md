@@ -2270,3 +2270,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: created a disposable teacher account with a searched teacher identity and an empty password. The authenticated response rendered the dedicated `Временный пароль` page with an `output[aria-label="Временный пароль"]`; only the presence and length of the one-time output were checked, and the credential value was never read, logged or recorded. The page URL contained no password or credential query data.
 - Cleanup: removed the disposable account by its exact email from the local database and confirmed the account search returned no row. No fixture account was changed.
 - Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Account editor keyboard focus check
+
+- Batch/slice: B06 adjacent interaction acceptance.
+- Runtime evidence: on authenticated `/admin/accounts`, opening the create sheet moved focus to `Закрыть редактор`; pressing Escape closed the native dialog and restored focus to `Создать пользователя`. This confirms a keyboard cancellation path without changing the table or editor contract.
+- Browser console errors: zero.
+- Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
