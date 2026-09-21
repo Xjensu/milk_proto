@@ -2213,3 +2213,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `4d70826`.
 - Runtime verification: authenticated `/admin/teachers` and `/admin/observability` both measured 320px document/body width at 320px and 1280px at desktop width. Observability table regions retained their full column sets with local scroll widths of 326–594px. Browser console errors were zero.
 - Table inventory: no columns, order, headings, grouping, row meaning or report semantics changed.
+
+## 2026-09-21 — Room-type CRUD and database-length validation
+
+- Batch/slice: B03 Resources, room-type editor failure/read-back.
+- Runtime verification: the authenticated room-type workspace preserved a rejected create draft with the entered name when the activity type was missing. A disposable room type was then created for `Лекция`, edited, reloaded and read back with the updated name, and deleted through the confirmation flow; the catalog returned to its original row set.
+- Finding: the database column limits room-type names to 25 characters, while the API contract previously accepted longer values and surfaced a PostgreSQL 500 on update. This made a normal editor mistake look like an infrastructure failure.
+- Fix: API create/update contracts now enforce `max_size?: 25`; both Rails editor inputs expose the same `maxlength` constraint. The existing controller keeps the safe draft and Russian failure message when a request bypasses the browser limit.
+- Source revisions: API `04a7ff8`; Rails `9554135`.
+- Failure read-back: a deliberately bypassed overlong update returned the normal “Не удалось сохранить тип аудитории.” alert, reopened the editor with the long draft intact, and left the original `лекционная` row unchanged. Browser console errors were zero.
+- Table inventory: unchanged two data meanings (`Вид занятия`, `Название`) plus `Действия`.
+- Remaining B03 work: complete CRUD failure/read-back coverage for time slots and student groups; scoped-role denial still requires a separate administrator fixture.
