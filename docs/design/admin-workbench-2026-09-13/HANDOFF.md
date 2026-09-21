@@ -2187,6 +2187,16 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: Buildings (`Тип здания`, `Номер`, `Действия`), Room types (`Вид занятия`, `Название`, `Действия`), Time slots (`Время`, `Номер`, `Действия`) and Student groups (`Специальность`, `Год набора`, `Действия`) remain unchanged.
 - Known remaining issue: full CRUD failure/read-back coverage for these additional families is still pending; scoped-role denial still requires a separate administrator fixture.
 
+## 2026-09-21 — Resource row-action reachability and Buildings CRUD
+
+- Batch/slice: B03 shared resource actions and Buildings CRUD.
+- Finding: the generic hover rule left resource edit/delete controls with `pointer-events: none`; direct pointer activation was intercepted by the row action wrapper until a hover state happened to be established.
+- Fix: resource row edit/delete controls are now always visible and actionable for pointer, keyboard and touch input. Hover remains available for row feedback rather than being the only hit path.
+- Source revision: Rails pending commit.
+- Runtime verification: Buildings rejected create with missing building type preserved number `994`, reopened the editor and showed “Не удалось создать здание.” with no new row. A disposable building `992` was created, edited to `993`, reloaded/read back, then deleted through confirmation. The duplicate cleanup row was removed; no disposable building remains. Browser console errors were zero.
+- Table inventory: Buildings retains `Тип здания`, `Номер`, `Действия`.
+- Known remaining issue: full CRUD failure/read-back coverage for the remaining resource families and scoped-role denial remain pending.
+
 ## 2026-09-21 — Calendar period validation and read-back
 
 - Batch/slice: B04 period settings.
