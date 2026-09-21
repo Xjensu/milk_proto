@@ -2334,6 +2334,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Checks: Rails container syntax checks passed for both changed controllers; `rails zeitwerk:check` passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
 
+## 2026-09-21 — Final authenticated administrator regression sweep
+
+- Batch/slice: B06 final route-level regression after the calendar workspace repair.
+- Runtime evidence: authenticated staff loaded Schedule, Workload, Rooms, Subjects, period settings, Semesters, Holidays, Room reservations, weekday transfers, Accounts, Teachers, Notice and the event journal at 1280×900. Every route returned its expected Russian page title, one main landmark, no visible `Content missing` response, no alert state and no document-level horizontal overflow.
+- Targeted Calendar evidence: the room-reservation route loaded the selected-room occupancy surface; weekday transfers loaded its semester/faculty/group context. The browser console contained zero errors or warnings across the sweep.
+- Source revisions: Rails `af00fc9`; workspace handoff `5a0643e`.
+- Known remaining issue: staff-only acceptance is complete for the available environment. A scoped-role denial requires a separate scoped administrator fixture; performance and availability optimization remain deferred by instruction.
+
 ## 2026-09-21 — Aggregate schedule narrow table containment
 
 - Batch/slice: B06 aggregate schedule responsive verification.
