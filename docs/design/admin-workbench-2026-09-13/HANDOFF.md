@@ -2324,6 +2324,15 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged across all resource families.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
 
+## 2026-09-21 — Notice narrow overflow containment
+
+- Batch/slice: B06 responsive administrator verification.
+- Finding: at 320px, the Notice report header's print/export action group stayed on one flex row and expanded the document to 379px, while the report table's intended horizontal scroller was already correctly bounded.
+- Fix: notice rail/grid children now allow shrink-to-container sizing; narrow report/context headers stack their controls and the action group wraps inside the page. The report table remains a 760px schema inside `.notice-table-wrap` and no columns are hidden or reordered (Rails `fb04cad`).
+- Runtime evidence: authenticated `/admin/notice?teacher_id=1&semester_id=1&period=semester` at 320×844 now reports body/document width 320px with zero page overflow; the semester rail remains the labelled horizontal scroller and the report actions remain reachable. Browser console errors: zero.
+- Checks: Rails `zeitwerk:check` passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
 ## 2026-09-21 — Public notice download endpoint
 
 - Batch/slice: B06 Notice export download boundary.
