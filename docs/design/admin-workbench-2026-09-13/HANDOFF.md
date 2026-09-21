@@ -2131,6 +2131,28 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: submitted an invalid transfer with date `2026-12-12` and reason `Draft transfer failure`, with no weekday selected. The page retained the context URL, showed “Не удалось изменить перенос дня.”, reopened the editor, preserved both values, and created no transfer. Syntax and Zeitwerk checks passed; browser errors were zero.
 - Next concrete action: finish the remaining adjacent-page and final responsive/print matrix.
 
+## 2026-09-21 — Room reservation mutation/read-back acceptance
+
+- Batch/slice: B04 Calendar reservation editor.
+- Status: runtime-verified.
+- Runtime source: rebuilt Rails image serving the current Rails source; authenticated staff-only administrator at 1280×900.
+- Journey: searched and selected the readable room `173 · Лаборатория кафедры ПСИЭТО` and teacher `Кожедуб Сергей Сергеевич`, created a disposable reservation for `2026-12-20`/slot `1`, edited the same row to `2026-12-21`/slot `2` and changed its purpose, reloaded the scoped URL, then deleted the disposable record through the explicit confirmation.
+- Evidence: create showed “Бронирование создано.”; the edit row and direct reload showed the updated date, slot, teacher, room and purpose; deletion removed the row and restored “Бронирований по выбранному фильтру нет.”. No reservation row remained after cleanup.
+- Table inventory: unchanged five meanings (`Аудитория`, `Дата / слот`, `Преподаватель`, `Назначение`, `Действия`). Browser console errors: zero.
+- Known remaining issue: reservation conflict and rejected-editor draft retention still need a deliberate failure run; no new reservation code was required in this acceptance slice.
+- Next concrete action: exercise Accounts invalid-input draft retention and successful edit/read-back.
+
+## 2026-09-21 — Accounts editor action and safe draft retention
+
+- Batch/slice: B05 Accounts editor failure/read-back.
+- Finding: the shared resource hover rule made the Accounts edit trigger `opacity: 0` and `pointer-events: none` until row hover. The native sheet was therefore intercepted by its table row in the authenticated desktop flow. A rejected create also discarded the safe full-name input used for login generation.
+- Fix: Accounts edit triggers are now always visible and actionable; the editor remains a fixed native sheet. Create and edit failures retain safe full-name inputs alongside email, while password fields remain empty.
+- Source revision: Rails pending commit.
+- Runtime verification: a rejected teacher-account create preserved `Codex Draft Account` and its email, reopened the editor and cleared the password. A disposable teacher account was then created with a searched teacher identity, edited to disabled, reloaded and read back with the same email, teacher and status. A rejected edit preserved `Codex Edit Draft` and the attempted email while clearing the password. The disposable account was removed from the local database after verification.
+- Table inventory: unchanged six meanings (`Email`, `Роль`, `Статус`, `Преподаватель`, `Область`, `Действия`). At 1280px document/body width remained 1280px; browser console errors were zero.
+- Known remaining issue: scoped-role denial still lacks a second scoped administrator fixture; generated credential evidence remains deliberately unlogged.
+- Next concrete action: complete final responsive/print and adjacent-page matrix, then rerun the core workload-to-schedule journey after this Accounts CSS/controller change.
+
 ## 2026-09-21 — Adjacent-page 320px containment
 
 - Batch/slice: B06 adjacent-page responsive verification.
