@@ -2451,3 +2451,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Browser console errors: zero. The status page returns HTTP 200 and its return link preserves the department/semester context. No schedule or workload records were modified.
 - Checks: Rails image rebuilt and restarted; container Zeitwerk passed. Generated signed URLs were not copied into documentation or logs.
 - Known remaining issue: individual populated notice export and scoped-role denial still need separate acceptance coverage. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Individual notice PDF worker read-back
+
+- Batch/slice: B06 Notice individual export completion.
+- Runtime verification: authenticated teacher `Кожедуб Сергей Сергеевич`, semester 1 and `lecture_week` export contract was queued through the Rails endpoint, processed by the notice worker and read back from the authoritative status endpoint.
+- Evidence: the worker completed job `66ec5cba-1d0c-41d0-a8b6-b413efc1eadf`, persisted one teacher PDF, and the Rails status page returned HTTP 200 with `Готово`, `Файлы сформированы`, a signed `Скачать общий PDF` link and `Отдельные извещения (1)`.
+- Return-path evidence: the status page links back to the same teacher, semester and `lecture_week` context. The report fixture currently has no lecture-week rows, so the export was exercised through the authorized worker contract rather than the disabled empty-report button.
+- Browser console errors: zero. No schedule, workload or teacher records were changed.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
