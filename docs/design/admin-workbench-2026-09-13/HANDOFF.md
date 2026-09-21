@@ -2002,3 +2002,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revisions: Rails `924e6a2`, `68a4176`.
 - Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, Rails Zeitwerk check passed, and authenticated Playwright console errors remained at zero on the verified pages. No fixture records remain from the journey.
 - Remaining acceptance: complete the calendar/resource/account failure-state and print matrix, then rerun the core journey after those batches. Performance and availability optimization remain deferred by instruction.
+
+## 2026-09-21 — Calendar and resource browser acceptance
+
+- Status: B03/B04 read and disposable transfer acceptance advanced.
+- Evidence: authenticated `/admin/rooms` and `/admin/subjects` render their list-first resource workspaces with explicit navigation and action controls. `/admin/operations`, `/admin/operations/semesters`, `/admin/holidays`, `/admin/room_reservations` and `/admin/transfers?mode=days` all load through the shared Calendar shell. Reservations now expose searchable room/teacher controls and an empty result state instead of the historical unavailable-data page.
+- Transfer journey: created a temporary global weekday transfer for 2026-10-01, verified the five-column row (`Дата`, `Следует дню`, `Группа`, `Причина`, `Действия`), then deleted it through the explicit confirmation path. The list returned to “Переносы не добавлены.” and no browser errors occurred.
+- Remaining acceptance: resource CRUD failure/read-back, period validation persistence, reservation mutation/conflict handling, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
