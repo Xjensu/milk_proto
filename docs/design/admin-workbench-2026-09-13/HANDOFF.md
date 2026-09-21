@@ -2324,6 +2324,16 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged across all resource families.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
 
+## 2026-09-21 — Room and weekday-transfer workspace repair
+
+- Batch/slice: B04 Calendar context and Turbo failure boundary.
+- Finding: room reservations used a mismatched outer Turbo frame and duplicated room/date controls; the weekday-transfer editor exposed an unscoped raw group search instead of the faculty and semester context used by the scheduling workspace.
+- Fix: room reservations now use the `calendar-workspace` frame, opt full-page search/filter requests out of Turbo replacement, load the selected room's date-resolved occupancy, and keep one room context date for the create editor. Weekday transfers now select semester, faculty and group before opening the editor, preserve readable course context, and submit the selected group identity without the duplicate search block.
+- Source revision: Rails `af00fc9`.
+- Runtime evidence: authenticated room `173 · Лаборатория кафедры ПСИЭТО` rendered occupancy for `21.09.2026` with two schedule rows; the create sheet contained one teacher search and one hidden reservation date. Authenticated weekday transfers rendered semester, faculty and group selectors with populated options and no raw group-search field. Both pages had no `Content missing` text, no browser console errors, and no horizontal overflow at 390px.
+- Checks: Rails container syntax checks passed for both changed controllers; `rails zeitwerk:check` passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
 ## 2026-09-21 — Aggregate schedule narrow table containment
 
 - Batch/slice: B06 aggregate schedule responsive verification.
