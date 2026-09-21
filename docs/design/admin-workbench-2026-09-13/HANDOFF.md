@@ -2037,4 +2037,6 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `249e07f`.
 - Runtime evidence: saved the existing super-administrator record without changing its identity or credentials; API returned 200, the editor closed, the account remained readable, and browser console errors were zero.
 - Remaining acceptance: invalid account draft feedback, generated one-time credential flow and scoped-role coverage remain pending. Password values were not captured.
+
+- Follow-up: the Accounts index now renders shared success/error feedback. Repeating the unchanged edit after this fix displayed “Учётная запись обновлена.”, closed the editor, and produced zero browser errors. Source revision: Rails `1bd0c38`.
 - Remaining acceptance: explicit conflict rejection and failed reservation draft read-back, period validation persistence, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
