@@ -2291,8 +2291,8 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 
 - Batch/slice: B02 editor accessibility and safe navigation.
 - Finding: the assignment side sheet was visually fixed and scrollable, but rendered as a plain `section` without dialog semantics and left focus on `BODY` after navigation.
-- Fix: workload create, edit and assignment partials now expose `role="dialog"`, `aria-modal="true"` and an explicit labelled heading. The shared Stimulus controller focuses the close action on entry, maps `Escape` to the existing safe close URL, and confirms before discarding a changed form (Rails `d1d5899`, `45ba066`).
-- Runtime evidence: authenticated assignment editor for requirement `2` measured 500×900 at desktop, reported the dialog semantics, focused `Закрыть назначение`, and a dirty Escape attempt opened the Russian discard confirmation; cancelling it kept the same URL and editor draft. Browser console errors were zero.
+- Fix: workload create, edit and assignment partials now expose `role="dialog"`, `aria-modal="true"` and an explicit labelled heading. The shared Stimulus controller focuses the close action on entry, traps Tab within the sheet, maps `Escape` to the existing safe close URL, and confirms before discarding a changed form (Rails `d1d5899`, `45ba066`, `b08a71a`).
+- Runtime evidence: authenticated assignment editor for requirement `2` measured 500×900 at desktop, reported the dialog semantics, focused `Закрыть назначение`, wrapped forward Tab from `Сохранить назначение` back to the close action, and a dirty Escape attempt opened the Russian discard confirmation; cancelling it kept the same URL and editor draft. Browser console errors were zero.
 - Table inventory and assignment identity remain unchanged.
 
 ## 2026-09-21 — Schedule URL and reservation state rerun
