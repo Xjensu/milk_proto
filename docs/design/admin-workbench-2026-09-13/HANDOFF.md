@@ -2358,3 +2358,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: authenticated selected-load Schedule at 390×844 keeps document/body width at exactly 390px; the inspector remains bounded to the viewport (`max-height: 812px`, local vertical scrolling) and its submit action remains inside the scrollable editor. Browser console errors: zero.
 - Table inventory: Schedule time axis and six weekday columns remain unchanged.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Atomic lesson swap acceptance
+
+- Batch/slice: B02c/B04 dated lesson swap operation.
+- Runtime verification: selected the existing `Автомобили` occurrences on `21.09.2026` slot 3 and `22.09.2026` slot 1 in the authenticated Calendar transfer workspace, opened the explicit swap confirmation and submitted it with an empty optional reason.
+- Evidence: the UI returned `Занятия обменены местами.` and the API created exactly two reciprocal moved occurrence records. The records were removed by their exact disposable event/date predicates, returning `event_transfers` to zero; the underlying recurring schedule events were unchanged.
+- Fix: Rails now removes blank optional swap reasons before calling the API, matching the dated-move normalization (Rails `273e986`).
+- Table inventory: both transfer grids retain their existing `Время` and `Занятие` columns. Browser console errors were zero.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
