@@ -2102,3 +2102,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source revision: Rails `b38270a` (with search toolbar styles in `6312f69`).
 - Runtime verification: Subjects rendered “Добавить дисциплину”; a disposable subject create reported “Дисциплина создана.”, search read it back, and deletion reported “Дисциплина удалена.” before the row disappeared. Browser errors were zero and the disposable record was cleaned up.
 - Next concrete action: continue calendar/resource family coverage and then rerun the full core journey after the shared UI changes.
+
+## 2026-09-21 — Calendar navigation context preservation
+
+- Batch/slice: B04 shared Calendar navigation.
+- Finding: the weekday-transfer destination and the separate lesson-transfer mode links dropped the current calendar context. Switching modes therefore returned to an unscoped transfer page even when the originating page had a selected faculty, semester, group or date pair.
+- Fix: the shared calendar navigation now includes remembered context for Transfers; weekday-transfer forms and redirects retain context; lesson-transfer mode links preserve semester, faculty, group-semester and both dates; the lesson-transfer page now consumes the shared navigation partial.
+- Source revision: Rails `62524f2`.
+- Runtime verification: `/admin/transfers?mode=days&faculty_id=1&semester_id=1&group_id=1` rendered all five navigation links with the same context and included the context hidden fields in the create form. Lesson-transfer links preserved `semester_id=1`, `faculty_id=1`, `group_semester_id=1`, and both dates. Both desktop and document widths remained 1280px with no browser errors.
+- Table inventory: weekday transfers retains its five columns; lesson-transfer grids and existing axes remain unchanged.
+- Next concrete action: verify Calendar mutation failure retention after this context pass, then rerun the core workload-to-schedule journey.
