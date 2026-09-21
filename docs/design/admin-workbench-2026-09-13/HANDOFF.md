@@ -2277,3 +2277,12 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: on authenticated `/admin/accounts`, opening the create sheet moved focus to `Закрыть редактор`; pressing Escape closed the native dialog and restored focus to `Создать пользователя`. This confirms a keyboard cancellation path without changing the table or editor contract.
 - Browser console errors: zero.
 - Remaining acceptance: scoped-role denial still lacks a second scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Faculty and department date-resolved aggregate schedules
+
+- Batch/slice: specification compliance F01, staff-only aggregate timetable.
+- Runtime evidence: authenticated `/admin/aggregate_schedule` loaded the current faculty catalog and displayed the selected date with readable rows. The faculty scope and the department scope both returned the same occurrence window semantics, including group, subject, activity, teacher and room columns. Switching from `2026-09-21` to `2026-09-22` updated the weekday, date and rows without losing scope context.
+- API path: `/admin/faculties/:faculty_id/schedule/occurrences` and `/admin/kafedras/:kafedra_id/schedule/occurrences` validate positive identifiers and ISO dates, enforce staff scope authorization, and build on the shared occurrence engine so transfers, cancellations and holidays use the same date resolution as group/teacher schedules.
+- Print evidence: the selected-date button invoked the existing print controller; the report table remains the print surface while the admin shell is excluded by the shared print rules.
+- Finding/fix: the seeded catalog included a zero-ID faculty row that rendered as `UNKNOWN` and could trigger an invalid `/0` request. Rails now filters non-positive catalog IDs and chooses the first positive ID when establishing default context (Rails `ccd89a2`).
+- Browser console errors: zero during faculty, department and date-switch checks. No table axes or report semantics changed.
