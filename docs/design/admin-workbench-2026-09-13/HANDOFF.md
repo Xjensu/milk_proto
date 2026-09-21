@@ -2332,3 +2332,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Cleanup: deleted the disposable holiday through the explicit confirmation; the list returned to `Нерабочие дни не добавлены.`.
 - Browser console errors: zero. Table inventory remains three meanings (`Дата`, `Название`, `Действия`).
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Shared administrator control dimensions
+
+- Batch/slice: B01 shared primitives, computed-style acceptance.
+- Finding: Schedule search fields and cell actions inherited local padding on top of `min-height`, producing visible 48.5px and 47px controls despite the 40px/44px design roles.
+- Fix: shared administrator inputs, selects, buttons and submit controls now use border-box sizing and an explicit token height; textareas retain content-driven height. Existing role-specific minimums still govern primary and compact actions.
+- Source revision: Rails `a71666c` (following `71bb340`).
+- Runtime evidence: authenticated Schedule at desktop reports visible controls at 40px or the intended 44px role; Workload at 390px retains 390px document/body width and its visible controls at 40px/44px. Browser console errors: zero.
+- Table inventory: Schedule and Workload axes/columns unchanged.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
