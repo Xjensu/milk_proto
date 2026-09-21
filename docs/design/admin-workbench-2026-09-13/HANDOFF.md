@@ -2402,3 +2402,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Cleanup: the original disposable reservation was removed through the UI confirmation and its authoritative row is now `cancelled`; no fixture reservation was changed.
 - Browser console errors: zero. Reservation table columns remain `Аудитория`, `Дата / слот`, `Преподаватель`, `Назначение`, `Действия`.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Localized audit entity filter
+
+- Batch/slice: B06 adjacent administrator UX, event journal.
+- Finding: the journal exposed backend entity identifiers such as `Student group semester periods` and `Study load requirements`; its filter was an unbounded raw identifier text field.
+- Fix: added Russian labels for emitted audit resources and replaced the free-text filter with a bounded native select that submits the existing API identifiers. Unknown future resources now use the neutral Russian label `Объект системы` instead of leaking an identifier.
+- Source revision: Rails `ef3045f`.
+- Runtime evidence: authenticated `/admin/overview` renders the select with `Все объекты`, localized options and localized rows for period and workload events. Existing journal columns and pagination remain unchanged; browser console errors: zero.
+- Checks: container Zeitwerk passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
