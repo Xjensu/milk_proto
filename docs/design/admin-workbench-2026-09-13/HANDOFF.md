@@ -2092,3 +2092,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Next concrete action: exercise a rejected room create/update with preserved draft values, then continue the remaining resource families.
 
 - Failure evidence follow-up: submitted a room create with the required catalog selections deliberately cleared while retaining `draft-993` and `Draft Room Failure`. The API rejection returned the Russian message “Не удалось создать аудиторию.”, reopened the create sheet, preserved both safe values, and created no row. This confirms the resource editor's failure retention path for Rooms.
+
+## 2026-09-21 — Resource editor Russian copy
+
+- Batch/slice: B03 shared resource editor copy and feedback.
+- Status: runtime-verified.
+- Finding: the generic resource template assembled grammatically invalid messages and actions such as “Добавить дисциплина” and “Дисциплина создано.”
+- Fix: resource configurations now provide explicit Russian create labels and created/updated/deleted messages for every generic catalog family. Routes, contracts, table columns and failure behavior remain unchanged.
+- Source revision: Rails `b38270a` (with search toolbar styles in `6312f69`).
+- Runtime verification: Subjects rendered “Добавить дисциплину”; a disposable subject create reported “Дисциплина создана.”, search read it back, and deletion reported “Дисциплина удалена.” before the row disappeared. Browser errors were zero and the disposable record was cleaned up.
+- Next concrete action: continue calendar/resource family coverage and then rerun the full core journey after the shared UI changes.
