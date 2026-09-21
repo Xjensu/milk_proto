@@ -2039,4 +2039,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Remaining acceptance: invalid account draft feedback, generated one-time credential flow and scoped-role coverage remain pending. Password values were not captured.
 
 - Follow-up: the Accounts index now renders shared success/error feedback. Repeating the unchanged edit after this fix displayed “Учётная запись обновлена.”, closed the editor, and produced zero browser errors. Source revision: Rails `1bd0c38`.
+
+## 2026-09-21 — Narration-led schedule presentation
+
+- Artifact: [administrator_schedule_creation_workflow.pptx](../../presentations/administrator_schedule_creation_workflow.pptx), with source note in [README.md](../../presentations/README.md).
+- Contents: seven full-slide screenshots covering context selection, manual workload creation and assignment, lesson placement/editing, weekday transfers, and the Excel import entry point. Slides intentionally contain no instructional copy so the presenter can narrate the process.
+- Verification: the PPTX ZIP passed integrity testing and contains seven slide XML parts. No credentials, tokens or session data were included.
 - Remaining acceptance: explicit conflict rejection and failed reservation draft read-back, period validation persistence, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
