@@ -1981,3 +1981,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged; Accounts retains its six-column report.
 - Known remaining issue: current browser session has no staff authentication, so computed modal behavior cannot yet be observed interactively.
 - Next concrete action: continue B05 keyboard/focus source verification, then retry authenticated Account acceptance.
+
+## 2026-09-21 — Authenticated core journey and schedule inspector fixes
+
+- Status: authenticated browser acceptance resumed with the supplied staff account; the core read/edit path now renders successfully.
+- Evidence: `/admin/workload` loaded semester 1 and the Construction faculty with three workload rows. `/admin/schedule` opened group СИ-1 with existing lessons and the load rail; a direct event URL rendered the inspector with teacher, room, edit, transfer and swap controls. Browser console errors were zero after the fix. `/admin/aggregate_schedule?faculty_id=1&semester_id=1` resolved the faculty context and displayed two dated occurrences for 21.09.2026.
+- Fixes: moved `event_entry` initialization outside the nested form block and corrected the swap target `select_tag` call, removing two 500 paths when opening an event inspector. Aggregate schedule now uses the requested `faculty_id` when the displayed URL omits `scope_id`, preventing an UNKNOWN/ID-0 context on fresh navigation.
+- Files changed: `apps/schedule_web/app/views/admin/schedules/show/show.html.erb`, `apps/schedule_web/app/lib/operations/admin/load_aggregate_schedule.rb`.
+- Source revisions: Rails `bb15593`, `3b3809b`, `3c68eae`.
+- Runtime verification: Rails image rebuilt with Propshaft precompile, `schedule_web` recreated healthy, API and PostgreSQL healthy, and authenticated Playwright read-back completed on 127.0.0.1. No credentials were recorded in evidence or documentation.
+- Remaining acceptance: no destructive mutation was performed against fixture data. A disposable workload create/assignment and lesson transfer/edit should be exercised next, followed by responsive computed-layout checks for Schedule, Workload, Resources and Accounts.
