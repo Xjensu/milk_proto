@@ -2422,3 +2422,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime evidence: authenticated event `119` now reports `Связанные аудитории`, `Связанные занятия`, `Связанные назначения`, `Связанные назначения преподавателей` and `Требование нагрузки`; browser console errors: zero. Journal table and inspector structure are unchanged.
 - Checks: Propshaft assets rebuilt, `schedule_web` restarted healthy, and container Zeitwerk remains passing.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
+## 2026-09-21 — Excel import authenticated workflow
+
+- Batch/slice: Excel import runtime acceptance carried forward from the migration handoff.
+- Runtime verification: authenticated super administrator opened `/admin/excel_imports?semester_id=1`; the page retained `2026/2027 · 1-й семестр`, rendered the drop zone, status refresh control and six-column file history table.
+- Mutation/read-back: dropped a disposable `.xlsx` workbook into the drop zone, received `Файл отправлен на обработку.`, and observed the authoritative file row with the original filename, semester context and `Ошибка обработки` status from the deliberately minimal workbook. This confirms upload, asynchronous status read-back and original filename persistence without changing fixture files.
+- Cleanup: deleted the disposable upload through its explicit confirmation; the file row was removed from the history.
+- Browser console errors: zero. Table columns remain `Файл`, `Структура`, `Семестр`, `Обновлён`, `Статус`, `Действия`.
+- Checks: Rails container Zeitwerk passed; all services remained healthy. The existing processed fixture file was not modified.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
