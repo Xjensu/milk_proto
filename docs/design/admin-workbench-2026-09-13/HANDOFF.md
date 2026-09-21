@@ -2234,3 +2234,14 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Runtime verification: a rejected disposable create (`98`, `19:00`, `18:00`) reopened the editor with all three values intact and showed “Не удалось создать временной слот.”; no row was created. A valid disposable slot was created (`98`, `18:00–18:45`), edited to `97`, `18:05–18:50`, reloaded and read back, then deleted through confirmation. The catalog returned to its original five rows.
 - Table inventory: unchanged three meanings (`Время`, `Номер`, `Действия`). Browser console errors were zero.
 - Remaining B03 work: complete CRUD failure/read-back coverage for student groups and their group-semester editor; scoped-role denial still requires a separate administrator fixture.
+
+## 2026-09-21 — Student-group and group-semester CRUD validation
+
+- Batch/slice: B03 Resources, student-group and group-semester identity preservation.
+- Runtime verification: created a disposable `СИ` group for `2025-09-01` with auto-semester provisioning disabled, updated it to `2024-09-01`, reloaded and read back the same group row, then deleted it. The original `2026-09-01` group remained unchanged.
+- Failure evidence: a create request with no speciality preserved the safe year (`2023-09-01`), student count (`7`), semester duration (`14`) and checkbox state while showing the Russian failure message; no group row was created.
+- Finding/fix: negative student counts and non-positive semester durations were accepted by the API contracts even though the editors expressed non-negative/positive bounds. Student-group and group-semester contracts now enforce those bounds. The group-semester failure view also now renders its alert/notice feedback, and the success copy is fully Russian.
+- Source revisions: API `70a68a8`; Rails `ecb8c3c`.
+- Group-semester runtime: submitting `students_now=-1` for an existing disposable editor path returned 422, showed “Не удалось обновить параметры семестра группы. Проверьте значения.”, reopened the same group-semester editor with `-1` and `18` intact, and left the authoritative row at `1` and `18` after reload. Browser console errors were zero.
+- Table inventory: student groups retains `Специальность`, `Год набора`, `Действия`; group-semesters retains `Группа-семестр`, `Семестр`, `Студентов`, `Параметры`, `Действия`.
+- B03 status: all listed resource families have now had at least one runtime render/readback pass; focused CRUD matrix evidence exists for Buildings, Rooms, Room types, Time slots and Student groups. Scoped-role denial still requires a separate administrator fixture.
