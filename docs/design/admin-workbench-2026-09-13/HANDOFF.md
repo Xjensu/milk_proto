@@ -2324,6 +2324,15 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Table inventory: unchanged across all resource families.
 - Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
 
+## 2026-09-21 — Aggregate schedule narrow table containment
+
+- Batch/slice: B06 aggregate schedule responsive verification.
+- Finding: the faculty/department aggregate report's 980px table correctly had a labelled horizontal scroller, but intrinsic sizing from the report/context flex items expanded the entire 320px document to 1012px.
+- Fix: aggregate schedule page, context, report and table wrapper now opt into shrink-to-container sizing while preserving the existing table schema and horizontal scroll region (Rails `c61b41b`).
+- Runtime evidence: authenticated `/admin/aggregate_schedule?scope=faculty&faculty_id=1&date=2026-09-21` at 320×844 reports body/document/page width 320px; the labelled table region is 288px wide with 980px scroll content. No columns were hidden or reordered. Browser console errors: zero.
+- Checks: Rails `zeitwerk:check` passed; Propshaft assets rebuilt and `schedule_web` restarted healthy.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture. Performance/availability optimization remains deferred by instruction.
+
 ## 2026-09-21 — Notice narrow overflow containment
 
 - Batch/slice: B06 responsive administrator verification.
