@@ -2028,4 +2028,13 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Conflict evidence: a disposable reservation on 2026-10-16/slot 1 was created, a duplicate attempt returned the Russian conflict message while preserving the editor draft and leaving one active row, and the anchor was then soft-cancelled. The API create response now hydrates associations before serialization, so successful writes no longer appear as generic failures after persistence.
 - Additional source revision: API `a9bc2a0`.
 - Period evidence: `/admin/operations?faculty_id=1&semester_id=1&group_id=1` rejected an inverted disposable lecture-week range while preserving both submitted dates, accepted and read back a temporary 2028-01-01…2028-01-07 period, then deleted it through the explicit confirmation path. The existing semester period remained unchanged; console errors were zero.
+
+## 2026-09-21 — Account edit contract alignment
+
+- Status: authenticated account edit read-back verified.
+- Finding: the Accounts editor submitted empty optional `password` and `teacher_id` values. Hanami’s update contract correctly rejects blank optional values, so saving an unchanged global administrator returned 422 even though the UI supplied no changes.
+- Behavior: Rails now removes blank optional fields at the request boundary and only renders the existing teacher identity field when a teacher is actually linked. The member PATCH route remains unchanged and role/scope authorization stays server-side.
+- Source revision: Rails `249e07f`.
+- Runtime evidence: saved the existing super-administrator record without changing its identity or credentials; API returned 200, the editor closed, the account remained readable, and browser console errors were zero.
+- Remaining acceptance: invalid account draft feedback, generated one-time credential flow and scoped-role coverage remain pending. Password values were not captured.
 - Remaining acceptance: explicit conflict rejection and failed reservation draft read-back, period validation persistence, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
