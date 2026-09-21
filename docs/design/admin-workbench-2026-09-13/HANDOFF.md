@@ -2169,6 +2169,17 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Source checks: Rails `zeitwerk:check`, changed-controller syntax check and `git diff --check` passed after rebuilding the Rails image with current Propshaft assets.
 - Remaining acceptance: a final full workload-to-schedule mutation rerun after the Accounts-only change and the separately documented scoped-role fixture limitation.
 
+## 2026-09-21 — Core journey rerun and readable Schedule subjects
+
+- Batch/slice: B02 regression gate plus Schedule presenter correction.
+- Finding: a disposable subject whose database `short_name` was the numeric value `5342` appeared in the Schedule load panel as `5342`, although the Workload page correctly showed the human-readable name `авто`.
+- Fix: Schedule load entries, recommendation labels and event labels now prefer the subject name and fall back to the short name only when the name is absent.
+- Source revision: Rails pending commit.
+- Runtime journey: created workload requirement `7` for group СИ-1/subject `авто`, assigned Кожедуб Сергей Сергеевич, selected it for Monday slot 5, created event `13`, edited the same event to Tuesday slot 4 with status `modified`, reloaded the direct event URL and read back day `2`, slot `4`, status `modified` and teacher ID `1`. The Schedule load panel showed `авто` throughout. The event and workload were then deleted through their explicit confirmations.
+- Evidence: creation, assignment, placement, edit and deletion each returned their Russian success feedback; no temporary workload/event remained. At 320px document/body width remained 320px and browser console errors were zero.
+- Table inventory: unchanged Schedule grid axes and Workload table columns.
+- Known remaining issue: scoped-role denial still requires a separate scoped administrator fixture.
+
 ## 2026-09-21 — Adjacent-page 320px containment
 
 - Batch/slice: B06 adjacent-page responsive verification.
