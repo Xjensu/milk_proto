@@ -2009,3 +2009,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Evidence: authenticated `/admin/rooms` and `/admin/subjects` render their list-first resource workspaces with explicit navigation and action controls. `/admin/operations`, `/admin/operations/semesters`, `/admin/holidays`, `/admin/room_reservations` and `/admin/transfers?mode=days` all load through the shared Calendar shell. Reservations now expose searchable room/teacher controls and an empty result state instead of the historical unavailable-data page.
 - Transfer journey: created a temporary global weekday transfer for 2026-10-01, verified the five-column row (`Дата`, `Следует дню`, `Группа`, `Причина`, `Действия`), then deleted it through the explicit confirmation path. The list returned to “Переносы не добавлены.” and no browser errors occurred.
 - Remaining acceptance: resource CRUD failure/read-back, period validation persistence, reservation mutation/conflict handling, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
+
+## 2026-09-21 — Subject resource create/delete read-back
+
+- Status: authenticated subject resource mutation path verified with a disposable record.
+- Evidence: `/admin/subjects` opened the Russian editor with full and short-name fields. A temporary `Codex Acceptance Subject 20260921` / `CAS-0921` subject was created and the success state reported “Дисциплина создано.”; it was then removed through the authenticated DELETE route and confirmed absent from PostgreSQL. Browser console errors remained at zero.
+- Scope: this validates the existing list-first editor and mutation contract without changing fixture subjects. No new test files were added.
+- Remaining acceptance: resource update and failure-state read-back, period validation persistence, reservation mutation/conflict handling, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
