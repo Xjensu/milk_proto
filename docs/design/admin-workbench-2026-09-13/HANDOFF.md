@@ -2300,3 +2300,11 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Schedule context: selecting the available `СИ-1` group from `/admin/schedule?faculty_id=1&semester_id=9` committed `/admin/schedule?semester_id=1&faculty_id=1&groups[]=1`. A fresh navigation to that exact URL restored the committed context, period tabs, load panel and timetable grid; the old V03 stale-address behavior did not reproduce.
 - Reservation state: authenticated `/admin/room_reservations` now rendered its searchable room filter (`173 · Лаборатория кафедры ПСИЭТО`) and the explicit empty state `Бронирований по выбранному фильтру нет.` with no dependency alert. This is an empty catalog state, not an unavailable-data fallback.
 - Browser console errors: zero during both checks. Existing table and route semantics were preserved.
+
+## 2026-09-21 — Dated lesson transfer through aggregate schedule
+
+- Batch/slice: B04 dated occurrence transfer and F01 aggregate read-back.
+- Finding: the existing Schedule transfer form returned a 500 because its controller called `gateway` without defining the existing ScheduleWorkspace gateway. After that dependency was fixed, blank optional room/time fields still reached Hanami as empty strings and caused a 422.
+- Fix: the Rails transfer controller now resolves `gateways.admin.schedule_workspace` and removes blank optional transfer attributes before the API call (Rails `25fe8ba`).
+- Runtime evidence: moved disposable event `7` from `24.09.2026` to `27.09.2026` through the Schedule UI. The UI showed `Изменение занятия сохранено.`. The faculty aggregate showed zero lessons on the original date and one row on the destination date with `Перенесено на эту дату`. The exact disposable transfer row was then removed and verified absent.
+- Browser console errors: zero after the fix. No recurring event, table schema or transfer API contract was changed.
