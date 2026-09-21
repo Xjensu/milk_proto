@@ -2045,4 +2045,10 @@ Follow-up: Rails `81f703c` removes previously injected `selected_room_ids[]` fie
 - Artifact: [administrator_schedule_creation_workflow.pptx](../../presentations/administrator_schedule_creation_workflow.pptx), with source note in [README.md](../../presentations/README.md).
 - Contents: seven full-slide screenshots covering context selection, manual workload creation and assignment, lesson placement/editing, weekday transfers, and the Excel import entry point. Slides intentionally contain no instructional copy so the presenter can narrate the process.
 - Verification: the PPTX ZIP passed integrity testing and contains seven slide XML parts. No credentials, tokens or session data were included.
+
+## 2026-09-21 — Notice populated report and responsive print surface
+
+- Status: B06 Notice screen acceptance advanced; no print dialog was invoked.
+- Evidence: authenticated `/admin/notice?q=Кожедуб` selected Кожедуб Сергей Сергеевич, loaded the current semester report with 73 rows and exposed the print action. At 390px the document remained 390px wide while the 760px report table stayed inside its labelled horizontal scroller; at 1280px the document and table fit the viewport. The loaded Notice CSS contains the dedicated print rules for hiding the sidebar/screen controls, repeating table headers and avoiding row breaks.
+- Remaining acceptance: verify an actual browser print/PDF output at narrow and desktop sizes, plus generated one-time credential and scoped-role failure coverage. No passwords or credential output were captured.
 - Remaining acceptance: explicit conflict rejection and failed reservation draft read-back, period validation persistence, account failure states and Notice/print verification remain pending. Performance and availability optimization remain deferred by instruction.
