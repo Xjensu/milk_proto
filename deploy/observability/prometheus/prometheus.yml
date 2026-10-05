@@ -8,8 +8,12 @@ rule_files:
 scrape_configs:
   - job_name: schedule_web
     metrics_path: /metrics
-    static_configs:
-      - targets: [schedule_web:3000]
-        labels:
-          service: schedule_web
-          environment: local
+    dns_sd_configs:
+      - names: [schedule_web]
+        type: A
+        port: 3000
+    relabel_configs:
+      - target_label: service
+        replacement: schedule_web
+      - target_label: environment
+        replacement: production

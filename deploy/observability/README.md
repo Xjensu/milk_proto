@@ -1,51 +1,35 @@
-# Local observability overlay
+# Optional monitoring
 
-This overlay provides the local monitoring path selected in the platform roadmap:
+This overlay runs Prometheus, Loki, Fluentd and Grafana. The server pulls `xjensu/table-fluentd:IMAGE_TAG`; build/push it on the workstation using the instructions in the [deployment guide](../DEPLOYMENT_GUIDE.md).
 
-`Rails /metrics → Prometheus → Grafana`
+`deploy/bin/init-env.py` creates `deploy/observability/.env.local` with private Grafana credentials. Existing files are preserved. The password initializes a new Grafana volume only; later changes require Grafana's own password change/reset procedure.
 
-and
+From the server deployment directory:
 
-`Docker JSON logs or Fluent Forward → Fluentd → Loki → Grafana`.
-
-Grafana credentials are supplied through the uncommitted `deploy/observability/.env.local` file. Create it from the committed template before the first start:
-
-```powershell
-Copy-Item deploy/observability/.env.example deploy/observability/.env.local
+```sh
+./deploy/bin/compose.sh -f deploy/observability/docker-compose.observability.yml \
+  --profile observability config --quiet
+./deploy/bin/compose.sh -f deploy/observability/docker-compose.observability.yml \
+  --profile observability pull prometheus loki fluentd grafana
+./deploy/bin/compose.sh -f deploy/observability/docker-compose.observability.yml \
+  --profile observability up -d --no-build prometheus loki fluentd grafana
 ```
 
-Replace `GF_SECURITY_ADMIN_PASSWORD` with a long random value and keep the file private. The local Grafana username is `admin`; Prometheus and Loki expose local operator endpoints without a separate login in this development overlay.
+Prometheus joins the private discovery network and resolves the Rails replicas through Docker DNS to scrape `/metrics`. Grafana provisions the existing data sources and dashboard. The scrape failure and circuit-breaker alert rules remain active.
 
-To inspect the configured Grafana username locally without putting the password in a command line or source file:
+Host ports bind to loopback: Grafana 3001, Prometheus 9090, Loki 3100, Fluent Forward 24224. Use SSH tunnels for access:
 
-```powershell
-$grafanaEnv = Get-Content deploy/observability/.env.local
-$grafanaUser = ($grafanaEnv | Where-Object { $_ -like 'GF_SECURITY_ADMIN_USER=*' }) -replace '^GF_SECURITY_ADMIN_USER=', ''
-Write-Output "Grafana user: $grafanaUser"
+```sh
+ssh -L 3001:127.0.0.1:3001 -L 9090:127.0.0.1:9090 deploy@SERVER
 ```
 
-Open `deploy/observability/.env.local` in a local editor when you need to enter the password interactively. Never paste it into tickets, logs or committed files. If Grafana was initialized earlier, changing this file alone does not rotate the stored password; use the reset procedure below with the same local value.
+Open `http://127.0.0.1:3001` on your PC. Fluentd mounts `/var/lib/docker/containers` read-only and assumes the Docker JSON-file log layout used by this stack. It does not mount the Docker socket.
 
-Start it from the repository root after the application services are available:
+Stop only monitoring without stopping the application:
 
-```powershell
-docker compose -f docker-compose.yml -f deploy/observability/docker-compose.observability.yml --profile observability up -d --build
+```sh
+./deploy/bin/compose.sh -f deploy/observability/docker-compose.observability.yml \
+  --profile observability stop prometheus loki fluentd grafana
 ```
 
-Open Grafana at `http://localhost:3001`, Prometheus at `http://localhost:9090`, and Loki at `http://localhost:3100/ready`. Grafana provisions the Prometheus and Loki data sources and the `Milk Schedule · Operations` dashboard automatically. If Grafana was already initialized, changing the environment variable does not rotate its stored password automatically; run `docker exec milk_schedule_grafana grafana cli admin reset-admin-password "$env:GF_SECURITY_ADMIN_PASSWORD"` after loading the same value into your shell, or use Grafana's password-reset procedure.
-
-Prometheus also loads the committed alert rules in `prometheus/alerts.yml`. `ScheduleWebDown` fires after two minutes without a Rails scrape; `ScheduleWebCircuitBreakerOpen` fires after five minutes with any upstream breaker open. Review the alert details in Prometheus (`/alerts`) and the corresponding breaker key in Grafana before retrying an administrator mutation.
-
-The Prometheus target is the internal Compose address `schedule_web:3000/metrics`. The dashboard uses the bounded request counters, duration sums/counts and circuit-breaker gauges already exposed by Rails; it does not use request IDs, URLs or user data as metric labels.
-
-Fluentd reads Docker JSON-file logs from the mounted Docker container directory and also accepts Fluent Forward traffic on port `24224`. On Docker Desktop, verify that the Docker data directory can be mounted by the engine. If that mount is unavailable in a deployment environment, route the service logger to Fluent Forward instead of weakening application logging or exposing the Docker socket.
-
-Stop only the overlay with:
-
-```powershell
-docker compose -f docker-compose.yml -f deploy/observability/docker-compose.observability.yml --profile observability down
-```
-
-The named `prometheus-data`, `loki-data` and `grafana-data` volumes preserve history and dashboard state. Remove them only as an intentional local reset.
-
-The overlay clears inherited HTTP proxy variables inside Prometheus, Loki, Fluentd and Grafana because these containers communicate over the Docker network. The current image tags are pinned to the locally verified Prometheus 3.3.0 and Grafana 11.6.0 images; update them deliberately when the deployment registry is reachable and repeat the health checks.
+Do not use `down` on the merged configuration to stop only monitoring: it also includes the main application's services. Named volumes retain history and Grafana state.

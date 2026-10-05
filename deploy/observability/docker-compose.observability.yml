@@ -8,6 +8,7 @@ services:
       HTTPS_PROXY: ""
       http_proxy: ""
       https_proxy: ""
+    networks: [default, discovery]
     container_name: milk_schedule_prometheus
     profiles: [observability]
     command:
@@ -19,7 +20,7 @@ services:
       - ./deploy/observability/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/ready"]
       interval: 15s
@@ -46,7 +47,7 @@ services:
       - ./deploy/observability/loki/config.yml:/etc/loki/config.yml:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3100/ready"]
       interval: 15s
@@ -55,15 +56,14 @@ services:
       start_period: 30s
 
   fluentd:
-    build:
-      context: ./deploy/observability/fluentd
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-fluentd:${IMAGE_TAG:?Set IMAGE_TAG in .env}
     container_name: milk_schedule_fluentd
     profiles: [observability]
     depends_on:
       - loki
     ports:
-      - "24224:24224"
-      - "24224:24224/udp"
+      - "127.0.0.1:24224:24224"
+      - "127.0.0.1:24224:24224/udp"
     volumes:
       - ./deploy/observability/fluentd/fluent.conf:/fluentd/etc/fluent.conf:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
@@ -94,7 +94,7 @@ services:
       - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 15s
