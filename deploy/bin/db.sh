@@ -3,8 +3,8 @@
 set -eu
 cd "$(dirname "$0")/../.."
 case "${1:-}" in
-  migrate|seed|version) ;;
-  *) echo 'Usage: db.sh migrate|seed|version' >&2; exit 2 ;;
+  create|migrate|seed|version) ;;
+  *) echo 'Usage: db.sh create|migrate|seed|version' >&2; exit 2 ;;
 esac
 [ "$#" -eq 1 ] || exit 2
 exec deploy/bin/compose.sh run --rm --no-deps -e DISCOVERY_COMMAND=1 \

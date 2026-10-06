@@ -14,7 +14,7 @@ Consul uses persisted storage, default-deny ACLs, and separate tokens scoped to 
 
 Keep the existing `.env.local` and `deploy/ops/.env.local` private. Required values include PostgreSQL credentials and database name, Redis password, application signing keys, MinIO credentials and bucket names, and operations-console credentials. Never print these files or a fully interpolated Compose model.
 
-After extracting the matching deployment bundle and configuring `.env` and `.env.local`, run:
+After cloning the main repository from GitHub and configuring `.env.local`, run:
 
 ```sh
 deploy/bin/deploy-discovery.sh
@@ -26,7 +26,7 @@ The preflight automatically selects a single private IPv4 LAN interface, excludi
 ADMIN_INTERFACE=enp1s0 ADMIN_LAN_CIDRS=192.168.10.0/24 deploy/bin/deploy-discovery.sh
 ```
 
-The standard router-forwarding setup requires no host IP in `.env`: Nginx listens on all host interfaces at port 80. Automatic detection selects a private IPv4 address, preferring the normal outbound route when multiple LAN interfaces exist. Set `LAN_BIND_IP` in `.env` to explicitly select another assigned address, including a public address; a public address requires explicit trusted client `ADMIN_LAN_CIDRS`. Prefer a private/VPN interface for administration. Never use `0.0.0.0/0`; this deployment supports IPv4 administrator CIDRs only. The allowlist describes clients, not the server address.
+The standard router-forwarding setup requires no host IP in `.env.local`: Nginx listens on all host interfaces at port 80. Automatic detection selects a private IPv4 address, preferring the normal outbound route when multiple LAN interfaces exist. Set `LAN_BIND_IP` in `.env.local` to explicitly select another assigned address, including a public address; a public address requires explicit trusted client `ADMIN_LAN_CIDRS`. Prefer a private/VPN interface for administration. Never use `0.0.0.0/0`; this deployment supports IPv4 administrator CIDRs only. The allowlist describes clients, not the server address.
 
 Generated network policy, token files, and Consul server configuration live in ignored `deploy/generated/`. Keep this directory private and back up its credentials with Consul's data. Do not copy a generated host policy to another server: run the preflight there. Detection runs only at deployment; a later network change does not silently change the allowlist. Use the selected LAN address for host-local administration too, because Docker may translate loopback connections to a bridge peer address.
 
@@ -87,6 +87,6 @@ For existing schema maintenance, use the established operations console or:
 ./deploy/bin/db.sh migrate
 ```
 
-Never reset volumes or use `down -v`. To roll back, restore the prior deployment bundle and its compatible image tag, then start them with their original configuration. Preserve database, MinIO, Redis, and Consul data; remove only attributable ingress firewall rules if reverting their policy. Back up before changes requiring schema rollback.
+Never reset volumes or use `down -v`. To roll back, restore the prior deployment repository revision and its compatible image tag, then start them with their original configuration. Preserve database, MinIO, Redis, and Consul data; remove only attributable ingress firewall rules if reverting their policy. Back up before changes requiring schema rollback.
 
 Record actual runtime acceptance separately; syntax success does not prove a functioning administrator journey or an externally verified LAN boundary.

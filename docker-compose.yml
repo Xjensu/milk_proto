@@ -9,7 +9,7 @@ x-logging: &id001
     max-file: '3'
 services:
   scheduler:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-scheduler:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-scheduler:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: milk_schedule_scheduler
     environment:
       DISCOVERY_ENABLED: '1'
@@ -50,7 +50,7 @@ services:
       discovery_acl:
         condition: service_completed_successfully
   frontend:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-frontend:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-frontend:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: milk_schedule_frontend
     ports:
     - 127.0.0.1:8080:80
@@ -70,7 +70,7 @@ services:
     profiles:
     - legacy-frontend
   schedule_web:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-bsut-by:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-bsut-by:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     env_file:
     - .env.local
     environment:
@@ -114,7 +114,7 @@ services:
     deploy:
       replicas: ${WEB_REPLICAS:-2}
   api_geteway:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: api_geteway
     networks:
     - discovery
@@ -162,7 +162,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
   ops_console:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: milk_schedule_ops_console
     command:
     - ruby
@@ -226,7 +226,7 @@ services:
     - ./deploy/discovery:/opt/discovery:ro
     - ./deploy/generated/ops-console.token:/run/secrets/consul-token:ro
   outbox_relay:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: outbox_relay
     env_file:
     - .env.local
@@ -276,7 +276,7 @@ services:
     networks:
     - discovery
   media_sanitizer:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: media_sanitizer
     env_file:
     - .env.local
@@ -326,7 +326,7 @@ services:
     networks:
     - discovery
   notice_export_worker:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: notice_export_worker
     env_file:
     - .env.local
@@ -366,7 +366,7 @@ services:
     networks:
     - discovery
   schedule_generation_worker:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-api:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: schedule_generation_worker
     env_file:
     - .env.local
@@ -409,7 +409,7 @@ services:
     - ruby
     - bin/schedule_generation_worker
   excel_processor:
-    image: ${IMAGE_NAMESPACE:-xjensu}/excel-processor:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/excel-processor:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: excel_processor
     env_file:
     - .env.local
@@ -530,7 +530,7 @@ services:
     ports:
     - ${LAN_BIND_IP:?Run preflight}:9000:9000
   minio_init:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-minio-init:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-minio-init:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     container_name: minio_init
     depends_on:
       minio:
@@ -568,7 +568,7 @@ services:
     restart: unless-stopped
     logging: *id001
   discovery_acl:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     command:
     - python
     - bootstrap_acl.py
@@ -582,7 +582,7 @@ services:
     restart: 'no'
     logging: *id001
   postgres_registrar:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     network_mode: service:db
     environment:
       DISCOVERY_ENABLED: '1'
@@ -600,7 +600,7 @@ services:
     restart: unless-stopped
     logging: *id001
   redis_registrar:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     network_mode: service:redis
     environment:
       DISCOVERY_ENABLED: '1'
@@ -618,7 +618,7 @@ services:
     restart: unless-stopped
     logging: *id001
   minio_registrar:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-discovery:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     network_mode: service:minio
     environment:
       DISCOVERY_ENABLED: '1'
@@ -637,7 +637,7 @@ services:
     restart: unless-stopped
     logging: *id001
   nginx:
-    image: ${IMAGE_NAMESPACE:-xjensu}/table-edge:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ${IMAGE_NAMESPACE:-xjensu}/table-edge:${IMAGE_TAG:?Set IMAGE_TAG in .env.local}
     ulimits:
       nofile:
         soft: 16384

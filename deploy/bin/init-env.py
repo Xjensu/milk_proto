@@ -22,7 +22,6 @@ def create(template, destination, replacements):
     print(f"Created {destination} (private; values not printed)")
 
 
-create(".env.compose.example", ".env", {})
 create(".env.example", ".env.local", {
     key: secrets.token_hex(64 if key == "SECRET_KEY_BASE" else 32)
     for key in ("POSTGRES_PASSWORD", "REDIS_PASSWORD", "MINIO_SECRET_KEY",
@@ -34,4 +33,4 @@ create("deploy/ops/.env.example", "deploy/ops/.env.local", {
 create("deploy/observability/.env.example", "deploy/observability/.env.local", {
     "GF_SECURITY_ADMIN_PASSWORD": secrets.token_hex(32),
 })
-print("Review .env networking/image tag and .env.local browser origin before deployment.")
+print("Review the image tag, administrator email and browser origin in .env.local before deployment.")

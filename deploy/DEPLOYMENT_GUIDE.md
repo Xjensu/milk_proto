@@ -1,268 +1,232 @@
-# Deploy from your development PC to a separate server
+# Deploy from GitHub using Docker Hub images
 
-Your current PC is the development and image-build machine. The application runs on a different Linux server. All commands below identify the machine on which they must run.
+The development PC builds and publishes images. The separate Linux server clones the main GitHub repository, reads `.env.local`, pulls those images and runs the application. No image builds run on the server, and no host IP entry is required.
 
-The server's IP does not need to be entered in `.env`. Nginx listens on all server interfaces at port 80, and your router forwards traffic to that host. Deployment detects the server's private IPv4 address and LAN subnet automatically.
+The archive packaging script is optional. The standard procedure below uses a Git checkout of the main repository.
 
-## 1. What happens on each machine
+## 1. Publish the release from the development PC
 
-| Development PC | Deployment server |
-| --- | --- |
-| Contains application source and independent application Git repositories | Contains the deployment bundle and private configuration |
-| Builds Docker images | Pulls published Docker images |
-| Pushes images to Docker Hub | Runs Compose and database migrations |
-| Packages matching deployment support files | Stores PostgreSQL, MinIO, Redis and Consul data |
-| Does not need the server's address in `.env` | Detects its own network when deployment runs |
-
-Use `compose.build.yml` on the development PC. Use `docker-compose.yml` on the server through the supplied scripts. The build commands do not start or restart your development containers.
-
-Each release consists of custom Docker images with one shared tag plus a matching archive. The archive contains Compose, scripts, configuration templates, schemas and the shared discovery adapters required by the current runtime. It excludes application sources, private environment files, generated credentials and local stored data.
-
-## 2. One-time preparation on the development PC
-
-Required: Docker with the Compose plugin, Python 3, Git and a POSIX shell. On Windows, run the shell commands through WSL.
-
-Use the existing project directory:
+Run these commands on the development PC in the complete source workspace:
 
 ```bash
 cd /home/xjensu/Desktop/milk_schedule
-```
-
-The build machine needs the compatible sources under `apps/schedule_web`, `apps/api_geteway`, `apps/excel_processor` and `apps/scheduler`. The web, API and Excel directories are independently versioned repositories. `apps/frontend` is retained for the optional legacy frontend and is also inspected by the packaging script. A root checkout alone does not supply all these source directories. Keep this complete development workspace for building releases.
-
-Create the build settings file only if it is absent:
-
-```bash
 [ -f .env ] || cp .env.compose.example .env
-nano .env
-```
-
-Keep `IMAGE_NAMESPACE=xjensu`. Leave `ADMIN_INTERFACE` and `ADMIN_LAN_CIDRS` empty for the normal router/LAN setup; no `LAN_BIND_IP` entry is needed. An existing local `.env.local` remains development configuration and is not transferred to the server.
-
-Sign in to Docker Hub:
-
-```bash
 docker login --username xjensu
-```
-
-Enter your Docker Hub access token at the prompt. Create the image repositories under your account and choose whether they are public or private.
-
-| Required repository | Purpose |
-| --- | --- |
-| `xjensu/table-bsut-by` | Rails web interface |
-| `xjensu/table-api` | Hanami API and its background workers/operations console |
-| `xjensu/excel-processor` | Excel processing |
-| `xjensu/table-scheduler` | Scheduling solver |
-| `xjensu/table-discovery` | Discovery registrars and ACL initialization |
-| `xjensu/table-minio-init` | Storage bucket initialization |
-| `xjensu/table-edge` | Nginx ingress |
-
-Optional repositories are `xjensu/table-fluentd` for monitoring and `xjensu/table-frontend` for the legacy frontend. The normal deployment does not enable these profiles.
-
-Build for the server's architecture. If both machines are Linux amd64, no architecture override is needed. If the build machine differs from the amd64 server, set `DOCKER_DEFAULT_PLATFORM=linux/amd64` before building. ARM support for the current pinned dependencies has not been verified.
-
-## 3. Build and publish a release — development PC
-
-Choose a new tag for every release, for example `2026-10-06-1`. Do not overwrite a tag already used by the server.
-
-```bash
 ./deploy/bin/build-images.sh 2026-10-06-1 --push
-python3 deploy/bin/package-release.py 2026-10-06-1
 ```
 
-The first command builds and pushes all seven required custom images. Without `--push`, it only builds. The second command creates:
+Use a new tag for each release. The build file reads `.env` on the development PC for registry settings; the script supplies the requested image tag. It builds and pushes these seven images:
 
-```text
-dist/milk-schedule-2026-10-06-1.tar.gz
-```
+| Image | Used by |
+| --- | --- |
+| `xjensu/table-bsut-by:2026-10-06-1` | Rails web interface |
+| `xjensu/table-api:2026-10-06-1` | Hanami API, operations console and API workers |
+| `xjensu/excel-processor:2026-10-06-1` | Excel processing |
+| `xjensu/table-scheduler:2026-10-06-1` | Scheduling solver |
+| `xjensu/table-discovery:2026-10-06-1` | Service registrars and ACL initialization |
+| `xjensu/table-minio-init:2026-10-06-1` | Storage initialization |
+| `xjensu/table-edge:2026-10-06-1` | Nginx ingress |
 
-For example, the web and Excel images are published as:
+Create these repositories in your Docker Hub account and choose their visibility before pushing. Enter the Docker Hub token interactively at login. Build for the server's CPU architecture; an amd64 server needs amd64 images. ARM compatibility of the pinned dependencies has not been verified.
 
-```text
-xjensu/table-bsut-by:2026-10-06-1
-xjensu/excel-processor:2026-10-06-1
-```
-
-The packaging script puts the same tag into the archive's `.env.compose.example`. Build and package without changing the source worktrees between these steps. `RELEASE.json` records source revisions and dirty-worktree flags; commit application changes in their owning repositories when you need a reproducible release.
-
-If using another registry namespace, set `IMAGE_NAMESPACE` in the development PC's `.env`, and pass that same namespace with `package-release.py --namespace YOUR_NAMESPACE`.
-
-## 4. One-time preparation — deployment server
-
-Use a Linux server with Docker Engine, the Compose plugin, Python 3 and `iproute2` (the `ip` command). The deployment account must be able to run Docker. The firewall helper requires Docker's iptables backend and its `DOCKER-USER` chain; iptables-nft is supported. Rootless Docker and a native nftables-only backend are outside this setup.
-
-Connect using the server's SSH hostname or address. `SERVER` below is a placeholder for that SSH destination; it is not a value you must add to `.env`.
+Publish the corresponding main repository revision to GitHub too:
 
 ```bash
-ssh deploy@SERVER
+git push origin HEAD
 ```
 
-Create a stable installation directory. Replace `deploy` with your actual deployment account:
+This pushes the current branch. The server must use that published branch/revision, not an older default branch. Application directories under `apps/` have independent Git state; their compatible sources are required on the build PC, while the server uses their published images. Commit application source changes in their owning repositories when preparing a reproducible release.
+
+Do not change sources or deployment configuration between building the images and identifying the matching Git revision. The build commands do not start or restart the development application.
+
+## 2. Clone the main repository on the server
+
+Install Git, Docker Engine with the Compose plugin, Python 3 and `iproute2` on the Linux server. The deployment account needs Docker access. The firewall helper requires Docker's iptables backend and a `DOCKER-USER` chain; iptables-nft is supported.
+
+Connect to the server through SSH. Create a persistent directory, substituting your actual deployment account for `deploy`:
 
 ```bash
 sudo install -d -m 750 -o deploy -g deploy /opt/milk-schedule
 ```
 
-Your router continues forwarding website traffic to this server on TCP port 80. Ensure port 80 is available on the server. A hostname can point to the router's external address; application IP detection does not configure DNS or the router.
+As that deployment account, clone the branch containing the release's deployment changes. Replace `DEPLOYMENT_BRANCH` with the branch published in step 1:
 
-For private Docker Hub images, log in on the server with an account token that has pull access:
+```bash
+git clone --branch DEPLOYMENT_BRANCH \
+  https://github.com/Xjensu/milk_proto.git /opt/milk-schedule
+cd /opt/milk-schedule
+```
+
+For a fixed release, check out its published commit or tag. The repository contains the server Compose file and its support files. You do not need to clone the nested application source repositories on the server.
+
+For private Docker Hub images, log in on the server using a token with pull access:
 
 ```bash
 docker login --username xjensu
 ```
 
-## 5. Transfer and configure the release
+Your router can keep forwarding incoming website traffic to this server on port 80. Nginx listens on all server interfaces. SSH/DNS/router configuration does not need to be copied into `.env.local`.
 
-**On the development PC:**
+## 3. Generate and edit server configuration
 
-```bash
-scp dist/milk-schedule-2026-10-06-1.tar.gz \
-  deploy@SERVER:/opt/milk-schedule/
-```
-
-**On the deployment server:**
+On the server, run:
 
 ```bash
-cd /opt/milk-schedule
-tar -xzf milk-schedule-2026-10-06-1.tar.gz
 python3 deploy/bin/init-env.py
+nano .env.local
 ```
 
-`init-env.py` creates private files with random secrets and mode 600. It never overwrites an existing file. On the new server it generates new server credentials; it does not use this development PC's passwords.
+The initializer creates `.env.local` with random secrets and private permissions. It also creates separate operations-console and optional monitoring credential files. Existing files are never overwritten. It does not create a server `.env` file.
 
-### `.env` — release and container settings
-
-Edit it on the server:
-
-```bash
-nano .env
-```
-
-For the normal deployment, the essential values are:
+Choose the published image tag in `.env.local`:
 
 ```dotenv
 COMPOSE_PROJECT_NAME=milk_schedule
 IMAGE_NAMESPACE=xjensu
 IMAGE_TAG=2026-10-06-1
-ADMIN_INTERFACE=
-ADMIN_LAN_CIDRS=
 HTTP_BIND_IP=0.0.0.0
 HTTP_PORT=80
 WEB_REPLICAS=2
+ADMIN_INTERFACE=
+ADMIN_LAN_CIDRS=
 ```
 
-No host IP entry is required. The blank network overrides enable automatic private-address/subnet detection. On a host with multiple LAN interfaces, preflight prefers the normal outbound route. Use `ADMIN_INTERFACE` only if you deliberately need a particular interface, such as a VPN.
+Leave the network overrides blank for the normal LAN/router setup. Deployment detects the server's private address and subnet, preferring its normal outbound route when multiple private interfaces exist. `HTTP_BIND_IP=0.0.0.0` means all interfaces; it is not the machine's actual address. No `LAN_BIND_IP` entry is needed.
 
-Keep `COMPOSE_PROJECT_NAME` unchanged across updates because it determines persistent volume names. `HTTP_BIND_IP=0.0.0.0` means all server interfaces; it is not your server's actual address.
+Review these runtime settings in the same file:
 
-Upstream PostgreSQL, Redis, MinIO and Consul images are configured separately through `POSTGRES_IMAGE`, `REDIS_IMAGE`, `MINIO_IMAGE` and `CONSUL_IMAGE`. Leave these values unchanged unless performing an intentional infrastructure update.
-
-### `.env.local` — server secrets and application settings
-
-Open it privately on the server:
-
-```bash
-nano .env.local
-```
-
-Generated passwords/signing keys can remain as created. Review the bootstrap administrator email and the website origin:
-
-```dotenv
-SEED_ADMIN_EMAIL=admin@your-organization.example
-CORS_ORIGINS=http://your-website.example
-```
-
-These are examples: use your actual email and browser URL, without a trailing slash in the origin. A website hostname is not a machine IP configuration. Use `https://` only if HTTPS has actually been configured.
-
-| Values | Purpose |
+| Settings | What to configure |
 | --- | --- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database identity and credentials |
-| `DATABASE_URL` | Must match the PostgreSQL credentials/database |
-| `REDIS_PASSWORD`, `REDIS_URL` | Matching Redis authentication settings |
-| `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | Application storage credentials |
-| `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | MinIO server credentials; template derives them from the application credentials |
-| `JWT_SECRET`, `SECRET_KEY_BASE` | Authentication and session signing |
-| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Initial application administrator |
-| Bucket names, timeouts, worker and cache options | Runtime tuning |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database name and credentials. The initializer generates a password. |
+| `DATABASE_URL` | Must agree with the PostgreSQL settings. The template derives it automatically. |
+| `REDIS_PASSWORD`, `REDIS_URL` | Matching Redis authentication settings. |
+| `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | Storage credentials. The template derives matching MinIO root credentials. |
+| `JWT_SECRET`, `SECRET_KEY_BASE` | Generated signing keys; retain them across upgrades. |
+| `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | Initial application administrator. Set the desired email; a password is generated. |
+| `CORS_ORIGINS` | Actual browser origin, e.g. `http://your-website.example`, without a trailing slash. |
+| `ASSUME_SSL`, `FORCE_SSL` | Keep false for the current HTTP ingress. These settings do not configure HTTPS. |
 
-Keep container hostnames such as `db`, `redis` and `minio`; do not replace them with the server's IP or `localhost`. Consul resolves the actual internal endpoints.
+Keep internal hostnames `db`, `redis` and `minio`; do not put the server IP or `localhost` in container connection settings. Consul discovers internal endpoints.
 
-The template uses `${VARIABLE}` references to keep connection settings consistent. Newly generated passwords are hexadecimal, which is safe in those URLs. Existing passwords with URL-reserved characters require correctly encoded connection URLs. Single-quote literal dotenv values containing `$` when interpolation is unwanted.
+The template expands `${VARIABLE}` references. Generated passwords are hexadecimal and safe in connection URLs. Existing passwords with URL-reserved characters require URL-encoded credentials in `DATABASE_URL` and `REDIS_URL`. Single-quote literal dotenv values containing `$` when interpolation is unwanted.
 
-The current ingress serves HTTP. Keep `ASSUME_SSL=false` and `FORCE_SSL=false` for that setup. These variables do not install certificates or configure HTTPS.
+Edit `deploy/ops/.env.local` if you want a different operations-console username/password. Its account is separate from the application administrator. Optional Grafana credentials are in `deploy/observability/.env.local`.
 
-### Other private settings
+Teachers, groups, subjects and workload are application data, not environment settings. Enter or import them after the database and administrator are ready.
 
-`deploy/ops/.env.local` holds separate credentials for `/ops/`. `deploy/observability/.env.local` holds optional Grafana credentials. The application administrator, database account and operations-console account are separate identities.
+## 4. Pull images and start infrastructure
 
-Do not copy development `.env.local`, `storage/` or `deploy/generated/` to a new server. Each server generates its own networking and discovery credentials. Preserve and privately back up the server's generated configuration once the server is installed.
-
-## 6. First startup — deployment server only
-
-From `/opt/milk-schedule`:
+The following commands run only on the deployment server:
 
 ```bash
-./deploy/bin/deploy-discovery.sh
+cd /opt/milk-schedule
+python3 deploy/bin/prepare-discovery.py
+./deploy/bin/compose.sh config --quiet
+./deploy/bin/compose.sh pull
+./deploy/bin/compose.sh up -d --no-build \
+  db redis minio consul discovery_acl \
+  postgres_registrar redis_registrar minio_registrar minio_init scheduler
 ```
 
-This detects the server network, validates Compose, pulls the images, starts infrastructure/discovery, runs database migrations, starts application services, installs the project firewall and waits for health checks. It does not build images.
+Preflight writes host-specific settings and private discovery credentials to ignored `deploy/generated/`. The Compose wrapper loads `.env.local` and those generated settings. An existing `.env` is supported as a legacy fallback, but `.env.local` takes precedence for server settings.
 
-For a new installation, seed reference data and the initial administrator:
+All runtime services use `image:` references. Pulling or starting this configuration does not build images, and no `apps/` directory is needed.
+
+Use `config --quiet` rather than plain `config` to avoid displaying expanded secrets.
+
+## 5. Initialize the database through Hanami
+
+The PostgreSQL image creates the database named by `POSTGRES_DB` when its data volume is first initialized. Normally, you therefore run Hanami migrations and seeds directly:
 
 ```bash
+./deploy/bin/db.sh migrate
 ./deploy/bin/db.sh seed
+./deploy/bin/db.sh version
+```
+
+`db.sh` runs a temporary container from the published API image and resolves the database URL through Consul before executing the Hanami command. The API web server does not need to be running for these commands.
+
+If the configured database does not exist, Hanami database creation is available:
+
+```bash
+./deploy/bin/db.sh create
+./deploy/bin/db.sh migrate
+./deploy/bin/db.sh seed
+```
+
+Do not run `create` as a required step when PostgreSQL has already created the database. `migrate` creates/updates tables. `seed` loads reference data and creates the initial administrator using the server's configured credentials; it does not reset an existing administrator's password. Hanami `db prepare` also runs seeds, so use `migrate` for routine updates.
+
+The Excel worker applies its own migrations on startup.
+
+## 6. Start the application
+
+After migrations and initial seeding:
+
+```bash
+./deploy/bin/compose.sh up -d --no-build
+python3 deploy/bin/install-project-firewall.py
+./deploy/bin/compose.sh up -d --no-build --wait --wait-timeout 180
 ./deploy/bin/compose.sh ps
 ./deploy/bin/compose.sh images
 ```
 
-The seed uses the server's `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`. Change the bootstrap password after first sign-in. Seeding does not reset an existing administrator's password.
+Open the website through the hostname/router you already use. From an allowed LAN client, open `/admin/` and sign in with `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD`. Change the bootstrap password after first sign-in, then add/import teachers and other schedule data.
 
-Open the public website through your router/hostname. Administrator sign-in and `/ops/` are restricted to the detected LAN by default. Port forwarding alone does not grant external administrator access. Use that LAN or a deliberately configured VPN for administration; HTTP itself does not encrypt credentials.
+The `/ops/` console uses its own credentials and exposes allowlisted Hanami database operations. You can manage later migrations there or through `db.sh` over SSH. It has no arbitrary shell or Docker socket.
 
-Verify public schedules, administrator sign-in, an edit/reload, an Excel import and a notice download. Healthy containers do not prove every application workflow.
+Public pages are reachable through router forwarding. Administrator/login routes and `/ops/` remain LAN-restricted by default. Use the LAN or a deliberately configured VPN for administration. The current ingress is HTTP and does not encrypt credentials.
 
-The current notice download links point to MinIO on the detected private address at port 9000. Forwarding only website port 80 does not make that storage address reachable to external clients. LAN/VPN downloads can use the default. If external downloads are required, provide an appropriately secured storage endpoint and configure `NOTICE_EXPORT_PUBLIC_ENDPOINT`; that is a separate network/proxy arrangement.
+Notice download links currently target MinIO on the detected private address at port 9000. Forwarding website port 80 alone does not make that private storage endpoint reachable from external clients. LAN/VPN downloads can use the default; external downloads require an appropriately secured storage endpoint and `NOTICE_EXPORT_PUBLIC_ENDPOINT` configuration.
 
-## 7. Publish an application update
+Verify schedules, administrator sign-in, an edit/reload, Excel import and notice download. Container health checks do not prove these complete workflows.
 
-**On the development PC:** build a new tag, package it and transfer it:
+## 7. Shorter automatic startup option
+
+If you prefer the supplied automation after configuration:
 
 ```bash
-./deploy/bin/build-images.sh 2026-10-07-1 --push
-python3 deploy/bin/package-release.py 2026-10-07-1
-scp dist/milk-schedule-2026-10-07-1.tar.gz \
-  deploy@SERVER:/opt/milk-schedule/
+./deploy/bin/deploy-discovery.sh
+./deploy/bin/db.sh seed
 ```
 
-**On the deployment server:** back up first, extract the bundle, select the tag and deploy:
+The deployment script performs detection, pull, infrastructure startup, migrations, application startup, firewall installation and health waits. It does not seed automatically. Use the manual steps above when you want to control when migrations run.
+
+## 8. Deploy an update
+
+On the development PC, build/push a new image tag and publish its compatible main repository revision to GitHub.
+
+On the server, back up first, then update the checked-out deployment branch:
 
 ```bash
 cd /opt/milk-schedule
-tar -xzf milk-schedule-2026-10-07-1.tar.gz
-nano .env
-# Set IMAGE_TAG=2026-10-07-1 in the editor.
+git pull --ff-only
+nano .env.local
+```
+
+Set `IMAGE_TAG` to the newly published tag. Compare the new `.env.example` with your existing `.env.local` and add new settings deliberately. Git does not replace the ignored private file. Keep the project name and existing secrets unchanged.
+
+Then deploy with the wrapper, which includes migrations:
+
+```bash
 ./deploy/bin/deploy-discovery.sh
 ```
 
-The archive updates templates and deployment files, not the existing private environment files or data. Compare new templates with your current configuration and add new options deliberately. Do not copy `.env.example` over the installed `.env.local`.
+Alternatively, repeat the manual pull/infrastructure/migration/start steps. Routine updates do not require another seed. Review schema changes and back up before migrations; an image rollback does not undo database migrations.
 
-Database migrations run during deployment, so review schema changes and have a verified backup. Hanami `db prepare` also runs seeds; the supplied deployment script intentionally uses `db migrate`. The Excel worker applies its own migrations when starting.
+## 9. Change environment settings without rebuilding
 
-## 8. Change server configuration without rebuilding
-
-Edit the appropriate file **on the server**, then recreate services:
+On the server:
 
 ```bash
-cd /opt/milk-schedule
 nano .env.local
 ./deploy/bin/compose.sh config --quiet
 ./deploy/bin/compose.sh up -d --no-build
 python3 deploy/bin/install-project-firewall.py
 ```
 
-A restart alone does not apply edited environment values. Use `config --quiet` to validate without printing expanded secrets. Clear stale exported shell overrides such as `IMAGE_TAG` when you intend to use file values.
+Compose recreates containers whose environment changed. A restart alone does not apply edited environment values. Clear stale shell overrides such as `IMAGE_TAG` when file values should be used.
 
-If the server's LAN address changes, no IP edit in `.env` is needed. Refresh detection and apply the resulting configuration:
+After a server address/subnet change, refresh automatic detection:
 
 ```bash
 python3 deploy/bin/prepare-discovery.py
@@ -272,18 +236,17 @@ python3 deploy/bin/prepare-discovery.py
 python3 deploy/bin/install-project-firewall.py
 ```
 
-Reloading Nginx applies the regenerated administrator subnet policy. Ensure the router's forwarding rule still targets the server's current address. The network is detected at deployment/preflight, not continuously in the background.
+No IP edit is needed in `.env.local`. Detection runs at deployment/preflight, not continuously. The router's forwarding rule must still target the server's current address.
 
-Changing `POSTGRES_PASSWORD` in a file does not change the stored PostgreSQL role password. Rotate the database credential and dependent services together. Changing signing secrets invalidates authentication/session data. Grafana stores its initialized administrator password in its own database; later rotation uses Grafana's password-change/reset process.
+Changing `POSTGRES_PASSWORD` in a file does not change the stored PostgreSQL role password; rotate the database credential and clients together. Changing signing keys invalidates authentication/session data. Grafana stores its initialized administrator password in its own database and needs its own password rotation procedure.
 
-## 9. Backups, stopping and rollback
+## 10. Backups and diagnostics
 
-Back up PostgreSQL, MinIO objects, Redis files, Consul data/tokens and any monitoring volumes. Keep private copies of the server's `.env`, `.env.local`, component credential files and `deploy/generated/`. Keep older release bundles and image tags.
+Preserve PostgreSQL, MinIO objects, Redis files, Consul data/tokens and optional monitoring volumes. Back up the private environment files and `deploy/generated/` securely. Do not copy another machine's generated networking to a new server. Never use `down -v` or volume pruning during routine updates.
 
-Example PostgreSQL logical backup **on the server**:
+Example PostgreSQL logical backup on the server:
 
 ```bash
-cd /opt/milk-schedule
 umask 077
 mkdir -p backups
 ./deploy/bin/compose.sh exec -T db sh -c \
@@ -291,19 +254,9 @@ mkdir -p backups
   > "backups/postgres-$(date +%Y%m%d-%H%M%S).dump"
 ```
 
-This covers PostgreSQL only. Back up MinIO and other state separately. Use consistent snapshots or stop writers for filesystem-level volume backups. Store backups separately from the installation and verify restoration.
+This backs up PostgreSQL only. Back up other state separately and verify restoration. To stop services while preserving data, use `./deploy/bin/compose.sh stop`.
 
-Stop services without removing data:
-
-```bash
-./deploy/bin/compose.sh stop
-```
-
-For an application rollback, restore the earlier matching bundle, select its tag in `.env`, pull and recreate compatible services, then reapply the firewall. An image rollback does not undo database migrations; confirm schema compatibility or use a planned database restore. Never use `down -v` or volume pruning during routine updates.
-
-## 10. Diagnostics and optional monitoring
-
-Run diagnostics **on the server**:
+Useful server diagnostics:
 
 ```bash
 ./deploy/bin/compose.sh ps -a
@@ -314,20 +267,17 @@ Run diagnostics **on the server**:
 ./deploy/bin/compose.sh exec -T nginx nginx -t
 ```
 
-| Symptom | What to check |
+| Problem | Check |
 | --- | --- |
-| Pull denied / tag missing | All seven images were pushed; namespace, tag and Docker Hub access are correct. |
-| `exec format error` | Image architecture matches the server. |
-| Automatic address detection fails | Host IPv4/default route; use `ADMIN_INTERFACE` for unusual routing. |
-| `/admin/` or `/ops/` returns 403 | Access from the detected LAN/VPN; router forwarding does not bypass the allowlist. |
-| `/ops/` returns 401 | Its separate credentials; recreate the console after changing them. |
-| Missing mounted configuration | Complete matching archive was extracted and preflight ran. |
-| Website works, external file download fails | MinIO's private port-9000 endpoint is not reachable through website port forwarding alone. |
-| Environment edit has no effect | Recreate services and check shell overrides. |
+| Image missing / pull denied | All seven images were published with the chosen tag; registry access is correct. |
+| `exec format error` | Images match the server architecture. |
+| Missing runtime mount | The compatible main repository revision was cloned, including `deploy/` and `schemas/`, and preflight ran. |
+| IP detection fails | Host private IPv4/default route; optional `ADMIN_INTERFACE` for unusual routing. |
+| `/admin/` or `/ops/` returns 403 | Client is on the detected LAN or configured administrator network. |
+| `/ops/` returns 401 | Its separate credentials and container recreation after changes. |
+| Env edit has no effect | Recreate containers; check shell overrides. |
 | Firewall helper fails | Docker iptables backend and `DOCKER-USER` chain. |
 
-For monitoring, first build/push `table-fluentd` on the development PC for the same tag, then enable the server overlay as described in [observability/README.md](observability/README.md). Its host ports bind to loopback; access Grafana through an SSH tunnel.
+For optional monitoring, see [observability/README.md](observability/README.md). Build/push Fluentd on the development PC for the chosen tag before enabling the server overlay.
 
-The deployment scripts do not configure DNS, router rules, cloud security groups, TLS or automatic firewall restoration after host restarts. Reapply `install-project-firewall.py` after a host/firewall restart or container replacement.
-
-References: [Compose image builds](https://docs.docker.com/reference/compose-file/build/), [environment interpolation](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/), [environment precedence](https://docs.docker.com/compose/how-tos/environment-variables/envvars-precedence/).
+Deployment does not configure router rules, DNS, TLS certificates or automatic firewall restoration after host restarts. Reapply `install-project-firewall.py` after host/firewall restarts or container replacement.

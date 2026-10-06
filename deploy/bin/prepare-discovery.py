@@ -16,13 +16,17 @@ os.chmod(OUT, 0o700)
 addresses = json.loads(subprocess.check_output(["ip", "-j", "-4", "address", "show"], text=True))
 routes = json.loads(subprocess.check_output(["ip", "-j", "-4", "route", "show"], text=True))
 settings = {}
-for line in (ROOT / ".env").read_text().splitlines():
-    key, separator, value = line.partition("=")
-    if separator and key.strip() in ("ADMIN_INTERFACE", "ADMIN_LAN_CIDRS", "LAN_BIND_IP"):
-        parts = shlex.split(value, comments=True)
-        if len(parts) > 1:
-            raise SystemExit(f"Invalid {key.strip()} in .env; use one value without spaces.")
-        settings[key.strip()] = parts[0] if parts else ""
+for filename in (".env", ".env.local"):
+    path = ROOT / filename
+    if not path.exists():
+        continue
+    for line in path.read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() in ("ADMIN_INTERFACE", "ADMIN_LAN_CIDRS", "LAN_BIND_IP"):
+            parts = shlex.split(value, comments=True)
+            if len(parts) > 1:
+                raise SystemExit(f"Invalid {key.strip()} in {filename}; use one value without spaces.")
+            settings[key.strip()] = parts[0] if parts else ""
 interface = os.environ.get("ADMIN_INTERFACE", settings.get("ADMIN_INTERFACE", ""))
 explicit = os.environ.get("ADMIN_LAN_CIDRS", settings.get("ADMIN_LAN_CIDRS", ""))
 bind_ip = os.environ.get("LAN_BIND_IP", settings.get("LAN_BIND_IP", ""))
@@ -56,7 +60,7 @@ if len(candidates) > 1 and not interface and not bind_ip:
     if len(preferred) == 1:
         candidates = preferred
 if len(candidates) != 1:
-    raise SystemExit("Could not identify a unique LAN interface automatically. Check the host's IPv4/default route or set ADMIN_INTERFACE in .env; no policy was expanded.")
+    raise SystemExit("Could not identify a unique LAN interface automatically. Check the host's IPv4/default route or set ADMIN_INTERFACE in .env.local; no policy was expanded.")
 name, selected = candidates[0]
 if not explicit and not any(selected.ip in network for network in private):
     raise SystemExit("A public bind address requires explicit ADMIN_LAN_CIDRS for trusted client addresses.")

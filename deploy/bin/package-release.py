@@ -63,7 +63,7 @@ with tarfile.open(destination, "w:gz") as archive:
         path = ROOT / name
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"Missing or non-regular release file: {name}")
-        if name == ".env.compose.example":
+        if name in (".env.compose.example", ".env.example"):
             content = path.read_text()
             for key, value in (("IMAGE_TAG", args.tag), ("IMAGE_NAMESPACE", args.namespace)):
                 content = re.sub(rf"^{key}=.*$", lambda _: f"{key}={value}", content, flags=re.M)

@@ -1,6 +1,6 @@
 # Hanami operations console
 
-Follow the [deployment guide](../DEPLOYMENT_GUIDE.md) first. Nginx serves `/ops/` only to the administrator client networks configured in `.env` through `ADMIN_LAN_CIDRS`.
+Follow the [deployment guide](../DEPLOYMENT_GUIDE.md) first. Nginx serves `/ops/` only to the administrator client networks configured in `.env.local` through `ADMIN_LAN_CIDRS`.
 
 `deploy/bin/init-env.py` creates the private `deploy/ops/.env.local` once. Edit `OPS_CONSOLE_USERNAME` and `OPS_CONSOLE_PASSWORD` there. These credentials are separate from the application administrator and PostgreSQL account. The console runs the same release image as the API.
 
