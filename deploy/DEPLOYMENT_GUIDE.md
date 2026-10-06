@@ -115,20 +115,21 @@ Open the file in an editor, for example `nano .env`.
 | `IMAGE_NAMESPACE` | Docker Hub account/registry prefix, normally `xjensu`. |
 | `IMAGE_TAG` | Published release tag; the bundle's template contains its tag. |
 | `ADMIN_INTERFACE` | Optional server interface, e.g. `enp1s0` or `wg0`. |
-| `LAN_BIND_IP` | An IPv4 address actually assigned to the server. MinIO binds to it. Blank enables private LAN detection. |
+| `LAN_BIND_IP` | Advanced optional override, omitted from the template. The host address is normally detected automatically; MinIO binds to that address. |
 | `ADMIN_LAN_CIDRS` | Trusted administrator client source networks, comma-separated. Blank uses the detected private LAN subnet. |
 | `HTTP_BIND_IP`, `HTTP_PORT` | Website binding; defaults to `0.0.0.0:80`. |
 | `WEB_REPLICAS` | Rails container count, default `2`. |
 | `NOTICE_EXPORT_PUBLIC_ENDPOINT` | Optional object-store address reachable by administrators' browsers; otherwise `http://LAN_BIND_IP:9000`. |
 | `POSTGRES_IMAGE`, `REDIS_IMAGE`, `MINIO_IMAGE`, `CONSUL_IMAGE` | Infrastructure versions, independent of your application tag. |
 
-Example for a private network:
+For a host behind a router forwarding port 80, leave network overrides empty:
 
 ```dotenv
-ADMIN_INTERFACE=enp1s0
-LAN_BIND_IP=192.168.10.20
-ADMIN_LAN_CIDRS=192.168.10.0/24
+ADMIN_INTERFACE=
+ADMIN_LAN_CIDRS=
 ```
+
+The website already listens on all host interfaces at port 80. Your router can forward traffic to it without an IP entry in `.env`. Preflight detects the private address and subnet for storage and administrator access; when multiple private interfaces exist, it prefers the normal outbound route. Detection runs again on deployment, so an address change does not require editing `.env`. Router port forwarding must still target the current host address.
 
 For a cloud server, prefer a private/VPN interface for administration. An explicit public `LAN_BIND_IP` is also supported, but you must set `ADMIN_LAN_CIDRS` to the trusted client source IPs/subnets. The client CIDRs need not contain the server address. Never set `0.0.0.0/0`. Do not copy the example addresses literally.
 
@@ -259,7 +260,7 @@ Review logs locally before sharing; never publish complete environment files, to
 | Image not found / pull denied | Tag exists for all seven images, correct namespace, Docker Hub permissions/login. |
 | `exec format error` | Image architecture matches the server. |
 | Missing bind-mount file | Extract the complete matching deployment bundle and run preflight. |
-| Address detection fails | Set the assigned `LAN_BIND_IP` and correct interface/CIDRs in `.env`. |
+| Address detection fails | Check the host IPv4/default route; for unusual routing, select `ADMIN_INTERFACE`. A manual host IP is normally unnecessary. |
 | `/admin/` or `/ops/` returns 403 | Client source address belongs to the configured allowlist; no proxy is hiding it. |
 | `/ops/` returns 401 | Its separate username/password; recreate the console after changes. |
 | MinIO access denied | Root credentials and application credentials agree; retain the old values for existing data. |

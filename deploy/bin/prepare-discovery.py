@@ -40,8 +40,23 @@ for item in addresses:
             continue
         if address.get("scope") == "global" and (bind_ip or any(value in network for network in private)):
             candidates.append((name, ipaddress.ip_interface(f"{value}/{address['prefixlen']}")))
+if len(candidates) > 1 and not interface and not bind_ip:
+    # A routing lookup sends no traffic and selects the normal outbound address.
+    try:
+        outbound = json.loads(subprocess.check_output(
+            ["ip", "-j", "-4", "route", "get", "1.1.1.1"], text=True
+        ))
+    except subprocess.CalledProcessError:
+        outbound = []
+    preferred = [candidate for candidate in candidates if any(
+        route.get("dev") == candidate[0]
+        and route.get("prefsrc") == str(candidate[1].ip)
+        for route in outbound
+    )]
+    if len(preferred) == 1:
+        candidates = preferred
 if len(candidates) != 1:
-    raise SystemExit("Address detection is ambiguous or unavailable. Set ADMIN_INTERFACE and/or LAN_BIND_IP in .env; no policy was expanded.")
+    raise SystemExit("Could not identify a unique LAN interface automatically. Check the host's IPv4/default route or set ADMIN_INTERFACE in .env; no policy was expanded.")
 name, selected = candidates[0]
 if not explicit and not any(selected.ip in network for network in private):
     raise SystemExit("A public bind address requires explicit ADMIN_LAN_CIDRS for trusted client addresses.")
