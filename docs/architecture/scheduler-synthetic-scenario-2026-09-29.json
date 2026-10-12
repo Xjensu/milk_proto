@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "purpose": "Isolated prototype data for scheduling, preference compilation, static analysis, and sandbox review; not a database seed",
+  "semester": { "key": "demo-2026-autumn", "label": "Autumn 2026", "weeks": 16 },
+  "faculty": { "key": "demo-engineering", "label": "Demo Engineering Faculty" },
+  "time_slots": [
+    { "key": "p1", "number": 1, "start": "08:30", "end": "09:55" },
+    { "key": "p2", "number": 2, "start": "10:10", "end": "11:35" },
+    { "key": "p3", "number": 3, "start": "11:45", "end": "13:10" },
+    { "key": "p4", "number": 4, "start": "14:00", "end": "15:25" }
+  ],
+  "groups": [
+    { "key": "g1", "label": "ДЕМО-11", "students": 24 },
+    { "key": "g2", "label": "ДЕМО-12", "students": 22 }
+  ],
+  "teachers": [
+    { "key": "t1", "label": "Преподаватель А" },
+    { "key": "t2", "label": "Преподаватель Б" },
+    { "key": "t3", "label": "Преподаватель В" }
+  ],
+  "rooms": [
+    { "key": "r1", "label": "Аудитория 101", "capacity": 30 },
+    { "key": "r2", "label": "Аудитория 202", "capacity": 20 },
+    { "key": "r3", "label": "Лаборатория 303", "capacity": 26 }
+  ],
+  "requirements": [
+    { "key": "l1", "group": "g1", "subject": "Материаловедение", "activity": "laboratory", "teacher": "t1", "eligible_rooms": ["r3"], "weekly_meetings": 2, "week_type": "both" },
+    { "key": "l2", "group": "g2", "subject": "Математика", "activity": "lecture", "teacher": "t2", "eligible_rooms": ["r1", "r2"], "weekly_meetings": 1, "week_type": "both" },
+    { "key": "l3", "group": "g1", "subject": "Физика", "activity": "lecture", "teacher": "t2", "eligible_rooms": ["r1"], "weekly_meetings": 1, "week_type": "both" },
+    { "key": "l4", "group": "g2", "subject": "Черчение", "activity": "practice", "teacher": "t3", "eligible_rooms": ["r1", "r3"], "weekly_meetings": 1, "week_type": "both" }
+  ],
+  "profile_constraints": [
+    { "key": "c1", "teacher": "t1", "type": "unavailable_slot", "weekday": "monday", "slots": ["p1", "p2"], "strength": "hard" }
+  ],
+  "teacher_wishes": [
+    { "key": "w1", "teacher": "t1", "text": "Хочу две пары подряд, потому что печка включена.", "expected_type": "consecutive_lessons", "strength": "soft" },
+    { "key": "w2", "teacher": "t1", "text": "Могу вести материаловедение в понедельник на первой паре.", "expected_review": "contradicts profile constraint c1" },
+    { "key": "w3", "teacher": "t3", "text": "Хочу аудиторию с программой Компас-3D.", "expected_review": "UNSUPPORTED_ROOM_CAPABILITY", "expected_action": "review-only; do not compile until capability catalog exists" },
+    { "key": "w4", "teacher": "t2", "text": "Хочу две пары подряд, чтобы не разогревать печку дважды.", "expected_type": "consecutive_lessons", "expected_scope": "teacher" },
+    { "key": "w5", "teacher": "t1", "text": "Я бы хотела избегать пар подряд.", "expected_review": "consecutive lesson avoidance is not supported; never compile as a positive preference" },
+    { "key": "w6", "teacher": "t1", "text": "По средам мне удобно на второй паре.", "expected_type": "available_slot", "weekday": "wednesday", "slots": ["p2"] },
+    { "key": "w7", "teacher": "t1", "text": "Не могу по понедельникам на первой и второй паре.", "expected_type": "unavailable_slot", "weekday": "monday", "slots": ["p1", "p2"] },
+    { "key": "w8", "teacher": "t1", "text": "В пятницу свободен на четвертой паре.", "expected_type": "available_slot", "weekday": "friday", "slots": ["p4"] },
+    { "key": "w9", "teacher": "t1", "text": "Хочу в понедельник на первой и второй паре.", "expected_review": "conflicts with profile availability" },
+    { "key": "w10", "teacher": "t1", "text": "Не хочу в понедельник на первой и второй паре.", "expected_type": "unavailable_slot", "weekday": "monday", "slots": ["p1", "p2"] }
+  ],
+  "approved_preferences": [
+    { "schema_version": 1, "type": "consecutive_lessons", "scope": { "teacher": "t1", "requirement": "l1" }, "strength": "soft", "status": "approved", "source": "w1" }
+  ],
+  "published_lessons": [
+    { "key": "e1", "requirement": "l3", "weekday": "tuesday", "slot": "p2", "room": "r1", "week_type": "both" }
+  ],
+  "sandbox_proposal": [
+    { "key": "s1", "requirement": "l1", "weekday": "monday", "slot": "p1", "room": "r3", "week_type": "both" },
+    { "key": "s2", "requirement": "l1", "weekday": "monday", "slot": "p2", "room": "r3", "week_type": "both" },
+    { "key": "s3", "requirement": "l2", "weekday": "tuesday", "slot": "p2", "room": "r1", "week_type": "both" },
+    { "key": "s4", "requirement": "l4", "weekday": "wednesday", "slot": "p3", "room": "r2", "week_type": "both" }
+  ],
+  "expected_findings": [
+    { "code": "TEACHER_UNAVAILABLE", "proposal_keys": ["s1", "s2"], "severity": "error", "source": "c1" },
+    { "code": "TEACHER_CLASH", "proposal_keys": ["s3"], "severity": "error", "source": "e1" },
+    { "code": "ROOM_CLASH", "proposal_keys": ["s3"], "severity": "error", "source": "e1" },
+    { "code": "ROOM_CAPACITY", "proposal_keys": ["s4"], "severity": "error", "source": "g2/r2" },
+    { "code": "ROOM_NOT_ASSIGNED", "proposal_keys": ["s4"], "severity": "error", "source": "l4" },
+    { "code": "PROFILE_TEXT_CONTRADICTION", "proposal_keys": [], "severity": "review", "source": "w2/c1" }
+  ]
+}

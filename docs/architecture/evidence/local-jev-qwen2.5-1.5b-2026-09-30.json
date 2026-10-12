@@ -1,0 +1,1919 @@
+{
+  "source_revision": "64a0b31ff343dca32142496cf9edca5a0174a18d",
+  "model_revision": "989aa7980e4cf806f80c7fef2b1adb7bc71aa306",
+  "torch": "2.14.0+cu130",
+  "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "head_matches": 10,
+  "head_total": 20,
+  "joint_matches": 3,
+  "joint_total": 10,
+  "cases": [
+    {
+      "key": "w1",
+      "expected": [
+        "want_consecutive",
+        "propose"
+      ],
+      "predicted": [
+        "want_consecutive",
+        "propose"
+      ],
+      "matches": [
+        true,
+        true
+      ],
+      "seconds": 7.186,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "want_consecutive",
+            "confidence": 0.3939,
+            "probabilities": {
+              "available_time": 0.0817,
+              "unavailable_time": 0.2667,
+              "want_consecutive": 0.4949,
+              "avoid_consecutive": 0.0901,
+              "room_capability": 0.0309,
+              "other": 0.0357
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.3522,
+            "probabilities": {
+              "propose": 0.5141,
+              "review_profile": 0.2322,
+              "review_ambiguous": 0.134,
+              "review_unsupported": 0.1197
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1087,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w2",
+      "expected": [
+        "available_time",
+        "review_profile"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        false,
+        false
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.6397,
+            "probabilities": {
+              "available_time": 0.1133,
+              "unavailable_time": 0.6997,
+              "want_consecutive": 0.0721,
+              "avoid_consecutive": 0.0599,
+              "room_capability": 0.0312,
+              "other": 0.0238
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4609,
+            "probabilities": {
+              "propose": 0.5957,
+              "review_profile": 0.2125,
+              "review_ambiguous": 0.1013,
+              "review_unsupported": 0.0905
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1089,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w3",
+      "expected": [
+        "room_capability",
+        "review_unsupported"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        false,
+        false
+      ],
+      "seconds": 0.3,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.5341,
+            "probabilities": {
+              "available_time": 0.1587,
+              "unavailable_time": 0.6118,
+              "want_consecutive": 0.0934,
+              "avoid_consecutive": 0.0682,
+              "room_capability": 0.0362,
+              "other": 0.0317
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4107,
+            "probabilities": {
+              "propose": 0.558,
+              "review_profile": 0.1896,
+              "review_ambiguous": 0.1293,
+              "review_unsupported": 0.1231
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 995,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w4",
+      "expected": [
+        "want_consecutive",
+        "review_ambiguous"
+      ],
+      "predicted": [
+        "want_consecutive",
+        "propose"
+      ],
+      "matches": [
+        true,
+        false
+      ],
+      "seconds": 0.297,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "want_consecutive",
+            "confidence": 0.5136,
+            "probabilities": {
+              "available_time": 0.0717,
+              "unavailable_time": 0.1351,
+              "want_consecutive": 0.5946,
+              "avoid_consecutive": 0.1231,
+              "room_capability": 0.0311,
+              "other": 0.0443
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.3065,
+            "probabilities": {
+              "propose": 0.4799,
+              "review_profile": 0.1834,
+              "review_ambiguous": 0.1712,
+              "review_unsupported": 0.1655
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1123,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w5",
+      "expected": [
+        "avoid_consecutive",
+        "review_unsupported"
+      ],
+      "predicted": [
+        "avoid_consecutive",
+        "propose"
+      ],
+      "matches": [
+        true,
+        false
+      ],
+      "seconds": 0.295,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "avoid_consecutive",
+            "confidence": 0.3009,
+            "probabilities": {
+              "available_time": 0.0468,
+              "unavailable_time": 0.299,
+              "want_consecutive": 0.1285,
+              "avoid_consecutive": 0.4174,
+              "room_capability": 0.0348,
+              "other": 0.0735
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.3552,
+            "probabilities": {
+              "propose": 0.5164,
+              "review_profile": 0.2043,
+              "review_ambiguous": 0.1386,
+              "review_unsupported": 0.1407
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1075,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w6",
+      "expected": [
+        "available_time",
+        "propose"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        false,
+        true
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.6355,
+            "probabilities": {
+              "available_time": 0.1017,
+              "unavailable_time": 0.6963,
+              "want_consecutive": 0.078,
+              "avoid_consecutive": 0.0644,
+              "room_capability": 0.0329,
+              "other": 0.0266
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4791,
+            "probabilities": {
+              "propose": 0.6093,
+              "review_profile": 0.1867,
+              "review_ambiguous": 0.1067,
+              "review_unsupported": 0.0972
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1075,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w7",
+      "expected": [
+        "unavailable_time",
+        "propose"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        true,
+        true
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.7455,
+            "probabilities": {
+              "available_time": 0.0551,
+              "unavailable_time": 0.7879,
+              "want_consecutive": 0.0585,
+              "avoid_consecutive": 0.0507,
+              "room_capability": 0.0258,
+              "other": 0.022
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4156,
+            "probabilities": {
+              "propose": 0.5617,
+              "review_profile": 0.2415,
+              "review_ambiguous": 0.1054,
+              "review_unsupported": 0.0914
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1083,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w8",
+      "expected": [
+        "available_time",
+        "propose"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        false,
+        true
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.6522,
+            "probabilities": {
+              "available_time": 0.1027,
+              "unavailable_time": 0.7102,
+              "want_consecutive": 0.0732,
+              "avoid_consecutive": 0.0596,
+              "room_capability": 0.0301,
+              "other": 0.0242
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4751,
+            "probabilities": {
+              "propose": 0.6063,
+              "review_profile": 0.1867,
+              "review_ambiguous": 0.1078,
+              "review_unsupported": 0.0991
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1081,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w9",
+      "expected": [
+        "available_time",
+        "review_profile"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        false,
+        false
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.636,
+            "probabilities": {
+              "available_time": 0.1028,
+              "unavailable_time": 0.6967,
+              "want_consecutive": 0.0788,
+              "avoid_consecutive": 0.0623,
+              "room_capability": 0.0328,
+              "other": 0.0267
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.502,
+            "probabilities": {
+              "propose": 0.6265,
+              "review_profile": 0.1837,
+              "review_ambiguous": 0.1009,
+              "review_unsupported": 0.0889
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1083,
+          "output_tokens": 2
+        }
+      }
+    },
+    {
+      "key": "w10",
+      "expected": [
+        "unavailable_time",
+        "propose"
+      ],
+      "predicted": [
+        "unavailable_time",
+        "propose"
+      ],
+      "matches": [
+        true,
+        true
+      ],
+      "seconds": 0.296,
+      "result": {
+        "model": "llm-qwen2.5-1.5b",
+        "answers": {
+          "intent": {
+            "type": "choice",
+            "choice": "unavailable_time",
+            "confidence": 0.7279,
+            "probabilities": {
+              "available_time": 0.0582,
+              "unavailable_time": 0.7733,
+              "want_consecutive": 0.0609,
+              "avoid_consecutive": 0.0549,
+              "room_capability": 0.0282,
+              "other": 0.0246
+            }
+          },
+          "disposition": {
+            "type": "choice",
+            "choice": "propose",
+            "confidence": 0.4577,
+            "probabilities": {
+              "propose": 0.5933,
+              "review_profile": 0.2066,
+              "review_ambiguous": 0.1055,
+              "review_unsupported": 0.0947
+            }
+          }
+        },
+        "truncated": false,
+        "usage": {
+          "input_tokens": 1081,
+          "output_tokens": 2
+        }
+      }
+    }
+  ],
+  "checkpoint_sha256": "dd924a11b4c220f385b51ffa522daea7c9f3d850e31b162bb5661df483c6d3ee",
+  "checkpoint_bytes": 3087467144,
+  "inputs": {
+    "questions": {
+      "intent": {
+        "type": "choice",
+        "instructions": "Classify only the meaning of the Russian teacher wish. Interpret negation literally. Ignore whether the wish is allowed by the profile. Answer this question independently of all other questions.",
+        "criteria": {
+          "available_time": "Teacher wants or is available to teach at a named day and period.",
+          "unavailable_time": "Teacher cannot or does not want to teach at a named day and period.",
+          "want_consecutive": "Teacher wants two consecutive lessons.",
+          "avoid_consecutive": "Teacher wants to avoid consecutive lessons.",
+          "room_capability": "Teacher requests specific room software or equipment.",
+          "other": "No listed intent or ambiguous intent."
+        }
+      },
+      "disposition": {
+        "type": "choice",
+        "instructions": "Decide disposition using the supplied policy, the wish and authorized context. Do not invent assignments or constraints. Answer independently of the intent question.",
+        "criteria": {
+          "propose": "A supported soft wish grounded in the supplied domain; no contradiction of hard profile constraints.",
+          "review_profile": "Requested teaching time contradicts hard profile unavailability.",
+          "review_ambiguous": "Consecutive wish cannot identify one assigned requirement or its meaning is ambiguous.",
+          "review_unsupported": "Room capability, avoiding consecutive lessons, unsupported count or missing catalog period requires review."
+        }
+      }
+    },
+    "cases": [
+      {
+        "key": "w1",
+        "state": {
+          "wish": "Хочу две пары подряд, потому что печка включена.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w2",
+        "state": {
+          "wish": "Могу вести материаловедение в понедельник на первой паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w3",
+        "state": {
+          "wish": "Хочу аудиторию с программой Компас-3D.",
+          "teacher": "t3",
+          "requirements": [
+            {
+              "key": "l4",
+              "group": "g2",
+              "subject": "Черчение",
+              "activity": "practice",
+              "teacher": "t3",
+              "eligible_rooms": [
+                "r1",
+                "r3"
+              ],
+              "weekly_meetings": 1,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w4",
+        "state": {
+          "wish": "Хочу две пары подряд, чтобы не разогревать печку дважды.",
+          "teacher": "t2",
+          "requirements": [
+            {
+              "key": "l2",
+              "group": "g2",
+              "subject": "Математика",
+              "activity": "lecture",
+              "teacher": "t2",
+              "eligible_rooms": [
+                "r1",
+                "r2"
+              ],
+              "weekly_meetings": 1,
+              "week_type": "both"
+            },
+            {
+              "key": "l3",
+              "group": "g1",
+              "subject": "Физика",
+              "activity": "lecture",
+              "teacher": "t2",
+              "eligible_rooms": [
+                "r1"
+              ],
+              "weekly_meetings": 1,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w5",
+        "state": {
+          "wish": "Я бы хотела избегать пар подряд.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w6",
+        "state": {
+          "wish": "По средам мне удобно на второй паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w7",
+        "state": {
+          "wish": "Не могу по понедельникам на первой и второй паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w8",
+        "state": {
+          "wish": "В пятницу свободен на четвертой паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w9",
+        "state": {
+          "wish": "Хочу в понедельник на первой и второй паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      },
+      {
+        "key": "w10",
+        "state": {
+          "wish": "Не хочу в понедельник на первой и второй паре.",
+          "teacher": "t1",
+          "requirements": [
+            {
+              "key": "l1",
+              "group": "g1",
+              "subject": "Материаловедение",
+              "activity": "laboratory",
+              "teacher": "t1",
+              "eligible_rooms": [
+                "r3"
+              ],
+              "weekly_meetings": 2,
+              "week_type": "both"
+            }
+          ],
+          "profile_constraints": [
+            {
+              "key": "c1",
+              "teacher": "t1",
+              "type": "unavailable_slot",
+              "weekday": "monday",
+              "slots": [
+                "p1",
+                "p2"
+              ],
+              "strength": "hard"
+            }
+          ],
+          "available_slots": [
+            {
+              "key": "p1",
+              "number": 1,
+              "start": "08:30",
+              "end": "09:55"
+            },
+            {
+              "key": "p2",
+              "number": 2,
+              "start": "10:10",
+              "end": "11:35"
+            },
+            {
+              "key": "p3",
+              "number": 3,
+              "start": "11:45",
+              "end": "13:10"
+            },
+            {
+              "key": "p4",
+              "number": 4,
+              "start": "14:00",
+              "end": "15:25"
+            }
+          ],
+          "policy": {
+            "hard_profile_unavailability": "authoritative; opposing positive time wishes require review",
+            "text_wishes": "soft after administrator approval; negative time wishes remain supported even when profile permits the time",
+            "consecutive": "exactly two lessons, unique assigned requirement or unique laboratory requirement from oven context",
+            "room_capabilities": "unsupported until catalog exists; never propose",
+            "avoid_consecutive": "unsupported; never turn into wanting consecutive lessons"
+          }
+        }
+      }
+    ]
+  },
+  "sensitivity": [
+    {
+      "variant": "intent_wish_only",
+      "matches": 7,
+      "total": 10,
+      "cases": [
+        {
+          "key": "w1",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "want_consecutive",
+                "confidence": 0.8443,
+                "probabilities": {
+                  "available_time": 0.0218,
+                  "unavailable_time": 0.0432,
+                  "want_consecutive": 0.8703,
+                  "avoid_consecutive": 0.032,
+                  "room_capability": 0.0158,
+                  "other": 0.0169
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 198,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w2",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "available_time",
+                "confidence": 0.552,
+                "probabilities": {
+                  "available_time": 0.6267,
+                  "unavailable_time": 0.29,
+                  "want_consecutive": 0.0328,
+                  "avoid_consecutive": 0.0261,
+                  "room_capability": 0.0132,
+                  "other": 0.0112
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 199,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w3",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.6222,
+                "probabilities": {
+                  "available_time": 0.1384,
+                  "unavailable_time": 0.6851,
+                  "want_consecutive": 0.064,
+                  "avoid_consecutive": 0.0539,
+                  "room_capability": 0.0296,
+                  "other": 0.0289
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 198,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": false
+          }
+        },
+        {
+          "key": "w4",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "want_consecutive",
+                "confidence": 0.8208,
+                "probabilities": {
+                  "available_time": 0.0219,
+                  "unavailable_time": 0.0459,
+                  "want_consecutive": 0.8507,
+                  "avoid_consecutive": 0.042,
+                  "room_capability": 0.0174,
+                  "other": 0.0222
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 202,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w5",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "avoid_consecutive",
+                "confidence": 0.668,
+                "probabilities": {
+                  "available_time": 0.0217,
+                  "unavailable_time": 0.1206,
+                  "want_consecutive": 0.0783,
+                  "avoid_consecutive": 0.7233,
+                  "room_capability": 0.024,
+                  "other": 0.0321
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 192,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w6",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.4296,
+                "probabilities": {
+                  "available_time": 0.3649,
+                  "unavailable_time": 0.5247,
+                  "want_consecutive": 0.0488,
+                  "avoid_consecutive": 0.0343,
+                  "room_capability": 0.0146,
+                  "other": 0.0128
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 192,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": false
+          }
+        },
+        {
+          "key": "w7",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.8431,
+                "probabilities": {
+                  "available_time": 0.0334,
+                  "unavailable_time": 0.8693,
+                  "want_consecutive": 0.0349,
+                  "avoid_consecutive": 0.0348,
+                  "room_capability": 0.014,
+                  "other": 0.0137
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 196,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w8",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "available_time",
+                "confidence": 0.7252,
+                "probabilities": {
+                  "available_time": 0.771,
+                  "unavailable_time": 0.1468,
+                  "want_consecutive": 0.034,
+                  "avoid_consecutive": 0.0251,
+                  "room_capability": 0.0125,
+                  "other": 0.0106
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 195,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        },
+        {
+          "key": "w9",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.5202,
+                "probabilities": {
+                  "available_time": 0.2339,
+                  "unavailable_time": 0.6002,
+                  "want_consecutive": 0.0855,
+                  "avoid_consecutive": 0.043,
+                  "room_capability": 0.0182,
+                  "other": 0.0191
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 196,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": false
+          }
+        },
+        {
+          "key": "w10",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.7533,
+                "probabilities": {
+                  "available_time": 0.0363,
+                  "unavailable_time": 0.7944,
+                  "want_consecutive": 0.0564,
+                  "avoid_consecutive": 0.0717,
+                  "room_capability": 0.0194,
+                  "other": 0.0218
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 195,
+              "output_tokens": 1
+            }
+          },
+          "matches": {
+            "intent": true
+          }
+        }
+      ]
+    },
+    {
+      "variant": "rotated_choice_order",
+      "matches": 8,
+      "total": 20,
+      "cases": [
+        {
+          "key": "w1",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "want_consecutive",
+                "confidence": 0.5719,
+                "probabilities": {
+                  "unavailable_time": 0.1426,
+                  "want_consecutive": 0.6432,
+                  "avoid_consecutive": 0.1052,
+                  "room_capability": 0.0473,
+                  "other": 0.0322,
+                  "available_time": 0.0295
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.1656,
+                "probabilities": {
+                  "review_profile": 0.3151,
+                  "review_ambiguous": 0.106,
+                  "review_unsupported": 0.3742,
+                  "propose": 0.2046
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1087,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": true,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w2",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.485,
+                "probabilities": {
+                  "unavailable_time": 0.5709,
+                  "want_consecutive": 0.1424,
+                  "avoid_consecutive": 0.076,
+                  "room_capability": 0.0428,
+                  "other": 0.1229,
+                  "available_time": 0.0452
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.1481,
+                "probabilities": {
+                  "review_profile": 0.2967,
+                  "review_ambiguous": 0.1008,
+                  "review_unsupported": 0.3611,
+                  "propose": 0.2414
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1089,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": false,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w3",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.288,
+                "probabilities": {
+                  "unavailable_time": 0.4067,
+                  "want_consecutive": 0.1957,
+                  "avoid_consecutive": 0.098,
+                  "room_capability": 0.05,
+                  "other": 0.1616,
+                  "available_time": 0.088
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.1974,
+                "probabilities": {
+                  "review_profile": 0.2022,
+                  "review_ambiguous": 0.0959,
+                  "review_unsupported": 0.398,
+                  "propose": 0.3039
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 995,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": false,
+            "disposition": true
+          }
+        },
+        {
+          "key": "w4",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "want_consecutive",
+                "confidence": 0.5884,
+                "probabilities": {
+                  "unavailable_time": 0.1069,
+                  "want_consecutive": 0.657,
+                  "avoid_consecutive": 0.1269,
+                  "room_capability": 0.049,
+                  "other": 0.0304,
+                  "available_time": 0.0297
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.2517,
+                "probabilities": {
+                  "review_profile": 0.185,
+                  "review_ambiguous": 0.0982,
+                  "review_unsupported": 0.4388,
+                  "propose": 0.278
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1123,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": true,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w5",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "avoid_consecutive",
+                "confidence": 0.6302,
+                "probabilities": {
+                  "unavailable_time": 0.1051,
+                  "want_consecutive": 0.0907,
+                  "avoid_consecutive": 0.6918,
+                  "room_capability": 0.0447,
+                  "other": 0.047,
+                  "available_time": 0.0206
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.189,
+                "probabilities": {
+                  "review_profile": 0.2698,
+                  "review_ambiguous": 0.1067,
+                  "review_unsupported": 0.3918,
+                  "propose": 0.2317
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1075,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": true,
+            "disposition": true
+          }
+        },
+        {
+          "key": "w6",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.4114,
+                "probabilities": {
+                  "unavailable_time": 0.5095,
+                  "want_consecutive": 0.1656,
+                  "avoid_consecutive": 0.0906,
+                  "room_capability": 0.0453,
+                  "other": 0.1328,
+                  "available_time": 0.0563
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.1145,
+                "probabilities": {
+                  "review_profile": 0.2774,
+                  "review_ambiguous": 0.1024,
+                  "review_unsupported": 0.3359,
+                  "propose": 0.2843
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1075,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": false,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w7",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.6731,
+                "probabilities": {
+                  "unavailable_time": 0.7276,
+                  "want_consecutive": 0.1052,
+                  "avoid_consecutive": 0.0626,
+                  "room_capability": 0.0372,
+                  "other": 0.0455,
+                  "available_time": 0.022
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_profile",
+                "confidence": 0.2027,
+                "probabilities": {
+                  "review_profile": 0.402,
+                  "review_ambiguous": 0.1008,
+                  "review_unsupported": 0.2838,
+                  "propose": 0.2135
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1083,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": true,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w8",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.437,
+                "probabilities": {
+                  "unavailable_time": 0.5308,
+                  "want_consecutive": 0.1489,
+                  "avoid_consecutive": 0.0814,
+                  "room_capability": 0.0452,
+                  "other": 0.1397,
+                  "available_time": 0.0539
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_unsupported",
+                "confidence": 0.1176,
+                "probabilities": {
+                  "review_profile": 0.2672,
+                  "review_ambiguous": 0.1041,
+                  "review_unsupported": 0.3382,
+                  "propose": 0.2905
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1081,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": false,
+            "disposition": false
+          }
+        },
+        {
+          "key": "w9",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.4234,
+                "probabilities": {
+                  "unavailable_time": 0.5195,
+                  "want_consecutive": 0.1748,
+                  "avoid_consecutive": 0.0879,
+                  "room_capability": 0.0451,
+                  "other": 0.1215,
+                  "available_time": 0.0512
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_profile",
+                "confidence": 0.0868,
+                "probabilities": {
+                  "review_profile": 0.3151,
+                  "review_ambiguous": 0.106,
+                  "review_unsupported": 0.3135,
+                  "propose": 0.2654
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1083,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": false,
+            "disposition": true
+          }
+        },
+        {
+          "key": "w10",
+          "result": {
+            "model": "llm-qwen2.5-1.5b",
+            "answers": {
+              "intent": {
+                "type": "choice",
+                "choice": "unavailable_time",
+                "confidence": 0.6729,
+                "probabilities": {
+                  "unavailable_time": 0.7274,
+                  "want_consecutive": 0.1032,
+                  "avoid_consecutive": 0.0619,
+                  "room_capability": 0.0374,
+                  "other": 0.0475,
+                  "available_time": 0.0226
+                }
+              },
+              "disposition": {
+                "type": "choice",
+                "choice": "review_profile",
+                "confidence": 0.1291,
+                "probabilities": {
+                  "review_profile": 0.3468,
+                  "review_ambiguous": 0.1027,
+                  "review_unsupported": 0.3008,
+                  "propose": 0.2496
+                }
+              }
+            },
+            "truncated": false,
+            "usage": {
+              "input_tokens": 1081,
+              "output_tokens": 2
+            }
+          },
+          "matches": {
+            "intent": true,
+            "disposition": false
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": "Ten synthetic wishes; prompt and option-order sensitivity checks; not a general benchmark or a full JSON compiler evaluation."
+}
