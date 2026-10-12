@@ -1,6 +1,6 @@
 # Excel upload release — 2026-10-12-1
 
-Local verification: Rails multipart upload of a real XLSX returned HTTP 201 after ClamAV scanning and MinIO storage. Redis/outbox delivery reached the Excel worker; the diagnostic workbook intentionally used an unknown header and was recorded as failed with the expected unsupported-structure explanation. No curriculum data was imported. The file and storage object were removed afterward. This verifies upload and worker delivery, not a complete valid business import.
+Local verification on the published images: the actual ExcelImportsGateway succeeded in 6.20 seconds (longer than the normal five-second deadline). Rails multipart upload of a real XLSX returned HTTP 201 after ClamAV scanning and MinIO storage. Redis/outbox delivery reached the Excel worker; the diagnostic workbook intentionally used an unknown header and was recorded as failed with the expected unsupported-structure explanation. No curriculum data was imported. The file and storage object were removed afterward. This verifies upload and worker delivery, not a complete valid business import.
 
 Authenticated production check on table.bsut.by: login redirected successfully, `/admin/excel_imports` returned 200, and the same upload returned HTTP 422 with the generic service-unavailable message after 5.34 seconds. A subsequent read found the diagnostic file in upload history, and its delete action returned 303. Thus the reported failure did not mean the upload was never committed. Do not repeatedly upload the same business workbook after this error without checking history.
 
@@ -49,7 +49,7 @@ python3 deploy/bin/install-project-firewall.py
 ./deploy/bin/compose.sh ps
 ```
 
-Check that Rails, API, Excel worker and associated custom services show tag `2026-10-12-1`. Preserve any deliberate server access settings; this procedure is not a change to LAN policy or HTTPS publishing. The preflight step matters after network changes: stale generated addresses can prevent MinIO binding or discovery.
+Check that Rails, API, Excel worker and associated custom services show tag `2026-10-12-1`. The stock edge image enforces the repository LAN policy. If production uses a custom ingress that permits external administration, preserve/port its configuration before replacing edge. For a focused upload update, keep the existing ingress/infrastructure and recreate only the application services as described below. HTTPS publishing is not configured by this release. The preflight step matters after network changes: stale generated addresses can prevent MinIO binding or discovery.
 
 ClamAV signatures must be available on production:
 
@@ -73,3 +73,21 @@ Finally, sign in and upload one supported Excel workbook. Expect “Файл о�
 Browser plugin/skill was unavailable; Playwright MCP navigation failed with `NS_ERROR_PROXY_CONNECTION_REFUSED`. Production authentication/upload was therefore verified through direct HTTP with CSRF and an in-memory session, not a rendered browser journey. No screenshot/console or full UI acceptance is claimed. Seven normal image builds passed; changed API Ruby files, all Rails app/config Ruby files, and Python source syntax passed. The legacy frontend is checked separately by its container build.
 
 Local diagnostic artifacts and private runtime files are kept out of Git publication. Existing broad application changes were published at the owner's request; the focused Excel check is not full regression acceptance for every unrelated feature.
+
+## Focused update preserving the current ingress
+
+If your server has customised Nginx/ARR or externally accessible administration, prefer this bounded application update after fetching the deployment files and setting the image tag/overrides above. Reuse existing generated discovery settings while the server network remains unchanged:
+
+```sh
+./deploy/bin/compose.sh config --quiet
+./deploy/bin/compose.sh pull schedule_web api_geteway excel_processor \
+  outbox_relay media_sanitizer notice_export_worker schedule_generation_worker ops_console
+./deploy/bin/db.sh migrate
+./deploy/bin/compose.sh up -d --no-build --no-deps --wait --wait-timeout 180 \
+  schedule_web api_geteway excel_processor \
+  outbox_relay media_sanitizer notice_export_worker schedule_generation_worker ops_console
+./deploy/bin/compose.sh images
+./deploy/bin/compose.sh ps
+```
+
+This keeps the currently running edge, database, Redis and MinIO containers. If discovery/network settings are stale, run preflight and reconcile them first; the full procedure earlier covers that case. Do not replace a custom ingress configuration blindly. Existing dependency services must be healthy before the bounded update.
