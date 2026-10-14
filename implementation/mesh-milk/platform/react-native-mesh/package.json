@@ -1,0 +1,42 @@
+{
+  "name": "@mesh-milk/react-native-mesh",
+  "version": "0.1.0",
+  "description": "React Native promise API for the mesh_milk MMP/1 native module",
+  "license": "MIT OR Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    },
+    "./NativeMmpMesh": {
+      "types": "./dist/NativeMmpMesh.d.ts",
+      "import": "./dist/NativeMmpMesh.js",
+      "require": "./dist/NativeMmpMesh.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "tsconfig.json"
+  ],
+  "codegenConfig": {
+    "name": "NativeMmpMeshSpec",
+    "type": "modules",
+    "jsSrcsDir": "src"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
+  },
+  "peerDependencies": {
+    "react": "*",
+    "react-native": "*"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3"
+  }
+}

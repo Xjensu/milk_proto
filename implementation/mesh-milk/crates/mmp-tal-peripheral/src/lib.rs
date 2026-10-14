@@ -1,0 +1,411 @@
+//! mmp-tal-peripheral — PC BLE **peripheral** role: GATT server + advertiser
+//! (HANDOFF M5b; handbook §4.1).
+//!
+//! `mmp-tal-btleplug` is central-only — `btleplug` cannot advertise or run a
+//! GATT server on any OS. For PC↔PC contact (or a PC a phone can dial) one
+//! side must be a peripheral, and PC peripheral APIs are inherently
+//! platform-specific. This crate provides [`PeripheralRole`], the mirror
+//! image of `BleCentral`, speaking the same [`TalEvent`] contract to the rest
+//! of the system and the same dev GATT layout over the air.
+//!
+//! ## Design decisions (M5b)
+//!
+//! 1. **Separate crate, not a feature of `mmp-tal-btleplug`.** The central
+//!    crate declares `btleplug`+`tokio`+`futures` unconditionally; peripheral
+//!    backends need per-OS stacks (`bluer`→D-Bus→libdbus on Linux, WinRT via
+//!    the `windows` crate on Windows) that are heavier and would turn the
+//!    central crate's manifest into a cfg/feature lattice. A host that only
+//!    ever dials should not build a D-Bus stack. See `Cargo.toml` for the
+//!    cfg(target_os)-not-features rationale.
+//! 2. **No portable dual-role crate exists to adopt (re-verified 2026-07-16).**
+//!    Survey: `bluest` documents "Peripheral and Server roles not supported";
+//!    `ble-peripheral-rust` is cross-platform in intent but pre-1.0 with ~60
+//!    stars, 13 commits and no releases — not a foundation for a reference
+//!    implementation; `burble` bypasses the OS stack entirely (raw USB HCI,
+//!    needs a dedicated controller); `gattrs` is Linux-only. Hand-rolling
+//!    per-OS against first-party stacks (BlueZ, WinRT) remains the sound call.
+//! 3. **Platform scope: Linux/BlueZ (`bluer`) is implemented; Windows and
+//!    macOS are explicit stubs.** Linux first because BlueZ is scriptable and
+//!    testable in CI-adjacent environments (and `bluer` is the official BlueZ
+//!    binding). The Windows stub carries a concrete WinRT design sketch in
+//!    `src/unsupported.rs`; macOS is lowest priority per the handbook.
+//! 4. **GATT role inversion** — the single easiest thing to get backwards:
+//!    the central crate's "TX" characteristic (`…-0001-…`) is the one the
+//!    central *writes*; as the peripheral we therefore expose it as
+//!    Write-Without-Response and treat every write as **inbound**
+//!    [`TalEvent::LinkData`]. The central crate's "RX" (`…-0002-…`) is the one
+//!    the central *subscribes* to; we expose it as Notify and push **outbound**
+//!    bytes through it in [`PeripheralRole::notify`]. The constants below are
+//!    deliberately named from the central's perspective
+//!    (`DEV_CENTRAL_TX_…`/`DEV_CENTRAL_RX_…`) so a reader is forced through
+//!    the inversion once instead of trusting an ambiguous local "TX"/"RX".
+//! 5. **LinkId minting** uses the identical recipe as the central crate
+//!    (first 8 LE bytes of `blake3(Debug string of the OS peer identifier)`).
+//!    Honesty note: the central mints from `btleplug::PeripheralId` and this
+//!    crate mints from `bluer::Address` — different Debug strings for the
+//!    same physical peer — so cross-role ID *equality* is not achievable;
+//!    what is shared is the derivation recipe (and its determinism per peer,
+//!    which is what the session table relies on).
+//! 6. **Chunk size: real negotiated MTU, floor 20.** Unlike btleplug 0.11
+//!    (no portable MTU query, so the central pins the 20-byte floor for a
+//!    link's lifetime), BlueZ reports the exchanged ATT MTU on
+//!    `AcquireWrite`/`AcquireNotify`, surfaced by `bluer` as
+//!    `CharacteristicReader::mtu()`/`CharacteristicWriter::mtu()`. We chunk
+//!    outbound notifications to `max(mtu − 3, 20)` (doc 09 §5.1's (MTU−3)
+//!    ATT payload rule; 3 = ATT opcode+handle overhead — subtracted here
+//!    because BlueZ reports the raw exchanged MTU, and losing ≤3 B per
+//!    notification is cheaper than risking a too-large packet if a bluer
+//!    version ever bounds `send()` at the usable payload instead). Follow-up
+//!    (not done here, per M5b scope): teach the central crate per-platform
+//!    MTU escape hatches so the write path enjoys the same lift.
+//!
+//! ## Contract (same as the central crate)
+//!
+//! - Emits [`TalEvent`]s through a bounded two-lane ingress and a public FIFO
+//!   ([`PeripheralRole::events`], take-once). ATT callbacks never await the
+//!   host receiver; data overflow retires the affected link, while lifecycle
+//!   controls have reserved capacity.
+//!   `LinkUp` carries `initiator: false` — the central dialed us.
+//! - Accepts outbound bytes via [`PeripheralRole::notify`], chunked.
+//! - Owns no runtime: every `async fn` runs on the caller's tokio runtime;
+//!   internal tasks are `tokio::spawn`ed onto it.
+//! - Shuttles bytes only: beacon payloads are NOT constructed or parsed here
+//!   (`mmp-node` owns that, doc 04); [`PeripheralRole::advertise`] takes the
+//!   ready-made payload and the host re-calls it each beacon slot
+//!   ([`readvertise_due`]).
+//!
+//! `tools/layer-check` polices only the crates below `mmp-node`, so tokio is
+//! fine here (this crate sits beside `mmp-tal-btleplug`, above the core).
+
+use core::fmt;
+#[cfg(any(target_os = "linux", test))]
+use core::future::Future;
+#[cfg(any(target_os = "linux", test))]
+use tokio::sync::mpsc;
+
+pub use mmp_tal::{LinkId, LinkQuality, TalEvent};
+#[cfg(any(target_os = "linux", test))]
+use mmp_types::beacon::BEACON_LEN;
+use mmp_types::consts::EPHEM_SLOT_MS;
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod event_queue;
+pub mod framing;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod lifecycle;
+
+/// Bounded ingress sizing shared with the central TAL.
+///
+/// The value mirrors the central TAL: eight concurrently admitted sessions
+/// need 1640 twenty-byte notifications to hold one maximum-size 4096-byte
+/// envelope per session; 2048 is a deliberate ingress-memory threshold with
+/// a reserved control lane. Ordered link data is never awaited while a
+/// lifecycle lock is held: data-lane overflow retires the affected link and
+/// queues a reserved `LinkDown`; beacon data is low priority and may be
+/// discarded when the data lane is full.
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn event_channel() -> (event_queue::EventSender, mpsc::Receiver<TalEvent>) {
+    event_queue::event_channel()
+}
+
+/// Create the ingress with a terminal callback for a dropped public event
+/// receiver.  The Linux backend uses this to fence BlueZ admission and retire
+/// links when no host consumer remains.
+#[cfg(target_os = "linux")]
+pub(crate) fn event_channel_with_close_handler<F>(
+    on_closed: F,
+) -> (event_queue::EventSender, mpsc::Receiver<TalEvent>)
+where
+    F: FnOnce(event_queue::EventSender) + Send + 'static,
+{
+    event_queue::event_channel_with_close_handler(on_closed)
+}
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::PeripheralRole;
+
+#[cfg(not(target_os = "linux"))]
+mod unsupported;
+#[cfg(not(target_os = "linux"))]
+pub use unsupported::PeripheralRole;
+
+/// Single source of truth for the dev service UUID (E3-S3): re-exported from
+/// `mmp-tal` rather than a separate literal, so this crate and the central
+/// (`mmp-tal-btleplug`) can never drift. A SIG-assigned 16-bit UUID is a
+/// production release blocker (OQ-12); doc 09 §2 pins only this service UUID,
+/// not the characteristic UUIDs.
+pub use mmp_tal::DEV_SERVICE_UUID;
+
+/// The characteristic the central crate calls "TX" (`mmp_tal::DEV_TX_CHARACTERISTIC_UUID`):
+/// the central WRITES here (Write Without Response). **For this peripheral it
+/// is the INBOUND path** — each write we accept becomes [`TalEvent::LinkData`].
+/// Named from the central's perspective to make the role inversion explicit;
+/// same underlying UUID, single source of truth (E3-S3).
+pub const DEV_CENTRAL_TX_CHARACTERISTIC_UUID: &str = mmp_tal::DEV_TX_CHARACTERISTIC_UUID;
+
+/// The characteristic the central crate calls "RX" (`mmp_tal::DEV_RX_CHARACTERISTIC_UUID`):
+/// the central SUBSCRIBES here (Notify). **For this peripheral it is the
+/// OUTBOUND path** — [`PeripheralRole::notify`] pushes chunks through it.
+pub const DEV_CENTRAL_RX_CHARACTERISTIC_UUID: &str = mmp_tal::DEV_RX_CHARACTERISTIC_UUID;
+
+/// Everything that can go wrong advertising, serving, or notifying.
+///
+/// `#[non_exhaustive]` because the variant set is platform-dependent (the
+/// `Bluer` variant only exists on Linux); cross-platform callers must keep a
+/// catch-all arm anyway.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum PeriphError {
+    /// A `LinkId` was not found in this peripheral's link table (central
+    /// never connected, or already disconnected).
+    UnknownLink,
+    /// The central is connected (it wrote to us) but has not subscribed to
+    /// the notify characteristic yet, so there is no outbound path.
+    NotSubscribed,
+    /// The advertisement payload is not the fixed-size v1 MMP beacon.
+    InvalidBeaconLength {
+        /// Required v1 beacon size.
+        expected: usize,
+        /// Supplied payload size.
+        actual: usize,
+    },
+    /// The peripheral has entered terminal shutdown and cannot advertise
+    /// again; construct a new role to restart the backend.
+    ShuttingDown,
+    /// A BlueZ notification socket did not become writable within the
+    /// transport-local per-chunk deadline. The link is retired before this
+    /// error is returned so a stalled peer cannot pin the host drive loop.
+    NotifyTimeout,
+    /// This build's OS has no peripheral backend (Windows/macOS stubs); the
+    /// payload says what implementing one would take.
+    Unsupported(&'static str),
+    /// The BlueZ stack reported an error.
+    #[cfg(target_os = "linux")]
+    Bluer(bluer::Error),
+}
+
+impl fmt::Display for PeriphError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PeriphError::UnknownLink => write!(f, "unknown link"),
+            PeriphError::NotSubscribed => write!(f, "central has not subscribed to notifications"),
+            PeriphError::InvalidBeaconLength { expected, actual } => {
+                write!(
+                    f,
+                    "invalid beacon length: expected {expected} bytes, got {actual}"
+                )
+            }
+            PeriphError::ShuttingDown => write!(f, "peripheral is shutting down"),
+            PeriphError::NotifyTimeout => write!(f, "notification timed out"),
+            PeriphError::Unsupported(what) => write!(f, "peripheral role unsupported: {what}"),
+            #[cfg(target_os = "linux")]
+            PeriphError::Bluer(e) => write!(f, "bluer error: {e}"),
+        }
+    }
+}
+
+/// Maximum time a single notification chunk may wait for BlueZ socket
+/// writability. This is a transport-local bound; it is not a protocol timer.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) const NOTIFY_CHUNK_TIMEOUT_MS: u64 = 250;
+
+#[cfg(any(target_os = "linux", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NotifyWaitTimeout;
+
+/// Apply the bounded transport deadline to one notification future. Keeping
+/// this small helper outside the BlueZ module lets the timeout contract be
+/// tested without a live adapter.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) async fn bounded_notify<F, E>(future: F) -> Result<Result<(), E>, NotifyWaitTimeout>
+where
+    F: Future<Output = Result<(), E>>,
+{
+    tokio::time::timeout(
+        tokio::time::Duration::from_millis(NOTIFY_CHUNK_TIMEOUT_MS),
+        future,
+    )
+    .await
+    .map_err(|_| NotifyWaitTimeout)
+}
+
+/// Validate the fixed-size MMP/1 beacon before handing it to an OS advertiser.
+/// Keeping this check at the TAL boundary prevents a syntactically valid
+/// BlueZ advertisement from carrying bytes that every MMP node will reject.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn validate_beacon(beacon: &[u8]) -> Result<(), PeriphError> {
+    if beacon.len() == BEACON_LEN {
+        Ok(())
+    } else {
+        Err(PeriphError::InvalidBeaconLength {
+            expected: BEACON_LEN,
+            actual: beacon.len(),
+        })
+    }
+}
+
+/// Keep terminal shutdown admission testable without constructing a BlueZ
+/// role. The Linux backend calls this immediately before and after the
+/// asynchronous advertisement registration.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn ensure_not_shutting_down(shutting_down: bool) -> Result<(), PeriphError> {
+    if shutting_down {
+        Err(PeriphError::ShuttingDown)
+    } else {
+        Ok(())
+    }
+}
+
+impl std::error::Error for PeriphError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            #[cfg(target_os = "linux")]
+            PeriphError::Bluer(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl From<bluer::Error> for PeriphError {
+    fn from(e: bluer::Error) -> Self {
+        PeriphError::Bluer(e)
+    }
+}
+
+/// True when the host should re-call [`PeripheralRole::advertise`] with a
+/// fresh `Node::beacon()` payload: the beacon rotates per 15-minute
+/// `EPHEM_SLOT_MS` slot (doc 09 §3.2), and `mmp-node` keys the beacon content
+/// on `now_ms / EPHEM_SLOT_MS` — so this is slot-boundary-crossing arithmetic
+/// (not "elapsed ≥ 15 min"), keeping the advertisement aligned with the exact
+/// payload the node would mint for the current slot.
+///
+/// `last_advertised_ms` is when the host last called `advertise`; monotone
+/// milliseconds, same clock the host feeds `Node::tick`.
+pub fn readvertise_due(last_advertised_ms: u64, now_ms: u64) -> bool {
+    now_ms / EPHEM_SLOT_MS != last_advertised_ms / EPHEM_SLOT_MS
+}
+
+/// Mint a `LinkId` as the first 8 LE bytes of `blake3(Debug string of id)` —
+/// the SAME recipe as `mmp-tal-btleplug` (its `mint_link_id`), kept in
+/// lockstep by convention: deterministic per peer (a reconnecting central
+/// reuses its `LinkId`) and practically collision-free across peers. See
+/// module docs (decision 5) for why cross-role ID equality is still not a
+/// thing. Generic over `Debug` so it stays unit-testable without hardware.
+// Only the cfg(linux) backend calls this outside of tests; keep non-Linux
+// `cargo build` warning-free without hiding real dead code on Linux.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn mint_link_id(id: &impl fmt::Debug) -> LinkId {
+    let digest = blake3::hash(format!("{id:?}").as_bytes());
+    u64::from_le_bytes(
+        digest.as_bytes()[..8]
+            .try_into()
+            .expect("blake3 digest is 32 bytes"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The three constants must also be *parseable* UUIDs (the Linux backend
+    /// parses them at startup; catch a typo on every platform's test run).
+    #[test]
+    fn gatt_uuids_parse() {
+        for s in [
+            DEV_SERVICE_UUID,
+            DEV_CENTRAL_TX_CHARACTERISTIC_UUID,
+            DEV_CENTRAL_RX_CHARACTERISTIC_UUID,
+        ] {
+            s.parse::<uuid::Uuid>()
+                .expect("dev UUID constant must parse");
+        }
+    }
+
+    #[test]
+    fn mint_link_id_is_deterministic_for_the_same_peer() {
+        assert_eq!(
+            mint_link_id(&"aa:bb:cc:dd:ee:ff"),
+            mint_link_id(&"aa:bb:cc:dd:ee:ff")
+        );
+    }
+
+    #[test]
+    fn mint_link_id_differs_across_distinct_peers() {
+        assert_ne!(
+            mint_link_id(&"aa:bb:cc:dd:ee:ff"),
+            mint_link_id(&"aa:bb:cc:dd:ee:00")
+        );
+    }
+
+    /// Recipe pin: blake3 of the Debug string, first 8 bytes LE. If either
+    /// crate ever drifts from the shared recipe, this vector breaks loudly.
+    #[test]
+    fn mint_link_id_recipe_is_blake3_of_debug_first_8_le() {
+        let id = "peer";
+        let digest = blake3::hash(format!("{id:?}").as_bytes());
+        let expect = u64::from_le_bytes(digest.as_bytes()[..8].try_into().unwrap());
+        assert_eq!(mint_link_id(&id), expect);
+    }
+
+    #[test]
+    fn readvertise_not_due_within_the_same_slot() {
+        assert!(!readvertise_due(0, EPHEM_SLOT_MS - 1));
+        assert!(!readvertise_due(EPHEM_SLOT_MS, EPHEM_SLOT_MS + 1));
+    }
+
+    #[test]
+    fn readvertise_due_when_the_slot_boundary_is_crossed() {
+        assert!(readvertise_due(EPHEM_SLOT_MS - 1, EPHEM_SLOT_MS));
+        assert!(readvertise_due(0, 3 * EPHEM_SLOT_MS));
+    }
+
+    #[test]
+    fn beacon_length_matches_the_fixed_mmp_wire_shape() {
+        assert!(validate_beacon(&[0; BEACON_LEN]).is_ok());
+        assert!(matches!(
+            validate_beacon(&[0; BEACON_LEN - 1]),
+            Err(PeriphError::InvalidBeaconLength { expected, actual })
+                if expected == BEACON_LEN && actual == BEACON_LEN - 1
+        ));
+        assert!(matches!(
+            validate_beacon(&[0; BEACON_LEN + 1]),
+            Err(PeriphError::InvalidBeaconLength { expected, actual })
+                if expected == BEACON_LEN && actual == BEACON_LEN + 1
+        ));
+    }
+
+    #[test]
+    fn shutdown_fence_rejects_advertisement_admission() {
+        assert!(ensure_not_shutting_down(false).is_ok());
+        assert!(matches!(
+            ensure_not_shutting_down(true),
+            Err(PeriphError::ShuttingDown)
+        ));
+    }
+
+    #[test]
+    fn notify_timeout_is_explicit_and_bounded() {
+        assert_eq!(NOTIFY_CHUNK_TIMEOUT_MS, 250);
+        assert_eq!(
+            PeriphError::NotifyTimeout.to_string(),
+            "notification timed out"
+        );
+    }
+
+    #[tokio::test]
+    async fn bounded_notify_times_out_without_a_live_adapter() {
+        let result = bounded_notify(async {
+            tokio::time::sleep(tokio::time::Duration::from_millis(
+                NOTIFY_CHUNK_TIMEOUT_MS * 4,
+            ))
+            .await;
+            Ok::<(), ()>(())
+        })
+        .await;
+        assert_eq!(result, Err(NotifyWaitTimeout));
+    }
+}

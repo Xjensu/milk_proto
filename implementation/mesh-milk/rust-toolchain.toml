@@ -1,3 +1,12 @@
+# docs/internal/release-evidence/research-release-gates.md E2-S3: the MSRV floor itself is declared in
+# [workspace.package] rust-version (Cargo.toml) — that's the portable,
+# install-nothing-extra declaration cargo itself enforces. This file is left
+# on the rolling `stable` channel deliberately: contributor/CI machines with a
+# constrained toolchain cache (pinning to a literal version like "1.96.1"
+# installs it as a *second* toolchain alongside whatever "stable" already
+# resolved to, even when they're the same release — this was tried on
+# 2026-07-23 and failed here on disk space) get the current stable, which
+# must stay >= rust-version. Bump rust-version deliberately when it doesn't.
 [toolchain]
 channel = "stable"
 targets = ["thumbv7em-none-eabihf"]

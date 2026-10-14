@@ -1,0 +1,521 @@
+# CI matrix for the workspace and documented release gates.
+# Six targets: x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, aarch64-apple-darwin
+# (the three host jobs), aarch64-linux-android + thumbv7em-none-eabihf (cross-check),
+# aarch64-apple-ios (ios-check) — plus cargo-deny, the layer test, MIRI on mmp-types,
+# and the flash/RAM size gate (informational until the release gate is recorded).
+#
+# This workflow lives at the repo root (not implementation/mesh-milk/.github/) because
+# GitHub Actions only discovers workflows under <repo-root>/.github/workflows/ — see
+# workspace release-gate policy. All `run:` steps default into the workspace directory;
+# `uses:` steps (checkout, cargo-deny-action, upload-artifact) are unaffected by that
+# default and are pointed at the workspace explicitly where they need a path.
+
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 0"
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: implementation/mesh-milk
+
+jobs:
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # mmp-tal-peripheral's Linux backend (bluer, BlueZ D-Bus GATT server)
+      # links against libdbus; the stock ubuntu-latest runner doesn't carry
+      # its dev headers/pkg-config file, so cargo build fails at link time
+      # without this. Windows/macOS backends are stubs with no such need.
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - run: cargo build --workspace --all-features --locked
+      # Keep the full workspace matrix serial until every workspace test family
+      # has an independent fixture/isolation review. mmp-store's own recovery
+      # fixtures are now unique and parallel-safe; this is a broader policy.
+      - run: cargo test --workspace --all-targets --all-features --locked -- --test-threads=1
+      # Clippy is enforced by the workspace validation policy.
+      # local practice, not CI. Proven locally to catch a real violation
+      # (needless_bool/bool_comparison) before being wired in here.
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      # E7-S1 acceptance double: keep the reservation/commit invariants
+      # visible as a named CI gate while the real fixed-capacity provider and
+      # board image remain outstanding.
+      - name: test embedded transactional store acceptance double (E7-S1)
+        run: cargo test -p mmp-store --test transactional_prototype --all-features --locked
+
+  android-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      # blake3's cc build script needs the Android clang wrapper; the Rust
+      # target alone is insufficient. cargo-ndk supplies the NDK compiler and
+      # linker environment for the same target used by the AAR job below.
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - run: cargo install cargo-ndk --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: cargo ndk -t arm64-v8a check --workspace --locked
+
+  ios-check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - run: cargo check --workspace --target aarch64-apple-ios
+
+  # The no_std proof + size gate: the Core-profile crates must build for
+  # thumbv7em-none-eabihf. Budget (doc 12 §7.6): mmp-types+crypto+core+router
+  # ≤ 256 KiB flash / ≤ 48 KiB static RAM ⚠. A real gate needs a linked+stripped
+  # image (nRF52 profile, tracked as E7); until then, E2-S4 hardens this into a
+  # per-crate rlib-size regression gate — a proxy, not the literal flash number
+  # (an rlib archive carries debug/monomorphization overhead a linked image
+  # doesn't, so these thresholds are deliberately larger than 256 KiB split five
+  # ways; they exist to catch a crate suddenly bloating, not to prove the flash
+  # budget itself — that still needs the real E7 linked-image measurement).
+  #
+  # --no-default-features is required here: mmp-crypto/mmp-core each default to
+  # `std` (gating the Noise/snow session layer) and correctly disable it via
+  # `default-features = false` on their *internal* path deps, but `-p`-selecting
+  # them directly in one invocation re-activates each named package's own
+  # default feature set regardless of that internal wiring. Without this flag
+  # the build fails outright (`getrandom`/`subtle` reach for `std`, which
+  # doesn't exist on this target) — found while implementing this story: the
+  # gate had never actually produced rlibs to size in real CI at all.
+  no-std-size-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: thumbv7em-none-eabihf
+      # E7-S1 dependency-closure regression: the Embassy shell is intentionally
+      # only a no_std compile surface today, but its path dependencies must not
+      # silently re-enable the host-only `std`/filesystem graph.  Include
+      # mmp-store's no-default-features fence in the same target check: its
+      # filesystem backend is deliberately absent in this profile, so this
+      # proves only dependency closure, not an embedded persistence backend.
+      # mmp-flash-journal is a standalone no_std provider primitive and is
+      # included explicitly so its allocation-free target boundary cannot
+      # regress unnoticed merely because mmp-node-embassy does not depend on
+      # it yet.
+      # The nRF52840 board profile is a target-only Embassy compile probe. It
+      # is included here to keep the pinned chip feature and no_std closure
+      # covered without claiming a linked image or hardware behavior.
+      # This check does not claim an executor, TAL backend, linked image, or
+      # hardware exchange.
+      - name: check embedded shell dependency closure (E7-S1)
+        run: cargo check -p mmp-board-nrf52840-dk -p mmp-node-embassy -p mmp-tal-embedded -p mmp-flash-journal -p mmp-store --target thumbv7em-none-eabihf --no-default-features --locked
+      - run: >
+          cargo build --release --target thumbv7em-none-eabihf --no-default-features --locked
+          -p mmp-types -p mmp-crypto -p mmp-core -p mmp-router -p mmp-rs-code
+      - name: enforce rlib size budget (E2-S4)
+        run: |
+          set -e
+          cd target/thumbv7em-none-eabihf/release
+          # Budget = measured clean-HEAD baseline (2026-08-12, rustc 1.96.1,
+          # locked dependencies, this target/profile) * 1.2, rounded up. The
+          # archive sizes are a regression proxy, not a linked-image claim.
+          # Re-baseline deliberately,
+          # not by nudging the multiplier, if a change legitimately needs more
+          # room (e.g. a new crypto primitive) — record any change in the release evidence.
+          declare -A BUDGET=(
+            [libmmp_types.rlib]=754548    # baseline 628790
+            [libmmp_crypto.rlib]=528104   # baseline 440086
+            [libmmp_core.rlib]=1459424    # baseline 1216186
+            [libmmp_router.rlib]=274572   # baseline 228810
+            [libmmp_rs_code.rlib]=30658   # baseline 25548
+          )
+          fail=0
+          for f in "${!BUDGET[@]}"; do
+            size=$(stat -c%s "$f")
+            budget=${BUDGET[$f]}
+            echo "$f: $size bytes (budget $budget)"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error::$f exceeds its rlib size budget: $size > $budget"
+              fail=1
+            fi
+          done
+          exit $fail
+
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: implementation/mesh-milk/Cargo.toml
+
+  # Security advisories are checked in the release validation workflow. Note: `deny.toml`'s `[advisories]` block
+  # (checked by the `deny` job above) already queries the same RustSec
+  # advisory database `cargo-audit` does — this job exists because the story
+  # names `cargo-audit` specifically, not because it adds new coverage.
+  # Verified locally (2026-07-25): `cargo audit` against this workspace's real
+  # Cargo.lock reports 0 vulnerabilities across 259 crate dependencies.
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  layer-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo run -p layer-check
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo +nightly miri test -p mmp-types
+
+  # Generates the Kotlin/Swift bindings mobile apps consume from mmp-ffi's
+  # UniFFI proc-macro surface, via the crate's own `uniffi-bindgen` CLI
+  # binary (mmp-ffi/uniffi-bindgen.rs, gated behind the `cli` feature so
+  # normal mobile-app builds of mmp-ffi never pull in clap/camino/bindgen).
+  # Not a correctness gate on its own (no downstream Kotlin/Swift compiler
+  # runs here) — it proves the bindgen pipeline still produces output and
+  # publishes that output for manual inspection / downstream consumption.
+  mobile-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build -p mmp-ffi --release --locked
+      - run: cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- generate --library --language kotlin --out-dir bindings/kotlin target/release/libmmp_ffi.so
+      - run: cargo run -p mmp-ffi --features cli --release --locked --bin uniffi-bindgen -- generate --library --language swift --out-dir bindings/swift target/release/libmmp_ffi.so
+      # Rust-internal ratchet/prekey snapshots must never enter UniFFI output.
+      - run: python scripts/check_mobile_secret_surface.py bindings/kotlin bindings/swift
+      # Keep the generated Android/iOS call surface aligned with #[uniffi::export]
+      # MmpNode methods; this is a source-level smoke check, not a hardware test.
+      - run: python scripts/check_mobile_api_surface.py bindings/kotlin bindings/swift
+      # Keep the native iOS restoration, timing, queue, and back-pressure contract
+      # aligned across both integration guides. This is source-level only; it does
+      # not replace Swift/CoreBluetooth compilation or physical-device evidence.
+      - run: python scripts/check_ios_lifecycle_contract.py
+      - run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+      # A single artifact covering both language outputs; download once,
+      # both `bindings/kotlin/` and `bindings/swift/` subtrees included.
+      # upload-artifact's `path` is resolved from GITHUB_WORKSPACE (repo root),
+      # not the `defaults.run.working-directory` above — so it needs the full
+      # prefix even though the `run:` steps above wrote there via a relative path.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-mobile-bindings
+          if-no-files-found: error
+          path: |
+            implementation/mesh-milk/bindings/kotlin
+            implementation/mesh-milk/bindings/swift
+
+  # Validate the checked-in React Native package
+  # contract and npm file allow-list. This is intentionally not a TypeScript or
+  # device-build claim: the package delegates compilation to its consuming app,
+  # while React Native declarations and native runners are supplied downstream.
+  react-native-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test React Native package source contract (E4-S3)
+        run: python -m unittest scripts.tests.test_react_native_mesh -v
+      - name: install React Native package typecheck dependencies (E4-S3)
+        run: npm ci --ignore-scripts --legacy-peer-deps
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
+      - name: typecheck React Native package fixture (E4-S3)
+        run: npm run typecheck
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
+      - name: validate React Native npm package shape (E4-S3)
+        run: npm pack --dry-run --json
+        working-directory: implementation/mesh-milk/platform/react-native-mesh
+
+  # Downstream consumer compilation gates for the SDK-free coordinator
+  # modules. These jobs do not claim Android/iOS radio behavior: they prove
+  # that an external JVM/Swift package can compile against the public
+  # coordinator surface and run its deterministic host tests.
+  kotlin-consumer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "8.10"
+      - run: gradle test --no-daemon --stacktrace
+        working-directory: implementation/mesh-milk/platform/kotlin-mesh-drive
+
+  swift-consumer:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Top-level defaults.run.working-directory is implementation/mesh-milk;
+      # keep the package path relative to that directory so this consumer gate
+      # does not resolve implementation/mesh-milk twice.
+      - run: swift test --package-path platform/swift-mesh-drive
+
+  # Packages mmp-ffi's Android cdylib as a real
+  # .aar (native-only shape: AndroidManifest.xml + jni/<abi>/*.so, no compiled
+  # classes.jar — a standard, documented AGP dependency shape; this repo has
+  # no Android app module yet to compile the Kotlin bindings into bytecode,
+  # so they ship as a source zip alongside for a consuming app to compile —
+  # see scripts/build-android-aar.sh's header comment for the full rationale).
+  # Local one-command reproduction: scripts/build-android-aar.sh (needs
+  # cargo-ndk + an installed NDK, not run as part of this job's own checkout).
+  android-aar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26d
+      - run: cargo install cargo-ndk --locked
+      - env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: bash scripts/build-android-aar.sh mobile-artifacts/android
+      - run: python scripts/verify_android_artifacts.py mobile-artifacts/android/mmp-ffi.aar mobile-artifacts/android/mmp-ffi-kotlin-bindings.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-ffi-aar
+          if-no-files-found: error
+          path: implementation/mesh-milk/mobile-artifacts/android
+
+          # Wraps mmp-ffi's iOS staticlib (device +
+  # Apple-Silicon simulator) into MmpCore.xcframework via `xcodebuild`, the
+  # standard Apple packaging tool for multi-platform binary frameworks — no
+  # invented packaging step here, unlike the Android side's native-only-AAR
+  # design call. macOS-only by necessity (`xcodebuild` doesn't exist
+  # elsewhere); local one-command reproduction: scripts/build-ios-xcframework.sh
+  # on a real macOS host with Xcode installed.
+  ios-xcframework:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - run: bash scripts/build-ios-xcframework.sh mobile-artifacts/ios
+      - run: python scripts/verify_ios_artifacts.py mobile-artifacts/ios/MmpCore.xcframework mobile-artifacts/ios/swift-bindings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mmp-core-xcframework
+          if-no-files-found: error
+          path: implementation/mesh-milk/mobile-artifacts/ios
+
+  # Pre-auth-parser fuzzing (doc 07 §8 / doc 12 §7 mandate, E5-S6). The `fuzz/`
+  # member is deliberately outside the main workspace (its own `[workspace]`
+  # table) so libfuzzer-sys/arbitrary never leak into a normal build — see
+  # `fuzz/Cargo.toml`'s comment. Linux-only: libFuzzer's sanitizer runtime is
+  # a standard part of the ubuntu-latest toolchain's clang install; on Windows
+  # dev boxes the equivalent ASan runtime libraries are often missing, which
+  # is a toolchain-availability gap, not a target-code problem (verified
+  # 2026-07-16: all four harnesses compile cleanly under rustc on Windows —
+  # only the final sanitizer-instrumented link step fails there).
+  fuzz-build:
+    runs-on: ubuntu-latest
+    # cargo-fuzz 0.13 has no --locked option of its own. Forward Cargo's
+    # lockfile enforcement through the standard CARGOFLAGS environment so
+    # every metadata/build invocation uses fuzz/Cargo.lock reproducibly.
+    env:
+      CARGOFLAGS: --locked
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      # Pin the cargo-fuzz frontend as well as its installation graph. The
+      # fuzz workspace's Cargo.lock only constrains target dependencies.
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: validate deterministic seed recipe
+        run: python fuzz/seed_corpus.py check
+      - name: materialize and verify deterministic seed corpus
+        run: |
+          python fuzz/seed_corpus.py write
+          python fuzz/seed_corpus.py verify
+      - name: build every target (cheap correctness gate, every push)
+        run: |
+          cd fuzz
+          for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
+            cargo fuzz build "$t"
+          done
+
+  # Short seeded runs — weekly schedule/manual dispatch only (not on every
+  # push): doc 12 §7.2's
+  # "N CPU-hours once a baseline is measured" is deliberately NOT pre-committed
+  # here; this
+  # job is a smoke-level "still finds nothing in a couple minutes" check, not
+  # the real corpus-hardening run.
+  fuzz-run:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # Keep scheduled campaigns on the same locked fuzz dependency graph as
+    # the build gate; cargo-fuzz forwards CARGOFLAGS to its Cargo subprocess.
+    env:
+      CARGOFLAGS: --locked
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      # Keep the smoke campaign on the identical cargo-fuzz frontend as the
+      # every-push build gate.
+      - run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: run each target for 2 minutes
+        run: |
+          cd fuzz
+          python seed_corpus.py check
+          python seed_corpus.py write
+          python seed_corpus.py verify
+          for t in fuzz_beacon fuzz_envelope fuzz_bundle fuzz_hs; do
+            # Keep a single pathological input from masking campaign completion
+            # or exhausting the runner; these are smoke-run bounds, not parser
+            # performance claims.
+            cargo fuzz run "$t" -- -max_total_time=120 -max_len=8192 -timeout=10 -rss_limit_mb=2048
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mmp-fuzz-corpus
+          # AG-P0-04: a campaign must fail visibly if the discovered corpus
+          # cannot be retained; a warning-only upload would hide a broken
+          # path or missing output while leaving no evidence to triage.
+          if-no-files-found: error
+          path: implementation/mesh-milk/fuzz/corpus
+
+  # Extended simulation tier: ignored deployment/scale drills are deliberately
+  # kept out of the normal host loop so a local or pull-request cycle does not
+  # pay for a long experiment. The weekly schedule and an explicit
+  # workflow_dispatch both run this job; a release still requires the normal
+  # host matrix as its authoritative unit/regression gate.
+  simulator-extended:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: run ignored simulator deployment and scale drills
+        run: cargo test --release --locked -p mmp-sim --all-targets --all-features -- --ignored --test-threads=1
+
+  # Signed release artifacts are produced on a version tag
+  # push only. Scope decision: `mmp-cli` is this workspace's one standalone
+  # consumer-facing binary today (the PC anchor node + inspection tool) — the
+  # mobile artifacts (E2-S2/E2-S5) are already signed-adjacent via their own
+  # jobs and aren't re-signed here; publishing to an actual GitHub Release
+  # (vs. the workflow artifacts produced here) is a natural follow-on, not
+  # attempted in this story.
+  #
+  # Signing is keyless (Sigstore/cosign): no private key is generated, stored
+  # as a secret, or rotated anywhere. `id-token: write` lets cosign exchange
+  # the workflow's own short-lived GitHub OIDC token for an ephemeral
+  # certificate from Sigstore's public Fulcio CA, and the signature is
+  # recorded in the public Rekor transparency log — verification is against
+  # that public log, not a key distributed to verifiers. Gated on `host` and
+  # `fuzz-build`, `deny`, and `cargo-audit` passing first so a broken build,
+  # invalid deterministic corpus, or known dependency risk is never signed.
+  # The bounded `fuzz-run` campaign remains
+  # schedule/manual-only and therefore cannot be a tag-release dependency.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host, fuzz-build, deny, cargo-audit]
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin: mmp-cli
+            artifact_name: mmp-cli-linux-x86_64
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            bin: mmp-cli.exe
+            artifact_name: mmp-cli-windows-x86_64.exe
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            bin: mmp-cli
+            artifact_name: mmp-cli-macos-x86_64
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      # The Linux mmp-cli release links mmp-tal-peripheral's BlueZ backend,
+      # just like the host job. Keep the release matrix self-contained instead
+      # of relying on an undocumented runner image package.
+      - if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      - name: validate specification status manifest
+        run: python scripts/check_spec_status.py --repo ../..
+      - name: validate publication governance artifacts
+        run: >
+          python scripts/check_release_governance.py
+          --repo ../..
+          --commit "${{ github.sha }}"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build -p mmp-cli --release --locked --target ${{ matrix.target }}
+      - run: cp target/${{ matrix.target }}/release/${{ matrix.bin }} ${{ matrix.artifact_name }}
+      - uses: sigstore/cosign-installer@v3
+      - run: >
+          cosign sign-blob --yes ${{ matrix.artifact_name }}
+          --output-signature ${{ matrix.artifact_name }}.sig
+          --output-certificate ${{ matrix.artifact_name }}.pem
+      - name: verify keyless artifact signature
+        run: >
+          cosign verify-blob ${{ matrix.artifact_name }}
+          --signature ${{ matrix.artifact_name }}.sig
+          --certificate ${{ matrix.artifact_name }}.pem
+          --certificate-identity
+          "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@${{ github.ref }}"
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: record signed artifact digest manifest
+        run: >
+          python scripts/create_release_manifest.py
+          --artifact ${{ matrix.artifact_name }}
+          --signature ${{ matrix.artifact_name }}.sig
+          --certificate ${{ matrix.artifact_name }}.pem
+          --output ${{ matrix.artifact_name }}.manifest.json
+      - name: verify signed artifact digest manifest
+        run: >
+          python scripts/verify_release_manifest.py
+          --manifest ${{ matrix.artifact_name }}.manifest.json
+          --directory .
+          --repository "${{ github.repository }}"
+          --commit "${{ github.sha }}"
+          --ref "${{ github.ref }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}-signed
+          if-no-files-found: error
+          path: |
+            implementation/mesh-milk/${{ matrix.artifact_name }}
+            implementation/mesh-milk/${{ matrix.artifact_name }}.sig
+            implementation/mesh-milk/${{ matrix.artifact_name }}.pem
+            implementation/mesh-milk/${{ matrix.artifact_name }}.manifest.json

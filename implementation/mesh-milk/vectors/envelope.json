@@ -1,0 +1,6 @@
+{
+  "description": "link envelope framing (doc 10 §2): [len u16 LE][type u8][payload]",
+  "frame_type": 32,
+  "payload": "676f6c64656e206672616d65207061796c6f6164",
+  "wire": "140020676f6c64656e206672616d65207061796c6f6164"
+}

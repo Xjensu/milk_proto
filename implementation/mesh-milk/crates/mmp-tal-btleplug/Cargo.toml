@@ -3,11 +3,22 @@ name = "mmp-tal-btleplug"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "PC BLE (Linux/Windows/macOS) via btleplug"
+keywords = ["bluetooth", "ble", "btleplug"]
+categories = ["network-programming", "hardware-support"]
 
 [dependencies]
 mmp-tal = { path = "../mmp-tal" }
 mmp-types = { path = "../mmp-types" }
+blake3 = { workspace = true }
+btleplug = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+futures = "0.3"
+uuid = "1"
 
 [lints]
 workspace = true

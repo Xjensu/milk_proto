@@ -1,0 +1,13 @@
+{
+  "description": "24-byte beacon codec (doc 10 §5)",
+  "ver": 1,
+  "tier": 2,
+  "battery": 1,
+  "ephem_id": "a0a1a2a3a4a5a6a7",
+  "busy": false,
+  "epoch": 5,
+  "frag_structure": 1,
+  "frag_offset": 2748,
+  "fragment": "b0b1b2b3b4b5b6b7b8b9babb",
+  "wire": "19a0a1a2a3a4a5a6a705bc4ab0b1b2b3b4b5b6b7b8b9babb"
+}

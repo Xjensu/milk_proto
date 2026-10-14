@@ -3,15 +3,29 @@ name = "mmp-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "bundle core, session FSM, sync engine (docs 03/06/11)"
+keywords = ["ble", "mesh", "dtn", "sync", "no-std"]
+categories = ["no-std", "network-programming"]
 
 [features]
-default = []
+# `std` gates the Noise-backed session engine (snow); the data structures are
+# no_std+alloc throughout.
+default = ["std"]
+std = ["mmp-crypto/std"]
 alloc = []
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
-mmp-crypto = { path = "../mmp-crypto" }
+mmp-crypto = { path = "../mmp-crypto", default-features = false }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
+rand = { workspace = true }
 
 [lints]
 workspace = true

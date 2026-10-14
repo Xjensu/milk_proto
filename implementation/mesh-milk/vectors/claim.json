@@ -1,0 +1,10 @@
+{
+  "description": "nickname claim (field 0x01): mmp1/claim signature preimage (owner ‖ field ‖ seq ‖ body), full wire bytes, and signature (doc 06 §4, doc 10 §4.4)",
+  "owner_pubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "field": 1,
+  "seq": 7,
+  "body": "616c696365",
+  "signed_object": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787370107000000616c696365",
+  "wire": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c977873701070000000500616c696365492fbb2b84401d02d256112d5c555dc0d178001a2f2da7bc8183ef70f23db323cc8fbe1ce69b2ad38c39acd9b04a0133bf33457bab4ac74fd83294e1be9d9d0e",
+  "signature": "492fbb2b84401d02d256112d5c555dc0d178001a2f2da7bc8183ef70f23db323cc8fbe1ce69b2ad38c39acd9b04a0133bf33457bab4ac74fd83294e1be9d9d0e"
+}

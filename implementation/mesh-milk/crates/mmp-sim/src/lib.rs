@@ -1,3 +1,1369 @@
-//! mmp-sim — discrete-event simulator (OQ-4/OQ-5, doc 12 s8)
+//! mmp-sim — discrete-event simulator (OQ-4/OQ-5, doc 12 §8).
 //!
-//! Stage 0 scaffold (ROADMAP Stage 0): intentionally empty.
+//! Owns N [`mmp_node::Node`]s over in-memory storage and drives them through
+//! randomized pairwise "meetings": a contact opens a link, pumps wire bytes
+//! back and forth until quiet (mirrors `mmp-node`'s own test harness in
+//! `crates/mmp-node/src/tests.rs::contact`), then closes it and advances a
+//! virtual millisecond clock. No radio, no wall-clock sleeps — a whole
+//! multi-hour scenario runs in milliseconds of real time.
+//!
+//! The PRNG is a ~10-line xorshift64* — deterministic from a seed, no `rand`
+//! dependency needed at this layer (doc 12 §8: simulator determinism is a
+//! goal in itself, not just an implementation convenience).
+
+use std::collections::HashSet;
+
+use mmp_core::MemStore;
+pub use mmp_node::{Event, Node, Tier};
+use mmp_tal::{LinkQuality, TalEvent};
+use mmp_types::consts::{MAX_BUNDLE, QUOTA_ANCHOR, QUOTA_STANDARD};
+use mmp_types::frame::FT_BUNDLE;
+use mmp_types::ids::{Id16, NodeId};
+
+pub mod adversary;
+pub mod contact_survival;
+pub mod dof;
+pub mod energy;
+pub mod ews;
+
+/// Deterministic xorshift64* PRNG — good enough statistical spread for
+/// picking meeting pairs and jittering the clock; not cryptographic.
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Rng {
+        Rng(seed | 1) // xorshift needs a nonzero state
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    /// Uniform value in `[0, bound)`.
+    pub fn below(&mut self, bound: u64) -> u64 {
+        self.next_u64() % bound
+    }
+}
+
+/// Uniformly sample an inclusive `min..=max` range without overflowing when
+/// the caller intentionally asks for the full `u64` domain.
+fn sample_gap_inclusive(rng: &mut Rng, min: u64, max: u64) -> u64 {
+    let width = max - min;
+    if width == u64::MAX {
+        rng.next_u64()
+    } else {
+        min + rng.below(width + 1)
+    }
+}
+
+/// Deterministic clustered-contact model for simulation experiments.
+///
+/// Nodes are partitioned into equal-sized communities. Most contacts stay
+/// inside the currently active community; every `bridge_every`th contact
+/// crosses to the next community. This is a deliberately small, explicit
+/// approximation of clustered human mobility, not a claim that the model is
+/// SLAW-calibrated. The seed still controls all choices, so a run is exactly
+/// reproducible.
+pub struct ClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    bridge_every: usize,
+    contact_index: usize,
+}
+
+impl ClusteredMobility {
+    /// Build a plan for `node_count` nodes and `community_count` communities.
+    /// Every community must contain at least two nodes so an intra-community
+    /// contact is always possible; `bridge_every` must be non-zero.
+    pub fn new(node_count: usize, community_count: usize, bridge_every: usize) -> Option<Self> {
+        if community_count < 2
+            || bridge_every == 0
+            || node_count < community_count.saturating_mul(2)
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        Some(Self {
+            communities,
+            bridge_every,
+            contact_index: 0,
+        })
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let community = (self.contact_index / self.bridge_every) % self.communities.len();
+        let is_bridge = self.contact_index.is_multiple_of(self.bridge_every);
+        let pair = if is_bridge {
+            let next = (community + 1) % self.communities.len();
+            let left = self.pick(&self.communities[community], rng);
+            let right = self.pick(&self.communities[next], rng);
+            (left, right, true)
+        } else {
+            let members = &self.communities[community];
+            let first = self.pick(members, rng);
+            let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+            let first_index = members
+                .iter()
+                .position(|node| *node == first)
+                .expect("picked member");
+            (
+                first,
+                members[(first_index + offset) % members.len()],
+                false,
+            )
+        };
+        self.contact_index = self.contact_index.saturating_add(1);
+        pair
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
+/// Deterministic social-cluster contact model for controlled experiments.
+///
+/// Unlike [`ClusteredMobility`]'s periodic bridge cadence, this model keeps a
+/// latent active community and takes a seeded bridge transition with the
+/// configured per-mille probability. A bridge moves the latent activity to a
+/// different community; otherwise both endpoints are sampled from the active
+/// community. This makes dwell/bridge distributions explicit without claiming
+/// to reproduce SLAW, human traces, or any production routing behavior.
+pub struct SocialClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    bridge_probability_per_mille: u16,
+    active_community: usize,
+    bridge_count: usize,
+}
+
+/// Maximum dwell episode accepted by [`BoundedHeavyTailClusteredMobility`].
+///
+/// The cap is deliberately small enough that a research run cannot turn a
+/// malformed fixture into an unbounded generator cost.  Larger trace-driven
+/// campaigns should stream an external trace instead of increasing this
+/// bound silently.
+pub const MAX_CLUSTER_DWELL: usize = 4_096;
+
+/// A deterministic, bounded heavy-tail clustered contact model.
+///
+/// The active community remains selected for a pause episode, then the next
+/// episode starts with one inter-community bridge.  Episode lengths are drawn
+/// from a truncated harmonic distribution (`P(k) ∝ 1/k`) between
+/// `dwell_min` and `dwell_max`.  This captures the useful *long-tail dwell*
+/// property of human-mobility models while keeping every run finite and
+/// reproducible.  It is intentionally not labelled as a SLAW implementation:
+/// SLAW also models node-specific mobility regions, waypoint geometry, and
+/// flight/inter-contact distributions, none of which this pairwise simulator
+/// observes.
+pub struct BoundedHeavyTailClusteredMobility {
+    communities: Vec<Vec<usize>>,
+    active_community: usize,
+    dwell_min: usize,
+    dwell_max: usize,
+    dwell_weight_total: u64,
+    remaining_intra: usize,
+    initialized: bool,
+    bridge_count: usize,
+    episode_count: usize,
+    intra_streak: usize,
+    max_intra_streak: usize,
+}
+
+impl BoundedHeavyTailClusteredMobility {
+    /// Build a balanced community partition with bounded heavy-tail dwell.
+    ///
+    /// `dwell_min..=dwell_max` counts intra-community contacts in each
+    /// episode.  `dwell_min` must be non-zero and `dwell_max` must not exceed
+    /// [`MAX_CLUSTER_DWELL`].
+    pub fn new(
+        node_count: usize,
+        community_count: usize,
+        dwell_min: usize,
+        dwell_max: usize,
+    ) -> Option<Self> {
+        if community_count < 2
+            || node_count < community_count.saturating_mul(2)
+            || dwell_min == 0
+            || dwell_min > dwell_max
+            || dwell_max > MAX_CLUSTER_DWELL
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        let dwell_weight_total = (dwell_min..=dwell_max).map(Self::dwell_weight).sum();
+        Some(Self {
+            communities,
+            active_community: 0,
+            dwell_min,
+            dwell_max,
+            dwell_weight_total,
+            remaining_intra: 0,
+            initialized: false,
+            bridge_count: 0,
+            episode_count: 0,
+            intra_streak: 0,
+            max_intra_streak: 0,
+        })
+    }
+
+    /// Number of bridge contacts emitted so far.
+    pub fn bridge_count(&self) -> usize {
+        self.bridge_count
+    }
+
+    /// Number of dwell episodes started, including an initial episode when a
+    /// first contact has been emitted.
+    pub fn episode_count(&self) -> usize {
+        self.episode_count
+    }
+
+    /// Longest observed run of intra-community contacts.
+    pub fn max_intra_streak(&self) -> usize {
+        self.max_intra_streak
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let (left, right, is_bridge) = if !self.initialized {
+            self.initialized = true;
+            self.start_episode(rng);
+            self.intra_pair(rng)
+        } else if self.remaining_intra == 0 {
+            let previous = self.active_community;
+            let offset = 1 + rng.below((self.communities.len() - 1) as u64) as usize;
+            self.active_community = (self.active_community + offset) % self.communities.len();
+            self.bridge_count = self.bridge_count.saturating_add(1);
+            self.start_episode(rng);
+            self.bridge_pair(previous, rng)
+        } else {
+            self.intra_pair(rng)
+        };
+
+        if is_bridge {
+            self.intra_streak = 0;
+        } else {
+            self.intra_streak = self.intra_streak.saturating_add(1);
+            self.max_intra_streak = self.max_intra_streak.max(self.intra_streak);
+            self.remaining_intra = self.remaining_intra.saturating_sub(1);
+        }
+        (left, right, is_bridge)
+    }
+
+    fn start_episode(&mut self, rng: &mut Rng) {
+        self.remaining_intra = self.sample_dwell(rng);
+        self.episode_count = self.episode_count.saturating_add(1);
+    }
+
+    fn sample_dwell(&self, rng: &mut Rng) -> usize {
+        let mut target = rng.below(self.dwell_weight_total);
+        for dwell in self.dwell_min..=self.dwell_max {
+            let weight = Self::dwell_weight(dwell);
+            if target < weight {
+                return dwell;
+            }
+            target -= weight;
+        }
+        self.dwell_max
+    }
+
+    fn dwell_weight(dwell: usize) -> u64 {
+        // 1e6 keeps useful precision while remaining non-zero at the public
+        // 4,096-contact bound.
+        1_000_000 / dwell as u64
+    }
+
+    fn intra_pair(&self, rng: &mut Rng) -> (usize, usize, bool) {
+        let members = &self.communities[self.active_community];
+        let first = self.pick(members, rng);
+        let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+        let first_index = members
+            .iter()
+            .position(|node| *node == first)
+            .expect("picked member");
+        (
+            first,
+            members[(first_index + offset) % members.len()],
+            false,
+        )
+    }
+
+    fn bridge_pair(&self, previous: usize, rng: &mut Rng) -> (usize, usize, bool) {
+        let left = self.pick(&self.communities[previous], rng);
+        let right = self.pick(&self.communities[self.active_community], rng);
+        (left, right, true)
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
+/// Metrics returned by one bounded heavy-tail clustered schedule run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundedHeavyTailRunMetrics {
+    pub meetings: usize,
+    pub bridge_meetings: usize,
+    pub intra_community_meetings: usize,
+    pub episodes: usize,
+    /// Longest observed intra-community dwell streak. This is a model metric,
+    /// not a calibrated human dwell-time estimate.
+    pub max_intra_community_streak: usize,
+    pub dwell_min: usize,
+    pub dwell_max: usize,
+    pub realized_bridge_probability_per_mille: u16,
+}
+
+impl SocialClusteredMobility {
+    /// Build a seeded-model-independent plan for balanced social communities.
+    ///
+    /// `bridge_probability_per_mille` is in `0..=1000`; zero is a useful
+    /// disconnected-cluster control and 1000 forces a bridge every contact.
+    /// Every community contains at least two nodes so intra-community pairs
+    /// are always valid.
+    pub fn new(
+        node_count: usize,
+        community_count: usize,
+        bridge_probability_per_mille: u16,
+    ) -> Option<Self> {
+        if community_count < 2
+            || bridge_probability_per_mille > 1_000
+            || node_count < community_count.saturating_mul(2)
+        {
+            return None;
+        }
+        let mut communities = vec![Vec::new(); community_count];
+        for node in 0..node_count {
+            communities[node % community_count].push(node);
+        }
+        Some(Self {
+            communities,
+            bridge_probability_per_mille,
+            active_community: 0,
+            bridge_count: 0,
+        })
+    }
+
+    /// Configured probability of a bridge contact in per-mille units.
+    pub fn bridge_probability_per_mille(&self) -> u16 {
+        self.bridge_probability_per_mille
+    }
+
+    /// Number of bridge contacts emitted so far.
+    pub fn bridge_count(&self) -> usize {
+        self.bridge_count
+    }
+
+    /// Select the next `(left, right, is_bridge)` contact.
+    pub fn next_pair(&mut self, rng: &mut Rng) -> (usize, usize, bool) {
+        let bridge = rng.below(1_000) < u64::from(self.bridge_probability_per_mille);
+        let current = self.active_community;
+        let (left, right, is_bridge) = if bridge {
+            let offset = 1 + rng.below((self.communities.len() - 1) as u64) as usize;
+            let destination = (current + offset) % self.communities.len();
+            let left = self.pick(&self.communities[current], rng);
+            let right = self.pick(&self.communities[destination], rng);
+            self.active_community = destination;
+            self.bridge_count = self.bridge_count.saturating_add(1);
+            (left, right, true)
+        } else {
+            let members = &self.communities[current];
+            let first = self.pick(members, rng);
+            let offset = 1 + rng.below((members.len() - 1) as u64) as usize;
+            let first_index = members
+                .iter()
+                .position(|node| *node == first)
+                .expect("picked member");
+            (
+                first,
+                members[(first_index + offset) % members.len()],
+                false,
+            )
+        };
+        (left, right, is_bridge)
+    }
+
+    fn pick(&self, members: &[usize], rng: &mut Rng) -> usize {
+        members[rng.below(members.len() as u64) as usize]
+    }
+}
+
+/// Metrics returned by one social-cluster schedule run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SocialClusteredRunMetrics {
+    pub meetings: usize,
+    pub bridge_meetings: usize,
+    /// Contacts sampled within the active community.
+    pub intra_community_meetings: usize,
+    /// Longest consecutive run of intra-community contacts in this schedule.
+    /// This is a deterministic dwell proxy, not a human-mobility estimate.
+    pub max_intra_community_streak: usize,
+    pub bridge_probability_per_mille: u16,
+    /// Realized bridge rate, rounded down to per-mille. Zero for an empty run.
+    pub realized_bridge_probability_per_mille: u16,
+}
+
+/// A whole-scenario counter block, exposed so scenario tests can assert on
+/// outcomes beyond pass/fail (delivery ratio, quota headroom, ...).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Counters {
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub messages_delivered: u64,
+    pub meetings_run: u64,
+}
+
+/// Contact-generator labels for research-only paired comparisons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContactGeneratorKind {
+    UniformRandom,
+    PeriodicClustered,
+    SocialClustered,
+    /// Bounded heavy-tail clustered contacts used to probe long dwell tails.
+    ///
+    /// This label identifies a research generator only. It does not imply
+    /// SLAW calibration or any production routing behavior.
+    BoundedHeavyTailClustered,
+}
+
+/// Comparable simulator metrics captured after one contact-generator run.
+///
+/// This is an observation bundle for experiment reports, not a protocol or
+/// routing input. The optional bridge count is populated only by generators
+/// that expose bridge transitions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContactScenarioMetrics {
+    /// BLAKE3-derived identifier of the simulator seed and ordered meeting
+    /// schedule. This is a reproducibility label only, not a protocol or
+    /// security credential; callers must still retain the full seed/config.
+    pub trace_id: [u8; 16],
+    pub generator: ContactGeneratorKind,
+    pub meetings: u64,
+    pub bridge_meetings: Option<usize>,
+    pub simulated_elapsed_ms: u64,
+    pub messages_sent: u64,
+    pub messages_received: u64,
+    pub messages_delivered: u64,
+    pub delivery_ratio: f64,
+    pub p50_latency_ms: Option<u64>,
+    pub p90_latency_ms: Option<u64>,
+    pub store_high_water_bytes: u64,
+    /// Sum of byte lengths returned by `Node::poll_send()` during completed
+    /// [`Sim::meet`] contacts. This is simulator wire-pump accounting, not
+    /// BLE airtime or an energy estimate.
+    pub outbound_wire_bytes: u64,
+    /// Sum of byte lengths handed to `TalEvent::LinkData` during completed
+    /// [`Sim::meet`] contacts. In this in-memory pump it equals outbound
+    /// bytes; both are exposed to make the accounting boundary explicit.
+    pub inbound_wire_bytes: u64,
+    /// Number of link sessions opened by [`Sim::meet`]. This is not a radio
+    /// connection-time measurement.
+    pub contact_sessions: u64,
+    pub quota_ok: bool,
+}
+
+/// Maximum number of contacts retained by one research replay schedule.
+///
+/// This bound keeps a malformed or accidental fixture from turning the
+/// simulator into an unbounded trace allocator. Larger scale runs should use
+/// the streaming generators below and persist only their trace identifier.
+pub const MAX_REPLAY_CONTACTS: usize = 100_000;
+
+/// One deterministic contact event in a paired research replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContactEvent {
+    /// First node index in the contact pair.
+    pub left: usize,
+    /// Second node index in the contact pair.
+    pub right: usize,
+    /// Virtual milliseconds to advance after this contact.
+    pub gap_ms: u64,
+}
+
+/// Validation failures for an explicit research replay schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScheduleError {
+    /// The schedule retained more events than [`MAX_REPLAY_CONTACTS`].
+    TooManyContacts,
+    /// A contact referred to a node outside the schedule's node count.
+    NodeOutOfRange,
+    /// A contact attempted to connect a node to itself.
+    SelfContact,
+    /// The simulator has a different node count or seed/trace prefix.
+    TraceStateMismatch,
+}
+
+/// A bounded, explicit contact schedule for paired baseline/candidate runs.
+///
+/// The schedule identity includes the node count, seed, ordered contact pairs,
+/// and every virtual gap. Replaying it into two fresh simulators therefore
+/// gives both runs the same full 16-byte trace identity without changing any
+/// router, copy-budget, or wire behavior.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContactSchedule {
+    node_count: usize,
+    seed: u64,
+    events: Vec<ContactEvent>,
+    config_id: [u8; 16],
+    trace_id: [u8; 16],
+}
+
+impl ContactSchedule {
+    /// Validate and retain an explicit schedule for `node_count` nodes.
+    pub fn new(
+        node_count: usize,
+        seed: u64,
+        events: Vec<ContactEvent>,
+    ) -> Result<Self, ScheduleError> {
+        if events.len() > MAX_REPLAY_CONTACTS {
+            return Err(ScheduleError::TooManyContacts);
+        }
+        for event in &events {
+            if event.left >= node_count || event.right >= node_count {
+                return Err(ScheduleError::NodeOutOfRange);
+            }
+            if event.left == event.right {
+                return Err(ScheduleError::SelfContact);
+            }
+        }
+        let config_hasher = trace_hasher(node_count, seed);
+        let config_id = trace_id(&config_hasher);
+        let mut hasher = config_hasher.clone();
+        for event in &events {
+            update_trace(&mut hasher, event.left, event.right, event.gap_ms);
+        }
+        Ok(Self {
+            node_count,
+            seed,
+            events,
+            config_id,
+            trace_id: trace_id(&hasher),
+        })
+    }
+
+    /// Return the full 16-byte identity of this schedule and its configuration.
+    pub fn trace_id(&self) -> [u8; 16] {
+        self.trace_id
+    }
+
+    /// Return the 16-byte identity before any contact events are consumed.
+    pub fn config_id(&self) -> [u8; 16] {
+        self.config_id
+    }
+
+    /// Return the node count used to validate this schedule.
+    pub fn node_count(&self) -> usize {
+        self.node_count
+    }
+
+    /// Return the simulator seed used to derive node identities for this run.
+    pub fn seed(&self) -> u64 {
+        self.seed
+    }
+
+    /// Return the retained contact events in replay order.
+    pub fn events(&self) -> &[ContactEvent] {
+        &self.events
+    }
+
+    /// Replay the schedule into a fresh simulator with matching configuration.
+    ///
+    /// The preflight trace check rejects a simulator with a different seed,
+    /// node count, or already-consumed contact events before mutating it.
+    pub fn replay(&self, sim: &mut Sim) -> Result<[u8; 16], ScheduleError> {
+        if sim.len() != self.node_count || sim.trace_id() != self.config_id {
+            return Err(ScheduleError::TraceStateMismatch);
+        }
+        for event in &self.events {
+            sim.meet(event.left, event.right, event.gap_ms);
+        }
+        Ok(sim.trace_id())
+    }
+}
+
+/// One fixed application workload for a research replay.
+///
+/// The workload is intentionally limited to one direct text message. It is a
+/// host-side experiment input, not an application or wire-protocol type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FixedWorkload<'a> {
+    pub sender: usize,
+    pub recipient: usize,
+    pub text: &'a str,
+}
+
+/// Provenance needed to reproduce one baseline replay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResearchProvenance {
+    pub node_count: usize,
+    pub seed: u64,
+    pub config_id: [u8; 16],
+    pub trace_id: [u8; 16],
+    pub workload_id: [u8; 16],
+    pub generator: ContactGeneratorKind,
+}
+
+/// One unchanged MMP/1 baseline replay result.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Mmp1Replay {
+    pub provenance: ResearchProvenance,
+    pub metrics: ContactScenarioMetrics,
+}
+
+/// Errors raised before a research replay can produce a result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResearchExperimentError {
+    InvalidWorkload,
+    Send(mmp_node::SendError),
+    Schedule(ScheduleError),
+    TraceMismatch,
+}
+
+/// A deterministic, baseline-only research harness.
+///
+/// It replays one validated contact schedule and workload through fresh
+/// MMP/1 simulator nodes. EWS, contact-survival, and DoF remain sidecar
+/// evaluators until a separate candidate transport adapter is designed; this
+/// type never changes routing, copy budgets, wire frames, or production APIs.
+#[derive(Debug, Clone, Copy)]
+pub struct ResearchExperiment<'a> {
+    schedule: &'a ContactSchedule,
+    workload: FixedWorkload<'a>,
+    generator: ContactGeneratorKind,
+}
+
+impl<'a> ResearchExperiment<'a> {
+    pub fn new(
+        schedule: &'a ContactSchedule,
+        workload: FixedWorkload<'a>,
+        generator: ContactGeneratorKind,
+    ) -> Self {
+        Self {
+            schedule,
+            workload,
+            generator,
+        }
+    }
+
+    /// Run the unchanged MMP/1 baseline against the configured schedule.
+    pub fn run_mmp1_baseline(&self) -> Result<Mmp1Replay, ResearchExperimentError> {
+        self.validate_workload()?;
+        let mut sim = Sim::new(self.schedule.node_count(), self.schedule.seed());
+        sim.introduce(self.workload.sender, self.workload.recipient);
+        sim.try_send_text(
+            self.workload.sender,
+            self.workload.recipient,
+            self.workload.text,
+        )
+        .map_err(ResearchExperimentError::Send)?;
+        if sim.trace_id() != self.schedule.config_id() {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        let trace_id = self
+            .schedule
+            .replay(&mut sim)
+            .map_err(ResearchExperimentError::Schedule)?;
+        if trace_id != self.schedule.trace_id() {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        let metrics = sim.research_metrics(self.generator, None);
+        if metrics.trace_id != trace_id {
+            return Err(ResearchExperimentError::TraceMismatch);
+        }
+        Ok(Mmp1Replay {
+            provenance: ResearchProvenance {
+                node_count: self.schedule.node_count(),
+                seed: self.schedule.seed(),
+                config_id: self.schedule.config_id(),
+                trace_id,
+                workload_id: workload_id(self.workload),
+                generator: self.generator,
+            },
+            metrics,
+        })
+    }
+
+    fn validate_workload(&self) -> Result<(), ResearchExperimentError> {
+        if self.workload.sender >= self.schedule.node_count()
+            || self.workload.recipient >= self.schedule.node_count()
+            || self.workload.sender == self.workload.recipient
+            || self.workload.text.len() >= MAX_BUNDLE
+        {
+            return Err(ResearchExperimentError::InvalidWorkload);
+        }
+        Ok(())
+    }
+}
+
+fn workload_id(workload: FixedWorkload<'_>) -> [u8; 16] {
+    let mut hasher = blake3::Hasher::new_derive_key("mmp1 research workload-v1");
+    hasher.update(&(workload.sender as u64).to_le_bytes());
+    hasher.update(&(workload.recipient as u64).to_le_bytes());
+    hasher.update(&(workload.text.len() as u64).to_le_bytes());
+    hasher.update(workload.text.as_bytes());
+    trace_id(&hasher)
+}
+
+fn trace_hasher(node_count: usize, seed: u64) -> blake3::Hasher {
+    let mut hasher = blake3::Hasher::new_derive_key("mmp1 sim trace-v1");
+    hasher.update(&(node_count as u64).to_le_bytes());
+    hasher.update(&seed.to_le_bytes());
+    hasher
+}
+
+fn update_trace(hasher: &mut blake3::Hasher, left: usize, right: usize, gap_ms: u64) {
+    let (trace_left, trace_right) = if left < right {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    hasher.update(b"meet-v1");
+    hasher.update(&(trace_left as u64).to_le_bytes());
+    hasher.update(&(trace_right as u64).to_le_bytes());
+    hasher.update(&gap_ms.to_le_bytes());
+}
+
+fn trace_id(hasher: &blake3::Hasher) -> [u8; 16] {
+    let digest = hasher.finalize();
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest.as_bytes()[..16]);
+    id
+}
+
+/// The simulator: N nodes, a virtual clock, and a contact schedule.
+pub struct Sim {
+    nodes: Vec<Node>,
+    now_ms: u64,
+    rng: Rng,
+    /// Incremental digest of the deterministic simulator input trace. The
+    /// digest covers node count, seed, and every ordered meeting pair plus
+    /// its virtual time advance. It lets paired reports prove that they used
+    /// the same generated contact trace without treating metrics equality as
+    /// evidence of identical input.
+    trace_hasher: blake3::Hasher,
+    next_link: u64,
+    counters: Counters,
+    /// BundleIDs of our own outgoing sends, to detect their `MessageReceived`
+    /// / `Delivered` echoes exactly once each — event delivery is edge
+    /// triggered (it does not replay on a later contact), so counters must
+    /// be updated inside `meet()` itself rather than by a caller inspecting
+    /// the returned event list after the fact.
+    tracked: HashSet<Id16>,
+    received_ids: HashSet<Id16>,
+    delivered_ids: HashSet<Id16>,
+    /// `now_ms` at the moment each tracked id was sent (E6-S1, doc 13 §5) —
+    /// needed to turn a `Delivered` event into an end-to-end latency sample.
+    sent_at_ms: std::collections::HashMap<Id16, u64>,
+    /// One sample per tracked id, pushed exactly once (`delivered_ids` above
+    /// already gates the "exactly once" edge-triggering) at the moment its
+    /// `Delivered` receipt is observed.
+    delivery_latencies_ms: Vec<u64>,
+    /// Running max of `store_len(i) * MAX_BUNDLE` across every node touched
+    /// by a `meet()` so far — the same conservative per-node upper bound
+    /// `quota_ok()` uses, tracked as a peak rather than a final snapshot
+    /// (doc 13 §3's "store high-water" column is a peak-over-the-run figure,
+    /// not an end-of-run one).
+    store_high_water_bytes: u64,
+    outbound_wire_bytes: u64,
+    inbound_wire_bytes: u64,
+    contact_sessions: u64,
+}
+
+impl Sim {
+    /// Build `n` `Tier::Relay` nodes over independent `MemStore`s, seeded
+    /// deterministically from `seed` (each node's identity seed is derived
+    /// from the sim seed and its index, so the whole scenario is
+    /// reproducible end to end).
+    pub fn new(n: usize, seed: u64) -> Sim {
+        let mut rng = Rng::new(seed);
+        let trace_hasher = trace_hasher(n, seed);
+        let mut nodes = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut node_seed = [0u8; 32];
+            let a = seed
+                .wrapping_add(i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let b = rng.next_u64();
+            node_seed[..8].copy_from_slice(&a.to_le_bytes());
+            node_seed[8..16].copy_from_slice(&b.to_le_bytes());
+            node_seed[16..24].copy_from_slice(&(i as u64).to_le_bytes());
+            node_seed[24..32].copy_from_slice(&seed.to_le_bytes());
+            nodes.push(Node::new(node_seed, Box::new(MemStore::new()), Tier::Relay));
+        }
+        Sim {
+            nodes,
+            now_ms: 0,
+            rng,
+            trace_hasher,
+            next_link: 1,
+            counters: Counters::default(),
+            tracked: HashSet::new(),
+            received_ids: HashSet::new(),
+            delivered_ids: HashSet::new(),
+            sent_at_ms: std::collections::HashMap::new(),
+            delivery_latencies_ms: Vec::new(),
+            store_high_water_bytes: 0,
+            outbound_wire_bytes: 0,
+            inbound_wire_bytes: 0,
+            contact_sessions: 0,
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    pub fn now_ms(&self) -> u64 {
+        self.now_ms
+    }
+
+    /// Return the reproducibility identifier for the seed and meeting trace
+    /// emitted so far. This is intentionally not a cryptographic protocol
+    /// value; retain the seed and generator configuration for reproduction.
+    pub fn trace_id(&self) -> [u8; 16] {
+        trace_id(&self.trace_hasher)
+    }
+
+    pub fn node_id(&self, i: usize) -> NodeId {
+        self.nodes[i].node_id()
+    }
+
+    pub fn store_len(&self, i: usize) -> usize {
+        self.nodes[i].store_len()
+    }
+
+    /// Mutable access to one node — the adversary harness (E5-S7, handbook
+    /// §4.8) needs this to enable diagnostics, tick a node directly outside a
+    /// `meet()` pump, and drive `adversary::adversary_contact` against it.
+    pub fn node_mut(&mut self, i: usize) -> &mut Node {
+        &mut self.nodes[i]
+    }
+
+    /// Read-only access to one node (diagnostics inspection, id queries).
+    pub fn node(&self, i: usize) -> &Node {
+        &self.nodes[i]
+    }
+
+    pub fn counters(&self) -> Counters {
+        self.counters
+    }
+
+    /// Fraction of tracked sends whose `Delivered` receipt has been seen by
+    /// the origin. `0.0` when nothing has been sent yet.
+    /// Whether the origin has seen `id`'s delivery receipt yet — per-message
+    /// detail beneath [`Sim::delivery_ratio`]'s aggregate, for scenarios that
+    /// need to compare delivery across subsets of tracked sends (E6-S3's
+    /// near-carriage-vs-far-carriage misdeployment check, doc 17 §8 D-8).
+    pub fn is_delivered(&self, id: &Id16) -> bool {
+        self.delivered_ids.contains(id)
+    }
+
+    pub fn delivery_ratio(&self) -> f64 {
+        if self.counters.messages_sent == 0 {
+            0.0
+        } else {
+            self.counters.messages_delivered as f64 / self.counters.messages_sent as f64
+        }
+    }
+
+    /// Out-of-band claim exchange (QR ceremony equivalent) — mirrors
+    /// `mmp-node`'s `tests.rs::introduce`.
+    pub fn introduce(&mut self, a: usize, b: usize) {
+        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+        let (left, right) = self.nodes.split_at_mut(hi);
+        let (na, nb) = (&mut left[lo], &mut right[0]);
+        for c in na.own_claims() {
+            nb.ingest_claim(c, true);
+        }
+        for c in nb.own_claims() {
+            na.ingest_claim(c, true);
+        }
+        // Introduction ticks + events are plumbing, not scenario signal.
+        na.tick(self.now_ms);
+        nb.tick(self.now_ms);
+        drain(na);
+        drain(nb);
+    }
+
+    /// Send a text message `from` node `i` `to` node `j`; tracked for
+    /// `delivery_ratio()`. Returns the BundleID so callers can also assert
+    /// directly on `Event::Delivered { id }`.
+    pub fn send_text(&mut self, from: usize, to: usize, text: &str) -> Id16 {
+        self.try_send_text(from, to, text)
+            .expect("peer claims known and text fits the simulator workload")
+    }
+
+    /// Fallible text-send seam for research harnesses and hostile fixtures.
+    /// The existing infallible helper remains for legacy scenario tests; new
+    /// callers should prefer this method so wire-size failures cannot panic.
+    pub fn try_send_text(
+        &mut self,
+        from: usize,
+        to: usize,
+        text: &str,
+    ) -> Result<Id16, mmp_node::SendError> {
+        let peer = self.nodes[to].node_id();
+        let id = self.nodes[from].send_text(&peer, text)?;
+        self.tracked.insert(id);
+        self.sent_at_ms.insert(id, self.now_ms);
+        self.counters.messages_sent += 1;
+        Ok(id)
+    }
+
+    /// Run one meeting between nodes `i` and `j`: open a link, pump wire
+    /// bytes until quiet (bounded — matches the node-level test harness),
+    /// close the link, then advance the virtual clock by `dt_ms`. Returns
+    /// the events both sides emitted, in `(node_index, event)` form, so
+    /// scenario tests can inspect anything beyond the built-in counters.
+    pub fn meet(&mut self, i: usize, j: usize, dt_ms: u64) -> Vec<(usize, Event)> {
+        assert_ne!(i, j, "a node cannot meet itself");
+        update_trace(&mut self.trace_hasher, i, j, dt_ms);
+        let link = self.next_link;
+        self.next_link += 1;
+        let now = self.now_ms;
+
+        let (lo, hi) = if i < j { (i, j) } else { (j, i) };
+        let (left, right) = self.nodes.split_at_mut(hi);
+        let (a, b) = (&mut left[lo], &mut right[0]);
+        let (a_idx, b_idx) = if i < j { (i, j) } else { (j, i) };
+
+        a.tick(now);
+        b.tick(now);
+        a.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality: LinkQuality::default(),
+        });
+        b.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: false,
+            quality: LinkQuality::default(),
+        });
+        for _ in 0..300 {
+            let mut quiet = true;
+            while let Some((l, bytes)) = a.poll_send() {
+                quiet = false;
+                let byte_count = bytes.len() as u64;
+                self.outbound_wire_bytes = self.outbound_wire_bytes.saturating_add(byte_count);
+                self.inbound_wire_bytes = self.inbound_wire_bytes.saturating_add(byte_count);
+                b.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            while let Some((l, bytes)) = b.poll_send() {
+                quiet = false;
+                let byte_count = bytes.len() as u64;
+                self.outbound_wire_bytes = self.outbound_wire_bytes.saturating_add(byte_count);
+                self.inbound_wire_bytes = self.inbound_wire_bytes.saturating_add(byte_count);
+                a.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            if quiet {
+                break;
+            }
+        }
+        a.on_tal_event(TalEvent::LinkDown { link });
+        b.on_tal_event(TalEvent::LinkDown { link });
+
+        let mut out = Vec::new();
+        for (idx, n) in [(a_idx, &mut *a), (b_idx, &mut *b)] {
+            for ev in drain(n) {
+                match &ev {
+                    Event::MessageReceived { id, .. }
+                        if self.tracked.contains(id) && self.received_ids.insert(*id) =>
+                    {
+                        self.counters.messages_received += 1;
+                    }
+                    Event::Delivered { id }
+                        if self.tracked.contains(id) && self.delivered_ids.insert(*id) =>
+                    {
+                        self.counters.messages_delivered += 1;
+                        if let Some(sent) = self.sent_at_ms.get(id) {
+                            self.delivery_latencies_ms
+                                .push(self.now_ms.saturating_sub(*sent));
+                        }
+                    }
+                    _ => {}
+                }
+                out.push((idx, ev));
+            }
+        }
+
+        for i in [a_idx, b_idx] {
+            let bytes = self.nodes[i].store_len() as u64 * MAX_BUNDLE as u64;
+            self.store_high_water_bytes = self.store_high_water_bytes.max(bytes);
+        }
+
+        self.counters.meetings_run += 1;
+        self.contact_sessions = self.contact_sessions.saturating_add(1);
+        self.now_ms += dt_ms;
+        out
+    }
+
+    /// Like [`Sim::meet`], but the contact can be cut short — simulating a
+    /// radio link that drops mid-transfer — the moment a `Frame::Bundle`
+    /// envelope would be sent, with probability `drop_pct/100` evaluated
+    /// once per such envelope (E5-S1 blob-plane acceptance test, handbook
+    /// §4.4). The frame TYPE byte (`bytes[2]`) sits outside the AEAD channel
+    /// by construction (doc 10 §2) — the same wire-level inspection the
+    /// handbook's bug ledger recommends for a test pump — so this can target
+    /// `FT_BUNDLE` without decrypting.
+    ///
+    /// **Why "cut short" rather than "skip this one frame and keep going"**
+    /// (an interpretation call, found while building this test): the
+    /// session's post-handshake channel (`mmp_crypto::noise::NoiseChannel`,
+    /// wrapping `snow::TransportState`) uses a strict monotonic AEAD nonce
+    /// counter per direction — standard Noise transport behavior, not
+    /// specific to this crate. Silently discarding an already-encrypted
+    /// envelope while continuing to feed LATER envelopes on the same
+    /// direction desyncs the receiver's expected nonce from the sender's
+    /// actual one, so EVERY subsequent `decrypt()` on that direction fails
+    /// and the session protocol-errors closed almost immediately — not a
+    /// realistic packet-loss model, and not what any real BLE transport
+    /// would do either (ATT writes/notifies are locally reliable; loss there
+    /// manifests as a dropped or shortened CONNECTION, not a silently
+    /// skipped in-stream message.) Ending the whole contact at the drop
+    /// point — both directions, no more envelopes exchanged — mirrors a
+    /// dropped connection instead, which is both realistic and leaves the
+    /// Noise channel invariant untouched. It cannot distinguish class-4
+    /// SYMBOL bundles from other classes riding the same frame type
+    /// (manifest, receipts): at file-transfer scale that is a close proxy
+    /// for "class-4 loss specifically" anyway (a multi-hundred-symbol
+    /// transfer dwarfs the handful of other bundles in the same contact).
+    pub fn meet_with_bundle_loss(
+        &mut self,
+        i: usize,
+        j: usize,
+        dt_ms: u64,
+        drop_pct: u64,
+    ) -> Vec<(usize, Event)> {
+        assert_ne!(i, j, "a node cannot meet itself");
+        assert!(drop_pct <= 100);
+        update_trace(&mut self.trace_hasher, i, j, dt_ms);
+        let link = self.next_link;
+        self.next_link += 1;
+        let now = self.now_ms;
+
+        let (lo, hi) = if i < j { (i, j) } else { (j, i) };
+        let (left, right) = self.nodes.split_at_mut(hi);
+        let (a, b) = (&mut left[lo], &mut right[0]);
+        let (a_idx, b_idx) = if i < j { (i, j) } else { (j, i) };
+
+        a.tick(now);
+        b.tick(now);
+        a.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: true,
+            quality: LinkQuality::default(),
+        });
+        b.on_tal_event(TalEvent::LinkUp {
+            link,
+            initiator: false,
+            quality: LinkQuality::default(),
+        });
+        'contact: for _ in 0..1200 {
+            let mut quiet = true;
+            while let Some((l, bytes)) = a.poll_send() {
+                quiet = false;
+                if Self::drop_bundle_frame(&bytes, drop_pct, &mut self.rng) {
+                    break 'contact;
+                }
+                b.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            while let Some((l, bytes)) = b.poll_send() {
+                quiet = false;
+                if Self::drop_bundle_frame(&bytes, drop_pct, &mut self.rng) {
+                    break 'contact;
+                }
+                a.on_tal_event(TalEvent::LinkData { link: l, bytes });
+            }
+            if quiet {
+                break;
+            }
+        }
+        a.on_tal_event(TalEvent::LinkDown { link });
+        b.on_tal_event(TalEvent::LinkDown { link });
+
+        let mut out = Vec::new();
+        for (idx, n) in [(a_idx, &mut *a), (b_idx, &mut *b)] {
+            for ev in drain(n) {
+                out.push((idx, ev));
+            }
+        }
+        self.counters.meetings_run += 1;
+        self.now_ms += dt_ms;
+        out
+    }
+
+    fn drop_bundle_frame(envelope: &[u8], drop_pct: u64, rng: &mut Rng) -> bool {
+        envelope.get(2) == Some(&FT_BUNDLE) && rng.below(100) < drop_pct
+    }
+
+    /// Run `count` meetings between uniformly random distinct node pairs,
+    /// each followed by a `min_gap_ms..max_gap_ms` clock advance. Discards
+    /// events (use `meet` directly when the scenario needs to inspect a
+    /// specific contact). Panics when the gap range is inverted or fewer than
+    /// two nodes are present, so an invalid experiment cannot silently report
+    /// a distorted fixed-gap trace.
+    pub fn run_random_meetings(&mut self, count: usize, min_gap_ms: u64, max_gap_ms: u64) {
+        assert!(min_gap_ms <= max_gap_ms, "min_gap_ms must be <= max_gap_ms");
+        let n = self.nodes.len() as u64;
+        assert!(n >= 2, "need at least two nodes to meet");
+        let span = max_gap_ms - min_gap_ms;
+        for _ in 0..count {
+            let i = self.rng.below(n) as usize;
+            let mut j = self.rng.below(n) as usize;
+            while j == i {
+                j = self.rng.below(n) as usize;
+            }
+            let dt = min_gap_ms + self.rng.below(span.max(1));
+            self.meet(i, j, dt);
+        }
+    }
+
+    /// Run a deterministic clustered-contact schedule. This is a simulation
+    /// model for the open SLAW/clustered-mobility measurement gap, not a
+    /// production routing behavior. Invalid community or gap parameters leave
+    /// the simulator unchanged and return `false`.
+    pub fn run_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        bridge_every: usize,
+    ) -> bool {
+        if min_gap_ms > max_gap_ms {
+            return false;
+        }
+        let Some(mut plan) =
+            ClusteredMobility::new(self.nodes.len(), community_count, bridge_every)
+        else {
+            return false;
+        };
+        let span = (max_gap_ms - min_gap_ms).max(1);
+        for _ in 0..count {
+            let (i, j, _) = plan.next_pair(&mut self.rng);
+            let dt = min_gap_ms + self.rng.below(span);
+            self.meet(i, j, dt);
+        }
+        true
+    }
+
+    /// Run a deterministic social-cluster schedule and return only generator
+    /// metrics. This is a research instrument for comparing contact traces;
+    /// it leaves routing, copy budgets, and wire behavior untouched. Invalid
+    /// community or gap parameters return `None` without mutating the sim.
+    pub fn run_social_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        bridge_probability_per_mille: u16,
+    ) -> Option<SocialClusteredRunMetrics> {
+        if min_gap_ms > max_gap_ms {
+            return None;
+        }
+        let mut plan = SocialClusteredMobility::new(
+            self.nodes.len(),
+            community_count,
+            bridge_probability_per_mille,
+        )?;
+        let span = (max_gap_ms - min_gap_ms).max(1);
+        let mut bridge_meetings = 0usize;
+        let mut intra_community_meetings = 0usize;
+        let mut intra_streak = 0usize;
+        let mut max_intra_community_streak = 0usize;
+        for _ in 0..count {
+            let (i, j, is_bridge) = plan.next_pair(&mut self.rng);
+            let dt = min_gap_ms + self.rng.below(span);
+            self.meet(i, j, dt);
+            if is_bridge {
+                bridge_meetings = bridge_meetings.saturating_add(1);
+                intra_streak = 0;
+            } else {
+                intra_community_meetings = intra_community_meetings.saturating_add(1);
+                intra_streak = intra_streak.saturating_add(1);
+                max_intra_community_streak = max_intra_community_streak.max(intra_streak);
+            }
+        }
+        let realized_bridge_probability_per_mille = bridge_meetings
+            .saturating_mul(1_000)
+            .checked_div(count)
+            .unwrap_or(0)
+            .min(1_000) as u16;
+        Some(SocialClusteredRunMetrics {
+            meetings: count,
+            bridge_meetings,
+            intra_community_meetings,
+            max_intra_community_streak,
+            bridge_probability_per_mille: plan.bridge_probability_per_mille(),
+            realized_bridge_probability_per_mille,
+        })
+    }
+
+    /// Run a bounded heavy-tail clustered schedule and return generator
+    /// metrics. This research-only model leaves wire formats and routing
+    /// policy untouched; it does not claim to close the SLAW gate without
+    /// trace-derived parameters. Invalid parameters return `None` before the
+    /// simulator is mutated. Gap samples use the inclusive
+    /// `min_gap_ms..=max_gap_ms` interval.
+    pub fn run_bounded_heavy_tail_clustered_meetings(
+        &mut self,
+        count: usize,
+        min_gap_ms: u64,
+        max_gap_ms: u64,
+        community_count: usize,
+        dwell_min: usize,
+        dwell_max: usize,
+    ) -> Option<BoundedHeavyTailRunMetrics> {
+        if min_gap_ms > max_gap_ms {
+            return None;
+        }
+        let mut plan = BoundedHeavyTailClusteredMobility::new(
+            self.nodes.len(),
+            community_count,
+            dwell_min,
+            dwell_max,
+        )?;
+        let mut bridge_meetings = 0usize;
+        let mut intra_community_meetings = 0usize;
+        for _ in 0..count {
+            let (i, j, is_bridge) = plan.next_pair(&mut self.rng);
+            let dt = sample_gap_inclusive(&mut self.rng, min_gap_ms, max_gap_ms);
+            self.meet(i, j, dt);
+            if is_bridge {
+                bridge_meetings = bridge_meetings.saturating_add(1);
+            } else {
+                intra_community_meetings = intra_community_meetings.saturating_add(1);
+            }
+        }
+        let realized_bridge_probability_per_mille = bridge_meetings
+            .saturating_mul(1_000)
+            .checked_div(count)
+            .unwrap_or(0)
+            .min(1_000) as u16;
+        Some(BoundedHeavyTailRunMetrics {
+            meetings: count,
+            bridge_meetings,
+            intra_community_meetings,
+            episodes: plan.episode_count(),
+            max_intra_community_streak: plan.max_intra_streak(),
+            dwell_min,
+            dwell_max,
+            realized_bridge_probability_per_mille,
+        })
+    }
+
+    /// One conductor round (doc 17 §3.2, E6-S3): `conductor` meets each node
+    /// in `stops` **in order**, full `meet()` contacts (not random pairing) —
+    /// the scheduled, deterministic topology a physically-walking conductor
+    /// imposes, as opposed to [`Sim::run_random_meetings`]'s uniform-random
+    /// pairing. `travel_ms` advances the clock after each stop (time to walk
+    /// to the next carriage); does not loop — call again for another round.
+    pub fn run_conductor_round(&mut self, conductor: usize, stops: &[usize], travel_ms: u64) {
+        for &stop in stops {
+            self.meet(conductor, stop, travel_ms);
+        }
+    }
+
+    /// End-to-end delivery latency (send → origin sees the receipt) for
+    /// every tracked message delivered so far, in simulated milliseconds —
+    /// the raw samples doc 13 §5's p50/p90 latency bands are computed over.
+    pub fn delivery_latencies_ms(&self) -> &[u64] {
+        &self.delivery_latencies_ms
+    }
+
+    /// The `p`-th percentile (`0.0..=1.0`) of [`Sim::delivery_latencies_ms`],
+    /// nearest-rank on a sorted copy. `None` with no delivered samples yet.
+    pub fn latency_percentile_ms(&self, p: f64) -> Option<u64> {
+        if self.delivery_latencies_ms.is_empty() {
+            return None;
+        }
+        let mut sorted = self.delivery_latencies_ms.clone();
+        sorted.sort_unstable();
+        let idx = ((sorted.len() as f64 * p).ceil() as usize)
+            .saturating_sub(1)
+            .min(sorted.len() - 1);
+        Some(sorted[idx])
+    }
+
+    /// Peak, over every `meet()` so far, of `store_len * MAX_BUNDLE` for any
+    /// single node — doc 13 §3's "store high-water" figure (the same
+    /// conservative per-record upper bound `quota_ok()` uses, tracked as a
+    /// running max rather than an end-of-run snapshot).
+    pub fn store_high_water_bytes(&self) -> u64 {
+        self.store_high_water_bytes
+    }
+
+    /// Conservative per-node quota check: `store_len * MAX_BUNDLE` is an
+    /// upper bound on `total_bytes` (every stored record is ≤ `MAX_BUNDLE`
+    /// wire bytes), and `Node::tick` already self-enforces the real byte
+    /// quota internally (doc 04 §2) — `Node` has no public `total_bytes()`
+    /// getter, so this is the tightest check available from outside.
+    pub fn quota_ok(&self) -> bool {
+        self.nodes.iter().all(|n| {
+            let quota = if n.tier() == Tier::Anchor {
+                QUOTA_ANCHOR
+            } else {
+                QUOTA_STANDARD
+            };
+            (n.store_len() as u64) * (MAX_BUNDLE as u64) <= quota
+        })
+    }
+
+    /// Capture a deterministic, comparable metric block for a research run.
+    /// `bridge_meetings` is supplied by a generator such as
+    /// [`SocialClusteredMobility`] and is otherwise `None`.
+    pub fn research_metrics(
+        &self,
+        generator: ContactGeneratorKind,
+        bridge_meetings: Option<usize>,
+    ) -> ContactScenarioMetrics {
+        ContactScenarioMetrics {
+            trace_id: self.trace_id(),
+            generator,
+            meetings: self.counters.meetings_run,
+            bridge_meetings,
+            simulated_elapsed_ms: self.now_ms,
+            messages_sent: self.counters.messages_sent,
+            messages_received: self.counters.messages_received,
+            messages_delivered: self.counters.messages_delivered,
+            delivery_ratio: self.delivery_ratio(),
+            p50_latency_ms: self.latency_percentile_ms(0.50),
+            p90_latency_ms: self.latency_percentile_ms(0.90),
+            store_high_water_bytes: self.store_high_water_bytes,
+            outbound_wire_bytes: self.outbound_wire_bytes,
+            inbound_wire_bytes: self.inbound_wire_bytes,
+            contact_sessions: self.contact_sessions,
+            quota_ok: self.quota_ok(),
+        }
+    }
+}
+
+fn drain(n: &mut Node) -> Vec<Event> {
+    std::iter::from_fn(|| n.poll_event()).collect()
+}
+
+#[cfg(test)]
+mod tests;
+#[cfg(test)]
+mod tests_adversarial;
+#[cfg(test)]
+mod tests_blob;
+#[cfg(test)]
+mod tests_deployment;
+#[cfg(test)]
+mod tests_scale;

@@ -1,0 +1,100 @@
+{
+  "format": "mesh-milk-spec-status-v2",
+  "wire_version": "MMP/1",
+  "generated_from": "docs/spec/",
+  "documents": [
+    {
+      "path": "docs/spec/ble-transport.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "50b8c3fa72ff70f7cd1399bfbf45e6ee82bf50aac5ee8b398760df7f7ce291fb"
+    },
+    {
+      "path": "docs/spec/bundles.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "0e4050d0279ba41391f12ef5e4e5c81a48aceec90ca909c0765c8b96874d6484"
+    },
+    {
+      "path": "docs/spec/conformance.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "b72c9cca90023c0818b63e14ce0265f335dded86e7d6b1c1c1c11881389cde64"
+    },
+    {
+      "path": "docs/spec/cryptography.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "04060fb4f446fc0e4e532c4ced71ef03d5ab1e8884e84df2deac13e6208a93f5"
+    },
+    {
+      "path": "docs/spec/identity-claims.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "2b6832db2e76c285d64cf77a83a24e214bb94a85be66da600352b575f3da860a"
+    },
+    {
+      "path": "docs/spec/index.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "bbaa862c631a4475444d3ff5a89fd4407f7e81081af347999fea761f93882c82"
+    },
+    {
+      "path": "docs/spec/protocol-model.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "28080692843437807dc3907e7d5ee689e61fcb9518fea71cc815a65c927dac2f"
+    },
+    {
+      "path": "docs/spec/registries.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "4acd29647e70cc95ac1529fd35a50c518ceb45423c38bf932fc54816c31c2f31"
+    },
+    {
+      "path": "docs/spec/routing.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "46d24e66fb34d247473683e2ef5d42b0eefafc1261c7aacc851db70e108414f9"
+    },
+    {
+      "path": "docs/spec/security.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "ed51084f47981bf9e765bf389bf0902bec77c962313211336477ec2740663a46"
+    },
+    {
+      "path": "docs/spec/sessions.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "cff859c9c22ccc6aeab750e88ba7e5a9f8fc8562da5ee0564b76f2e4586f9319"
+    },
+    {
+      "path": "docs/spec/state-machines.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "22b69f437a8191b60e4a6f9afc1509ffa09ec7531066e6a8a0ee203cbc550fee"
+    },
+    {
+      "path": "docs/spec/synchronization.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "55468eef13356d174dfd46866bf8c98e6129907d6a120e4747b32e3586149ebf"
+    },
+    {
+      "path": "docs/spec/terminology.md",
+      "status": "normative-mmp1",
+      "status_marker": "Status: normative MMP/1 source",
+      "sha256": "3cd06b18467b609184f7cc13d490bfa27f8b78a153e2b09556ab730bb11ff8b7"
+    }
+  ],
+  "publication_artifacts": {
+    "required_present": [
+      "README.md",
+      "docs/README.md",
+      "docs/internal/release-evidence/spec-reboot-report.md",
+      "docs/spec/index.md"
+    ],
+    "historical_references_not_shipped": []
+  }
+}

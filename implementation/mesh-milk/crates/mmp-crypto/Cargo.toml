@@ -3,14 +3,35 @@ name = "mmp-crypto"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "suite 0x01, ratchets, sealed/prekey (doc 08)"
+keywords = ["cryptography", "ed25519", "x25519", "noise", "no-std"]
+categories = ["cryptography", "no-std"]
 
 [features]
-default = []
+# `std` gates the snow-based Noise XX session layer; everything else is
+# no_std+alloc. Embedded targets ship the doc-12 §4 hand-rolled-XX fallback
+# later (out of MVP scope, HANDOFF §0).
+default = ["std"]
+std = ["snow"]
 alloc = []
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
+chacha20poly1305 = { workspace = true }
+zeroize = { workspace = true }
+rand_core = { workspace = true }
+snow = { workspace = true, optional = true }
+
+[dev-dependencies]
+rand = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

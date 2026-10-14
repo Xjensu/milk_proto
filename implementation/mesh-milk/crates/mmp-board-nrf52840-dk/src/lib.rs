@@ -1,0 +1,840 @@
+#![no_std]
+
+//! Static configuration for the first embedded MMP implementation target.
+//!
+//! This crate is intentionally a profile and compile probe, not a board
+//! support package.  It does not select an executor, configure clocks or
+//! radio peripherals, provide a linker script, or assign a flash journal
+//! region.  Those decisions require board and power-loss evidence.
+
+mod nvmc_backend;
+
+#[cfg(target_arch = "arm")]
+pub use nvmc_backend::{NvmcJournalBackend, NvmcJournalError};
+pub use nvmc_backend::{NvmcRegion, NvmcRegionError};
+
+#[cfg(target_arch = "arm")]
+use mmp_embedded_provider::{JournalLayout, JournaledFixedStore, ProviderError};
+
+/// Stable implementation identifier for the Nordic PCA10056 development kit.
+pub const BOARD_ID: &str = "nrf52840-dk-pca10056";
+
+/// Rust target used by the repository's embedded checks for this profile.
+pub const TARGET: &str = "thumbv7em-none-eabihf";
+
+/// SoC/Embassy chip-selection name used by this board profile.
+pub const MCU: &str = "nrf52840";
+
+/// HAL crate selected by the target-only dependency below.
+pub const HAL_NAME: &str = "embassy-nrf";
+
+/// Exact HAL version locked by this crate's target dependency.
+pub const HAL_VERSION: &str = "0.11.0";
+
+/// Exact Embassy chip feature selected by this crate's target dependency.
+pub const HAL_CHIP_FEATURE: &str = "nrf52840";
+
+/// Documented nRF52840 on-chip flash capacity in bytes (1 MiB).
+pub const FLASH_CAPACITY_BYTES: usize = 1_048_576;
+
+/// Documented nRF52840 on-chip RAM capacity in bytes (256 KiB).
+pub const RAM_CAPACITY_BYTES: usize = 262_144;
+
+/// Named, evidence-backed configuration record for the first embedded target.
+///
+/// This record intentionally contains only repository-selected identity and
+/// capacity facts. It does not select a linker map, bootloader/SoftDevice
+/// reservation, runtime, radio backend, or flash-storage geometry.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Nrf52840DkConfig {
+    /// Stable board identifier for the Nordic PCA10056 development kit.
+    pub board_id: &'static str,
+    /// SoC/chip name selected by the Embassy target dependency.
+    pub mcu: &'static str,
+    /// Rust target triple used by the embedded compile check.
+    pub target: &'static str,
+    /// Total documented on-chip flash capacity, not application space.
+    pub flash_capacity_bytes: usize,
+    /// Total documented on-chip RAM capacity, not free runtime RAM.
+    pub ram_capacity_bytes: usize,
+    /// HAL crate selected by the target dependency.
+    pub hal_name: &'static str,
+    /// Exact HAL version selected by the locked target dependency.
+    pub hal_version: &'static str,
+    /// Exact chip feature selected on the HAL dependency.
+    pub hal_chip_feature: &'static str,
+}
+
+/// The complete named nRF52840 DK compile-probe record.
+pub const NRF52840_DK_CONFIG: Nrf52840DkConfig = Nrf52840DkConfig {
+    board_id: BOARD_ID,
+    mcu: MCU,
+    target: TARGET,
+    flash_capacity_bytes: FLASH_CAPACITY_BYTES,
+    ram_capacity_bytes: RAM_CAPACITY_BYTES,
+    hal_name: HAL_NAME,
+    hal_version: HAL_VERSION,
+    hal_chip_feature: HAL_CHIP_FEATURE,
+};
+
+/// Return the named nRF52840 DK configuration without allocating or touching
+/// hardware.
+pub const fn nrf52840_dk_config() -> Nrf52840DkConfig {
+    NRF52840_DK_CONFIG
+}
+
+/// Target provider composed from the board's NVMC adapter and the generic
+/// two-slot fixed-store journal provider.
+#[cfg(target_arch = "arm")]
+pub type NvmcFixedStore<'d, const SLOTS: usize, const BUNDLE_BYTES: usize, const TOTAL_BYTES: u64> =
+    JournaledFixedStore<NvmcJournalBackend<'d>, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>;
+
+/// Recover a fixed-capacity provider from a caller-selected NVMC region.
+///
+/// The caller remains responsible for supplying a region derived from the
+/// linked image and board reservation. This helper only validates the region,
+/// constructs the provider-neutral layout relative to that region, and runs
+/// the existing snapshot/authenticity recovery path. It does not choose a
+/// linker address, bootloader reservation, or storage policy.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    recover_nvmc_fixed_store_with_durable_floor(
+        flash,
+        region,
+        provider,
+        slot_bytes,
+        max_payload_bytes,
+        image,
+        0,
+    )
+}
+
+/// Recover a fixed-capacity provider while enforcing a caller-owned durable
+/// generation floor.
+///
+/// The floor must come from a separate crash-safe board record that advances
+/// with the published snapshot. A non-zero floor rejects an older but
+/// checksum-valid journal image instead of silently accepting rollback. The
+/// helper does not persist or authenticate the floor itself; those policies
+/// remain board-specific and must be completed before own-origin producers are
+/// enabled.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store_with_durable_floor<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+    durable_floor: u64,
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    let backend = NvmcJournalBackend::new(flash, region);
+    let layout = JournalLayout::new(&backend, 0, slot_bytes, max_payload_bytes)
+        .map_err(ProviderError::Layout)?;
+    JournaledFixedStore::recover_with_durable_floor(backend, layout, provider, image, durable_floor)
+}
+
+/// Recover a fixed-capacity provider only when the selected snapshot exactly
+/// matches a caller-owned durable generation floor.
+///
+/// This is a comparison seam, not an authenticated or cross-region atomic
+/// checkpoint. The board provider must obtain the floor from a separately
+/// crash-safe authority and must treat any mismatch as a fail-closed result.
+/// The zero/empty match is reserved for explicit first-install or
+/// uninitialized state; this helper cannot distinguish authority reset or
+/// deletion.
+#[cfg(target_arch = "arm")]
+pub fn recover_nvmc_fixed_store_with_exact_durable_floor<
+    'd,
+    const SLOTS: usize,
+    const BUNDLE_BYTES: usize,
+    const TOTAL_BYTES: u64,
+>(
+    flash: embassy_nrf::nvmc::Nvmc<'d>,
+    region: NvmcRegion,
+    provider: u64,
+    slot_bytes: usize,
+    max_payload_bytes: usize,
+    image: &mut [u8],
+    durable_floor: u64,
+) -> Result<NvmcFixedStore<'d, SLOTS, BUNDLE_BYTES, TOTAL_BYTES>, ProviderError<NvmcJournalError>> {
+    let backend = NvmcJournalBackend::new(flash, region);
+    let layout = JournalLayout::new(&backend, 0, slot_bytes, max_payload_bytes)
+        .map_err(ProviderError::Layout)?;
+    JournaledFixedStore::recover_with_exact_durable_floor(
+        backend,
+        layout,
+        provider,
+        image,
+        durable_floor,
+    )
+}
+
+/// The small, evidence-backed portion of the board profile that is safe to
+/// expose before linker and storage geometry are selected.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoardConfig {
+    /// Board identifier, suitable for diagnostic output.
+    pub board_id: &'static str,
+    /// Rust target triple used for the compile probe.
+    pub target: &'static str,
+    /// Total flash capacity reported for the SoC, not application space.
+    pub flash_capacity_bytes: usize,
+    /// Total RAM capacity reported for the SoC, not free runtime RAM.
+    pub ram_capacity_bytes: usize,
+}
+
+/// Return the profile constants without allocating or touching hardware.
+pub const fn board_config() -> BoardConfig {
+    BoardConfig {
+        board_id: BOARD_ID,
+        target: TARGET,
+        flash_capacity_bytes: FLASH_CAPACITY_BYTES,
+        ram_capacity_bytes: RAM_CAPACITY_BYTES,
+    }
+}
+
+/// Parameters supplied by a board-specific storage profile.
+///
+/// The profile intentionally carries accounting inputs instead of selecting
+/// a flash map. A board adapter must provide values backed by its linker map,
+/// HAL, and power-loss evidence before it can use this configuration in a
+/// target image.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StorageConfig {
+    /// Absolute start of the journal region in flash.
+    pub store_region_offset_bytes: usize,
+    /// Total bytes reserved for the journal region.
+    pub store_region_bytes: usize,
+    /// Smallest aligned flash-program operation supported by the provider.
+    pub program_unit_bytes: usize,
+    /// Erase-page size supported by the provider.
+    pub erase_page_bytes: usize,
+    /// Maximum number of live bundle slots, including reserved slots.
+    pub max_live_bundles: usize,
+    /// Maximum encoded bundle bytes admitted to one slot.
+    pub max_bundle_bytes: usize,
+    /// Fixed bytes assigned to one bundle slot in the snapshot.
+    pub slot_bytes: usize,
+    /// Maximum number of index entries in the snapshot.
+    pub max_index_entries: usize,
+    /// Maximum outstanding reservations held in runtime memory.
+    pub max_reservations: usize,
+    /// Maximum entries in one atomic batch held in runtime memory.
+    pub max_batch_entries: usize,
+    /// Maximum payload accepted by the journal encoder.
+    pub max_snapshot_payload_bytes: usize,
+    /// Fixed snapshot payload bytes, including generation metadata but not
+    /// the journal record framing or alignment padding.
+    pub snapshot_fixed_overhead_bytes: usize,
+    /// Per-slot metadata bytes in the snapshot.
+    pub metadata_bytes_per_slot: usize,
+    /// Per-index-entry bytes in the snapshot.
+    pub index_bytes_per_entry: usize,
+    /// Auxiliary state bytes assigned to this provider profile.
+    pub auxiliary_bytes: usize,
+}
+
+/// Address-parametric region reserved for a separate durable generation-floor
+/// journal. The board supplies the address from its linker/storage map; this
+/// type does not select a board address or claim flash atomicity/authentication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableFloorConfig {
+    /// Absolute start of the floor journal region in flash.
+    pub region_offset_bytes: usize,
+    /// Total bytes reserved for the floor journal region.
+    pub region_bytes: usize,
+}
+
+/// Deterministic validation failures for [`StorageConfig`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StorageConfigError {
+    /// A required geometry or capacity value is zero.
+    ZeroValue,
+    /// The region offset is not aligned to the program or erase unit.
+    RegionOffsetUnaligned,
+    /// The region size is not aligned to the program or erase unit.
+    RegionSizeUnaligned,
+    /// The region end exceeds the selected flash capacity or overflows.
+    RegionOutOfBounds,
+    /// The index capacity does not match the live-slot capacity.
+    IndexCapacityMismatch,
+    /// A bundle does not fit in its configured slot.
+    BundleExceedsSlot,
+    /// Snapshot accounting overflowed checked arithmetic.
+    SnapshotArithmeticOverflow,
+    /// The complete snapshot exceeds the journal encoder payload bound.
+    SnapshotExceedsPayload,
+    /// The complete snapshot exceeds the configured journal region.
+    SnapshotExceedsRegion,
+    /// The durable-floor region has a zero offset or size.
+    FloorRegionZero,
+    /// The durable-floor region offset is not aligned to program/erase units.
+    FloorRegionOffsetUnaligned,
+    /// The durable-floor region size is not aligned to program/erase units.
+    FloorRegionSizeUnaligned,
+    /// The durable-floor region arithmetic overflowed or exceeds flash.
+    FloorRegionOutOfBounds,
+    /// The durable-floor region overlaps the snapshot journal region.
+    FloorRegionOverlapsStore,
+    /// The durable-floor region is too small for two complete floor records.
+    FloorRegionTooSmall,
+    /// The erase unit is not compatible with the program unit.
+    FloorRegionGeometryIncompatible,
+    /// The durable-floor region cannot be divided into two aligned slots.
+    FloorRegionSlotUnaligned,
+    /// Checked arithmetic overflowed while sizing the durable-floor region.
+    FloorRegionArithmeticOverflow,
+}
+
+impl StorageConfig {
+    /// Validate this configuration against the documented SoC capacity.
+    pub const fn validate(self) -> Result<(), StorageConfigError> {
+        self.validate_against_flash(FLASH_CAPACITY_BYTES)
+    }
+
+    /// Validate this configuration against a caller-supplied flash capacity.
+    ///
+    /// This is `const` so a board crate can place the result in a compile-time
+    /// assertion once its linker and provider values are authoritative.
+    pub const fn validate_against_flash(
+        self,
+        flash_capacity_bytes: usize,
+    ) -> Result<(), StorageConfigError> {
+        if flash_capacity_bytes == 0
+            || self.store_region_offset_bytes == 0
+            || self.store_region_bytes == 0
+            || self.program_unit_bytes == 0
+            || self.erase_page_bytes == 0
+            || self.max_live_bundles == 0
+            || self.max_bundle_bytes == 0
+            || self.slot_bytes == 0
+            || self.max_index_entries == 0
+            || self.max_reservations == 0
+            || self.max_batch_entries == 0
+            || self.max_snapshot_payload_bytes == 0
+            || self.snapshot_fixed_overhead_bytes == 0
+            || self.metadata_bytes_per_slot == 0
+            || self.index_bytes_per_entry == 0
+        {
+            return Err(StorageConfigError::ZeroValue);
+        }
+        if !self
+            .store_region_offset_bytes
+            .is_multiple_of(self.program_unit_bytes)
+            || !self
+                .store_region_offset_bytes
+                .is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::RegionOffsetUnaligned);
+        }
+        if !self
+            .store_region_bytes
+            .is_multiple_of(self.program_unit_bytes)
+            || !self
+                .store_region_bytes
+                .is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::RegionSizeUnaligned);
+        }
+        let Some(region_end) = self
+            .store_region_offset_bytes
+            .checked_add(self.store_region_bytes)
+        else {
+            return Err(StorageConfigError::RegionOutOfBounds);
+        };
+        if region_end > flash_capacity_bytes {
+            return Err(StorageConfigError::RegionOutOfBounds);
+        }
+        if self.max_index_entries != self.max_live_bundles {
+            return Err(StorageConfigError::IndexCapacityMismatch);
+        }
+        if self.max_bundle_bytes > self.slot_bytes {
+            return Err(StorageConfigError::BundleExceedsSlot);
+        }
+        if self.max_snapshot_payload_bytes > mmp_flash_journal::MAX_PAYLOAD_LEN {
+            return Err(StorageConfigError::SnapshotExceedsPayload);
+        }
+        let Some(slot_with_metadata) = self.slot_bytes.checked_add(self.metadata_bytes_per_slot)
+        else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        let Some(per_slot) = slot_with_metadata.checked_add(self.index_bytes_per_entry) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        let Some(live_bytes) = per_slot.checked_mul(self.max_live_bundles) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        let Some(snapshot_with_live) = self.snapshot_fixed_overhead_bytes.checked_add(live_bytes)
+        else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        let Some(snapshot_bytes) = snapshot_with_live.checked_add(self.auxiliary_bytes) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        if snapshot_bytes > self.max_snapshot_payload_bytes {
+            return Err(StorageConfigError::SnapshotExceedsPayload);
+        }
+        let Some(encoded_snapshot_bytes) = mmp_flash_journal::encoded_len(snapshot_bytes) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        let remainder = encoded_snapshot_bytes % self.program_unit_bytes;
+        let aligned_snapshot_bytes = if remainder == 0 {
+            encoded_snapshot_bytes
+        } else {
+            let Some(aligned) =
+                encoded_snapshot_bytes.checked_add(self.program_unit_bytes - remainder)
+            else {
+                return Err(StorageConfigError::SnapshotArithmeticOverflow);
+            };
+            aligned
+        };
+        // `JournalLayout` reserves two complete record slots so recovery can
+        // retain the previous committed image while appending the next one.
+        // Validate the whole region against both slots, not just the one
+        // record that a single snapshot would occupy.
+        let Some(required_region_bytes) = aligned_snapshot_bytes.checked_mul(2) else {
+            return Err(StorageConfigError::SnapshotArithmeticOverflow);
+        };
+        if required_region_bytes > self.store_region_bytes {
+            return Err(StorageConfigError::SnapshotExceedsRegion);
+        }
+        Ok(())
+    }
+
+    /// Validate this storage profile together with a separate durable-floor
+    /// journal region against caller-supplied flash capacity.
+    ///
+    /// The floor region is required to be non-empty, program/erase aligned,
+    /// disjoint from the snapshot journal, and large enough for two complete
+    /// aligned `GFL1` journal records. This is only geometry/accounting
+    /// validation; it does not authenticate the floor or couple two regions
+    /// atomically across power loss.
+    pub const fn validate_with_floor_region(
+        self,
+        flash_capacity_bytes: usize,
+        floor: DurableFloorConfig,
+    ) -> Result<(), StorageConfigError> {
+        if self.program_unit_bytes == 0 || self.erase_page_bytes == 0 {
+            return Err(StorageConfigError::ZeroValue);
+        }
+        if !self
+            .erase_page_bytes
+            .is_multiple_of(self.program_unit_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionGeometryIncompatible);
+        }
+        if let Err(error) = self.validate_against_flash(flash_capacity_bytes) {
+            return Err(error);
+        }
+
+        if floor.region_offset_bytes == 0 || floor.region_bytes == 0 {
+            return Err(StorageConfigError::FloorRegionZero);
+        }
+        if !floor
+            .region_offset_bytes
+            .is_multiple_of(self.program_unit_bytes)
+            || !floor
+                .region_offset_bytes
+                .is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionOffsetUnaligned);
+        }
+        if !floor.region_bytes.is_multiple_of(self.program_unit_bytes)
+            || !floor.region_bytes.is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionSizeUnaligned);
+        }
+        if !floor.region_bytes.is_multiple_of(2) {
+            return Err(StorageConfigError::FloorRegionSlotUnaligned);
+        }
+        let floor_slot_bytes = floor.region_bytes / 2;
+        if !floor_slot_bytes.is_multiple_of(self.program_unit_bytes)
+            || !floor_slot_bytes.is_multiple_of(self.erase_page_bytes)
+        {
+            return Err(StorageConfigError::FloorRegionSlotUnaligned);
+        }
+        let Some(floor_end) = floor.region_offset_bytes.checked_add(floor.region_bytes) else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        if floor_end > flash_capacity_bytes {
+            return Err(StorageConfigError::FloorRegionOutOfBounds);
+        }
+        let Some(store_end) = self
+            .store_region_offset_bytes
+            .checked_add(self.store_region_bytes)
+        else {
+            return Err(StorageConfigError::RegionOutOfBounds);
+        };
+        if floor.region_offset_bytes < store_end && self.store_region_offset_bytes < floor_end {
+            return Err(StorageConfigError::FloorRegionOverlapsStore);
+        }
+
+        let Some(floor_record) =
+            mmp_flash_journal::encoded_len(mmp_flash_journal::GENERATION_FLOOR_PAYLOAD_LEN)
+        else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        let remainder = floor_record % self.program_unit_bytes;
+        let aligned_floor_record = if remainder == 0 {
+            floor_record
+        } else {
+            let Some(aligned) = floor_record.checked_add(self.program_unit_bytes - remainder)
+            else {
+                return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+            };
+            aligned
+        };
+        let Some(required_floor_bytes) = aligned_floor_record.checked_mul(2) else {
+            return Err(StorageConfigError::FloorRegionArithmeticOverflow);
+        };
+        if floor_slot_bytes < aligned_floor_record || floor.region_bytes < required_floor_bytes {
+            return Err(StorageConfigError::FloorRegionTooSmall);
+        }
+        Ok(())
+    }
+}
+
+impl BoardConfig {
+    /// Validate a storage profile against this board's documented capacity.
+    pub const fn validate_storage(self, storage: StorageConfig) -> Result<(), StorageConfigError> {
+        storage.validate_against_flash(self.flash_capacity_bytes)
+    }
+
+    /// Validate storage and a caller-selected durable-floor region.
+    pub const fn validate_storage_with_floor_region(
+        self,
+        storage: StorageConfig,
+        floor: DurableFloorConfig,
+    ) -> Result<(), StorageConfigError> {
+        storage.validate_with_floor_region(self.flash_capacity_bytes, floor)
+    }
+}
+
+/// Return a type-name marker that proves the nRF52840 Embassy dependency is
+/// selected in the ARM target build.
+///
+/// This is deliberately not a peripheral constructor: it cannot enable an
+/// executor, claim a singleton, touch registers, or imply a radio backend.
+#[cfg(target_arch = "arm")]
+#[must_use]
+pub fn embassy_peripherals_type_name() -> &'static str {
+    core::any::type_name::<embassy_nrf::Peripherals>()
+}
+
+// The embedded target is checked as a library only.  Keep the host-side
+// assertions out of the target test harness, which is unavailable until a
+// board runner and linker image are selected.
+#[cfg(all(test, not(target_arch = "arm")))]
+mod tests {
+    use super::*;
+
+    const VALID_STORAGE: StorageConfig = StorageConfig {
+        store_region_offset_bytes: 0x20_000,
+        store_region_bytes: 0x10_000,
+        program_unit_bytes: 4,
+        erase_page_bytes: 4096,
+        max_live_bundles: 4,
+        max_bundle_bytes: 1024,
+        slot_bytes: 1024,
+        max_index_entries: 4,
+        max_reservations: 2,
+        max_batch_entries: 2,
+        max_snapshot_payload_bytes: 65_536,
+        snapshot_fixed_overhead_bytes: 256,
+        metadata_bytes_per_slot: 64,
+        index_bytes_per_entry: 32,
+        auxiliary_bytes: 256,
+    };
+
+    const CONST_NRF52840_DK_CONFIG: Nrf52840DkConfig = nrf52840_dk_config();
+
+    #[test]
+    fn profile_constants_are_explicit() {
+        let config = board_config();
+        assert_eq!(config.board_id, "nrf52840-dk-pca10056");
+        assert_eq!(config.target, "thumbv7em-none-eabihf");
+        assert_eq!(config.flash_capacity_bytes, 1_048_576);
+        assert_eq!(config.ram_capacity_bytes, 262_144);
+    }
+
+    #[test]
+    fn named_nrf52840_dk_record_contains_every_selected_field() {
+        let config = nrf52840_dk_config();
+        assert_eq!(config, NRF52840_DK_CONFIG);
+        assert_eq!(CONST_NRF52840_DK_CONFIG, NRF52840_DK_CONFIG);
+        assert_eq!(config.board_id, "nrf52840-dk-pca10056");
+        assert_eq!(config.mcu, "nrf52840");
+        assert_eq!(config.target, "thumbv7em-none-eabihf");
+        assert_eq!(config.flash_capacity_bytes, 1_048_576);
+        assert_eq!(config.ram_capacity_bytes, 262_144);
+        assert_eq!(config.hal_name, "embassy-nrf");
+        assert_eq!(config.hal_version, "0.11.0");
+        assert_eq!(config.hal_chip_feature, "nrf52840");
+    }
+
+    #[test]
+    fn valid_storage_configuration_is_accepted() {
+        assert_eq!(VALID_STORAGE.validate(), Ok(()));
+        assert_eq!(board_config().validate_storage(VALID_STORAGE), Ok(()));
+    }
+
+    #[test]
+    fn valid_disjoint_durable_floor_region_is_accepted() {
+        let floor = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, floor),
+            Ok(())
+        );
+        assert_eq!(
+            board_config().validate_storage_with_floor_region(VALID_STORAGE, floor),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn storage_configuration_rejects_zero_and_misaligned_values() {
+        let mut zero = VALID_STORAGE;
+        zero.program_unit_bytes = 0;
+        assert_eq!(zero.validate(), Err(StorageConfigError::ZeroValue));
+
+        let mut misaligned = VALID_STORAGE;
+        misaligned.store_region_offset_bytes += 1;
+        assert_eq!(
+            misaligned.validate(),
+            Err(StorageConfigError::RegionOffsetUnaligned)
+        );
+    }
+
+    #[test]
+    fn storage_configuration_rejects_overflow_and_accounting_mismatches() {
+        let mut out_of_bounds = VALID_STORAGE;
+        out_of_bounds.store_region_offset_bytes = usize::MAX - 4095;
+        assert_eq!(
+            out_of_bounds.validate(),
+            Err(StorageConfigError::RegionOutOfBounds)
+        );
+
+        let mut wrong_index = VALID_STORAGE;
+        wrong_index.max_index_entries = wrong_index.max_live_bundles + 1;
+        assert_eq!(
+            wrong_index.validate(),
+            Err(StorageConfigError::IndexCapacityMismatch)
+        );
+
+        let mut too_large = VALID_STORAGE;
+        too_large.max_bundle_bytes = too_large.slot_bytes + 1;
+        assert_eq!(
+            too_large.validate(),
+            Err(StorageConfigError::BundleExceedsSlot)
+        );
+
+        let mut too_many = VALID_STORAGE;
+        too_many.max_live_bundles = usize::MAX;
+        too_many.max_index_entries = usize::MAX;
+        assert_eq!(
+            too_many.validate(),
+            Err(StorageConfigError::SnapshotArithmeticOverflow)
+        );
+    }
+
+    #[test]
+    fn storage_configuration_rejects_snapshot_limits() {
+        let mut payload = VALID_STORAGE;
+        payload.max_snapshot_payload_bytes = 512;
+        assert_eq!(
+            payload.validate(),
+            Err(StorageConfigError::SnapshotExceedsPayload)
+        );
+
+        let mut region = VALID_STORAGE;
+        region.store_region_bytes = 4096;
+        assert_eq!(
+            region.validate(),
+            Err(StorageConfigError::SnapshotExceedsRegion)
+        );
+
+        // One encoded snapshot is below 8192 bytes for this profile, but the
+        // journal layout needs two complete slots for crash-safe recovery.
+        let mut one_slot_only = VALID_STORAGE;
+        one_slot_only.store_region_bytes = 8192;
+        assert_eq!(
+            one_slot_only.validate(),
+            Err(StorageConfigError::SnapshotExceedsRegion)
+        );
+    }
+
+    #[test]
+    fn durable_floor_region_rejects_zero_alignment_bounds_overlap_and_size() {
+        let valid = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+
+        let mut zero = valid;
+        zero.region_bytes = 0;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, zero),
+            Err(StorageConfigError::FloorRegionZero)
+        );
+
+        let mut unaligned_offset = valid;
+        unaligned_offset.region_offset_bytes += 4;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, unaligned_offset),
+            Err(StorageConfigError::FloorRegionOffsetUnaligned)
+        );
+
+        let mut unaligned_size = valid;
+        unaligned_size.region_bytes += 4;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, unaligned_size),
+            Err(StorageConfigError::FloorRegionSizeUnaligned)
+        );
+
+        let mut overlap = valid;
+        overlap.region_offset_bytes = VALID_STORAGE.store_region_offset_bytes;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, overlap),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let partial_before = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes - 4096,
+            region_bytes: 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, partial_before),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let contained = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes + 4096,
+            region_bytes: 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, contained),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let contains_store = DurableFloorConfig {
+            region_offset_bytes: VALID_STORAGE.store_region_offset_bytes - 4096,
+            region_bytes: VALID_STORAGE.store_region_bytes + 8192,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, contains_store),
+            Err(StorageConfigError::FloorRegionOverlapsStore)
+        );
+
+        let mut small_geometry = VALID_STORAGE;
+        small_geometry.erase_page_bytes = 4;
+        let too_small = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 64,
+        };
+        assert_eq!(
+            small_geometry.validate_with_floor_region(FLASH_CAPACITY_BYTES, too_small),
+            Err(StorageConfigError::FloorRegionTooSmall)
+        );
+
+        let odd = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 8191,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, odd),
+            Err(StorageConfigError::FloorRegionSizeUnaligned)
+        );
+
+        let slot_unaligned = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 12_288,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, slot_unaligned),
+            Err(StorageConfigError::FloorRegionSlotUnaligned)
+        );
+
+        let mut incompatible = VALID_STORAGE;
+        incompatible.program_unit_bytes = 8;
+        incompatible.erase_page_bytes = 12;
+        assert_eq!(
+            incompatible.validate_with_floor_region(FLASH_CAPACITY_BYTES, valid),
+            Err(StorageConfigError::FloorRegionGeometryIncompatible)
+        );
+    }
+
+    #[test]
+    fn durable_floor_region_rejects_out_of_bounds_and_arithmetic_overflow() {
+        let mut out_of_bounds = DurableFloorConfig {
+            region_offset_bytes: 0xF_FF000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, out_of_bounds),
+            Err(StorageConfigError::FloorRegionOutOfBounds)
+        );
+
+        let at_flash_end = DurableFloorConfig {
+            region_offset_bytes: FLASH_CAPACITY_BYTES - 0x2_000,
+            region_bytes: 0x2_000,
+        };
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, at_flash_end),
+            Ok(())
+        );
+
+        let custom_flash = FLASH_CAPACITY_BYTES - 0x1000;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(custom_flash, at_flash_end),
+            Err(StorageConfigError::FloorRegionOutOfBounds)
+        );
+
+        out_of_bounds.region_offset_bytes = usize::MAX - 4095;
+        out_of_bounds.region_bytes = 8192;
+        assert_eq!(
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, out_of_bounds),
+            Err(StorageConfigError::FloorRegionArithmeticOverflow)
+        );
+    }
+
+    #[test]
+    fn existing_storage_validation_does_not_require_floor_region() {
+        assert_eq!(VALID_STORAGE.validate(), Ok(()));
+        assert_eq!(
+            VALID_STORAGE.validate_against_flash(FLASH_CAPACITY_BYTES),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn durable_floor_validation_is_const_evaluable() {
+        const FLOOR: DurableFloorConfig = DurableFloorConfig {
+            region_offset_bytes: 0x30_000,
+            region_bytes: 0x2_000,
+        };
+        const RESULT: Result<(), StorageConfigError> =
+            VALID_STORAGE.validate_with_floor_region(FLASH_CAPACITY_BYTES, FLOOR);
+        assert_eq!(RESULT, Ok(()));
+    }
+}

@@ -3,13 +3,25 @@ name = "mmp-node-embassy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
 description = "embedded orchestration on the Embassy executor"
+keywords = ["embassy", "embedded", "async"]
+categories = ["embedded", "no-std", "asynchronous"]
 
 [dependencies]
-mmp-core = { path = "../mmp-core" }
-mmp-router = { path = "../mmp-router" }
-mmp-store = { path = "../mmp-store" }
-mmp-tal = { path = "../mmp-tal" }
+# Keep the embedded orchestration shell on the sans-IO dependency closure.
+# `mmp-core`'s default `std` feature pulls the Noise/snow stack (and its
+# host-only entropy path); `mmp-store` is currently a filesystem-backed,
+# std-only implementation.  The future flash-log backend must be injected at
+# the `mmp_core::BundleStore` seam rather than making this crate non-buildable
+# for Cortex-M targets.
+mmp-core = { path = "../mmp-core", default-features = false }
+mmp-router = { path = "../mmp-router", default-features = false }
+mmp-tal = { path = "../mmp-tal", default-features = false }
+mmp-tal-embedded = { path = "../mmp-tal-embedded", default-features = false }
 
 [lints]
 workspace = true

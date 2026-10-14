@@ -1,0 +1,51 @@
+[package]
+name = "mmp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone from the parent workspace (standard cargo-fuzz convention) — the
+# parent's `members = ["crates/*", "tools/layer-check"]` glob wouldn't have
+# swept this in anyway, but this makes the boundary explicit.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+mmp-types = { path = "../crates/mmp-types" }
+# fuzz_hs needs the `std` feature (on by default) for the snow-based Noise
+# session layer — NoiseHandshake::responder is only built under it.
+mmp-crypto = { path = "../crates/mmp-crypto" }
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "fuzz_beacon"
+path = "fuzz_targets/fuzz_beacon.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_envelope"
+path = "fuzz_targets/fuzz_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_bundle"
+path = "fuzz_targets/fuzz_bundle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_hs"
+path = "fuzz_targets/fuzz_hs.rs"
+test = false
+doc = false
+bench = false

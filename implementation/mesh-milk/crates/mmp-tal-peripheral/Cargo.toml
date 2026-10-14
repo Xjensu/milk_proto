@@ -1,0 +1,50 @@
+# mmp-tal-peripheral — PC BLE peripheral/GATT-server TAL (HANDOFF M5b).
+#
+# Dependency-shape decision (handbook §4.1): this is a SEPARATE crate, not a
+# feature of mmp-tal-btleplug, because the peripheral role needs per-OS stacks
+# (bluer/BlueZ on Linux, WinRT on Windows) that are heavier and more
+# OS-specific than btleplug's unconditional btleplug+tokio+futures set.
+# Platform selection is by TARGET (cfg(target_os)), not cargo features: a
+# feature that merely mirrors the build OS adds a failure mode (right OS,
+# feature forgotten) and no expressive power — the OS alone decides which
+# backend can exist. The handbook sketched `bluez`/`winrt` features; target
+# tables achieve the same dependency isolation automatically.
+
+[package]
+name = "mmp-tal-peripheral"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "PC BLE peripheral role (GATT server + advertiser): Linux/BlueZ via bluer; Windows/macOS stubs"
+keywords = ["bluetooth", "ble", "bluez", "peripheral"]
+categories = ["network-programming", "hardware-support"]
+
+[dependencies]
+mmp-tal = { path = "../mmp-tal" }
+mmp-types = { path = "../mmp-types" }
+blake3 = { workspace = true }
+# This crate sits ABOVE the sans-IO core (like mmp-tal-btleplug); tools/layer-check
+# only polices the crates below mmp-node, so tokio is allowed here.
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `bluetoothd` is bluer's feature gating everything that talks to the BlueZ
+# daemon over D-Bus — including the gatt::local server API and adv — per the
+# bluer 0.17 manifest (default features are ["bluetoothd", "id"]; we drop `id`,
+# the Bluetooth-SIG id database, which is lookup sugar this crate never uses).
+bluer = { version = "0.17", default-features = false, features = ["bluetoothd"] }
+futures = "0.3"
+
+[dev-dependencies]
+# UUID-parseability test only (src/lib.rs) — the byte-compatibility with the
+# central crate is now enforced by construction (E3-S3: both re-export the
+# same mmp-tal constants), not by a duplicated-literal cross-check, so this
+# crate no longer needs mmp-tal-btleplug as a dev-dependency at all.
+uuid = "1"
+
+[lints]
+workspace = true

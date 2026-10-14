@@ -3,15 +3,37 @@ name = "mmp-node"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "std orchestration: scheduler, tier ladder, power mgmt (doc 04)"
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "std orchestration: node API, scheduler, tier ladder, event stream (doc 04)"
+keywords = ["ble", "mesh", "p2p", "messaging"]
+categories = ["network-programming"]
 
 [dependencies]
 mmp-types = { path = "../mmp-types" }
 mmp-crypto = { path = "../mmp-crypto" }
 mmp-core = { path = "../mmp-core" }
-mmp-router = { path = "../mmp-router" }
+mmp-router = { path = "../mmp-router", features = ["std"] }
 mmp-store = { path = "../mmp-store" }
 mmp-tal = { path = "../mmp-tal" }
+mmp-rs-code = { path = "../mmp-rs-code" }
+blake3 = { workspace = true }
+rand = { workspace = true }
+rand_core = { workspace = true }
+zeroize = { workspace = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# DPAPI is used only to wrap the provider-owned DEK.  The journal, generation
+# floor, and restore lock remain in the adapter so the SnapshotVault contract
+# is not mistaken for a generic key/value store.
+windows-sys = { version = "0.61.2", default-features = false, features = [
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemInformation",
+] }
 
 [lints]
 workspace = true

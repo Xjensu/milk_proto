@@ -1,0 +1,6 @@
+{
+  "description": "budget grant over L_MAX is clamped on receive (AUDIT F3)",
+  "granted": 200,
+  "l_max": 32,
+  "clamped": 32
+}

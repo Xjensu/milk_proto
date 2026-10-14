@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""Validate a two-host Linux/BlueZ evidence manifest.
+
+The validator checks the evidence package, not the radio itself.  It is
+deliberately independent of the Rust protocol implementation so a report can
+be checked on a machine that did not run the test.  Paths in the manifest are
+relative to the manifest file and may not escape its directory.
+
+The two hosts must use distinct seed fingerprints.  Each role must also
+declare the reference-CLI markers that establish its side of the exchange:
+``advertising``, ``Established``, and ``MessageReceived`` for the peripheral;
+``dialed``, ``Established``, and ``Delivered`` for the central.  The markers
+must occur in the corresponding log.  These checks prevent a manifest from
+passing with two arbitrary logs and self-selected markers, while remaining
+honest that text logs are not cryptographically authenticated.
+
+The two host logs and two store-inspection files must also be distinct
+canonical paths.  Reusing one file for both roles would make a two-host gate
+one-sided even if that file contains every required marker.
+
+Manifest shape (``mmp-ble-evidence-v1``)::
+
+    {
+      "schema": "mmp-ble-evidence-v1",
+      "run_id": "2026-08-09-linux-pair-01",
+      "commit": "<40 hex characters>",
+      "worktree_clean": true,
+      "toolchain": {"rustc": "...", "cargo": "..."},
+      "hosts": [
+        {"name": "alice", "role": "peripheral", "os": "...",
+         "kernel": "...", "adapter": "...",
+         "seed_fingerprint": "sha256:<64 lowercase hex>",
+         "command": "cargo run --release -p mmp-cli -- listen ...",
+         "log": "alice.log", "markers": ["advertising", "Established",
+                                            "MessageReceived"]},
+        {"name": "bob", "role": "central", "os": "...",
+         "kernel": "...", "adapter": "...",
+         "seed_fingerprint": "sha256:<64 lowercase hex>",
+         "command": "cargo run --release -p mmp-cli -- send ...",
+         "log": "bob.log", "markers": ["dialed", "Established", "Delivered"]}
+      ],
+      "stores": {"peripheral_inspect": "alice.inspect",
+                 "central_inspect": "bob.inspect"},
+      "radio": {
+        "mtu": {"available": true, "value": 247, "source": "btleplug"},
+        "rssi_dbm": {"available": true, "samples": [-58, -55],
+                      "source": "scanner callback"}
+      },
+      "gates": {"advertisement": true, "gatt_connection": true,
+                "identity_proof": true, "bundle_transfer": true,
+                "receipt_returned": true},
+      "message": {"delivered": true, "bundle_id": "<32 hex characters>"},
+      "receipt": {"returned": true},
+      "reconnect": {"attempted": true, "stable": true, "cycles": 1}
+    }
+
+When a platform does not expose MTU or RSSI, set ``available`` to false and
+provide a non-empty ``reason``.  This records the limitation instead of
+silently turning an absent measurement into a pass.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import re
+import shlex
+import sys
+from pathlib import Path
+from typing import Any
+
+
+SCHEMA = "mmp-ble-evidence-v1"
+COMMIT_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
+SEED_FINGERPRINT_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+ROLES = {"peripheral", "central"}
+# Evidence is an offline release artifact, not an unbounded log collector.
+# Keep parser memory bounded when a package is supplied by an untrusted host
+# or copied from a long-running adapter process.
+MAX_MANIFEST_BYTES = 1 << 20
+MAX_EVIDENCE_FILE_BYTES = 8 << 20
+REQUIRED_GATES = (
+    "advertisement",
+    "gatt_connection",
+    "identity_proof",
+    "bundle_transfer",
+    "receipt_returned",
+)
+# A release manifest is not allowed to reduce the Phase-A exchange to two
+# arbitrary logs with self-selected markers.  These are the minimum role
+# markers emitted by the reference CLI for the corresponding physical path.
+# The validator still cannot authenticate a log (see the module docstring),
+# but requiring both the declaration and the observed text prevents an
+# incomplete/one-sided run from being presented as a complete gate.
+REQUIRED_LOG_MARKERS = {
+    "peripheral": ("advertising", "Established", "MessageReceived"),
+    "central": ("dialed", "Established", "Delivered"),
+}
+REQUIRED_COMMAND_SUBCOMMAND = {"peripheral": "listen", "central": "send"}
+CLI_BINARIES = {"mmp-cli", "mmp-cli.exe"}
+CARGO_BINARIES = {"cargo", "cargo.exe"}
+
+
+class _DuplicateKey(ValueError):
+    """Raised when an evidence JSON object repeats a member name."""
+
+
+def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Build a JSON object without allowing last-member-wins ambiguity."""
+
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _DuplicateKey(f"duplicate JSON member: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_constant(value: str) -> None:
+    """Keep evidence JSON finite and portable across validators."""
+
+    raise ValueError(f"non-finite JSON value is not allowed: {value}")
+
+
+def _is_mapping(value: object) -> bool:
+    return isinstance(value, dict)
+
+
+def _text(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _command_matches_role(command: str, role: str) -> bool:
+    """Require the reference CLI and the role's evidence-producing command.
+
+    Unix paths, ``mmp-cli.exe``, and ``cargo run -p mmp-cli -- ...`` are all
+    accepted. The central bootstrap ``connect`` command is intentionally not
+    accepted: the manifest command must describe the later ``send`` process
+    whose log contains the delivery marker. Tokenize before matching so text
+    printed by an unrelated command (for example ``echo 'mmp-cli send ...'``)
+    cannot satisfy the invocation check.
+    """
+
+    subcommand = REQUIRED_COMMAND_SUBCOMMAND.get(role)
+    if subcommand is None:
+        return False
+
+    try:
+        # ``posix=False`` preserves quoted PowerShell/Windows path tokens and
+        # keeps a quoted payload such as ``'mmp-cli send'`` as one token. This
+        # parser is only a structural gate; it never executes the command.
+        tokens = shlex.split(command, posix=False)
+    except ValueError:
+        return False
+
+    def unquote(token: str) -> str:
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in "'\"":
+            return token[1:-1]
+        return token
+
+    def basename(token: str) -> str:
+        # ``Path`` uses the host separator, while evidence may be checked on a
+        # different OS from the one that produced it. Handle both separators.
+        return re.split(r"[\\/]", unquote(token))[-1].casefold()
+
+    if not tokens:
+        return False
+
+    command_index = 1 if unquote(tokens[0]) == "&" else 0
+    if command_index >= len(tokens):
+        return False
+    first = basename(tokens[command_index])
+    wanted = subcommand.casefold()
+
+    # Direct invocation: the executable must be the first command token. A
+    # quoted argument to ``echo`` therefore cannot be mistaken for mmp-cli.
+    if first in CLI_BINARIES and len(tokens) > command_index + 1:
+        return unquote(tokens[command_index + 1]).casefold() == wanted
+
+    # Cargo invocation: require the documented ``-p mmp-cli -- <role>``
+    # sequence and a cargo executable at the command position. Other tokens
+    # (release flags, manifest options) remain intentionally unconstrained.
+    if first not in CARGO_BINARIES:
+        return False
+    normalized = [unquote(token).casefold() for token in tokens[command_index:]]
+    for index in range(len(normalized) - 3):
+        if normalized[index:index + 4] == ["-p", "mmp-cli", "--", wanted]:
+            return True
+    return False
+
+
+def _read_utf8_bounded(path: Path, label: str, limit: int, errors: list[str]) -> str | None:
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
+        return None
+    if size > limit:
+        errors.append(f"{label} exceeds maximum size of {limit} bytes")
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        errors.append(f"{label} cannot be read as UTF-8: {exc}")
+        return None
+
+
+def _relative_file(root: Path, value: object, label: str, errors: list[str]) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{label} must be a non-empty relative path")
+        return None
+    candidate = Path(value)
+    if candidate.is_absolute():
+        errors.append(f"{label} must be relative to the manifest")
+        return None
+    # Keep an evidence package self-contained and reproducible. Resolving a
+    # symlink that happens to point inside the package would otherwise make
+    # the accepted path depend on mutable filesystem state (and archivers may
+    # preserve or dereference that link differently). Check every component,
+    # not just the leaf, so a symlinked subdirectory cannot bypass the guard.
+    unresolved = root
+    try:
+        for component in candidate.parts:
+            unresolved /= component
+            if unresolved.is_symlink():
+                errors.append(f"{label} must not use symbolic links: {value}")
+                return None
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
+        return None
+    try:
+        resolved = (root / candidate).resolve()
+        resolved.relative_to(root.resolve())
+    except (OSError, ValueError):
+        errors.append(f"{label} escapes the manifest directory")
+        return None
+    if not resolved.is_file():
+        errors.append(f"{label} does not exist: {value}")
+        return None
+    try:
+        if resolved.stat().st_size > MAX_EVIDENCE_FILE_BYTES:
+            errors.append(f"{label} exceeds maximum size of {MAX_EVIDENCE_FILE_BYTES} bytes")
+            return None
+    except OSError as exc:
+        errors.append(f"{label} cannot be inspected: {exc}")
+        return None
+    return resolved
+
+
+def _validate_radio(radio: object, errors: list[str]) -> None:
+    if not _is_mapping(radio):
+        errors.append("radio must be an object")
+        return
+    for key, value in (("mtu", radio.get("mtu")), ("rssi_dbm", radio.get("rssi_dbm"))):
+        if not _is_mapping(value):
+            errors.append(f"radio.{key} must be an object")
+            continue
+        available = value.get("available")
+        if not isinstance(available, bool):
+            errors.append(f"radio.{key}.available must be boolean")
+            continue
+        source = value.get("source")
+        if not _text(source):
+            errors.append(f"radio.{key}.source must identify where the measurement came from")
+        if available:
+            if key == "mtu":
+                mtu = value.get("value")
+                if not isinstance(mtu, int) or isinstance(mtu, bool) or mtu < 23:
+                    errors.append("radio.mtu.value must be an integer >= 23 when available")
+            else:
+                samples = value.get("samples")
+                if not isinstance(samples, list) or not samples:
+                    errors.append("radio.rssi_dbm.samples must be a non-empty list when available")
+                elif any(
+                    isinstance(sample, bool)
+                    or not isinstance(sample, (int, float))
+                    or not math.isfinite(float(sample))
+                    for sample in samples
+                ):
+                    errors.append("radio.rssi_dbm.samples must contain finite numbers")
+        elif not _text(value.get("reason")):
+            errors.append(f"radio.{key}.reason is required when the measurement is unavailable")
+
+
+def validate_manifest(path: Path) -> list[str]:
+    """Return deterministic validation errors for one evidence manifest."""
+
+    errors: list[str] = []
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        return [f"manifest cannot be inspected: {exc}"]
+    if size > MAX_MANIFEST_BYTES:
+        return [f"manifest exceeds maximum size of {MAX_MANIFEST_BYTES} bytes"]
+    try:
+        raw = path.read_text(encoding="utf-8")
+        document = json.loads(
+            raw,
+            object_pairs_hook=_object_without_duplicates,
+            parse_constant=_reject_constant,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        return [f"manifest cannot be read as UTF-8 JSON: {exc}"]
+    if not _is_mapping(document):
+        return ["manifest root must be an object"]
+
+    # Evidence files must be independent artifacts.  The manifest itself
+    # contains every required marker string and is therefore able to satisfy
+    # the log checks without proving that either host produced a log.  Reject
+    # it explicitly before recording any evidence paths.
+    manifest_path = path.resolve()
+
+    if document.get("schema") != SCHEMA:
+        errors.append(f"schema must be {SCHEMA!r}")
+    for key in ("run_id", "commit"):
+        if not _text(document.get(key)):
+            errors.append(f"{key} must be a non-empty string")
+    if isinstance(document.get("commit"), str) and not COMMIT_RE.fullmatch(document["commit"]):
+        errors.append("commit must be a hexadecimal Git object ID (7-64 characters)")
+    if document.get("worktree_clean") is not True:
+        errors.append("worktree_clean must be true for a release evidence package")
+
+    toolchain = document.get("toolchain")
+    if not _is_mapping(toolchain) or not _text(toolchain.get("rustc")) or not _text(toolchain.get("cargo")):
+        errors.append("toolchain.rustc and toolchain.cargo are required")
+
+    hosts = document.get("hosts")
+    if not isinstance(hosts, list) or len(hosts) != 2:
+        errors.append("hosts must contain exactly two entries")
+        hosts = []
+    roles: set[str] = set()
+    names: set[str] = set()
+    seed_fingerprints: set[str] = set()
+    evidence_paths: dict[Path, str] = {}
+
+    def record_evidence_path(candidate: Path | None, label: str) -> None:
+        if candidate is None:
+            return
+        try:
+            is_manifest = candidate.samefile(manifest_path)
+        except OSError:
+            # The candidate was already proven to exist.  If a transient
+            # filesystem error prevents an inode comparison, retain the
+            # canonical-path guard rather than failing open on the common
+            # direct-reference case.
+            is_manifest = candidate == manifest_path
+        if is_manifest:
+            errors.append(f"{label} must not reference the manifest itself")
+            return
+        previous = evidence_paths.get(candidate)
+        if previous is not None:
+            errors.append(f"{label} reuses evidence path already assigned to {previous}")
+        else:
+            evidence_paths[candidate] = label
+
+    for index, host in enumerate(hosts):
+        label = f"hosts[{index}]"
+        if not _is_mapping(host):
+            errors.append(f"{label} must be an object")
+            continue
+        name = host.get("name")
+        role = host.get("role")
+        if not _text(name):
+            errors.append(f"{label}.name must be non-empty")
+        elif name in names:
+            errors.append(f"duplicate host name: {name}")
+        else:
+            names.add(name)
+        if role not in ROLES:
+            errors.append(f"{label}.role must be peripheral or central")
+        else:
+            roles.add(role)
+        for key in ("os", "kernel", "adapter", "seed_fingerprint", "command"):
+            if not _text(host.get(key)):
+                errors.append(f"{label}.{key} must be recorded")
+        command = host.get("command")
+        if (
+            _text(command)
+            and role in REQUIRED_COMMAND_SUBCOMMAND
+            and not _command_matches_role(command, role)
+        ):
+            errors.append(
+                f"{label}.command must invoke mmp-cli {REQUIRED_COMMAND_SUBCOMMAND[role]} "
+                f"for the {role} role"
+            )
+        fingerprint = host.get("seed_fingerprint")
+        if _text(fingerprint):
+            if not SEED_FINGERPRINT_RE.fullmatch(fingerprint):
+                errors.append(
+                    f"{label}.seed_fingerprint must be sha256:<64 lowercase hex>"
+                )
+            elif fingerprint in seed_fingerprints:
+                errors.append(f"duplicate host seed_fingerprint: {fingerprint}")
+            else:
+                seed_fingerprints.add(fingerprint)
+        log = _relative_file(path.parent, host.get("log"), f"{label}.log", errors)
+        record_evidence_path(log, f"{label}.log")
+        markers = host.get("markers")
+        if not isinstance(markers, list) or any(not _text(marker) for marker in markers):
+            errors.append(f"{label}.markers must be a list of non-empty strings")
+        elif role in REQUIRED_LOG_MARKERS:
+            for required_marker in REQUIRED_LOG_MARKERS[role]:
+                if required_marker not in markers:
+                    errors.append(f"{label}.markers must include role gate marker: {required_marker}")
+        if log is not None and isinstance(markers, list):
+            content = _read_utf8_bounded(log, f"{label}.log", MAX_EVIDENCE_FILE_BYTES, errors)
+            if content is not None:
+                for marker in markers:
+                    if isinstance(marker, str) and marker not in content:
+                        errors.append(f"{label}.log is missing marker: {marker}")
+    if roles != ROLES:
+        errors.append("hosts must contain one peripheral and one central")
+
+    stores = document.get("stores")
+    if not _is_mapping(stores):
+        errors.append("stores must be an object")
+    else:
+        for key in ("peripheral_inspect", "central_inspect"):
+            inspect = _relative_file(path.parent, stores.get(key), f"stores.{key}", errors)
+            record_evidence_path(inspect, f"stores.{key}")
+
+    _validate_radio(document.get("radio"), errors)
+
+    gates = document.get("gates")
+    if not _is_mapping(gates):
+        errors.append("gates must be an object")
+    else:
+        for key in REQUIRED_GATES:
+            if gates.get(key) is not True:
+                errors.append(f"gates.{key} must be true")
+
+    message = document.get("message")
+    if not _is_mapping(message) or message.get("delivered") is not True:
+        errors.append("message.delivered must be true")
+    elif not isinstance(message.get("bundle_id"), str) or not re.fullmatch(r"[0-9a-fA-F]{32}", message["bundle_id"]):
+        errors.append("message.bundle_id must be a 32-character hexadecimal BundleID")
+
+    receipt = document.get("receipt")
+    if not _is_mapping(receipt) or receipt.get("returned") is not True:
+        errors.append("receipt.returned must be true")
+
+    reconnect = document.get("reconnect")
+    if not _is_mapping(reconnect):
+        errors.append("reconnect must be an object")
+    else:
+        if reconnect.get("attempted") is not True:
+            errors.append("reconnect.attempted must be true")
+        if reconnect.get("stable") is not True:
+            errors.append("reconnect.stable must be true")
+        cycles = reconnect.get("cycles")
+        if not isinstance(cycles, int) or isinstance(cycles, bool) or cycles < 1:
+            errors.append("reconnect.cycles must be an integer >= 1")
+
+    return errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("manifest", type=Path, help="JSON evidence manifest")
+    args = parser.parse_args(argv)
+    errors = validate_manifest(args.manifest)
+    if errors:
+        for error in errors:
+            print(f"BLE evidence: {error}", file=sys.stderr)
+        return 1
+    print(f"BLE evidence: passed ({args.manifest})")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

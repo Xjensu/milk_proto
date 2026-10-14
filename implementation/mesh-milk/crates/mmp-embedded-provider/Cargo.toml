@@ -1,0 +1,25 @@
+[package]
+name = "mmp-embedded-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Host-testable journal-backed fixed-capacity MMP provider"
+keywords = ["no-std", "embedded", "flash", "journal"]
+categories = ["embedded", "no-std"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+mmp-core = { path = "../mmp-core", default-features = false }
+mmp-flash-journal = { path = "../mmp-flash-journal" }
+
+[dev-dependencies]
+mmp-crypto = { path = "../mmp-crypto", default-features = false }
+mmp-types = { path = "../mmp-types" }
+
+[lints]
+workspace = true

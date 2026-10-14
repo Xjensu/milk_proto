@@ -1,0 +1,12 @@
+{
+  "description": "Ed25519 overlarge-S negative: replacing canonical S with S+L MUST be rejected by strict verification (RFC 8032 §5.1.7, AUDIT F9)",
+  "domain": "mmp1/bundle",
+  "pubkey": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+  "object": "1102d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c97787372222222222222222222222222222222200000000000200001500676f6c64656e20766563746f72207061796c6f6164",
+  "valid_signature": "de865e61d838f6dfea0bbc64ef090c8a2253f7c553692e912c06a260a098ef4e3a5faf108ff252e95daa22c954a884be221fba889b7b9ca1780dedcd24f7d90a",
+  "noncanonical_signature": "de865e61d838f6dfea0bbc64ef090c8a2253f7c553692e912c06a260a098ef4e2733a56da955654134471a6c33a263d3221fba889b7b9ca1780dedcd24f7d91a",
+  "valid_s": "3a5faf108ff252e95daa22c954a884be221fba889b7b9ca1780dedcd24f7d90a",
+  "noncanonical_s": "2733a56da955654134471a6c33a263d3221fba889b7b9ca1780dedcd24f7d91a",
+  "expected_valid": "accept",
+  "expected_noncanonical": "reject"
+}
