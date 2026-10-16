@@ -1,5 +1,7 @@
 # Deploy from GitHub using Docker Hub images
 
+For the October 16 socket-exhaustion repair on an existing server, follow [Production repair and deployment](PRODUCTION_REPAIR_2026-10-16.md).
+
 The development PC builds and publishes images. The separate Linux server clones the main GitHub repository, reads `.env.local`, pulls those images and runs the application. No image builds run on the server, and no host IP entry is required.
 
 The archive packaging script is optional. The standard procedure below uses a Git checkout of the main repository.
