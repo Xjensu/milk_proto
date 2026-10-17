@@ -1,3 +1,5 @@
+> Superseded for the 2026-10-17 simplified release: use [the current deployment runbook](SIMPLIFIED_DEPLOYMENT_2026-10-17.md). The instructions below describe the older Consul deployment.
+
 # Deploy from GitHub using Docker Hub images
 
 For the October 16 socket-exhaustion repair on an existing server, follow [Production repair and deployment](PRODUCTION_REPAIR_2026-10-16.md).

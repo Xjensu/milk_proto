@@ -1,3 +1,5 @@
+For the current single-host production release, use [the simplified deployment runbook](deploy/SIMPLIFIED_DEPLOYMENT_2026-10-17.md). It replaces the older Consul-based startup instructions.
+
 # Milk Schedule
 
 The application uses a Rails web interface, a Hanami API, Python Excel and scheduling workers, PostgreSQL, Redis, MinIO, Consul discovery and Nginx.

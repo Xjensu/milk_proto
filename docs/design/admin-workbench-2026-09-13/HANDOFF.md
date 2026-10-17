@@ -4417,3 +4417,13 @@ Rails commit e729d8a closes each outbound HTTP pool as well as its response, inc
 The same-process socket diagnostic reproduced growth from 9 to 209 descriptors on 100 old-client calls (including diagnostic server sockets). The fixed client stayed at 9; 20 HTTP-500 calls and 10 cancellations also returned to 9. The rebuilt real Falcon worker stayed at 9 descriptors across 100 readiness probes. Both Rails replicas and direct Puma returned readiness 200. API stop made Rails unready, and API restart restored readiness without Rails restart. Seven compiled CSS/JS assets returned 200; Playwright MCP loaded the public selection page. No visual redesign or full administrator journey is claimed.
 
 The ClamAV CDN returned 403/cooldown during local verification; successful live signature updates remain blocked by upstream network access. Freshness checks reject stale databases, and the updater retries hourly instead of rapid restarts. No remote server deployment or multi-day soak is claimed. Local project containers are stopped again after checks.
+
+## 2026-10-17 — simplified single-host runtime
+
+A dedicated deployment agent removed Consul/ACL/three registrars and replaced the Python edge supervisor with native Docker DNS refresh. The optional operations console no longer causes idle DNS retries. Default Rails count is one; business workers and all data volumes remain. New deployment instructions and exact evidence are in deploy/SIMPLIFIED_DEPLOYMENT_2026-10-17.md and deploy/image-releases/2026-10-17-1.json.
+
+Rails 1646796 checks API readiness even with discovery disabled. API ddf921c gates required scans on signature freshness and returns 503 before accepting an Excel upload while unavailable. Excel deefab6 selects its installed psycopg2 driver in direct mode. Five images are published under 2026-10-17-1; scheduler retains its previous tag.
+
+Local verification: cached startup 17.01s, 250 readiness probes at 9 descriptors afterward, 180-second idle check range 9–11 ending at 9, API IP replacement without Rails restart/Nginx reload, admin login and persisted faculty read-back, Excel worker healthy, public Playwright load without console errors, stale-signature upload 503 with no new record, direct db version command. No remote server deployment, multi-day soak, full business import/export or successful live CDN refresh is claimed. Local containers are returned to stopped state after verification.
+
+Follow-up: worker PID 9 remained at 9 descriptors at 38,889 seconds of monotonic process age. This is a later snapshot, not continuous monitoring of the entire interval.
